@@ -476,8 +476,6 @@ async fn run_client_loop(
         direct_graphics_response: Arc::new(Mutex::new(direct_graphics::ResponseMatcher::default())),
         #[cfg(unix)]
         retired_direct_graphics: HashMap::new(),
-        #[cfg(unix)]
-        disabled_native_graphics: Default::default(),
         pending_native_cleanup: Vec::new(),
         #[cfg(unix)]
         pending_surface_graphics: HashMap::new(),
@@ -1678,7 +1676,7 @@ async fn run_client_loop(
                                 transfer_id,
                                 image_id,
                             );
-                            if retirement == RetiredDirectGraphicsMatch::Exact {
+                            if retirement == RetiredDirectGraphicsMatch::Retired {
                                 continue;
                             }
                             let surface_asset_valid = match (state.shell.as_ref(), &surface_asset) {
@@ -1697,8 +1695,6 @@ async fn run_client_loop(
                             let native_valid = !native
                                 || surface_asset.as_ref().is_some_and(|asset| {
                                     !state.presentation_frozen
-                                        && state.disabled_native_graphics.get(&endpoint_id)
-                                            != Some(&generation)
                                         && graphics_owner_is_active(
                                             &state,
                                             &write_stream,

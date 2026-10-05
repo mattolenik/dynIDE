@@ -467,6 +467,224 @@ fn native_rejection_falls_back_without_disabling_other_client() {
 }
 
 #[test]
+fn voluntary_retirement_pauses_native_delivery_and_resumes_after_cooldown() {
+    let mut server = test_headless_server();
+    let (control, render) = add_client(&mut server, 7);
+    let (path, token, image) = prepare_and_commit(&mut server, 7);
+    assert!(native_started(&mut server, 7, token, image));
+    // Geometry changed under the in-flight upload (or the viewer deactivated).
+    server.retire_native_graphics_for_client(7);
+    assert_retirement(&control, token, image);
+    assert!(render.try_recv().is_err());
+    assert!(!path.exists());
+    assert!(!server.native_graphics.is_pending(7));
+    assert!(!server.clients[&7].shell_graphics_delivery.has_pending());
+    assert_eq!(server.clients[&7].deferred_render(), DeferredRender::Full);
+    // The recovery render stays inline while the cooldown runs, and a late result
+    // for the retired transfer neither restores it nor counts as a failure.
+    assert_native_disabled(&mut server, 7);
+    assert!(!native_result(&mut server, 7, token, image, true));
+    assert_native_disabled(&mut server, 7);
+    // A fresh inline revision also establishes bank 0 regardless of whether the
+    // client had already displayed the retired upload before receiving retirement.
+    commit_scene(&mut server, 7, &scene_for(1, 124));
+    // Unlike a timeout or rejection, the pause ends: native delivery is offered
+    // again once the cooldown has elapsed.
+    server.expire_native_graphics(
+        Instant::now() + super::super::native_graphics::VOLUNTARY_RETIRE_COOLDOWN,
+    );
+    let (second_path, second_token, _) = prepare_and_commit(&mut server, 7);
+    assert_ne!(second_token, token);
+    assert!(second_path.exists());
+    assert!(server.native_graphics.is_pending(7));
+    assert!(server.clients[&7].direct_graphics);
+}
+
+#[test]
+fn retirement_ack_races_reconcile_banks_before_resuming_native_delivery() {
+    use crate::kitty_graphics::surface::{ClientState as GraphicsClient, Occlusion, Visibility};
+
+    for pending_bank_one in [false, true] {
+        for client_acked in [false, true] {
+            for fallback_revision in [120, 121, 122] {
+                let mut server = test_headless_server();
+                let (control, _render) = add_client(&mut server, 7);
+                let mut client = GraphicsClient::new();
+                client.set_scope(&server.client_shell_boot_id);
+                let cell = crate::kitty_graphics::HostCellSize {
+                    width_px: 10,
+                    height_px: 20,
+                };
+                let encode = |client: &mut GraphicsClient| {
+                    client.encode(Visibility::Main, (0, 0), None, cell, &Occlusion::default())
+                };
+                // Start with a known resident revision in the opposite bank.
+                let mut previous = scene_for(1, 120);
+                if pending_bank_one {
+                    commit_scene(&mut server, 7, &previous);
+                    client.set_scene(previous);
+                    encode(&mut client);
+                } else {
+                    let (token, image) = prepare_scene_and_commit(&mut server, 7, previous.clone());
+                    previous.assets.clear();
+                    let key = previous.placements[0].asset.clone();
+                    client.set_scene(previous);
+                    encode(&mut client);
+                    assert!(client.trust_direct_asset(&key, image));
+                    encode(&mut client);
+                    ack_native(&mut server, 7, token, image);
+                }
+
+                let mut pending = scene_for(1, 121);
+                let (token, image) = prepare_scene_and_commit(&mut server, 7, pending.clone());
+                pending.assets.clear();
+                let key = pending.placements[0].asset.clone();
+                client.set_scene(pending);
+                encode(&mut client);
+                assert!(native_started(&mut server, 7, token, image));
+                if client_acked {
+                    // The client has displayed the upload, but its success is
+                    // still in transit when the server notices new geometry.
+                    assert!(client.trust_direct_asset(&key, image));
+                    encode(&mut client);
+                }
+
+                let mut fallback = scene_for(1, fallback_revision);
+                fallback.placements[0].cols = 2;
+                assert!(server.defer_changed_native_geometry(7, &fallback));
+                assert_retirement(&control, token, image);
+                if !client_acked {
+                    // Only an upload still awaiting ACK owns retirement cleanup.
+                    client.retire_direct_image(image);
+                    encode(&mut client);
+                }
+                assert!(!native_result(&mut server, 7, token, image, client_acked));
+                commit_scene(&mut server, 7, &fallback);
+                client.set_scene(fallback);
+                encode(&mut client);
+                server.expire_native_graphics(
+                    Instant::now() + super::super::native_graphics::VOLUNTARY_RETIRE_COOLDOWN,
+                );
+
+                let ambiguous_revision = if pending_bank_one { 121 } else { 120 };
+                let mut next = scene_for(1, 123);
+                next.placements[0].cols = 2;
+                let mut prepared = server.prepare_native_scene(
+                    7,
+                    &mut next,
+                    &mut DeliveryCache::default(),
+                    &mut Default::default(),
+                );
+                if fallback_revision == ambiguous_revision {
+                    assert!(prepared.is_none(), "ambiguous bank must recover inline");
+                    assert_eq!(next.assets.len(), 1);
+                    commit_scene(&mut server, 7, &next);
+                    client.set_scene(next);
+                    encode(&mut client);
+                    next = scene_for(1, 124);
+                    next.placements[0].cols = 2;
+                    prepared = server.prepare_native_scene(
+                        7,
+                        &mut next,
+                        &mut DeliveryCache::default(),
+                        &mut Default::default(),
+                    );
+                }
+                let (pending, message) = prepared.expect("reconciled source resumes native");
+                let ServerMessage::GraphicsFile {
+                    transfer_id,
+                    image_id,
+                    ..
+                } = message
+                else {
+                    panic!("expected file upload");
+                };
+                commit_scene(&mut server, 7, &next);
+                server.native_graphics.commit(7, pending);
+                let key = next.placements[0].asset.clone();
+                client.set_scene(next);
+                encode(&mut client);
+                assert!(client.accepts_direct_asset(&key, image_id),
+                    "pending_bank_one={pending_bank_one} client_acked={client_acked} fallback_revision={fallback_revision}");
+                assert!(client.trust_direct_asset(&key, image_id));
+                encode(&mut client);
+                ack_native(&mut server, 7, transfer_id, image_id);
+            }
+        }
+    }
+}
+
+#[test]
+fn retired_bank_uncertainty_is_scoped_and_pruned_with_committed_scenes() {
+    let mut server = test_headless_server();
+    let (control, _render) = add_client(&mut server, 7);
+    let (_other_control, _other_render) = add_client(&mut server, 8);
+    let (_, token, image) = prepare_and_commit(&mut server, 7);
+    server.retire_native_graphics_for_client(7);
+    assert_retirement(&control, token, image);
+    server.expire_native_graphics(Instant::now() + Duration::from_secs(1));
+    assert_native_disabled(&mut server, 7);
+    let (_, token, image) = prepare_and_commit(&mut server, 8);
+    ack_native(&mut server, 8, token, image);
+
+    // A different source is eligible even while the retired source is retained.
+    let mut other = scene_for(2, 456);
+    other
+        .retained_assets
+        .push(scene().placements[0].asset.clone());
+    let (token, image) = prepare_scene_and_commit(&mut server, 7, other);
+    ack_native(&mut server, 7, token, image);
+    assert_native_disabled(&mut server, 7);
+
+    // Only a queued omission prunes uncertainty. Preparing one is speculative.
+    let mut omitted = SurfaceGraphicsScene::default();
+    assert!(server
+        .prepare_native_scene(
+            7,
+            &mut omitted,
+            &mut DeliveryCache::default(),
+            &mut Default::default(),
+        )
+        .is_none());
+    assert_native_disabled(&mut server, 7);
+    commit_scene(&mut server, 7, &omitted);
+    let (_, token, image) = prepare_and_commit(&mut server, 7);
+    server.retire_native_graphics_for_client(7);
+    assert_retirement(&control, token, image);
+    server.remove_client(7);
+    let (_control, _render) = add_client(&mut server, 7);
+    let (_, token, image) = prepare_and_commit(&mut server, 7);
+    ack_native(&mut server, 7, token, image);
+}
+
+#[test]
+fn native_failure_after_voluntary_recovery_remains_disabled_until_disconnect() {
+    for timeout in [false, true] {
+        let mut server = test_headless_server();
+        let (control, _render) = add_client(&mut server, 7);
+        let (_, token, image) = prepare_and_commit(&mut server, 7);
+        server.retire_native_graphics_for_client(7);
+        assert_retirement(&control, token, image);
+        commit_scene(&mut server, 7, &scene_for(1, 124));
+        server.expire_native_graphics(Instant::now() + Duration::from_secs(1));
+        let (_, token, image) = prepare_and_commit(&mut server, 7);
+        assert!(native_started(&mut server, 7, token, image));
+        if timeout {
+            assert!(server.expire_native_graphics(Instant::now() + Duration::from_secs(10)));
+        } else {
+            assert!(native_result(&mut server, 7, token, image, false));
+        }
+        assert_retirement(&control, token, image);
+        server.expire_native_graphics(Instant::now() + Duration::from_secs(60));
+        assert_native_disabled(&mut server, 7);
+        server.remove_client(7);
+        let (_control, _render) = add_client(&mut server, 7);
+        let (_, token, image) = prepare_and_commit(&mut server, 7);
+        ack_native(&mut server, 7, token, image);
+    }
+}
+
+#[test]
 fn disconnect_unlinks_only_that_clients_native_export() {
     let mut server = test_headless_server();
     let (_control, _render) = add_client(&mut server, 7);

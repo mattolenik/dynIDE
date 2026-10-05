@@ -15,6 +15,12 @@ const MAX_FILE: usize = 16 * 1024 * 1024;
 const MAX_BYTES: usize = 64 * 1024 * 1024;
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(3);
+// After a voluntary retirement (geometry change, viewer deactivation) the client
+// falls back to inline delivery for at least this long. This throttles retries
+// during geometry churn; it is not a debounce of every geometry update.
+// Capability failures (rejection, timeout) still disable native delivery for the
+// rest of the connection.
+pub(super) const VOLUNTARY_RETIRE_COOLDOWN: Duration = Duration::from_millis(500);
 
 pub(super) struct Pending {
     export: Arc<OwnedExport>,
@@ -26,6 +32,8 @@ pub(super) struct Pending {
     deadline: Instant,
     written: bool,
     refresh_needed: bool,
+    // Retired by the server (geometry/activity), not failed by the client.
+    voluntary: bool,
     scene: SurfaceGraphicsScene,
     delivery: DeliveryCache,
 }
@@ -45,12 +53,21 @@ impl Pending {
 pub(super) struct NativeGraphics {
     store: FileStore,
     pending: HashMap<u64, Pending>,
+    // Native delivery failed for this client; inline only until disconnect.
     disabled: HashSet<u64>,
+    // Native delivery paused for this client until the instant; see
+    // VOLUNTARY_RETIRE_COOLDOWN.
+    cooldown: HashMap<u64, Instant>,
     next_transfer: u64,
     source_retries: HashMap<u64, Instant>,
     // The key and bank currently addressed for each logical source. Native state
     // advances on ACK; inline state and source pruning advance on queued scenes.
     acknowledged_slots: HashMap<u64, HashMap<SurfaceGraphicsSource, AcknowledgedSlot>>,
+    // A retired upload may have been displayed before its ACK reached us. Track
+    // the one key that could still address bank 1 (all other keys default to 0).
+    // Resume this source only after an inline commit of a different key, or its
+    // removal from the scene, makes bank residency unambiguous again.
+    retired_bank_one: HashMap<u64, HashMap<SurfaceGraphicsSource, SurfaceGraphicsAssetKey>>,
 }
 impl Default for NativeGraphics {
     fn default() -> Self {
@@ -58,9 +75,11 @@ impl Default for NativeGraphics {
             store: FileStore::default(),
             pending: HashMap::new(),
             disabled: HashSet::new(),
+            cooldown: HashMap::new(),
             next_transfer: 1,
             source_retries: HashMap::new(),
             acknowledged_slots: HashMap::new(),
+            retired_bank_one: HashMap::new(),
         }
     }
 }
@@ -71,6 +90,9 @@ impl NativeGraphics {
     }
     pub(super) fn is_pending(&self, client: u64) -> bool {
         self.pending.contains_key(&client)
+    }
+    fn cooling_down(&self, client: u64, now: Instant) -> bool {
+        self.cooldown.get(&client).is_some_and(|until| *until > now)
     }
     pub(super) fn can_hold(&self, client: u64, scene: &SurfaceGraphicsScene) -> bool {
         let Some(pending) = self.pending.get(&client) else {
@@ -133,10 +155,22 @@ impl NativeGraphics {
             .collect();
         let slots = self.acknowledged_slots.entry(client).or_default();
         slots.retain(|source, _| present_sources.contains(source));
+        let mut retired = self.retired_bank_one.get_mut(&client);
+        if let Some(retired) = &mut retired {
+            retired.retain(|source, _| present_sources.contains(source));
+        }
         for asset in inline_assets
             .iter()
             .filter(|asset| matches!(asset.source, SurfaceGraphicsSource::Terminal { .. }))
         {
+            if let Some(retired) = &mut retired {
+                if retired.get(&asset.source) == Some(asset) {
+                    // Exact inline replay preserves the client's key-to-bank
+                    // mapping, which may depend on the retired upload's ACK.
+                    continue;
+                }
+                retired.remove(&asset.source);
+            }
             let same_resident_key = slots
                 .get(&asset.source)
                 .is_some_and(|resident| resident.asset == *asset);
@@ -152,6 +186,13 @@ impl NativeGraphics {
         }
         if slots.is_empty() {
             self.acknowledged_slots.remove(&client);
+        }
+        if self
+            .retired_bank_one
+            .get(&client)
+            .is_some_and(HashMap::is_empty)
+        {
+            self.retired_bank_one.remove(&client);
         }
     }
     #[cfg(all(test, unix))]
@@ -174,15 +215,17 @@ impl NativeGraphics {
         sources: &mut SourceFiles,
     ) -> Option<(Pending, ServerMessage)> {
         if self.disabled.contains(&client)
+            || self.cooling_down(client, Instant::now())
             || self.pending.contains_key(&client)
             || self.pending.len() >= 8
         {
             return None;
         }
-        let index = scene
-            .assets
-            .iter()
-            .position(|asset| eligible(asset, sources))?;
+        let retired = self.retired_bank_one.get(&client);
+        let index = scene.assets.iter().position(|asset| {
+            !retired.is_some_and(|retired| retired.contains_key(&asset.key.source))
+                && eligible(asset, sources)
+        })?;
         let asset = &scene.assets[index];
         if self.pending.values().map(|p| p.export.len()).sum::<usize>()
             + asset.key.data_len as usize
@@ -238,6 +281,7 @@ impl NativeGraphics {
                 deadline: Instant::now() + DELIVERY_TIMEOUT,
                 written: false,
                 refresh_needed: delivery.has_pending(),
+                voluntary: false,
                 scene: held,
                 delivery: delivery.clone(),
             },
@@ -377,8 +421,10 @@ impl HeadlessServer {
                 .pending
                 .get_mut(&client)
                 .expect("matched");
-            p.written = true;
-            p.deadline = Instant::now() + RESPONSE_TIMEOUT;
+            if !p.voluntary {
+                p.written = true;
+                p.deadline = Instant::now() + RESPONSE_TIMEOUT;
+            }
         }
         true
     }
@@ -395,7 +441,9 @@ impl HeadlessServer {
         if !self.native_graphics.matches(client, transfer, image) {
             return Some(false);
         }
-        if self.native_graphics.disabled.contains(&client) {
+        if self.native_graphics.disabled.contains(&client)
+            || self.native_graphics.pending[&client].voluntary
+        {
             return Some(self.expire_native_graphics(Instant::now()));
         }
         if success {
@@ -440,8 +488,11 @@ impl HeadlessServer {
             .pending
             .iter()
             .filter(|(_, p)| p.deadline <= now)
-            .map(|(id, p)| (*id, p.transfer_id, p.image_id))
+            .map(|(id, p)| (*id, p.transfer_id, p.image_id, p.voluntary))
             .collect();
+        self.native_graphics
+            .cooldown
+            .retain(|_, until| *until > now);
         let mut changed = false;
         self.native_graphics.source_retries.retain(|id, deadline| {
             if *deadline > now {
@@ -453,8 +504,17 @@ impl HeadlessServer {
             }
             false
         });
-        for (id, transfer_id, image_id) in expired {
-            self.native_graphics.disabled.insert(id);
+        for (id, transfer_id, image_id, voluntary) in expired {
+            // A timed-out upload means the client or its terminal cannot complete
+            // native delivery: stop offering it. A voluntary retirement only pauses
+            // native delivery; the client tombstones the retired transfer itself.
+            if voluntary {
+                self.native_graphics
+                    .cooldown
+                    .insert(id, now + VOLUNTARY_RETIRE_COOLDOWN);
+            } else {
+                self.native_graphics.disabled.insert(id);
+            }
             let message = ServerMessage::GraphicsTransmissionRetired {
                 transfer_id,
                 image_id,
@@ -465,8 +525,27 @@ impl HeadlessServer {
             if !sent {
                 continue;
             } // Keep the export alive until retirement is queued or disconnect cleans it.
-            self.native_graphics.pending.remove(&id);
-            self.native_graphics.disabled.insert(id);
+            if let Some(pending) = self.native_graphics.pending.remove(&id) {
+                if voluntary {
+                    let bank_one = if pending.slot {
+                        Some(pending.asset)
+                    } else {
+                        self.native_graphics
+                            .acknowledged_slots
+                            .get(&id)
+                            .and_then(|slots| slots.get(&pending.source))
+                            .filter(|slot| slot.slot)
+                            .map(|slot| slot.asset.clone())
+                    };
+                    if let Some(asset) = bank_one {
+                        self.native_graphics
+                            .retired_bank_one
+                            .entry(id)
+                            .or_default()
+                            .insert(pending.source, asset);
+                    }
+                }
+            }
             if let Some(c) = self.clients.get_mut(&id) {
                 c.shell_graphics_delivery = DeliveryCache::default();
                 c.defer_full_render();
@@ -478,7 +557,7 @@ impl HeadlessServer {
     pub(super) fn retire_native_graphics_for_client(&mut self, id: u64) {
         if let Some(p) = self.native_graphics.pending.get_mut(&id) {
             p.deadline = Instant::now();
-            self.native_graphics.disabled.insert(id);
+            p.voluntary = true;
             if self.expire_native_graphics(Instant::now()) {
                 self.app.render_dirty.request_generic();
             }
@@ -487,8 +566,10 @@ impl HeadlessServer {
     pub(super) fn disconnect_native_graphics(&mut self, id: u64) {
         self.native_graphics.pending.remove(&id);
         self.native_graphics.disabled.remove(&id);
+        self.native_graphics.cooldown.remove(&id);
         self.native_graphics.source_retries.remove(&id);
         self.native_graphics.acknowledged_slots.remove(&id);
+        self.native_graphics.retired_bank_one.remove(&id);
     }
 }
 
