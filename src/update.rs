@@ -1161,7 +1161,9 @@ fn release_info_from_local_build(path: &Path) -> Result<ReleaseInfo, String> {
         build_id: None,
         commit: None,
         target_protocol: None,
-        target_endpoint_generation: None,
+        // Assume a local build shares this binary's endpoint generation, so a
+        // compatible running server is left alone like it is for releases.
+        target_endpoint_generation: Some(crate::protocol::endpoint::ENDPOINT_PROTOCOL_GENERATION),
         download_url: format!("file://{}", path.display()),
         sha256: None,
         notes_body: String::new(),
