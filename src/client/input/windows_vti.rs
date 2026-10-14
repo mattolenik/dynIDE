@@ -843,6 +843,8 @@ struct WindowsMouseButtons {
     left: bool,
     right: bool,
     middle: bool,
+    back: bool,
+    forward: bool,
 }
 
 impl WindowsInputMapper {
@@ -1322,6 +1324,8 @@ impl WindowsInputMapper {
         const FROM_LEFT_1ST_BUTTON_PRESSED: u32 = 0x0001;
         const RIGHTMOST_BUTTON_PRESSED: u32 = 0x0002;
         const FROM_LEFT_2ND_BUTTON_PRESSED: u32 = 0x0004;
+        const FROM_LEFT_3RD_BUTTON_PRESSED: u32 = 0x0008;
+        const FROM_LEFT_4TH_BUTTON_PRESSED: u32 = 0x0010;
         const MOUSE_MOVED: u32 = 0x0001;
         const MOUSE_WHEELED: u32 = 0x0004;
         const MOUSE_HWHEELED: u32 = 0x0008;
@@ -1330,7 +1334,40 @@ impl WindowsInputMapper {
             left: mouse.button_state & FROM_LEFT_1ST_BUTTON_PRESSED != 0,
             right: mouse.button_state & RIGHTMOST_BUTTON_PRESSED != 0,
             middle: mouse.button_state & FROM_LEFT_2ND_BUTTON_PRESSED != 0,
+            back: mouse.button_state & FROM_LEFT_3RD_BUTTON_PRESSED != 0,
+            forward: mouse.button_state & FROM_LEFT_4TH_BUTTON_PRESSED != 0,
         };
+        let previous = std::mem::replace(&mut self.mouse_buttons, buttons);
+        let modifiers = windows_key_modifiers(mouse.control_key_state).bits();
+        // Back/forward thumb buttons have no crossterm kind; report them as the
+        // protocol kind directly. A move while one is held is plain motion.
+        if mouse.event_flags & (MOUSE_WHEELED | MOUSE_HWHEELED | MOUSE_MOVED) == 0 {
+            for (button, now, before) in [
+                (
+                    crate::protocol::ClientMouseButton::Back,
+                    buttons.back,
+                    previous.back,
+                ),
+                (
+                    crate::protocol::ClientMouseButton::Forward,
+                    buttons.forward,
+                    previous.forward,
+                ),
+            ] {
+                if now != before {
+                    return Some(crate::protocol::ClientInputEvent::Mouse {
+                        kind: if now {
+                            crate::protocol::ClientMouseKind::Down(button)
+                        } else {
+                            crate::protocol::ClientMouseKind::Up(button)
+                        },
+                        column: mouse.x,
+                        row: mouse.y,
+                        modifiers,
+                    });
+                }
+            }
+        }
 
         let kind = if mouse.event_flags & MOUSE_WHEELED != 0 {
             if (mouse.button_state as i32) < 0 {
@@ -1354,29 +1391,27 @@ impl WindowsInputMapper {
             } else {
                 MouseEventKind::Moved
             }
-        } else if buttons.left && !self.mouse_buttons.left {
+        } else if buttons.left && !previous.left {
             MouseEventKind::Down(MouseButton::Left)
-        } else if buttons.right && !self.mouse_buttons.right {
+        } else if buttons.right && !previous.right {
             MouseEventKind::Down(MouseButton::Right)
-        } else if buttons.middle && !self.mouse_buttons.middle {
+        } else if buttons.middle && !previous.middle {
             MouseEventKind::Down(MouseButton::Middle)
-        } else if !buttons.left && self.mouse_buttons.left {
+        } else if !buttons.left && previous.left {
             MouseEventKind::Up(MouseButton::Left)
-        } else if !buttons.right && self.mouse_buttons.right {
+        } else if !buttons.right && previous.right {
             MouseEventKind::Up(MouseButton::Right)
-        } else if !buttons.middle && self.mouse_buttons.middle {
+        } else if !buttons.middle && previous.middle {
             MouseEventKind::Up(MouseButton::Middle)
         } else {
-            self.mouse_buttons = buttons;
             return None;
         };
-        self.mouse_buttons = buttons;
 
         Some(crate::protocol::ClientInputEvent::Mouse {
             kind: crate::protocol::ClientMouseKind::from_crossterm(kind)?,
             column: mouse.x,
             row: mouse.y,
-            modifiers: windows_key_modifiers(mouse.control_key_state).bits(),
+            modifiers,
         })
     }
 }

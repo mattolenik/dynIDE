@@ -174,17 +174,44 @@ pub(super) fn direct_attach_pixel_mouse(
 )> {
     let report = crate::raw_input::parse_sgr_mouse_report(data)?;
     let (column, row) = geometry.cell(report.x, report.y)?;
-    let mouse = report.at_cell(column, row);
+    let (kind, modifiers) = raw_mouse_kind(report.at_cell(column, row))?;
     Some((
-        crate::protocol::ClientMouseKind::from_crossterm(mouse.kind)?,
+        kind,
         crate::protocol::ClientMousePosition::Pixels {
             x: report.x,
             y: report.y,
             column,
             row,
         },
-        mouse.modifiers.bits(),
+        modifiers.bits(),
     ))
+}
+
+/// The protocol kind and modifiers of a raw mouse event, if it is one.
+#[cfg(unix)]
+fn raw_mouse_kind(
+    event: crate::raw_input::RawInputEvent,
+) -> Option<(crate::protocol::ClientMouseKind, KeyModifiers)> {
+    match event {
+        crate::raw_input::RawInputEvent::Mouse(mouse) => Some((
+            crate::protocol::ClientMouseKind::from_crossterm(mouse.kind)?,
+            mouse.modifiers,
+        )),
+        crate::raw_input::RawInputEvent::ExtraMouseButton {
+            button,
+            pressed,
+            modifiers,
+            ..
+        } => Some((
+            if pressed {
+                crate::protocol::ClientMouseKind::Down(button)
+            } else {
+                crate::protocol::ClientMouseKind::Up(button)
+            },
+            modifiers,
+        )),
+        _ => None,
+    }
 }
 
 #[cfg(unix)]
@@ -224,6 +251,14 @@ fn attach_scroll_action(
                 modifiers: mouse.modifiers.bits(),
             }),
         },
+        event @ crate::raw_input::RawInputEvent::ExtraMouseButton { column, row, .. } => {
+            let (kind, modifiers) = raw_mouse_kind(event)?;
+            Some(AttachSemanticAction::Mouse {
+                kind,
+                position: crate::protocol::ClientMousePosition::Cell { column, row },
+                modifiers: modifiers.bits(),
+            })
+        }
         crate::raw_input::RawInputEvent::Key(key)
             if key.modifiers.is_empty()
                 && matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>

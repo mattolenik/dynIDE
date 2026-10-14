@@ -649,7 +649,7 @@ impl PaneTerminal {
 
     pub(crate) fn encode_mouse_button(
         &self,
-        kind: crossterm::event::MouseEventKind,
+        kind: crate::protocol::ClientMouseKind,
         position: crate::input::mouse::Position,
         modifiers: crossterm::event::KeyModifiers,
     ) -> Option<Vec<u8>> {
@@ -2088,7 +2088,7 @@ impl GhosttyPaneTerminal {
 
     pub(crate) fn encode_mouse_button(
         &self,
-        kind: crossterm::event::MouseEventKind,
+        kind: crate::protocol::ClientMouseKind,
         position: crate::input::mouse::Position,
         modifiers: crossterm::event::KeyModifiers,
     ) -> Option<Vec<u8>> {
@@ -5553,12 +5553,28 @@ mod tests {
         let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
 
         let encoded = pane.encode_mouse_button(
-            crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
+            crate::protocol::ClientMouseKind::Up(crate::protocol::ClientMouseButton::Left),
             crate::input::mouse::Position::Cell { column: 11, row: 9 },
             crossterm::event::KeyModifiers::empty(),
         );
 
         assert_eq!(encoded.as_deref(), Some(&b"\x1b[<0;12;10m"[..]));
+    }
+
+    #[test]
+    fn ghostty_mouse_back_button_encodes_as_sgr_button_eight() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        terminal.write(b"\x1b[?1000h\x1b[?1006h");
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+
+        let encoded = pane.encode_mouse_button(
+            crate::protocol::ClientMouseKind::Down(crate::protocol::ClientMouseButton::Back),
+            crate::input::mouse::Position::Cell { column: 11, row: 9 },
+            crossterm::event::KeyModifiers::empty(),
+        );
+
+        assert_eq!(encoded.as_deref(), Some(&b"\x1b[<128;12;10M"[..]));
     }
 
     #[test]
@@ -5569,7 +5585,7 @@ mod tests {
         let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
 
         let encoded = pane.encode_mouse_button(
-            crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+            crate::protocol::ClientMouseKind::Drag(crate::protocol::ClientMouseButton::Left),
             crate::input::mouse::Position::Cell { column: 4, row: 6 },
             crossterm::event::KeyModifiers::SHIFT,
         );
@@ -5585,7 +5601,7 @@ mod tests {
         let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
 
         let encoded = pane.encode_mouse_button(
-            crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+            crate::protocol::ClientMouseKind::Drag(crate::protocol::ClientMouseButton::Left),
             crate::input::mouse::Position::Cell { column: 4, row: 6 },
             crossterm::event::KeyModifiers::empty(),
         );

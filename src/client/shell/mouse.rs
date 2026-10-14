@@ -2336,9 +2336,14 @@ impl ClientShellState {
     }
 
     fn pane_mouse_position(&self, hit: &PaneHit, mouse: MouseEvent) -> ClientMousePosition {
+        self.pane_mouse_position_at(hit, (mouse.column, mouse.row))
+    }
+
+    fn pane_mouse_position_at(&self, hit: &PaneHit, point: (u16, u16)) -> ClientMousePosition {
+        let (column, row) = point;
         let cell = ClientMousePosition::Cell {
-            column: mouse.column.saturating_sub(hit.inner_rect.x),
-            row: mouse.row.saturating_sub(hit.inner_rect.y),
+            column: column.saturating_sub(hit.inner_rect.x),
+            row: row.saturating_sub(hit.inner_rect.y),
         };
         if hit.sgr_pixel_mouse && hit.pixel_width > 0 && hit.pixel_height > 0 {
             self.host_mouse_pixels
@@ -2350,8 +2355,8 @@ impl ClientShellState {
                                 Some(ClientMousePosition::Pixels {
                                     x,
                                     y,
-                                    column: mouse.column.saturating_sub(hit.inner_rect.x),
-                                    row: mouse.row.saturating_sub(hit.inner_rect.y),
+                                    column: column.saturating_sub(hit.inner_rect.x),
+                                    row: row.saturating_sub(hit.inner_rect.y),
                                 })
                             }
                             crate::input::mouse::Position::Cell { .. } => None,
@@ -2360,6 +2365,35 @@ impl ClientShellState {
                 .unwrap_or(cell)
         } else {
             cell
+        }
+    }
+
+    /// Back/forward buttons mean nothing to Herdr's chrome, so they go straight
+    /// to the pane or popup under the pointer. No gesture is tracked: the
+    /// release is routed by position too.
+    pub(super) fn handle_extra_mouse_button(
+        &mut self,
+        kind: crate::protocol::ClientMouseKind,
+        point: (u16, u16),
+        modifiers: crossterm::event::KeyModifiers,
+        outcome: &mut ClientShellInput,
+    ) {
+        if self.overlay.is_some() || self.popup_pending || self.pane_mouse_gesture.is_some() {
+            return;
+        }
+        let hit = match self.hits.popup.clone() {
+            Some(hit) => super::contains(hit.inner_rect, point).then_some(hit),
+            None if self.popup_terminal_id.is_none() => self
+                .hits
+                .panes
+                .iter()
+                .find(|hit| super::contains(hit.inner_rect, point))
+                .cloned(),
+            None => None,
+        };
+        if let Some(hit) = hit {
+            let position = self.pane_mouse_position_at(&hit, point);
+            self.push_pane_mouse_kind(&hit, kind, position, modifiers, outcome);
         }
     }
 
@@ -2374,6 +2408,17 @@ impl ClientShellState {
             return;
         };
         let position = self.pane_mouse_position(hit, mouse);
+        self.push_pane_mouse_kind(hit, kind, position, modifiers, outcome);
+    }
+
+    fn push_pane_mouse_kind(
+        &self,
+        hit: &PaneHit,
+        kind: crate::protocol::ClientMouseKind,
+        position: ClientMousePosition,
+        modifiers: crossterm::event::KeyModifiers,
+        outcome: &mut ClientShellInput,
+    ) {
         let geometry = matches!(position, ClientMousePosition::Pixels { .. }).then_some(
             crate::protocol::ClientMouseGeometry {
                 cols: hit.inner_rect.width,

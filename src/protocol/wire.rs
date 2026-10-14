@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 /// Current protocol version. Bumped when wire format changes incompatibly.
-pub const PROTOCOL_VERSION: u32 = 22;
+pub const PROTOCOL_VERSION: u32 = 23;
 
 /// Maximum allowed frame payload size (2 MB). Frames larger than this are
 /// rejected to prevent denial-of-service via oversized length prefixes.
@@ -88,6 +88,10 @@ pub enum ClientMouseButton {
     Left,
     Right,
     Middle,
+    /// X11 button 8, usually the thumb "back" button.
+    Back,
+    /// X11 button 9, usually the thumb "forward" button.
+    Forward,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -271,12 +275,14 @@ impl ClientMouseButton {
         }
     }
 
-    pub(crate) fn to_crossterm(self) -> crossterm::event::MouseButton {
-        match self {
+    /// Crossterm's `MouseButton` has no back/forward variants.
+    pub(crate) fn to_crossterm(self) -> Option<crossterm::event::MouseButton> {
+        Some(match self {
             Self::Left => crossterm::event::MouseButton::Left,
             Self::Right => crossterm::event::MouseButton::Right,
             Self::Middle => crossterm::event::MouseButton::Middle,
-        }
+            Self::Back | Self::Forward => return None,
+        })
     }
 }
 
@@ -295,17 +301,57 @@ impl ClientMouseKind {
         })
     }
 
-    pub(crate) fn to_crossterm(self) -> crossterm::event::MouseEventKind {
+    /// `None` for back/forward presses and releases, which crossterm cannot
+    /// represent. Back/forward drags become plain motion, like the host parser
+    /// does, so a held thumb button cannot suppress hover.
+    pub(crate) fn to_crossterm(self) -> Option<crossterm::event::MouseEventKind> {
         use crossterm::event::MouseEventKind;
-        match self {
-            Self::Down(button) => MouseEventKind::Down(button.to_crossterm()),
-            Self::Up(button) => MouseEventKind::Up(button.to_crossterm()),
-            Self::Drag(button) => MouseEventKind::Drag(button.to_crossterm()),
+        Some(match self {
+            Self::Down(button) => MouseEventKind::Down(button.to_crossterm()?),
+            Self::Up(button) => MouseEventKind::Up(button.to_crossterm()?),
+            Self::Drag(button) => match button.to_crossterm() {
+                Some(button) => MouseEventKind::Drag(button),
+                None => MouseEventKind::Moved,
+            },
             Self::Moved => MouseEventKind::Moved,
             Self::ScrollUp => MouseEventKind::ScrollUp,
             Self::ScrollDown => MouseEventKind::ScrollDown,
             Self::ScrollLeft => MouseEventKind::ScrollLeft,
             Self::ScrollRight => MouseEventKind::ScrollRight,
+        })
+    }
+
+    pub(crate) fn to_raw_input_event(
+        self,
+        column: u16,
+        row: u16,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> crate::raw_input::RawInputEvent {
+        match (self.to_crossterm(), self) {
+            (Some(kind), _) => {
+                crate::raw_input::RawInputEvent::Mouse(crossterm::event::MouseEvent {
+                    kind,
+                    column,
+                    row,
+                    modifiers,
+                })
+            }
+            (None, Self::Down(button) | Self::Up(button)) => {
+                crate::raw_input::RawInputEvent::ExtraMouseButton {
+                    button,
+                    pressed: matches!(self, Self::Down(_)),
+                    column,
+                    row,
+                    modifiers,
+                }
+            }
+            // `to_crossterm` only fails for back/forward presses and releases.
+            (None, _) => crate::raw_input::RawInputEvent::Mouse(crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Moved,
+                column,
+                row,
+                modifiers,
+            }),
         }
     }
 }
@@ -383,12 +429,11 @@ impl ClientPaneInputEvent {
                     ClientMousePosition::Cell { column, row }
                     | ClientMousePosition::Pixels { column, row, .. } => (*column, *row),
                 };
-                crate::raw_input::RawInputEvent::Mouse(crossterm::event::MouseEvent {
-                    kind: kind.to_crossterm(),
+                kind.to_raw_input_event(
                     column,
                     row,
-                    modifiers: crossterm::event::KeyModifiers::from_bits_truncate(*modifiers),
-                })
+                    crossterm::event::KeyModifiers::from_bits_truncate(*modifiers),
+                )
             }
             Self::Paste(text) => crate::raw_input::RawInputEvent::Paste(text.clone()),
         }
@@ -430,12 +475,11 @@ impl ClientInputEvent {
                 column,
                 row,
                 modifiers,
-            } => crate::raw_input::RawInputEvent::Mouse(crossterm::event::MouseEvent {
-                kind: kind.to_crossterm(),
-                column: *column,
-                row: *row,
-                modifiers: crossterm::event::KeyModifiers::from_bits_truncate(*modifiers),
-            }),
+            } => kind.to_raw_input_event(
+                *column,
+                *row,
+                crossterm::event::KeyModifiers::from_bits_truncate(*modifiers),
+            ),
             Self::Paste { text } => crate::raw_input::RawInputEvent::Paste(text.clone()),
             Self::FocusGained => crate::raw_input::RawInputEvent::OuterFocusGained,
             Self::FocusLost => crate::raw_input::RawInputEvent::OuterFocusLost,

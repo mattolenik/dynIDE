@@ -3747,7 +3747,7 @@ impl PaneRuntime {
 
     pub fn encode_mouse_button(
         &self,
-        kind: crossterm::event::MouseEventKind,
+        kind: crate::protocol::ClientMouseKind,
         position: crate::input::mouse::Position,
         modifiers: crossterm::event::KeyModifiers,
     ) -> Option<Vec<u8>> {

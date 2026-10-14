@@ -429,6 +429,22 @@ fn windows_client_input_event_from_raw(
                 modifiers: mouse.modifiers.bits(),
             })
         }
+        crate::raw_input::RawInputEvent::ExtraMouseButton {
+            button,
+            pressed,
+            column,
+            row,
+            modifiers,
+        } => Some(crate::protocol::ClientInputEvent::Mouse {
+            kind: if pressed {
+                crate::protocol::ClientMouseKind::Down(button)
+            } else {
+                crate::protocol::ClientMouseKind::Up(button)
+            },
+            column,
+            row,
+            modifiers: modifiers.bits(),
+        }),
         crate::raw_input::RawInputEvent::Paste(text) => {
             Some(crate::protocol::ClientInputEvent::Paste { text })
         }

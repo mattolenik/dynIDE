@@ -81,6 +81,16 @@ pub enum RawInputEvent {
     Text(TextCommit),
     Paste(String),
     Mouse(MouseEvent),
+    /// A back/forward (X11 button 8/9) press or release. Crossterm's
+    /// `MouseButton` cannot represent these, so they bypass `Mouse`. The
+    /// shell forwards them to the pane under the pointer and nothing else.
+    ExtraMouseButton {
+        button: crate::protocol::ClientMouseButton,
+        pressed: bool,
+        column: u16,
+        row: u16,
+        modifiers: KeyModifiers,
+    },
     OuterFocusGained,
     OuterFocusLost,
     HostDefaultColor {
@@ -1022,9 +1032,8 @@ fn extract_one_event(buffer: &[u8]) -> Option<(RawInputEvent, usize)> {
     if buffer[0] == ESC {
         let seq_len = complete_escape_sequence_len(buffer)?;
         if buffer[..seq_len].starts_with(b"\x1b[M") {
-            let event = parse_default_mouse(&buffer[..seq_len])
-                .map(RawInputEvent::Mouse)
-                .unwrap_or(RawInputEvent::Unsupported);
+            let event =
+                parse_default_mouse(&buffer[..seq_len]).unwrap_or(RawInputEvent::Unsupported);
             return Some((event, seq_len));
         }
         let seq = std::str::from_utf8(&buffer[..seq_len]).ok()?;
@@ -1062,7 +1071,7 @@ fn extract_one_event(buffer: &[u8]) -> Option<(RawInputEvent, usize)> {
         }
 
         if let Some(mouse) = parse_sgr_mouse(seq) {
-            return Some((RawInputEvent::Mouse(mouse), seq_len));
+            return Some((mouse, seq_len));
         }
 
         if let Some(key) = parse_terminal_key_sequence(seq) {
@@ -1517,7 +1526,7 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-fn parse_default_mouse(sequence: &[u8]) -> Option<MouseEvent> {
+fn parse_default_mouse(sequence: &[u8]) -> Option<RawInputEvent> {
     let &[ESC, b'[', b'M', encoded_cb, encoded_column, encoded_row] = sequence else {
         return None;
     };
@@ -1525,41 +1534,61 @@ fn parse_default_mouse(sequence: &[u8]) -> Option<MouseEvent> {
     let column = u16::from(encoded_column).checked_sub(33)?;
     let row = u16::from(encoded_row).checked_sub(33)?;
     let (kind, modifiers) = parse_mouse_cb(cb)?;
-
-    Some(MouseEvent {
-        kind,
-        column,
-        row,
-        modifiers,
-    })
+    Some(kind.at_cell(column, row, modifiers))
 }
 
-fn parse_sgr_mouse(sequence: &str) -> Option<MouseEvent> {
+fn parse_sgr_mouse(sequence: &str) -> Option<RawInputEvent> {
     let report = parse_sgr_mouse_report(sequence.as_bytes())?;
     let column = u16::try_from(report.x.checked_sub(1)?).ok()?;
     let row = u16::try_from(report.y.checked_sub(1)?).ok()?;
     Some(report.at_cell(column, row))
 }
 
+/// A decoded mouse button code: either something crossterm can represent or a
+/// back/forward button press.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MouseCbKind {
+    Standard(MouseEventKind),
+    Extra {
+        button: crate::protocol::ClientMouseButton,
+        pressed: bool,
+    },
+}
+
+impl MouseCbKind {
+    fn at_cell(self, column: u16, row: u16, modifiers: KeyModifiers) -> RawInputEvent {
+        match self {
+            Self::Standard(kind) => RawInputEvent::Mouse(MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers,
+            }),
+            Self::Extra { button, pressed } => RawInputEvent::ExtraMouseButton {
+                button,
+                pressed,
+                column,
+                row,
+                modifiers,
+            },
+        }
+    }
+}
+
 /// One SGR mouse report (`CSI < Cb ; x ; y M/m`) with its raw 1-based
 /// coordinates: cells normally, pixels when the host reports SGR pixels (1016).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SgrMouseReport {
-    kind: MouseEventKind,
+    kind: MouseCbKind,
     modifiers: KeyModifiers,
     pub(crate) x: u32,
     pub(crate) y: u32,
 }
 
 impl SgrMouseReport {
-    /// The report as a mouse event at a 0-based cell.
-    pub(crate) fn at_cell(self, column: u16, row: u16) -> MouseEvent {
-        MouseEvent {
-            kind: self.kind,
-            column,
-            row,
-            modifiers: self.modifiers,
-        }
+    /// The report as a raw mouse event at a 0-based cell.
+    pub(crate) fn at_cell(self, column: u16, row: u16) -> RawInputEvent {
+        self.kind.at_cell(column, row, self.modifiers)
     }
 }
 
@@ -1578,7 +1607,13 @@ pub(crate) fn parse_sgr_mouse_report(sequence: &[u8]) -> Option<SgrMouseReport> 
     }
     let (kind, modifiers) = parse_mouse_cb(cb)?;
     let kind = match (final_byte, kind) {
-        (b'm', MouseEventKind::Down(button)) => MouseEventKind::Up(button),
+        (b'm', MouseCbKind::Standard(MouseEventKind::Down(button))) => {
+            MouseCbKind::Standard(MouseEventKind::Up(button))
+        }
+        (b'm', MouseCbKind::Extra { button, .. }) => MouseCbKind::Extra {
+            button,
+            pressed: false,
+        },
         (_, kind) => kind,
     };
     Some(SgrMouseReport {
@@ -1595,7 +1630,7 @@ fn parse_report_number(value: &[u8]) -> Option<u32> {
         .flatten()
 }
 
-fn parse_mouse_cb(cb: u8) -> Option<(MouseEventKind, KeyModifiers)> {
+fn parse_mouse_cb(cb: u8) -> Option<(MouseCbKind, KeyModifiers)> {
     let button_number = (cb & 0b0000_0011) | ((cb & 0b1100_0000) >> 4);
     let dragging = cb & 0b0010_0000 == 0b0010_0000;
 
@@ -1614,9 +1649,31 @@ fn parse_mouse_cb(cb: u8) -> Option<(MouseEventKind, KeyModifiers)> {
         (5, false) => MouseEventKind::ScrollDown,
         (6, false) => MouseEventKind::ScrollLeft,
         (7, false) => MouseEventKind::ScrollRight,
+        (8, false) => {
+            return Some((
+                MouseCbKind::Extra {
+                    button: crate::protocol::ClientMouseButton::Back,
+                    pressed: true,
+                },
+                mouse_cb_modifiers(cb),
+            ));
+        }
+        (9, false) => {
+            return Some((
+                MouseCbKind::Extra {
+                    button: crate::protocol::ClientMouseButton::Forward,
+                    pressed: true,
+                },
+                mouse_cb_modifiers(cb),
+            ));
+        }
         _ => return None,
     };
 
+    Some((MouseCbKind::Standard(kind), mouse_cb_modifiers(cb)))
+}
+
+fn mouse_cb_modifiers(cb: u8) -> KeyModifiers {
     let mut modifiers = KeyModifiers::empty();
     if cb & 0b0000_0100 != 0 {
         modifiers |= KeyModifiers::SHIFT;
@@ -1627,8 +1684,7 @@ fn parse_mouse_cb(cb: u8) -> Option<(MouseEventKind, KeyModifiers)> {
     if cb & 0b0001_0000 != 0 {
         modifiers |= KeyModifiers::CONTROL;
     }
-
-    Some((kind, modifiers))
+    modifiers
 }
 
 #[cfg(test)]
@@ -1804,6 +1860,56 @@ mod tests {
             };
             assert_eq!(mouse.kind, MouseEventKind::Moved);
             assert_eq!((mouse.column, mouse.row), (19, 9));
+        }
+    }
+
+    #[test]
+    fn parses_back_forward_buttons_as_extra_mouse_buttons() {
+        use crate::protocol::ClientMouseButton;
+        for (input, expected_button, expected_pressed) in [
+            (
+                b"\x1b[<128;20;10M".as_slice(),
+                ClientMouseButton::Back,
+                true,
+            ),
+            (
+                b"\x1b[<128;20;10m".as_slice(),
+                ClientMouseButton::Back,
+                false,
+            ),
+            (
+                b"\x1b[<129;20;10M".as_slice(),
+                ClientMouseButton::Forward,
+                true,
+            ),
+            (
+                b"\x1b[<133;20;10m".as_slice(),
+                ClientMouseButton::Forward,
+                false,
+            ),
+        ] {
+            let (event, _) = extract_one_event(input).unwrap();
+            let RawInputEvent::ExtraMouseButton {
+                button,
+                pressed,
+                column,
+                row,
+                modifiers,
+            } = event
+            else {
+                panic!("expected extra mouse button for {input:?}");
+            };
+            assert_eq!(button, expected_button);
+            assert_eq!(pressed, expected_pressed);
+            assert_eq!((column, row), (19, 9));
+            assert_eq!(
+                modifiers,
+                if input[3..6] == *b"133" {
+                    KeyModifiers::SHIFT
+                } else {
+                    KeyModifiers::empty()
+                }
+            );
         }
     }
 

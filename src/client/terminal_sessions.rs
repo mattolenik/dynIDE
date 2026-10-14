@@ -222,6 +222,8 @@ enum TerminalControlMouseButton {
     Left,
     Right,
     Middle,
+    Back,
+    Forward,
 }
 
 #[derive(Clone, Copy, serde::Deserialize)]
@@ -317,6 +319,8 @@ pub(super) fn terminal_control_command_from_json(raw: &str) -> Result<ClientMess
                 TerminalControlMouseButton::Left => ClientMouseButton::Left,
                 TerminalControlMouseButton::Right => ClientMouseButton::Right,
                 TerminalControlMouseButton::Middle => ClientMouseButton::Middle,
+                TerminalControlMouseButton::Back => ClientMouseButton::Back,
+                TerminalControlMouseButton::Forward => ClientMouseButton::Forward,
             };
             let kind = match action {
                 TerminalControlMouseAction::Down => ClientMouseKind::Down(button),

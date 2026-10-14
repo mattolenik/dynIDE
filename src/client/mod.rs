@@ -904,6 +904,7 @@ async fn run_client_loop(
                                 | crate::raw_input::RawInputEvent::Text(_)
                                 | crate::raw_input::RawInputEvent::Paste(_)
                                 | crate::raw_input::RawInputEvent::Mouse(_)
+                                | crate::raw_input::RawInputEvent::ExtraMouseButton { .. }
                         )
                     }) {
                         supervisors.user_activity(now);

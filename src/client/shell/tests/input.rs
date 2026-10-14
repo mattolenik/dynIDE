@@ -652,6 +652,65 @@ fn highlighted_search_match_copies_after_in_flight_repeat() {
 }
 
 #[test]
+fn back_and_forward_buttons_forward_to_the_pane_under_the_pointer() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.compose(106, 20).expect("composed frame");
+    let pane = state.hits.panes[0].clone();
+    let x = pane.inner_rect.x + 3;
+    let y = pane.inner_rect.y + 2;
+
+    for (code, expected) in [
+        (
+            128,
+            crate::protocol::ClientMouseKind::Down(crate::protocol::ClientMouseButton::Back),
+        ),
+        (
+            129,
+            crate::protocol::ClientMouseKind::Down(crate::protocol::ClientMouseButton::Forward),
+        ),
+    ] {
+        let press = state.handle_input_bytes(format!("\x1b[<{code};{x};{y}M").as_bytes());
+        assert!(
+            matches!(
+                &press.requests[..],
+                [ClientMessage::ClientShellPaneInput { pane_id, events }]
+                    if pane_id == "pane_1"
+                        && matches!(
+                            &events[..],
+                            [ClientPaneInputEvent::Mouse {
+                                kind,
+                                position: ClientMousePosition::Cell { column: 2, row: 1 },
+                                ..
+                            }] if *kind == expected
+                        )
+            ),
+            "button {code} press: {:?}",
+            press.requests
+        );
+        assert!(state.pane_mouse_gesture.is_none());
+
+        let release = state.handle_input_bytes(format!("\x1b[<{code};{x};{y}m").as_bytes());
+        assert!(matches!(
+            &release.requests[..],
+            [ClientMessage::ClientShellPaneInput { events, .. }]
+                if matches!(
+                    &events[..],
+                    [ClientPaneInputEvent::Mouse {
+                        kind: crate::protocol::ClientMouseKind::Up(_),
+                        ..
+                    }]
+                )
+        ));
+    }
+
+    // Outside every pane nothing is forwarded.
+    let outside = state.handle_input_bytes(b"\x1b[<128;1;1M");
+    assert!(outside.requests.is_empty());
+}
+
+#[test]
 fn pixel_host_reports_use_cells_without_target_pixel_mode_and_release_outside() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));

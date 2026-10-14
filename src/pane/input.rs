@@ -265,57 +265,29 @@ fn cell_center_px(index: u32, count: u32, extent: u32) -> Option<u32> {
 }
 
 pub(super) fn ghostty_mouse_event_from_button_kind(
-    kind: crossterm::event::MouseEventKind,
+    kind: crate::protocol::ClientMouseKind,
     column: u16,
     row: u16,
     modifiers: crossterm::event::KeyModifiers,
 ) -> Option<crate::ghostty::MouseEvent> {
-    let mut event = crate::ghostty::MouseEvent::new().ok()?;
+    use crate::protocol::{ClientMouseButton, ClientMouseKind};
+
     let (action, button) = match kind {
-        crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left) => (
-            crate::ghostty::MOUSE_ACTION_PRESS,
-            Some(crate::ghostty::MOUSE_BUTTON_LEFT),
-        ),
-        crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Middle) => (
-            crate::ghostty::MOUSE_ACTION_PRESS,
-            Some(crate::ghostty::MOUSE_BUTTON_MIDDLE),
-        ),
-        crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Right) => (
-            crate::ghostty::MOUSE_ACTION_PRESS,
-            Some(crate::ghostty::MOUSE_BUTTON_RIGHT),
-        ),
-        crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left) => (
-            crate::ghostty::MOUSE_ACTION_RELEASE,
-            Some(crate::ghostty::MOUSE_BUTTON_LEFT),
-        ),
-        crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Middle) => (
-            crate::ghostty::MOUSE_ACTION_RELEASE,
-            Some(crate::ghostty::MOUSE_BUTTON_MIDDLE),
-        ),
-        crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Right) => (
-            crate::ghostty::MOUSE_ACTION_RELEASE,
-            Some(crate::ghostty::MOUSE_BUTTON_RIGHT),
-        ),
-        crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left) => (
-            crate::ghostty::MOUSE_ACTION_MOTION,
-            Some(crate::ghostty::MOUSE_BUTTON_LEFT),
-        ),
-        crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Middle) => (
-            crate::ghostty::MOUSE_ACTION_MOTION,
-            Some(crate::ghostty::MOUSE_BUTTON_MIDDLE),
-        ),
-        crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Right) => (
-            crate::ghostty::MOUSE_ACTION_MOTION,
-            Some(crate::ghostty::MOUSE_BUTTON_RIGHT),
-        ),
+        ClientMouseKind::Down(button) => (crate::ghostty::MOUSE_ACTION_PRESS, button),
+        ClientMouseKind::Up(button) => (crate::ghostty::MOUSE_ACTION_RELEASE, button),
+        ClientMouseKind::Drag(button) => (crate::ghostty::MOUSE_ACTION_MOTION, button),
         _ => return None,
     };
+    let button = match button {
+        ClientMouseButton::Left => crate::ghostty::MOUSE_BUTTON_LEFT,
+        ClientMouseButton::Middle => crate::ghostty::MOUSE_BUTTON_MIDDLE,
+        ClientMouseButton::Right => crate::ghostty::MOUSE_BUTTON_RIGHT,
+        ClientMouseButton::Back => crate::ghostty::MOUSE_BUTTON_BACK,
+        ClientMouseButton::Forward => crate::ghostty::MOUSE_BUTTON_FORWARD,
+    };
+    let mut event = crate::ghostty::MouseEvent::new().ok()?;
     event.set_action(action);
-    if let Some(button) = button {
-        event.set_button(button);
-    } else {
-        event.clear_button();
-    }
+    event.set_button(button);
     event.set_mods(ghostty_mods_from_key_modifiers(modifiers));
     event.set_position(column as f32, row as f32);
     Some(event)

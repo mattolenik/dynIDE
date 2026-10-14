@@ -241,7 +241,6 @@ pub(super) fn apply_client_terminal_input_events(
             ..
         } = event
         {
-            let kind = kind.to_crossterm();
             let modifiers = KeyModifiers::from_bits_truncate(*modifiers);
             let position = match position {
                 crate::protocol::ClientMousePosition::Cell { column, row } => {
@@ -261,9 +260,11 @@ pub(super) fn apply_client_terminal_input_events(
                     }
                 }
             };
-            let bytes = match kind {
-                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                    let direction = if kind == MouseEventKind::ScrollUp {
+            // Back/forward buttons have no crossterm kind; they only reach the
+            // button encoder, which takes the protocol kind directly.
+            let bytes = match kind.to_crossterm() {
+                Some(wheel @ (MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)) => {
+                    let direction = if wheel == MouseEventKind::ScrollUp {
                         AttachScrollDirection::Up
                     } else {
                         AttachScrollDirection::Down
@@ -278,20 +279,19 @@ pub(super) fn apply_client_terminal_input_events(
                     )?;
                     continue;
                 }
-                MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight => runtime
-                    .encode_mouse_wheel(kind, position, modifiers)
+                Some(wheel @ (MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight)) => runtime
+                    .encode_mouse_wheel(wheel, position, modifiers)
                     .unwrap_or_default(),
-                MouseEventKind::Down(_) | MouseEventKind::Up(_) | MouseEventKind::Drag(_) => {
-                    runtime
-                        .encode_mouse_button(kind, position, modifiers)
-                        .unwrap_or_default()
-                }
-                MouseEventKind::Moved => runtime
-                    .encode_mouse_motion(kind, position, modifiers)
+                Some(motion @ MouseEventKind::Moved) => runtime
+                    .encode_mouse_motion(motion, position, modifiers)
+                    .unwrap_or_default(),
+                Some(MouseEventKind::Down(_) | MouseEventKind::Up(_) | MouseEventKind::Drag(_))
+                | None => runtime
+                    .encode_mouse_button(*kind, position, modifiers)
                     .unwrap_or_default(),
             };
             if !bytes.is_empty() {
-                if kind != MouseEventKind::Moved {
+                if kind.to_crossterm() != Some(MouseEventKind::Moved) {
                     runtime.scroll_reset();
                 }
                 runtime
@@ -346,6 +346,7 @@ pub(super) fn apply_client_terminal_input_events(
                     .map_err(|err| format!("targeted pane paste failed: {err}"))?;
             }
             crate::raw_input::RawInputEvent::Mouse(_)
+            | crate::raw_input::RawInputEvent::ExtraMouseButton { .. }
             | crate::raw_input::RawInputEvent::OuterFocusGained
             | crate::raw_input::RawInputEvent::OuterFocusLost
             | crate::raw_input::RawInputEvent::HostDefaultColor { .. }
