@@ -1103,23 +1103,69 @@ fn target_client_protocol_server_is_running() -> Result<bool, String> {
     }))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct SelfUpdateOptions {
     pub(crate) live_handoff: bool,
+    /// Install this local binary instead of a published release.
+    pub(crate) from: Option<PathBuf>,
 }
+
+pub(crate) const SELF_UPDATE_USAGE: &str = "usage: herdr update [--handoff] [--from <path>]";
 
 pub(crate) fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateOptions, String> {
     let mut options = SelfUpdateOptions::default();
-    for arg in args {
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--handoff" => options.live_handoff = true,
+            "--from" => {
+                let path = args.next().ok_or("--from requires a path")?;
+                options.from = Some(PathBuf::from(path));
+            }
             "--help" | "-h" => {
-                return Err("usage: herdr update [--handoff]".to_string());
+                return Err(SELF_UPDATE_USAGE.to_string());
             }
             _ => return Err(format!("unknown update option: {arg}")),
         }
     }
     Ok(options)
+}
+
+/// Describe a local build as an installable release. The version comes from
+/// running the binary, so it matches what the handoff import will report.
+#[cfg(not(windows))]
+fn release_info_from_local_build(path: &Path) -> Result<ReleaseInfo, String> {
+    let path = fs::canonicalize(path).map_err(|e| format!("can't read {}: {e}", path.display()))?;
+    let current_exe = env::current_exe()
+        .ok()
+        .and_then(|exe| fs::canonicalize(exe).ok());
+    if current_exe.as_deref() == Some(path.as_path()) {
+        return Err("--from must point at a different binary than the one being updated".into());
+    }
+    let output = Command::new(&path)
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("can't run {}: {e}", path.display()))?;
+    let identity = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .strip_prefix("herdr ")
+        .ok_or_else(|| format!("{} did not report a herdr version", path.display()))?
+        .to_string();
+    let base = identity.split('-').next().unwrap_or(&identity);
+    let version = Version::parse(base)
+        .ok_or_else(|| format!("{} reported an invalid version: {identity}", path.display()))?;
+    Ok(ReleaseInfo {
+        version,
+        identity,
+        channel: UpdateChannel::configured(),
+        build_id: None,
+        commit: None,
+        target_protocol: None,
+        target_endpoint_generation: None,
+        download_url: format!("file://{}", path.display()),
+        sha256: None,
+        notes_body: String::new(),
+    })
 }
 
 #[cfg(not(windows))]
@@ -1175,7 +1221,7 @@ fn prompt_to_stop_old_servers_before_update(
 fn confirm_running_server_update_action(
     plans: Vec<RunningServerUpdatePlan>,
     release: &ReleaseInfo,
-    options: SelfUpdateOptions,
+    options: &SelfUpdateOptions,
 ) -> Result<Vec<RunningServerUpdateDecision>, String> {
     if plans.is_empty() {
         return Ok(Vec::new());
@@ -1318,7 +1364,7 @@ fn mark_plain_update_stop_decisions(
 fn print_running_session_update_summary(
     plans: &[RunningServerUpdatePlan],
     release: &ReleaseInfo,
-    options: SelfUpdateOptions,
+    options: &SelfUpdateOptions,
 ) {
     eprintln!("running herdr targets:");
     for plan in plans {
@@ -2146,15 +2192,24 @@ pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
         return Err("run `herdr update` outside herdr after detaching from the session".into());
     }
 
-    eprintln!("checking {} channel for updates...", channel.as_str());
-
     let current = Version::current();
 
-    let release = match check_latest()? {
-        Some(r) => r,
-        None => {
-            eprintln!("already up to date ({})", crate::build_info::version());
-            return Ok(current);
+    let release = if let Some(from) = &options.from {
+        #[cfg(windows)]
+        {
+            let _ = from;
+            return Err("`herdr update --from` is not supported on Windows".into());
+        }
+        #[cfg(not(windows))]
+        release_info_from_local_build(from)?
+    } else {
+        eprintln!("checking {} channel for updates...", channel.as_str());
+        match check_latest()? {
+            Some(r) => r,
+            None => {
+                eprintln!("already up to date ({})", crate::build_info::version());
+                return Ok(current);
+            }
         }
     };
 
@@ -2194,7 +2249,7 @@ pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
     {
         let running_server_plans = plan_running_server_updates(&release)?;
         let server_update_decisions =
-            confirm_running_server_update_action(running_server_plans, &release, options)?;
+            confirm_running_server_update_action(running_server_plans, &release, &options)?;
 
         eprintln!("downloading {}...", release.label());
         let downloaded_update = download_update(&release)?;
@@ -3002,13 +3057,26 @@ mod tests {
     fn self_update_args_gate_live_handoff() {
         assert_eq!(
             parse_self_update_args(&[]).unwrap(),
-            SelfUpdateOptions {
-                live_handoff: false
-            }
+            SelfUpdateOptions::default()
         );
         assert_eq!(
             parse_self_update_args(&["--handoff".to_string()]).unwrap(),
-            SelfUpdateOptions { live_handoff: true }
+            SelfUpdateOptions {
+                live_handoff: true,
+                from: None,
+            }
+        );
+        assert_eq!(
+            parse_self_update_args(&["--from".to_string(), "target/release/herdr".to_string()])
+                .unwrap(),
+            SelfUpdateOptions {
+                live_handoff: false,
+                from: Some(PathBuf::from("target/release/herdr")),
+            }
+        );
+        assert_eq!(
+            parse_self_update_args(&["--from".to_string()]).unwrap_err(),
+            "--from requires a path"
         );
         assert_eq!(
             parse_self_update_args(&["--unknown".to_string()]).unwrap_err(),
@@ -3137,9 +3205,7 @@ mod tests {
         let decisions = confirm_running_server_update_action(
             vec![plan],
             &release,
-            SelfUpdateOptions {
-                live_handoff: false,
-            },
+            &SelfUpdateOptions::default(),
         )
         .unwrap();
 
@@ -3347,9 +3413,7 @@ mod tests {
         let decisions = confirm_running_server_update_action(
             vec![plan],
             &release,
-            SelfUpdateOptions {
-                live_handoff: false,
-            },
+            &SelfUpdateOptions::default(),
         )
         .unwrap();
         let complete = prompt_to_complete_plain_update(&decisions, &release).unwrap();
@@ -3395,9 +3459,7 @@ mod tests {
         let decisions = confirm_running_server_update_action(
             vec![plan],
             &release,
-            SelfUpdateOptions {
-                live_handoff: false,
-            },
+            &SelfUpdateOptions::default(),
         )
         .unwrap();
 

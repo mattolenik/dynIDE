@@ -117,6 +117,12 @@ fn update_command() -> Command {
     Command::new("update")
         .about("Download and install the latest version")
         .arg(flag("handoff").help("Try live handoff after installing"))
+        .arg(
+            Arg::new("from")
+                .long("from")
+                .value_name("path")
+                .help("Install a local build instead of a published release"),
+        )
 }
 
 fn status_command() -> Command {

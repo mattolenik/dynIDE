@@ -586,7 +586,7 @@ fn main() -> io::Result<()> {
             }
             Err(err) => {
                 eprintln!("{err}");
-                eprintln!("usage: herdr update [--handoff]");
+                eprintln!("{}", update::SELF_UPDATE_USAGE);
                 std::process::exit(2);
             }
         };

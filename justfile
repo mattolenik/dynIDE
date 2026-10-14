@@ -88,6 +88,12 @@ build:
 build:
     python scripts/package_windows_conpty.py build-local
 
+# Build from this checkout and install it over the herdr on PATH (direct installs only)
+[unix]
+install-local *args:
+    HERDR_BUILD_CHANNEL=dev HERDR_BUILD_ID=$(git rev-parse --short HEAD) cargo build --release --locked
+    herdr update --from target/release/herdr {{args}}
+
 # Non-gating full-render scaling profile for background workspaces and active panes
 bench-render-scale:
     cargo test --release --locked --bin herdr render_scale_profile -- --ignored --nocapture --test-threads=1
