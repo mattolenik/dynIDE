@@ -1,5 +1,23 @@
 # herdr
 
+> **Fork notice.** This is [mattolenik/herdr](https://github.com/mattolenik/herdr),
+> a fork of [herdrdev/herdr](https://github.com/herdrdev/herdr) that tracks
+> upstream and adds a local development loop plus a few fixes:
+>
+> - **Install local builds in place.** `herdr update --from <path>` and
+>   `just install-local` swap a binary you built into the installed location
+>   using the same atomic update and live-handoff machinery as releases.
+> - **Seamless client restart.** After a live handoff the attached TUI
+>   re-executes itself into the new binary instead of exiting.
+> - **No update nags on dev builds.** Local builds skip the background
+>   release check.
+> - **Mouse back and forward buttons** reach panes.
+> - **Graphics fix.** Dragging a split while a pane shows kitty graphics no
+>   longer degrades input latency for the rest of the session.
+>
+> Per-commit details are in [FORK.md](FORK.md). Everything below is the
+> upstream README.
+
 
 <p align="center">
   <img src="assets/logo.png" alt="herdr" width="100" />
