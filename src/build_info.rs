@@ -24,6 +24,11 @@ pub fn is_preview() -> bool {
     channel() == "preview"
 }
 
+/// A build from a local checkout rather than a stable or preview release.
+pub fn is_local_build() -> bool {
+    !matches!(channel(), "stable" | "preview")
+}
+
 fn non_empty(value: Option<&'static str>) -> Option<&'static str> {
     value.and_then(|value| {
         let trimmed = value.trim();
@@ -40,5 +45,13 @@ mod tests {
     #[test]
     fn stable_version_defaults_to_cargo_version() {
         assert!(!super::version().is_empty());
+    }
+
+    #[test]
+    fn local_build_is_any_channel_but_stable_or_preview() {
+        assert_eq!(
+            super::is_local_build(),
+            !matches!(super::channel(), "stable" | "preview")
+        );
     }
 }

@@ -2425,6 +2425,14 @@ pub fn auto_update(events: tokio::sync::mpsc::Sender<crate::events::AppEvent>) {
         return;
     }
 
+    if crate::build_info::is_local_build() {
+        tracing::info!(
+            "skipping update check for local build {}",
+            crate::build_info::version()
+        );
+        return;
+    }
+
     let configured_channel = UpdateChannel::configured();
     if is_homebrew_managed_install() {
         if configured_channel == UpdateChannel::Preview {
