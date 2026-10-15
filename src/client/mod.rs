@@ -172,6 +172,58 @@ fn negotiated_surface_decoder(
     (reuse || delta || scroll).then(|| protocol::surface_reuse::Decoder::new(delta, scroll))
 }
 
+/// How long to wait for the handed-off server before giving up on re-exec.
+#[cfg(unix)]
+const LIVE_HANDOFF_REEXEC_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Replace this client with the installed binary once the live handoff has
+/// produced a new server. Only returns on failure.
+#[cfg(unix)]
+fn reexec_after_live_handoff() -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::process::CommandExt;
+
+    let exe = std::env::current_exe()?;
+    // Linux reports a replaced executable as "<path> (deleted)"; the new binary is at <path>.
+    let exe = std::path::PathBuf::from(
+        exe.to_string_lossy()
+            .trim_end_matches(" (deleted)")
+            .to_owned(),
+    );
+    let _ = writeln!(
+        io::stderr(),
+        "herdr: waiting for the updated server, then restarting..."
+    );
+
+    // The new server binds a fresh socket file, so a changed inode is the
+    // only signal that distinguishes it from the old server, which may run
+    // the same version and keeps answering until the handoff commits.
+    let socket_path = client_socket_path();
+    let socket_inode = |path: &std::path::Path| std::fs::metadata(path).ok().map(|m| m.ino());
+    let old_inode = socket_inode(&socket_path);
+    let deadline = std::time::Instant::now() + LIVE_HANDOFF_REEXEC_TIMEOUT;
+    loop {
+        let inode = socket_inode(&socket_path);
+        if inode.is_some()
+            && inode != old_inode
+            && crate::server::autodetect::is_server_listening().unwrap_or(false)
+        {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "no new server appeared",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    Err(std::process::Command::new(&exe)
+        .args(std::env::args_os().skip(1))
+        .exec())
+}
+
 fn run_client_with_mode(
     attach_request: Option<(String, bool)>,
     attach_escape: Option<AttachEscapeState>,
@@ -381,6 +433,21 @@ fn run_client_with_mode(
         let _ = writeln!(io::stderr(), "herdr: {err}");
         rt.shutdown_timeout(Duration::from_millis(100));
         crate::logging::shutdown("client");
+
+        #[cfg(unix)]
+        if matches!(
+            &err,
+            ClientError::ServerShutdown { reason: Some(reason) }
+                if reason == crate::server::handoff::LIVE_HANDOFF_SHUTDOWN_REASON
+        ) {
+            if let Err(err) = reexec_after_live_handoff() {
+                let _ = writeln!(
+                    io::stderr(),
+                    "herdr: could not restart automatically ({err}); run `{}` to reattach",
+                    crate::session::local_attach_command()
+                );
+            }
+        }
 
         let detached = matches!(
             &err,

@@ -91,7 +91,7 @@ build:
 # Build from this checkout and install it over the herdr on PATH (direct installs only)
 [unix]
 install-local *args:
-    HERDR_BUILD_CHANNEL=dev HERDR_BUILD_ID=$(git rev-parse --short HEAD) cargo build --release --locked
+    HERDR_BUILD_CHANNEL=dev HERDR_BUILD_ID="$(git rev-parse --short HEAD).$(date +%Y%m%d%H%M%S)" cargo build --release --locked
     herdr update --from target/release/herdr {{args}}
 
 # Non-gating full-render scaling profile for background workspaces and active panes
