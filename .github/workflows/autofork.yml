@@ -1,0 +1,40 @@
+# Fork-only: keep this fork as upstream herdrdev/herdr master plus our patch series.
+# See https://github.com/mattolenik/gha-autofork and FORK.md.
+name: autofork
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Prepare and verify without updating refs or issues
+        type: boolean
+        default: true
+      initial_base:
+        description: First run only; inspected merge-base SHA of the fork and upstream
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  sync:
+    # gha-autofork main; no release tag exists yet. Move to a release SHA when one is cut.
+    uses: mattolenik/gha-autofork/.github/workflows/autofork.yml@e0a1cbab32ddb092e5f8f893cb019942e72bcbea
+    with:
+      upstream: herdrdev/herdr
+      upstream_branch: master
+      branch: master
+      worker: claude:claude-opus-5-5
+      reviewer: codex:gpt-6.1-sol
+      verify_command: bash scripts/autofork_verify.sh
+      initial_base: ${{ inputs.initial_base || '' }}
+      publish: auto
+      dry_run: ${{ inputs.dry_run || false }}
+    secrets:
+      token: ${{ secrets.AUTOFORK_TOKEN }}
+      anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+      openai_api_key: ${{ secrets.OPENAI_API_KEY }}

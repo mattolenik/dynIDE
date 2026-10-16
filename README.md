@@ -1,5 +1,6 @@
 # herdr
 
+<!-- autofork:fork-notice:start -->
 > **Fork notice.** This is [mattolenik/herdr](https://github.com/mattolenik/herdr),
 > a fork of [herdrdev/herdr](https://github.com/herdrdev/herdr) that tracks
 > upstream and adds a local development loop plus a few fixes:
@@ -17,6 +18,7 @@
 >
 > Per-commit details are in [FORK.md](FORK.md). Everything below is the
 > upstream README.
+<!-- autofork:fork-notice:end -->
 
 
 <p align="center">
