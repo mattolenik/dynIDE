@@ -90,7 +90,11 @@ caches the code signature per inode and will SIGKILL the result.
 dispatch. It rebases this fork's patch series onto upstream `master`, has an
 agent resolve conflicts, has a second agent review the result, verifies with
 `scripts/autofork_verify.sh` (the Linux CI lint and test recipes), and
-force-pushes `master` when everything passes. Contested results are staged on
+force-pushes `master` when everything passes. Verification runs unsandboxed
+in the verify job because Herdr's suite needs a real host: a root-owned sticky
+`/tmp` for SSH control sockets, PTY handoff across processes, and ACL xattrs
+naming other uids. The agents stay sandboxed, and the verify job only holds the
+read-only token. Contested results are staged on
 `autofork/*` branches and reported as issues.
 
 One-time setup on the fork:

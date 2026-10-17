@@ -23,7 +23,7 @@ permissions:
 jobs:
   sync:
     # Pinned to the gha-autofork commit tagged v1; bump deliberately after reviewing the diff.
-    uses: mattolenik/gha-autofork/.github/workflows/autofork.yml@2228f9a00dc889fb97a55aa97dd4da261cce40eb
+    uses: mattolenik/gha-autofork/.github/workflows/autofork.yml@e9bfcc8a51f0696c57473cffcae78feb8509b93f
     with:
       upstream: herdrdev/herdr
       upstream_branch: master
@@ -31,6 +31,9 @@ jobs:
       worker: claude:claude-opus-5-5
       reviewer: codex:gpt-6.1-sol
       verify_command: bash scripts/autofork_verify.sh
+      # Herdr's suite needs a real host (root-owned sticky /tmp, PTY handoff, ACL
+      # xattrs), so verification runs unsandboxed with the read-only token.
+      verify_sandbox: false
       initial_base: ${{ inputs.initial_base || '' }}
       publish: auto
       dry_run: ${{ inputs.dry_run || false }}
