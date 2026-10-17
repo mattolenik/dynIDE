@@ -103,7 +103,9 @@ One-time setup on the fork:
    inspect the artifacts, then dispatch again with `dry_run: false` to
    initialize the checkpoint.
 
-The workflow pins gha-autofork to a commit on its `main` branch because no
-release tag exists yet. Its reusable workflow internally calls
-`mattolenik/gha-autofork@v1`, so that tag must exist before the first real run.
+The workflow pins the reusable workflow to the gha-autofork commit tagged `v1`.
+That workflow internally calls the mutable `mattolenik/gha-autofork@v1` action,
+so moving the tag changes behavior without a pin bump here. The runner must
+lift Ubuntu 24.04's unprivileged user namespace restriction before bubblewrap
+can start; gha-autofork does this in its install step.
 <!-- autofork:workflow:end -->

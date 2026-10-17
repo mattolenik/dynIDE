@@ -22,8 +22,8 @@ permissions:
 
 jobs:
   sync:
-    # gha-autofork main; no release tag exists yet. Move to a release SHA when one is cut.
-    uses: mattolenik/gha-autofork/.github/workflows/autofork.yml@e0a1cbab32ddb092e5f8f893cb019942e72bcbea
+    # Pinned to the gha-autofork commit tagged v1; bump deliberately after reviewing the diff.
+    uses: mattolenik/gha-autofork/.github/workflows/autofork.yml@4079b241bc4051daa82a411c7d4507dc5ce82dac
     with:
       upstream: herdrdev/herdr
       upstream_branch: master
