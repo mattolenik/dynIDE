@@ -30,6 +30,21 @@ fi
 export ZIG="$TOOLS/zig/zig"
 [[ "$("$ZIG" version)" == "$ZIG_VERSION" ]] || { echo "zig $ZIG_VERSION required" >&2; exit 1; }
 
+# The sandbox hides the runner's home, so its preinstalled rustup is invisible.
+if ! command -v cargo >/dev/null; then
+  if [[ ! -x "$TOOLS/cargo/bin/cargo" ]]; then
+    echo "installing rustup"
+    curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+      | RUSTUP_HOME="$TOOLS/rustup" CARGO_HOME="$TOOLS/cargo" \
+        sh -s -- -y --no-modify-path --profile minimal --default-toolchain none
+  fi
+  export RUSTUP_HOME="$TOOLS/rustup" CARGO_HOME="$TOOLS/cargo"
+  export PATH="$TOOLS/cargo/bin:$PATH"
+fi
+# rust-toolchain.toml pins the compiler and components; install them up front.
+rustup toolchain install
+cargo --version
+
 if ! command -v just >/dev/null; then
   echo "installing just"
   curl --proto '=https' --tlsv1.2 -fsSL https://just.systems/install.sh | bash -s -- --to "$TOOLS/bin"
@@ -46,7 +61,6 @@ if ! command -v bun >/dev/null; then
   ln -sf "$TOOLS/bun/bin/bun" "$TOOLS/bin/bun"
 fi
 
-# rust-toolchain.toml pins the compiler; rustup installs it on first use.
 export CARGO_INCREMENTAL=1
 just lint
 just ci-tests 'all()'

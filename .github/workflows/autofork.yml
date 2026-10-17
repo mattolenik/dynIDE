@@ -23,7 +23,7 @@ permissions:
 jobs:
   sync:
     # Pinned to the gha-autofork commit tagged v1; bump deliberately after reviewing the diff.
-    uses: mattolenik/gha-autofork/.github/workflows/autofork.yml@4079b241bc4051daa82a411c7d4507dc5ce82dac
+    uses: mattolenik/gha-autofork/.github/workflows/autofork.yml@2228f9a00dc889fb97a55aa97dd4da261cce40eb
     with:
       upstream: herdrdev/herdr
       upstream_branch: master
