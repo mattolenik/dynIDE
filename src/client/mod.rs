@@ -438,7 +438,7 @@ fn run_client_with_mode(
         if matches!(
             &err,
             ClientError::ServerShutdown { reason: Some(reason) }
-                if reason == crate::server::handoff::LIVE_HANDOFF_SHUTDOWN_REASON
+                if reason == crate::server::LIVE_HANDOFF_SHUTDOWN_REASON
         ) {
             if let Err(err) = reexec_after_live_handoff() {
                 let _ = writeln!(

@@ -60,11 +60,6 @@ pub(crate) struct ReceivedHandoff {
     pub stream: UnixStream,
 }
 
-/// Shutdown reason sent to attached clients while a live handoff runs. The
-/// local client recognizes it and re-executes itself once the new server is up.
-pub(crate) const LIVE_HANDOFF_SHUTDOWN_REASON: &str =
-    "live update in progress; reconnect after handoff completes";
-
 #[cfg(unix)]
 pub(crate) fn handoff_socket_path() -> PathBuf {
     crate::session::data_dir().join(format!("herdr-handoff-{}.sock", std::process::id()))
