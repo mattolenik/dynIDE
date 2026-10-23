@@ -449,6 +449,7 @@ fn cancelled_link_activation_does_not_replay_mouse_input() {
             col: 0,
             content_revision: None,
             offset_from_bottom: None,
+            modifiers: Vec::new(),
         }),
         PendingEndpointKind::PaneLinkActivate {
             pane_id,

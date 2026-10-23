@@ -252,7 +252,7 @@ mod tests {
         );
         assert_eq!(
             actual.remove("pane.link.resolve").as_deref(),
-            Some("f5e4a3e01453ae7b188f127ce951c12c20e0bebcc17cc364eeb6d1a01fd5bf81")
+            Some("3dcc3f753cd533d1834efbbeceff261f76cdf9750d56463486f982872b7db324")
         );
 
         assert_eq!(
@@ -319,6 +319,7 @@ mod tests {
                 col: 0,
                 content_revision: None,
                 offset_from_bottom: None,
+                modifiers: Vec::new(),
             },
         )));
         assert!(supports_client_shell_method(&Method::PaneLinkResolve(
@@ -328,6 +329,7 @@ mod tests {
                 col: 0,
                 content_revision: None,
                 offset_from_bottom: None,
+                modifiers: Vec::new(),
             },
         )));
         assert!(!supports_client_shell_method(&Method::Ping(

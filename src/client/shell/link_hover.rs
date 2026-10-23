@@ -177,6 +177,7 @@ impl ClientShellState {
                 col: target.col,
                 content_revision: Some(target.content_revision),
                 offset_from_bottom: target.offset_from_bottom,
+                modifiers: Vec::new(),
             }),
             PendingEndpointKind::PaneLinkResolve { target },
             outcome,

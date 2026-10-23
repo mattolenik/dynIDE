@@ -985,6 +985,7 @@ impl ClientShellState {
                             offset_from_bottom: hit
                                 .scroll
                                 .map(|metrics| metrics.offset_from_bottom as u64),
+                            modifiers: modifier_names(mouse.modifiers),
                         },
                     ),
                     PendingEndpointKind::PaneLinkActivate {
@@ -2444,4 +2445,18 @@ impl ClientShellState {
             outcome,
         );
     }
+}
+
+/// Lowercase names of the held modifiers, in the fixed order `shift`, `alt`, `ctrl`.
+fn modifier_names(modifiers: crossterm::event::KeyModifiers) -> Vec<String> {
+    use crossterm::event::KeyModifiers;
+    [
+        (KeyModifiers::SHIFT, "shift"),
+        (KeyModifiers::ALT, "alt"),
+        (KeyModifiers::CONTROL, "ctrl"),
+    ]
+    .into_iter()
+    .filter(|(flag, _)| modifiers.contains(*flag))
+    .map(|(_, name)| name.to_string())
+    .collect()
 }

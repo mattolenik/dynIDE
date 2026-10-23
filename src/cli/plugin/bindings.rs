@@ -150,6 +150,7 @@ pub(crate) fn invocation_context() -> PluginInvocationContext {
         correlation_id: None,
         clicked_url: None,
         link_handler_id: None,
+        click_modifiers: None,
     }
 }
 

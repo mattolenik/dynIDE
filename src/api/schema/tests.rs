@@ -1334,6 +1334,7 @@ fn pane_link_activate_round_trips() {
             col: 7,
             content_revision: Some(42),
             offset_from_bottom: Some(5),
+            modifiers: vec!["alt".into(), "ctrl".into()],
         }),
     };
     let json = serde_json::to_value(&request).unwrap();

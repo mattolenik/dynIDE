@@ -2640,6 +2640,13 @@
                 "null"
               ]
             },
+            "modifiers": {
+              "description": "Lowercase modifier names held on the click (`shift`, `alt`, `ctrl`, in\nthat order). Empty means unknown.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "offset_from_bottom": {
               "format": "uint64",
               "minimum": 0,
@@ -3446,6 +3453,16 @@
         },
         "PluginInvocationContext": {
           "properties": {
+            "click_modifiers": {
+              "description": "Modifier names held on the link click that invoked this action\n(`shift`, `alt`, `ctrl`, in that order). Absent when unknown.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
             "clicked_url": {
               "type": [
                 "string",
@@ -8727,6 +8744,16 @@
         },
         "PluginInvocationContext": {
           "properties": {
+            "click_modifiers": {
+              "description": "Modifier names held on the link click that invoked this action\n(`shift`, `alt`, `ctrl`, in that order). Absent when unknown.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
             "clicked_url": {
               "type": [
                 "string",

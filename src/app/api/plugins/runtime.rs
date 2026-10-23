@@ -79,6 +79,12 @@ impl App {
                 link_handler_id.clone(),
             ));
         }
+        if let Some(modifiers) = context.click_modifiers.as_deref().filter(|m| !m.is_empty()) {
+            env.push((
+                "HERDR_PLUGIN_CLICK_MODIFIERS".to_string(),
+                modifiers.join(","),
+            ));
+        }
         if self.state.plugin_commands_in_flight >= MAX_PLUGIN_COMMANDS_IN_FLIGHT {
             let message = format!(
                 "maximum concurrent plugin commands reached ({MAX_PLUGIN_COMMANDS_IN_FLIGHT})"

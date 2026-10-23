@@ -365,7 +365,13 @@ and `action` must
 name an action declared by the same plugin. Link handler actions receive
 `invocation_source = "link_click"`, `clicked_url`, and `link_handler_id` in
 `HERDR_PLUGIN_CONTEXT_JSON`; shell plugins can also read
-`HERDR_PLUGIN_CLICKED_URL` and `HERDR_PLUGIN_LINK_HANDLER_ID`. Handlers are
+`HERDR_PLUGIN_CLICKED_URL` and `HERDR_PLUGIN_LINK_HANDLER_ID`. Handlers also
+receive the modifiers held on the click as `click_modifiers` in the context JSON
+and as comma-joined `HERDR_PLUGIN_CLICK_MODIFIERS` (for example `alt,ctrl`),
+using the lowercase names `shift`, `alt`, `ctrl` in that fixed order, so one
+handler can treat Ctrl+Alt+click (Ctrl+Option on macOS) differently from
+Ctrl+click; both are absent when the modifiers are unknown, and Shift usually
+never arrives because terminals keep Shift+click for selection. Handlers are
 checked in manifest order inside each plugin.
 
 Link clicks invoke plugins only while `ui.mouse_capture` is enabled. Matching handlers run first. A launch failure shows an error and stops. Without a matching handler, only HTTP(S) links open externally. When capture is disabled, the outer terminal handles explicit hyperlinks using its own shortcuts and warnings. See [mouse controls](/docs/quick-start/#use-the-mouse) for the Windows Terminal URL detection caveat.

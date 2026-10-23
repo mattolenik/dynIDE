@@ -56,6 +56,10 @@ pub struct PaneLinkActivateParams {
     pub content_revision: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offset_from_bottom: Option<u64>,
+    /// Lowercase modifier names held on the click (`shift`, `alt`, `ctrl`, in
+    /// that order). Empty means unknown.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modifiers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

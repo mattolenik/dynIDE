@@ -91,6 +91,7 @@ fn ctrl_click_routes_link_activation_through_endpoint_then_client_host() {
         &request.method,
         crate::api::schema::Method::PaneLinkActivate(params)
             if params.pane_id == "pane_1" && params.viewport_row == 1 && params.col == 2
+                && params.modifiers == ["ctrl"]
     ));
 
     let up = MouseEvent {
@@ -1229,4 +1230,28 @@ fn context_menu_keyboard_and_outside_click_are_client_owned() {
         })]);
     assert!(outside.repaint);
     assert!(state.overlay.is_none());
+}
+
+#[test]
+fn ctrl_alt_click_reports_both_modifiers_in_link_activation() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.compose(106, 20).expect("pane frame");
+    let pane = state.hits.panes[0].clone();
+    let down = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: pane.inner_rect.x + 2,
+        row: pane.inner_rect.y + 1,
+        modifiers: KeyModifiers::CONTROL | KeyModifiers::ALT,
+    };
+    let activate = state.handle_raw_events(vec![RawInputEvent::Mouse(down)]);
+    let [ClientShellAction::Endpoint { request, .. }] = &activate.actions[..] else {
+        panic!("expected link activation request");
+    };
+    assert!(matches!(
+        &request.method,
+        crate::api::schema::Method::PaneLinkActivate(params)
+            if params.modifiers == ["alt", "ctrl"]
+    ));
 }

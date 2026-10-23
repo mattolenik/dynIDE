@@ -410,6 +410,10 @@ pub struct PluginInvocationContext {
     pub clicked_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link_handler_id: Option<String>,
+    /// Modifier names held on the link click that invoked this action
+    /// (`shift`, `alt`, `ctrl`, in that order). Absent when unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub click_modifiers: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

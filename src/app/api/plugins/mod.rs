@@ -341,7 +341,11 @@ impl App {
                 Err(error) => return error,
             };
         let handled = match url.as_deref() {
-            Some(url) => match self.invoke_plugin_link_handler_for_url(url, pane_id) {
+            Some(url) => match self.invoke_plugin_link_handler_for_url(
+                url,
+                pane_id,
+                params.modifiers.clone(),
+            ) {
                 Ok(handled) => handled,
                 Err(err) => {
                     tracing::warn!(err = %err, url = %url, "failed to invoke plugin link handler");
@@ -357,6 +361,7 @@ impl App {
         &mut self,
         url: &str,
         pane_id: crate::layout::PaneId,
+        click_modifiers: Vec<String>,
     ) -> Result<bool, String> {
         self.refresh_installed_plugins()
             .map_err(|err| format!("failed to load plugin registry: {err}"))?;
@@ -394,6 +399,7 @@ impl App {
         context.invocation_source = Some("link_click".to_string());
         context.clicked_url = Some(url.to_string());
         context.link_handler_id = Some(handler.id);
+        context.click_modifiers = (!click_modifiers.is_empty()).then_some(click_modifiers);
         self.start_plugin_command(
             &plugin,
             Some(action.id),
@@ -834,6 +840,7 @@ mod tests {
             col: 1,
             content_revision: Some(revision),
             offset_from_bottom: Some(0),
+            modifiers: Vec::new(),
         };
         let response = app.handle_api_request(Request {
             id: "hover".into(),
@@ -924,6 +931,7 @@ action = "open"
                 col: 1,
                 content_revision: None,
                 offset_from_bottom: None,
+                modifiers: Vec::new(),
             },
         );
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();
@@ -2532,6 +2540,7 @@ command = ["sh", "-c", "printf %s ${{HERDR_PANE_ID-unset}} > '{}'; sleep 1"]
                     correlation_id: Some("external-correlation".into()),
                     clicked_url: None,
                     link_handler_id: None,
+                    click_modifiers: None,
                 }),
             }),
         });
@@ -2670,6 +2679,7 @@ command = ["sh", "-c", "printf %s ${{HERDR_PANE_ID-unset}} > '{}'; sleep 1"]
             .invoke_plugin_link_handler_for_url(
                 "https://github.com/herdrdev/herdr/issues/1174",
                 pane_id,
+                Vec::new(),
             )
             .unwrap());
 
@@ -3261,7 +3271,7 @@ platforms = ["linux", "macos"]
 [[actions]]
 id = "open"
 title = "Open link"
-command = ["sh", "-c", "printf '%s|%s' \"$HERDR_PLUGIN_LINK_HANDLER_ID\" \"$HERDR_PLUGIN_CLICKED_URL\""]
+command = ["sh", "-c", "printf '%s|%s|%s' \"$HERDR_PLUGIN_LINK_HANDLER_ID\" \"$HERDR_PLUGIN_CLICKED_URL\" \"${HERDR_PLUGIN_CLICK_MODIFIERS-unset}\""]
 
 [[link_handlers]]
 id = "github-issue"
@@ -3272,43 +3282,55 @@ action = "open"
         );
         link_manifest(&mut app, &root);
 
-        let handled = app
-            .invoke_plugin_link_handler_for_url(
-                "https://github.com/herdrdev/herdr/issues/398",
-                pane_id,
-            )
-            .expect("link handler should invoke");
-        assert!(handled);
-        let log = app
-            .state
-            .plugin_command_logs
-            .last()
-            .expect("plugin command log should be recorded")
-            .clone();
+        for (modifiers, expected_env) in [
+            (vec![], "unset"),
+            (vec!["ctrl".to_string()], "ctrl"),
+            (vec!["alt".to_string(), "ctrl".to_string()], "alt,ctrl"),
+        ] {
+            let handled = app
+                .invoke_plugin_link_handler_for_url(
+                    "https://github.com/herdrdev/herdr/issues/398",
+                    pane_id,
+                    modifiers,
+                )
+                .expect("link handler should invoke");
+            assert!(handled);
+            let log = app
+                .state
+                .plugin_command_logs
+                .last()
+                .expect("plugin command log should be recorded")
+                .clone();
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
-            app.drain_all_internal_events();
-            if app.state.plugin_command_logs.iter().any(|entry| {
-                entry.log_id == log.log_id && entry.status != PluginCommandStatus::Running
-            }) {
-                break;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                app.drain_all_internal_events();
+                if app.state.plugin_command_logs.iter().any(|entry| {
+                    entry.log_id == log.log_id && entry.status != PluginCommandStatus::Running
+                }) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
 
-        let finished = app
-            .state
-            .plugin_command_logs
-            .iter()
-            .find(|entry| entry.log_id == log.log_id)
-            .expect("log should exist");
-        assert_eq!(finished.status, PluginCommandStatus::Succeeded);
-        assert_eq!(finished.action_id.as_deref(), Some("open"));
-        assert_eq!(
-            finished.stdout.as_deref(),
-            Some("github-issue|https://github.com/herdrdev/herdr/issues/398")
-        );
+            let finished = app
+                .state
+                .plugin_command_logs
+                .iter()
+                .find(|entry| entry.log_id == log.log_id)
+                .expect("log should exist");
+            assert_eq!(finished.status, PluginCommandStatus::Succeeded);
+            assert_eq!(finished.action_id.as_deref(), Some("open"));
+            assert_eq!(
+                finished.stdout.as_deref(),
+                Some(
+                    format!(
+                        "github-issue|https://github.com/herdrdev/herdr/issues/398|{expected_env}"
+                    )
+                    .as_str()
+                )
+            );
+        }
 
         let _ = std::fs::remove_dir_all(root);
     }
