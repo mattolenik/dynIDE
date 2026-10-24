@@ -34,11 +34,11 @@ the recovery map for the coordinating session: trust this file and
 
 | milestone | status | branch | owner | merged at | notes |
 |---|---|---|---|---|---|
-| M0 skeleton | in progress | live/m0 | agent | | started 2026-10-23 |
-| M1 kernel vt+pty | not started | | | | wave 1 |
-| M2 term kernel tty+blit | not started | | | | wave 1 |
-| M3 server core + term client | not started | | | | wave 1 |
-| M4 reload + rollback | not started | | | | wave 1 (prep), wave 2 |
+| M0 skeleton | merged | (deleted) | agent | 179cd23e | 15 commits; results/m0.md; live-check verified green by coordinator |
+| M1 kernel vt+pty | in progress | live/m1 | agent | | wave 1; two-phase: packed cell spec first (SPEC_PUBLISHED), then rest |
+| M2 term kernel tty+blit | in progress | live/m2 | agent | | wave 1; waits on packed cell spec for decode |
+| M3 server core + term client | in progress | live/m3 | agent | | wave 1; against Kernel.Fake; owns scene contract |
+| M4 reload + rollback | in progress (phase 1) | live/m4 | agent | | wave 1 prep: Reload.* against toy modules; phase 2 after M3 |
 | M5 kernel restart | not started | | | | wave 2 |
 | M6 gate | not started | | | | human decision |
 | M7 self-hosting | not started | | | | human dogfood week |
@@ -57,6 +57,8 @@ the recovery map for the coordinating session: trust this file and
 ## Log
 
 - 2026-10-23: ledger created; Erlang/Elixir install started; M0 owner dispatched.
+- 2026-10-23: M0 DONE_WITH_CONCERNS at 179cd23e; coordinator re-ran `just live-check` on merged tree: exit 0. Fast-forwarded into herdr-live. Concerns carried: Linux CI never executed (no push); the M0 owner's Linux subagent added a 6 GiB swapfile at /var/tmp/swapf inside the podman VM and left a `herdr-linux-check` image.
+- 2026-10-23: wave 1 dispatched: M1, M2, M3, M4-prep owners on live/m1..m4 from 179cd23e.
 
 ## Rulings
 
@@ -71,3 +73,14 @@ what it costs if wrong.
   without asking, once exit criteria are evidenced. `herdr-live` is a local
   integration branch, not `master`, and is never pushed by the coordinator.
   Cost if wrong: a local branch to reset.
+- 2026-10-23: M1 delivers in two phases: packed cell spec (HerdrScene.Cell,
+  golden vectors, docs/herdr-live/packed-cells.md) first, then stops; the
+  coordinator merges that commit into herdr-live and tells M2/M3 to rebase,
+  then resumes M1. Cost if wrong: M2/M3 idle on cell decoding for an hour.
+- 2026-10-23: M3 adds `HERDR_LIVE_HEADLESS=1` so the launcher smoke keeps
+  passing once Tty.Owner exists. Cost if wrong: a flag to rename.
+- 2026-10-23: M3 may add a test-only umbrella app `herdr_integration` that
+  depends on both herdr_server and herdr_term, exempted by name in the
+  dependency-rule test. Cost if wrong: one app to delete.
+- 2026-10-23: M2's live-demo runs against a fake row source; real M1 wiring
+  happens after both land. Cost if wrong: a demo to rewire.
