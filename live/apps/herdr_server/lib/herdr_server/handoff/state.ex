@@ -19,6 +19,7 @@ defmodule HerdrServer.Handoff.State do
           title: binary | nil,
           pwd: binary | nil,
           exited: Pty.exit_status() | nil,
+          start_time: non_neg_integer | nil,
           pending_input: binary,
           vt: binary | nil,
           taken_at: integer
@@ -48,6 +49,8 @@ defmodule HerdrServer.Handoff.State do
       title: info.title,
       pwd: info.pwd,
       exited: info.exited,
+      # optional key (v stays 1): absent in older blobs, then adopt skips the check
+      start_time: info.start_time,
       pending_input: Keyword.get(opts, :pending_input, ""),
       vt: if(Keyword.get(opts, :vt, true), do: Vt.encode_snapshot(vt)),
       taken_at: System.system_time(:millisecond)

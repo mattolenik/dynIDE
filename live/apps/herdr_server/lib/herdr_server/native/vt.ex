@@ -107,6 +107,10 @@ defmodule HerdrServer.Native.Vt do
   @spec dirty_rows(vt) :: rows
   def dirty_rows(vt), do: Native.vt_dirty_rows(vt)
 
+  @doc "The current generation (what `rows_since/2` returns first), without copying rows."
+  @spec gen(vt) :: gen
+  def gen(vt), do: Native.vt_gen(vt)
+
   @doc "Rows whose generation is newer than `gen`."
   @spec rows_since(vt, gen) :: rows
   def rows_since(vt, gen), do: Native.vt_rows_since(vt, gen)

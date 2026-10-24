@@ -80,6 +80,10 @@ pub struct AdoptOptions {
     /// Last title and pwd the previous owner saw, so `info` survives a handoff.
     pub title: Option<Vec<u8>>,
     pub pwd: Option<Vec<u8>>,
+    /// The child's start time as the previous owner read it (`exitwatch::start_time`).
+    /// A live pid whose start time differs (recycled) or that is gone is treated as
+    /// exited: never watched, never signalled. None skips the check.
+    pub start_time: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,6 +94,8 @@ pub struct PtyInfo {
     pub title: Option<Vec<u8>>,
     pub pwd: Option<Vec<u8>>,
     pub exited: Option<ExitStatus>,
+    /// The child's start time (spawn, or carried by adopt); None when unreadable.
+    pub start_time: Option<u64>,
 }
 
 /// `release` needs a frozen pane.
@@ -229,6 +235,8 @@ struct Inner {
     adopted: bool,
     /// Exit watch for an adopted, live child; also how it is signalled.
     watch: Option<Watch>,
+    /// `exitwatch::start_time` of the child, carried across handoffs.
+    start_time: Option<u64>,
     /// Set by `freeze`: the reader and writer stop without draining or closing.
     frozen: AtomicBool,
     /// Set by `release`: no SIGHUP on drop, no exit event ever.
@@ -370,6 +378,7 @@ impl Inner {
             pid,
             adopted: false,
             watch: None,
+            start_time: None,
             frozen: AtomicBool::new(false),
             released: AtomicBool::new(false),
             threads: Mutex::new(Vec::new()),
@@ -580,6 +589,12 @@ fn reader_main(inner: &Inner) {
                 // EIO: the slave side is closed.
                 Err(_) => eof = true,
             }
+        }
+        // Adopted: nobody reaps for us, and a child that closed its tty (or a watch that
+        // never fires) must still end the pane. The status is unknowable anyway.
+        if eof && inner.adopted {
+            lock(&inner.reaped).get_or_insert(ExitStatus::Unknown);
+            break;
         }
         if inner.hidden() {
             pending = false;
@@ -800,7 +815,7 @@ impl Pty {
             .ok_or_else(|| io::Error::other("child has no pid"))?;
         // Dropping a std Child neither kills nor reaps; the waiter thread reaps.
         drop(child);
-        let inner = match Inner::new(vt, sink, fd, opts.id, pid as libc::pid_t) {
+        let mut inner = match Inner::new(vt, sink, fd, opts.id, pid as libc::pid_t) {
             Ok(inner) => inner,
             Err(e) => {
                 // No waiter runs yet: kill and reap the just-spawned child here.
@@ -813,6 +828,8 @@ impl Pty {
                 return Err(e);
             }
         };
+        // Our unreaped child: its pid cannot be recycled yet.
+        inner.start_time = exitwatch::start_time(pid).ok();
         launch(inner, Some(("waiter", waiter_main)))
     }
 
@@ -838,12 +855,23 @@ impl Pty {
                 Err(e) => return Err(e),
             },
         };
+        // Checked after the watch is registered, so a pid recycled before it is caught
+        // here and one recycled after it cannot be (the watch pins the old process).
+        let watch = match (watch, opts.start_time) {
+            (Some(w), Some(want)) => match exitwatch::start_time(opts.pid) {
+                Ok(now) if now == want => Some(w),
+                // gone, recycled or unreadable: never watch or signal it
+                _ => None,
+            },
+            (w, _) => w,
+        };
         let base = Inner::new(vt, sink, fd, opts.id, opts.pid as libc::pid_t)?;
         let side = watch.is_some().then_some(("watch", watcher_main as Body));
         let inner = Inner {
             adopted: true,
             reaped: Mutex::new(watch.is_none().then_some(ExitStatus::Unknown)),
             watch,
+            start_time: opts.start_time,
             title: Mutex::new(opts.title),
             pwd: Mutex::new(opts.pwd),
             ..base
@@ -916,6 +944,7 @@ impl Pty {
             title: lock(&self.inner.title).clone(),
             pwd: lock(&self.inner.pwd).clone(),
             exited: self.exit_status(),
+            start_time: self.inner.start_time,
         }
     }
 
@@ -1325,12 +1354,32 @@ mod tests {
         args: &[&str],
         exited: bool,
     ) -> (Arc<Vt>, Arc<Pty>, Receiver<Event>, u32) {
+        handed_over_as(cmd, args, exited, |t| t)
+    }
+
+    /// `handed_over` with the carried start time mapped by `start`.
+    fn handed_over_as(
+        cmd: &str,
+        args: &[&str],
+        exited: bool,
+        start: impl Fn(Option<u64>) -> Option<u64>,
+    ) -> (Arc<Vt>, Arc<Pty>, Receiver<Event>, u32) {
         let (_vt, pty, _rx) = spawn(cmd, args);
         let pid = pty.os_pid();
+        let start_time = start(pty.info().start_time);
         let fd = pty.dup_fd().expect("dup");
         assert!(pty.freeze().is_empty());
         pty.release().expect("release");
         drop(pty);
+        adopt_fd(fd, pid, exited, start_time)
+    }
+
+    fn adopt_fd(
+        fd: OwnedFd,
+        pid: u32,
+        exited: bool,
+        start_time: Option<u64>,
+    ) -> (Arc<Vt>, Arc<Pty>, Receiver<Event>, u32) {
         let vt = Vt::new(80, 24, 1000).expect("vt");
         let (tx, rx) = mpsc::channel();
         let opts = AdoptOptions {
@@ -1339,6 +1388,7 @@ mod tests {
             exited,
             title: None,
             pwd: None,
+            start_time,
         };
         let pty = Pty::adopt(
             Arc::clone(&vt),
@@ -1374,6 +1424,58 @@ mod tests {
         std::thread::sleep(Duration::from_millis(300));
         assert!(rx.try_iter().all(|ev| !matches!(ev, Event::Exit(_))));
         assert_eq!(pty.info().exited, Some(ExitStatus::Unknown));
+    }
+
+    #[test]
+    fn spawn_records_start_time() {
+        let (_vt, pty, _rx) = spawn("/bin/sleep", &["30"]);
+        let t = pty.info().start_time.expect("start time");
+        assert_eq!(exitwatch::start_time(pty.os_pid()).expect("read"), t);
+        assert_eq!(
+            exitwatch::start_time(u32::MAX >> 1).map_err(|e| e.raw_os_error()),
+            Err(Some(libc::ESRCH))
+        );
+        sigkill(pty.os_pid());
+    }
+
+    #[test]
+    fn adopt_recycled_pid_is_exited() {
+        // a live pid whose start time differs is someone else's process now
+        let (_vt, pty, rx, pid) =
+            handed_over_as("/bin/sleep", &["30"], false, |t| t.map(|t| t + 1));
+        assert_eq!(exit_of(&rx), ExitStatus::Unknown);
+        assert!(pty.kill(libc::SIGKILL).is_ok());
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(alive(pid));
+        sigkill(pid);
+    }
+
+    #[test]
+    fn adopt_matching_start_time_is_watched() {
+        let (_vt, pty, rx, pid) = handed_over("/bin/sleep", &["30"], false);
+        assert!(pty.info().start_time.is_some());
+        pty.kill(libc::SIGKILL).expect("kill");
+        assert_eq!(exit_of(&rx), ExitStatus::Unknown);
+        assert!(!alive(pid));
+    }
+
+    #[test]
+    fn adopted_eof_reports_exit() {
+        // the watch is on a process that outlives the pane's tty: EOF must end the pane
+        let (_vt, sh, _rx) = spawn("/bin/sh", &[]);
+        let fd = sh.dup_fd().expect("dup");
+        assert!(sh.freeze().is_empty());
+        sh.release().expect("release");
+        drop(sh);
+        let mut other = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("sleep");
+        let (_vt, pty, rx, _) = adopt_fd(fd, other.id(), false, None);
+        pty.write(b"exit\n").expect("write");
+        assert_eq!(exit_of(&rx), ExitStatus::Unknown);
+        let _ = other.kill();
+        let _ = other.wait();
     }
 
     #[test]

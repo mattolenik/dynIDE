@@ -37,6 +37,9 @@ defmodule HerdrServer.Native do
   @spec vt_dirty_rows(term) :: {non_neg_integer, [{non_neg_integer, binary}]}
   def vt_dirty_rows(_vt), do: err()
   @doc false
+  @spec vt_gen(term) :: non_neg_integer
+  def vt_gen(_vt), do: err()
+  @doc false
   @spec vt_rows_since(term, term) :: {non_neg_integer, [{non_neg_integer, binary}]}
   def vt_rows_since(_vt, _gen), do: err()
   @doc false
@@ -99,9 +102,9 @@ defmodule HerdrServer.Native do
   @spec pty_set_hidden(term, term) :: :ok
   def pty_set_hidden(_pty, _hidden), do: err()
   @doc false
-  @spec pty_adopt(term, term, term, term, term, term, term) ::
+  @spec pty_adopt(term, term, term, term, term, term, term, term) ::
           {:ok, reference} | {:error, atom | {atom, term}}
-  def pty_adopt(_vt, _id, _fd, _os_pid, _exited, _title, _pwd), do: err()
+  def pty_adopt(_vt, _id, _fd, _os_pid, _exited, _title, _pwd, _start_time), do: err()
   @doc false
   @spec pty_dup_fd(term) :: {:ok, reference} | {:error, atom | {atom, term}}
   def pty_dup_fd(_pty), do: err()

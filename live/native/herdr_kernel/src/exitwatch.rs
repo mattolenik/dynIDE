@@ -136,3 +136,47 @@ impl Watch {
         .map(drop)
     }
 }
+
+/// When `pid` started, as an opaque number that changes when the pid is reused: a handoff
+/// carries it so the next owner never watches or signals a recycled pid. `ESRCH`: gone.
+#[cfg(target_os = "macos")]
+pub fn start_time(pid: u32) -> io::Result<u64> {
+    // SAFETY: zeroed proc_bsdinfo is a valid out-buffer for proc_pidinfo.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: the buffer is valid and exactly `size` bytes.
+    let r = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&mut info as *mut libc::proc_bsdinfo).cast(),
+            size,
+        )
+    };
+    if r != size {
+        let e = last_err();
+        return Err(match e.raw_os_error() {
+            Some(0) | None => io::Error::from_raw_os_error(libc::ESRCH),
+            _ => e,
+        });
+    }
+    Ok(info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec)
+}
+
+/// Field 22 of `/proc/<pid>/stat` (start time in clock ticks since boot).
+#[cfg(target_os = "linux")]
+pub fn start_time(pid: u32) -> io::Result<u64> {
+    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(s) => s,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return Err(io::Error::from_raw_os_error(libc::ESRCH))
+        }
+        Err(e) => return Err(e),
+    };
+    // comm (field 2) may contain spaces and parens: fields resume after the last ')'.
+    stat.rsplit_once(')')
+        .and_then(|(_, rest)| rest.split_whitespace().nth(22 - 3))
+        .and_then(|f| f.parse().ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad /proc stat"))
+}

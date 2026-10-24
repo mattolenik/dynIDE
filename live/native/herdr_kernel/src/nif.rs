@@ -30,7 +30,7 @@ mod atoms {
         os, spawn, hyperlink, text, viewport, screen, rows,
         block, bar, underline, block_hollow, hup, term, kill, int,
         key, mods, event, kind, button, x, y, px, disabled, consumed, not_frozen, released,
-        os_pid, adopted, hidden, exited,
+        os_pid, adopted, hidden, exited, start_time,
         herdr_link, herdr_link_closed, eof, timeout, noproc, econnrefused, einval,
         connect_failed,
     }
@@ -327,6 +327,12 @@ fn vt_dirty_rows(env: Env, vt: ResourceArc<VtRes>) -> Term {
     encode_batch(env, vt.0.dirty_rows())
 }
 
+/// Scalar: the published snapshot's gen (no core lock, no row copies).
+#[rustler::nif]
+fn vt_gen(vt: ResourceArc<VtRes>) -> u64 {
+    vt.0.gen()
+}
+
 #[rustler::nif]
 fn vt_rows_since(env: Env, vt: ResourceArc<VtRes>, gen: u64) -> Term {
     encode_batch(env, vt.0.rows_since(gen))
@@ -542,7 +548,7 @@ fn new_sink(id: u64) -> Arc<BeamSink> {
     })
 }
 
-#[allow(clippy::too_many_arguments)] // mirrors the facade's `adopt/7`
+#[allow(clippy::too_many_arguments)] // mirrors the facade's `adopt/8`
 #[rustler::nif(schedule = "DirtyIo")]
 fn pty_adopt<'a>(
     env: Env<'a>,
@@ -553,6 +559,7 @@ fn pty_adopt<'a>(
     exited: bool,
     title: Option<Binary>,
     pwd: Option<Binary>,
+    start_time: Option<u64>,
 ) -> Term<'a> {
     let Some(fd) = lock(&fd.0).take() else {
         return (atoms::error(), atoms::consumed()).encode(env);
@@ -564,6 +571,7 @@ fn pty_adopt<'a>(
         exited,
         title: title.map(|b| b.as_slice().to_vec()),
         pwd: pwd.map(|b| b.as_slice().to_vec()),
+        start_time,
     };
     match Pty::adopt(Arc::clone(&vt.0), fd, opts, sink.clone()) {
         Ok(pty) => (atoms::ok(), ResourceArc::new(PtyRes { pty, sink })).encode(env),
@@ -629,6 +637,7 @@ fn pty_info(env: Env, pty: ResourceArc<PtyRes>) -> NifResult<Term> {
             (atoms::title().encode(env), opt(&i.title)),
             (atoms::pwd().encode(env), opt(&i.pwd)),
             (atoms::exited().encode(env), exited),
+            (atoms::start_time().encode(env), i.start_time.encode(env)),
         ],
     )
 }

@@ -483,6 +483,11 @@ impl Vt {
         Arc::clone(&lock(&self.snapshot))
     }
 
+    /// The published snapshot's gen; it moves whenever a row changes.
+    pub fn gen(&self) -> u64 {
+        lock(&self.snapshot).gen
+    }
+
     pub fn rows_since(&self, gen: u64) -> RowBatch {
         let s = self.snapshot();
         let rows = s

@@ -64,6 +64,25 @@ defmodule HerdrServer.Native.PtyHandoffTest do
     Pty.kill(pty, :kill)
   end
 
+  test "adopt with another start time is exited and never signalled" do
+    {pty, os_pid} = spawn_sh(93, ["-c", "sleep 30"])
+    assert %{start_time: st} = Pty.info(pty)
+    assert is_integer(st)
+    {:ok, fd} = Pty.dup_fd(pty)
+    Pty.freeze(pty)
+    :ok = Pty.release(pty)
+
+    {:ok, vt} = Vt.new(80, 24, 1000)
+    # the pid now names a different process (recycled)
+    assert {:ok, adopted} = Pty.adopt(vt, 92, fd, os_pid, false, nil, nil, st + 1)
+    :ok = Pty.subscribe(adopted, self())
+    assert_receive {:exit, 92, :unknown}, 5000
+    :ok = Pty.kill(adopted, :kill)
+    Process.sleep(100)
+    assert alive?(os_pid)
+    System.cmd("kill", ["-9", "#{os_pid}"])
+  end
+
   test "info reports title after OSC 2" do
     {pty, _} = spawn_sh(94, ["-c", "printf '\\033]2;handoff-title\\007'; sleep 30"])
     :ok = Pty.subscribe(pty, self())

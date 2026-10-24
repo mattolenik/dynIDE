@@ -92,12 +92,22 @@ defmodule HerdrServer.Native.Pty do
   second use is `{:error, :consumed}`), `os_pid` its child, which is not ours, so the
   exit is always `{:exit, id, :unknown}`. With `exited` the child is already gone:
   the exit follows the drain of what is left in the PTY, and `kill/2` is a no-op.
-  `title` and `pwd` seed `info/1`.
+  `title` and `pwd` seed `info/1`. `start_time` is the previous owner's
+  `info/1` `start_time`: when `os_pid` is gone or now has another start time (the pid
+  was recycled) the pane is adopted as exited; nil skips the check.
   """
-  @spec adopt(Vt.vt(), non_neg_integer, fd, pos_integer, boolean, binary | nil, binary | nil) ::
-          {:ok, pty} | {:error, :consumed | spawn_error}
-  def adopt(vt, id, fd, os_pid, exited, title, pwd),
-    do: Native.pty_adopt(vt, id, fd, os_pid, exited, title, pwd)
+  @spec adopt(
+          Vt.vt(),
+          non_neg_integer,
+          fd,
+          pos_integer,
+          boolean,
+          binary | nil,
+          binary | nil,
+          non_neg_integer | nil
+        ) :: {:ok, pty} | {:error, :consumed | spawn_error}
+  def adopt(vt, id, fd, os_pid, exited, title, pwd, start_time \\ nil),
+    do: Native.pty_adopt(vt, id, fd, os_pid, exited, title, pwd, start_time)
 
   @doc "A CLOEXEC dup of the PTY master, as a single-use fd resource."
   @spec dup_fd(pty) :: {:ok, fd} | {:error, spawn_error}
@@ -133,7 +143,8 @@ defmodule HerdrServer.Native.Pty do
 
   @doc """
   Runtime facts: the last title and pwd the reader flushed (or the adoption seed),
-  and `exited` in the `:exit` event's status shape, or nil.
+  `exited` in the `:exit` event's status shape, or nil, and `start_time` (an opaque
+  process start time the next owner checks at adopt; nil when unreadable).
   """
   @spec info(pty) :: %{
           os_pid: pos_integer,
@@ -141,7 +152,8 @@ defmodule HerdrServer.Native.Pty do
           hidden: boolean,
           title: binary | nil,
           pwd: binary | nil,
-          exited: exit_status | nil
+          exited: exit_status | nil,
+          start_time: non_neg_integer | nil
         }
   def info(pty), do: Native.pty_info(pty)
 end
