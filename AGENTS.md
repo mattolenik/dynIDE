@@ -57,7 +57,10 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
 
 - `live/` is a Mix umbrella. `live/apps/herdr_scene`: pure contracts and
   validators, no processes, no umbrella deps. `live/apps/herdr_server`:
-  server layer. `live/apps/herdr_term`: terminal client.
+  server layer. `live/apps/herdr_term`: terminal client. `live/apps/herdr_reload`:
+  the reloader. `live/apps/herdr_cli`: the `herdr-live` CLI (depends only on
+  herdr_scene; talks JSON to the API socket). `live/apps/herdr_integration`:
+  test-only, may depend on all of them.
 - Modules live under the app root module: design `Native.Vt` is
   `HerdrServer.Native.Vt`, `Client.Term.Input` is `HerdrTerm.Client.Term.Input`.
 - NIF crates: `live/native/herdr_kernel` (NIF module `HerdrServer.Native`,
