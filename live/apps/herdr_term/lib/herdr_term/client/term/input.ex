@@ -16,7 +16,7 @@ defmodule HerdrTerm.Client.Term.Input do
   at-least-once: an unacked event is re-sent first to the next session. Events before the first `{:session, pid}` (sent
   by Render after each attach) are queued. A buffered ESC is flushed after 25ms.
 
-  Parse runs through `SafeApply`: a failing chunk is dropped (logged) and the parser
+  Parse runs through `HerdrReload.Guard`: a failing chunk is dropped (logged) and the parser
   state, queue and in-flight event stay as they were. `{:tty_resumed}` and
   `{:exit, :tty, _}` are forwarded to `Tty.Owner` (modes, repaint, local exit).
   """
@@ -25,8 +25,9 @@ defmodule HerdrTerm.Client.Term.Input do
 
   require Logger
 
+  alias HerdrReload.Guard
   alias HerdrScene.Protocol
-  alias HerdrTerm.{Client, SafeApply}
+  alias HerdrTerm.Client
   alias HerdrTerm.Client.Term.Input.Parse
   alias HerdrTerm.Tty.Owner
 
@@ -61,7 +62,7 @@ defmodule HerdrTerm.Client.Term.Input do
 
     parse =
       Enum.reduce([:kitty_flags, :da1], Parse.new(), fn kind, p ->
-        case SafeApply.run(Parse, :open_window, [p, kind, deadline]) do
+        case Guard.run_twice(Parse, :open_window, [p, kind, deadline]) do
           {:ok, p} -> p
           {:failed, _} -> p
         end
@@ -82,8 +83,8 @@ defmodule HerdrTerm.Client.Term.Input do
   def handle_info({:tty_input, bin}, state) do
     state = Map.merge(%__MODULE__{}, state)
 
-    with {:ok, parse} <- SafeApply.run(Parse, :expire_windows, [state.parse, now()]),
-         {:ok, {items, parse}} <- SafeApply.run(Parse, :events, [bin, parse]) do
+    with {:ok, parse} <- Guard.run_twice(Parse, :expire_windows, [state.parse, now()]),
+         {:ok, {items, parse}} <- Guard.run_twice(Parse, :events, [bin, parse]) do
       {:noreply, enqueue(arm_esc(%{state | parse: parse}), items)}
     else
       {:failed, _} -> {:noreply, state}
@@ -93,7 +94,7 @@ defmodule HerdrTerm.Client.Term.Input do
   def handle_info({:esc_flush, ref}, %{esc: ref} = state) do
     state = Map.merge(%__MODULE__{}, state)
 
-    case SafeApply.run(Parse, :flush, [state.parse]) do
+    case Guard.run_twice(Parse, :flush, [state.parse]) do
       {:ok, {items, parse}} -> {:noreply, enqueue(%{state | parse: parse, esc: nil}, items)}
       {:failed, _} -> {:noreply, %{state | esc: nil}}
     end
@@ -183,7 +184,7 @@ defmodule HerdrTerm.Client.Term.Input do
 
     case fast(ev, state.mode, :persistent_term.get(Protocol.fast_path_key(), nil)) do
       {m, f, a} ->
-        SafeApply.run(m, f, [ev | a])
+        Guard.run_twice(m, f, [ev | a], scan: false)
         drain(state)
 
       nil ->

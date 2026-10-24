@@ -26,14 +26,17 @@ defmodule HerdrTerm.Client.Term.Render do
 
   require Logger
 
+  alias HerdrReload.Guard
   alias HerdrScene.Protocol
   alias HerdrScene.Scene
-  alias HerdrTerm.{Client, Kernel, SafeApply}
+  alias HerdrTerm.{Client, Kernel}
   alias HerdrTerm.Client.Term.Render.Compose
   alias HerdrTerm.Client.Term.Theme
   alias HerdrTerm.Tty.Owner
 
   @retry_ms 50
+  # compose can hang on a bad edit; its result is a transient frame
+  @compose [budget_ms: 50, scan: false]
 
   defstruct [
     :id,
@@ -184,7 +187,7 @@ defmodule HerdrTerm.Client.Term.Render do
 
     # Only exits: the endpoint can die or time out between whereis and the call, and
     # that is just "not attached yet" (retry). Raises and throws are bugs and crash this
-    # process; this is not a SafeApply boundary.
+    # process; this is not a Guard boundary.
     reply =
       try do
         GenServer.call(endpoint, {:attach, req})
@@ -233,8 +236,9 @@ defmodule HerdrTerm.Client.Term.Render do
     state = Enum.reduce(state.dirty, %{state | dirty: MapSet.new()}, &fetch(&2, &1))
     scene = state.scene
 
-    with {:ok, frame} <- SafeApply.run(Compose, :frame, [scene, state.rows, state.theme]),
-         {:ok, cursor} <- SafeApply.run(Compose, :cursor, [scene, state.cursors]) do
+    with {:ok, frame} <-
+           Guard.run_twice(Compose, :frame, [scene, state.rows, state.theme], @compose),
+         {:ok, cursor} <- Guard.run_twice(Compose, :cursor, [scene, state.cursors], @compose) do
       repaint = state.repaint or scene.size != state.last_size
       {at, shape} = cursor || {nil, :block}
       opts = %{cursor: at, shape: shape, repaint: repaint}
@@ -251,7 +255,7 @@ defmodule HerdrTerm.Client.Term.Render do
   defp fetch(%{rows_mfa: nil} = state, _id), do: state
 
   defp fetch(%{rows_mfa: {m, f, a}} = state, id) do
-    case SafeApply.run(m, f, [id | a]) do
+    case Guard.run_twice(m, f, [id | a], scan: false) do
       {:ok, {_gen, tuple, cursor}} ->
         %{
           state

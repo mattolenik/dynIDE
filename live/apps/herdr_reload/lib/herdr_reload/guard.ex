@@ -15,6 +15,8 @@ defmodule HerdrReload.Guard do
 
   alias HerdrReload.{LocalFuns, Notices, Server}
 
+  require Logger
+
   @type stack :: [term()]
   @type failure ::
           {:raise, Exception.t(), stack()}
@@ -37,6 +39,38 @@ defmodule HerdrReload.Guard do
       failure -> failed(stack_modules(mod, failure), failure, server)
     end
   end
+
+  @doc """
+  The call-site shape: `run/4`, and on failure a logged error and one re-run
+  (the first failure has already rolled back the attributed batch). Returns
+  the second outcome; a second failure is logged too.
+  """
+  @spec run_twice(module(), atom(), [term()], keyword()) :: {:ok, term()} | {:failed, failure()}
+  def run_twice(mod, fun, args, opts \\ []) do
+    with {:failed, _} = failed <- run(mod, fun, args, opts),
+         :ok <- log(mod, fun, args, failed),
+         {:failed, _} = failed <- run(mod, fun, args, opts),
+         :ok <- log(mod, fun, args, failed),
+         do: failed
+  end
+
+  defp log(mod, fun, args, {:failed, failure}) do
+    stack =
+      case failure do
+        {:local_fun, _, _} -> ""
+        {_, _, s} -> Exception.format_stacktrace(s)
+      end
+
+    Logger.error("#{inspect(mod)}.#{fun}/#{length(args)} failed: #{message(failure)}\n#{stack}")
+  end
+
+  @doc "One-line description of a failure, without its stack."
+  @spec message(failure()) :: String.t()
+  def message({:raise, e, _}), do: Exception.format_banner(:error, e)
+  def message({:throw, v, _}), do: Exception.format_banner(:throw, v)
+  def message({:exit, r, _}), do: Exception.format_banner(:exit, r)
+  def message({:timeout, ms, _}), do: "timed out after #{ms}ms"
+  def message({:local_fun, m, path}), do: "result holds a local fun of #{inspect(m)} at #{inspect(path)}"
 
   defp scan?(opts) do
     Keyword.get_lazy(opts, :scan, fn ->

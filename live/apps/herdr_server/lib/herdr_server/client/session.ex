@@ -2,7 +2,7 @@ defmodule HerdrServer.Client.Session do
   @moduledoc """
   One per attached client (`restart: :temporary`; a crash is a detach from the client's
   point of view). Owns the client's `Client.State`, computes its scene with `View.compute/2`
-  (through `SafeApply`) and pushes `{:scene, scene}` only when it differs from the last one.
+  (through `HerdrReload.Guard`) and pushes `{:scene, scene}` only when it differs from the last one.
 
   Ref transport: scenes carry `{:ref, id, layout_gen}` and no cursors; pane damage is
   forwarded as `{:damage, id, gen}` and the client reads rows and cursor from
@@ -25,11 +25,12 @@ defmodule HerdrServer.Client.Session do
   """
   use GenServer, restart: :temporary
 
+  alias HerdrReload.Guard
   alias HerdrScene.Protocol
   alias HerdrServer.App.{Keybinds, Store}
   alias HerdrServer.Client.{Keys, State}
   alias HerdrServer.Pane.Rows
-  alias HerdrServer.{SafeApply, View}
+  alias HerdrServer.View
 
   def start_link(info), do: GenServer.start_link(__MODULE__, info)
 
@@ -127,7 +128,7 @@ defmodule HerdrServer.Client.Session do
   end
 
   defp input(%{keybinds: %{}} = state, {:key, _} = ev, from) do
-    case SafeApply.run(Keys, :resolve, [Map.take(state, [:mode, :swallow]), state.keybinds, ev]) do
+    case Guard.run_twice(Keys, :resolve, [Map.take(state, [:mode, :swallow]), state.keybinds, ev]) do
       {:ok, {%{mode: mode, swallow: swallow}, result}} ->
         keyed(%{state | mode: mode, swallow: swallow}, state.mode, result, from)
 
@@ -168,9 +169,9 @@ defmodule HerdrServer.Client.Session do
     case :persistent_term.get(Protocol.fast_path_key(), nil) do
       %{passthrough: true, write: {mod, f, a}, intercept: i} ->
         # a failure in either call sends the event the slow path
-        with {:ok, key} <- SafeApply.run(Keybinds, :normalize, [k, m]),
+        with {:ok, key} <- Guard.run_twice(Keybinds, :normalize, [k, m]),
              false <- MapSet.member?(i, key),
-             {:ok, :ok} <- SafeApply.run(mod, f, [ev | a]),
+             {:ok, :ok} <- Guard.run_twice(mod, f, [ev | a], scan: false),
              do: true,
              else: (_ -> false)
 
@@ -225,12 +226,16 @@ defmodule HerdrServer.Client.Session do
   defp push(state, app) do
     state = %{state | keybinds: app.ui.keybinds}
 
-    case SafeApply.run(View, :compute, [app, state]) do
+    case Guard.run_twice(View, :compute, [app, state], budget_ms: 50, scan: false) do
       {:ok, scene} ->
         send_scene(state, if(state.transport == :inline, do: fill(scene), else: scene))
 
       {:failed, reason} ->
-        send(state.client, {:notice, %{level: :error, text: "view failed: #{inspect(reason)}"}})
+        send(
+          state.client,
+          {:notice, %{level: :error, text: "view failed: #{Guard.message(reason)}"}}
+        )
+
         state
     end
   end

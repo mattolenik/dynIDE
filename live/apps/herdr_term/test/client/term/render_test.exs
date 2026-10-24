@@ -12,7 +12,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
   def rows(id, agent) do
     Agent.get(agent, fn m ->
       send(Map.get(m, :test), {:fetched, id})
-      Map.get(m, id)
+      if Map.get(m, id) == :boom, do: raise("rows boom"), else: Map.get(m, id)
     end)
   end
 
@@ -35,6 +35,27 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     set_rows(rows, 1, "hello")
     send(render, {:scene, Fixture.load("single_pane_80x24")})
     assert_receive {:frame, _, %{repaint: true}}
+    assert hd(Blit.screen(tty)) =~ "hello"
+  end
+
+  test "a failing Compose drops the frame and keeps the render state", %{render: render} do
+    :sys.replace_state(render, &%{&1 | theme: :broken})
+    send(render, {:scene, Fixture.load("single_pane_80x24")})
+    refute_receive {:frame, _, _}, 100
+    assert %{theme: :broken, scene: %{}} = :sys.get_state(render)
+  end
+
+  test "a failing rows fetch keeps the cached rows and still renders", %{
+    render: render,
+    tty: tty,
+    rows: rows
+  } do
+    set_rows(rows, 1, "hello")
+    send(render, {:scene, Fixture.load("single_pane_80x24")})
+    assert_receive {:frame, _, %{repaint: true}}
+    Agent.update(rows, &Map.put(&1, 1, :boom))
+    send(render, {:damage, 1, 2})
+    assert_receive {:frame, _, _}
     assert hd(Blit.screen(tty)) =~ "hello"
   end
 

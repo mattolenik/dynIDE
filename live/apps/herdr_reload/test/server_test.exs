@@ -159,6 +159,59 @@ defmodule HerdrReload.ServerTest do
     assert v() == 1
   end
 
+  defp beam!(app, dir, mod),
+    do: Path.join(Compiler.ebin_dirs(project_dir: dir, app: app)[app], "#{mod}.beam")
+
+  defp rejected(dir, id, mod),
+    do: Path.wildcard(Path.join(dir, "**/herdr_reload/rejected/#{id}/#{mod}.beam"))
+
+  defp unload(mod) do
+    :code.purge(mod)
+    :code.delete(mod)
+    :code.purge(mod)
+  end
+
+  test "rollback restores the previous beam on disk and keeps the bad one" do
+    {dir, _} = toy!(:toy_s_disk)
+    p = beam!(:toy_s_disk, dir, Toy.V)
+    prev = File.read!(p)
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "v")])
+    bad = File.read!(p)
+    assert Server.rollback(1) == {:ok, [2]}
+
+    assert File.read!(p) == prev
+    assert [r] = rejected(dir, 2, Toy.V)
+    assert File.read!(r) == bad
+
+    # the restored beam is not a change, and autoloads the old code
+    HerdrReload.ReloadCase.write_source!(dir, "lib/w.ex", w_src(2))
+    assert {:ok, %Batch{id: 3, modules: [Toy.W]}} = Server.reload([path(dir, "w")])
+    unload(Toy.V)
+    assert v() == 1
+
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(3))
+    assert {:ok, %Batch{id: 4, modules: [Toy.V]}} = Server.reload([path(dir, "v")])
+    assert v() == 3
+  end
+
+  test "a module new in a rolled-back batch leaves only its rejected beam" do
+    {dir, _} = toy!(:toy_s_disk_new)
+    HerdrReload.ReloadCase.write_source!(dir, "lib/x.ex", "defmodule Toy.X do\nend\n")
+    assert {:ok, %Batch{id: 2, modules: [Toy.X]}} = Server.reload([path(dir, "x")])
+    p = beam!(:toy_s_disk_new, dir, Toy.X)
+    bad = File.read!(p)
+    assert Server.rollback(1) == {:ok, [2]}
+
+    refute File.exists?(p)
+    assert [r] = rejected(dir, 2, Toy.X)
+    assert File.read!(r) == bad
+
+    HerdrReload.ReloadCase.write_source!(dir, "lib/w.ex", w_src(2))
+    assert {:ok, %Batch{id: 3, modules: [Toy.W]}} = Server.reload([path(dir, "w")])
+    refute :code.is_loaded(Toy.X)
+  end
+
   test "compile error broadcasts and records no batch" do
     start_supervised!(Notices)
     {dir, _} = toy!(:toy_s_err)

@@ -21,6 +21,7 @@ defmodule HerdrReload.Compiler do
           changed: cache(),
           removed: [module()],
           previous: %{module() => binary() | nil},
+          paths: %{module() => Path.t()},
           diagnostics: list(),
           mtimes: %{Path.t() => integer()}
         }
@@ -28,6 +29,10 @@ defmodule HerdrReload.Compiler do
   @doc "Ebin dir per app of the project (umbrella children or the single app); deps excluded."
   @spec ebin_dirs(keyword()) :: %{atom() => Path.t()}
   def ebin_dirs(opts), do: in_project(opts, fn -> current_ebin_dirs() end)
+
+  @doc "The project's Mix build path."
+  @spec build_path(keyword()) :: Path.t()
+  def build_path(opts), do: in_project(opts, &Mix.Project.build_path/0)
 
   @doc "Every beam in the project's ebin dirs, read from disk."
   @spec snapshot(keyword()) :: cache()
@@ -169,7 +174,10 @@ defmodule HerdrReload.Compiler do
 
     removed = for {m, _} <- cache, !Map.has_key?(beams, m), do: m
     previous = Map.new(Map.keys(changed) ++ removed, &{&1, cache[&1]})
-    %{changed: changed, removed: removed, previous: previous}
+    # a removed module's beam was where Mix deleted it from
+    removed_paths = for m <- removed, {p, _, _} <- [disk[m]], into: %{}, do: {m, p}
+    paths = Map.merge(Map.take(beams, Map.keys(changed)), removed_paths)
+    %{changed: changed, removed: removed, previous: previous, paths: paths}
   end
 
   defp update_mtime(p, acc) do

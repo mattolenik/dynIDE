@@ -1,6 +1,8 @@
 defmodule HerdrReload.GuardTest do
   use HerdrReload.ReloadCase, async: false
 
+  import ExUnit.CaptureLog
+
   alias HerdrReload.{Batch, Compiler, Guard, Notices, Server}
 
   defmodule Fixture do
@@ -122,6 +124,28 @@ defmodule HerdrReload.GuardTest do
     refute b3.rolled_back or b1.rolled_back
     assert Guard.run(Toy.A, :f, [:ok]) == {:ok, 1}
     assert Guard.run(Toy.B, :g, []) == {:ok, 2}
+  end
+
+  test "run_twice re-runs once on the rolled-back code" do
+    dir = toy!(:toy_g_twice, %{"lib/a.ex" => a_src(1)})
+    HerdrReload.ReloadCase.write_source!(dir, "lib/a.ex", String.replace(a_src(2), "do: 2", "do: raise(\"v2\")"))
+    assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "a")])
+
+    log = capture_log(fn -> assert Guard.run_twice(Toy.A, :f, [:ok]) == {:ok, 1} end)
+    assert log =~ "Toy.A.f/1 failed: ** (RuntimeError) v2"
+    assert [%Batch{id: 2, rolled_back: true}, _] = Server.batches()
+  end
+
+  test "run_twice returns the second failure and logs both" do
+    log =
+      capture_log(fn ->
+        assert {:failed, {:raise, %RuntimeError{}, _} = f} = Guard.run_twice(Fixture, :f, [:boom], @nosrv)
+        assert Guard.message(f) == "** (RuntimeError) boom"
+      end)
+
+    assert length(String.split(log, "GuardTest.Fixture.f/1 failed")) == 3
+    assert Guard.message({:timeout, 50, []}) == "timed out after 50ms"
+    assert Guard.message({:local_fun, Fixture, [:cb]}) =~ "local fun"
   end
 
   test "an exit nested stack attributes to the modules inside it" do

@@ -476,6 +476,21 @@ defmodule HerdrServer.ServerTest do
     assert %{:sys.get_state(store) | clients: nil} == %{before | clients: nil}
   end
 
+  test "a failing View.compute is re-run once, then notices and the session survives" do
+    {c, s} = client()
+    scene(c)
+
+    log =
+      capture_log(fn ->
+        send(s, {:app_changed, %{}})
+        assert_receive {^c, {:notice, %{level: :error, text: "view failed: ** (" <> _}}}, 500
+      end)
+
+    assert length(String.split(log, "HerdrServer.View.compute/2 failed")) == 3
+    assert Process.alive?(s)
+    refute_received {^c, {:scene, _}}
+  end
+
   test "closing a pane makes stale damage harmless" do
     {c, s} = client()
     scene(c)

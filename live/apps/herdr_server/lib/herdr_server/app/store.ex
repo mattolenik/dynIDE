@@ -1,6 +1,6 @@
 defmodule HerdrServer.App.Store do
   @moduledoc """
-  Holds the app state. Thin: every change goes through `App.Actions` via `SafeApply`, and
+  Holds the app state. Thin: every change goes through `App.Actions` via `HerdrReload.Guard`, and
   this module only interprets the resulting effects.
 
     * `event/2` (call, from a `Client.Session`): `size` is the calling client's size
@@ -26,9 +26,10 @@ defmodule HerdrServer.App.Store do
 
   require Logger
 
+  alias HerdrReload.Guard
   alias HerdrScene.Protocol
   alias HerdrServer.App.{Actions, Keybinds}
-  alias HerdrServer.{Kernel, Layout, SafeApply}
+  alias HerdrServer.{Kernel, Layout}
   alias HerdrServer.Pane.{Input, Rows, Server}
   alias HerdrServer.Pane.Supervisor, as: Panes
 
@@ -59,7 +60,7 @@ defmodule HerdrServer.App.Store do
 
   @doc """
   Applies a keybind action `{m, f, a}` (resolved by the calling session's `Client.Keys`)
-  as `apply(m, f, [app | a])`, through `SafeApply` and the same effect handling and
+  as `apply(m, f, [app | a])`, through `HerdrReload.Guard` and the same effect handling and
   driver rule as `event/2`.
   """
   @spec run(Keybinds.mfa_t(), map | nil) :: :ok
@@ -196,9 +197,9 @@ defmodule HerdrServer.App.Store do
   defp step(state, step, origin) do
     result =
       case step do
-        {:init, size} -> SafeApply.run(Actions, :init, [size])
-        {:run, {m, f, a}} -> SafeApply.run(m, f, [state.app | a])
-        ev -> SafeApply.run(Actions, :apply, [state.app, ev])
+        {:init, size} -> Guard.run_twice(Actions, :init, [size])
+        {:run, {m, f, a}} -> Guard.run_twice(m, f, [state.app | a])
+        ev -> Guard.run_twice(Actions, :apply, [state.app, ev])
       end
 
     case result do
@@ -206,7 +207,7 @@ defmodule HerdrServer.App.Store do
         {:cont, {:ok, Enum.reduce(effects, %{state | app: app}, &effect(&2, &1, origin))}}
 
       {:failed, reason} ->
-        notice(origin, %{level: :error, text: "action failed: #{inspect(reason)}"})
+        notice(origin, %{level: :error, text: "action failed: #{Guard.message(reason)}"})
         {:halt, :failed}
     end
   end
@@ -292,8 +293,8 @@ defmodule HerdrServer.App.Store do
     ws = Enum.find(s.workspaces, &(&1.id == s.active_workspace))
     tab = Enum.find(ws.tabs, &(&1.id == ws.active_tab))
 
-    with {:ok, panes} <- SafeApply.run(Layout, :panes, [tab.layout, s.area]),
-         {:ok, rects} <- SafeApply.run(Layout, :borders, [panes, s.area]) do
+    with {:ok, panes} <- Guard.run_twice(Layout, :panes, [tab.layout, s.area], scan: false),
+         {:ok, rects} <- Guard.run_twice(Layout, :borders, [panes, s.area], scan: false) do
       visible = MapSet.new(rects, & &1.id)
 
       state =
@@ -330,7 +331,7 @@ defmodule HerdrServer.App.Store do
   defp publish_fast(%{app: nil} = state), do: state
 
   defp publish_fast(%{app: %{focus: f, ui: ui}} = state) do
-    case SafeApply.run(Keybinds, :intercept_set, [ui.keybinds]) do
+    case Guard.run_twice(Keybinds, :intercept_set, [ui.keybinds]) do
       {:ok, intercept} -> publish_fast(state, f, intercept)
       # keeps the previous fast path
       {:failed, _} -> state
