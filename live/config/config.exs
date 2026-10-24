@@ -44,3 +44,7 @@ config :herdr_server, :kernel,
 config :herdr_term, :kernel,
   tty: HerdrTerm.Kernel.Fake.Tty,
   blit: HerdrTerm.Kernel.Fake.Blit
+
+# Headless (no terminal client children) in test; HERDR_LIVE_HEADLESS=1 does
+# the same at runtime. Frames are at least min_frame_interval_ms apart.
+config :herdr_term, headless: config_env() == :test, min_frame_interval_ms: 6

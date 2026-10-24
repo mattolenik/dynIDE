@@ -1,20 +1,26 @@
 defmodule HerdrTerm.Application do
-  # See https://hexdocs.pm/elixir/Application.html
-  # for more information on OTP Applications
-  @moduledoc false
+  @moduledoc """
+  Starts `HerdrTerm.Registry` and, unless headless (`HERDR_LIVE_HEADLESS=1` or
+  `config :herdr_term, :headless`), the local terminal client `HerdrTerm.LocalClient`.
+  """
 
   use Application
 
+  require Logger
+
   @impl true
   def start(_type, _args) do
-    children = [
-      # Starts a worker by calling: HerdrTerm.Worker.start_link(arg)
-      # {HerdrTerm.Worker, arg}
-    ]
+    headless? =
+      System.get_env("HERDR_LIVE_HEADLESS") == "1" or
+        Application.get_env(:herdr_term, :headless, false)
 
-    # See https://hexdocs.pm/elixir/Supervisor.html
-    # for other strategies and supported options
-    opts = [strategy: :one_for_one, name: HerdrTerm.Supervisor]
-    Supervisor.start_link(children, opts)
+    client = if headless?, do: [], else: [{HerdrTerm.Client, name: HerdrTerm.LocalClient}]
+    children = [{Registry, keys: :unique, name: HerdrTerm.Registry} | client]
+
+    with {:ok, _} = ok <-
+           Supervisor.start_link(children, strategy: :one_for_one, name: HerdrTerm.Supervisor) do
+      if not headless?, do: Logger.info("terminal client started")
+      ok
+    end
   end
 end

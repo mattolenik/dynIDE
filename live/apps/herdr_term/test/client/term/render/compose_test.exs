@@ -176,4 +176,20 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
       assert Enum.all?(frame, fn {_, b} -> Cell.cols(b) == sc.size.cols end)
     end
   end
+
+  test "zero rows yields no rows" do
+    assert Compose.frame(%Scene{size: %{cols: 5, rows: 0}}, %{}, @theme) == []
+  end
+
+  test "inline pane rows are used when rows_by_pane has no entry" do
+    pane = %Pane{
+      id: 1,
+      rect: %{x: 0, y: 0, w: 4, h: 1},
+      rows: {:inline, [{0, Cells.text("hey", @s)}]}
+    }
+
+    scene = %Scene{size: %{cols: 4, rows: 1}, panes: [pane]}
+    assert texts(Compose.frame(scene, %{}, @theme)) == ["hey "]
+    assert texts(Compose.frame(scene, %{1 => %{0 => Cells.text("map", @s)}}, @theme)) == ["map "]
+  end
 end

@@ -1,13 +1,22 @@
 #!/bin/sh
-# Smoke test: herdr-live must boot headless under a pty, stop on SIGTERM with
-# status 0, leave the tty settings untouched, and print nothing to the terminal.
+# Smoke test: herdr-live must boot headless (HERDR_LIVE_HEADLESS=1) under a pty,
+# stop on SIGTERM with status 0, leave the tty settings untouched, and print
+# nothing to the terminal.
 # Usage: launcher_smoke.sh [-v]    (SMOKE_TIMEOUT seconds to boot, default 600)
+# SMOKE_ATTACHED=1 (see attached_smoke.sh) boots with the terminal client
+# instead, also waits for 'terminal client started', and asserts the empty
+# transcript only while the tty kernel is the fake.
 set -u
 verbose=0
 [ "${1:-}" = "-v" ] && verbose=1
 root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
 timeout=${SMOKE_TIMEOUT:-600}
+attached=${SMOKE_ATTACHED:-0}
+headless=1 client=
+[ "$attached" = 1 ] && headless= client='terminal client started'
+fake_tty=0
+grep -q 'Fake.Tty' "$root/config/config.exs" && fake_tty=1
 
 # shellcheck disable=SC2329 # invoked via trap
 cleanup() {
@@ -32,11 +41,12 @@ fail() {
 cat >"$tmp/inner.sh" <<INNER
 alive() { st=\$(ps -o stat= -p "\$1" 2>/dev/null); [ -n "\$st" ] && [ "\${st#Z}" = "\$st" ]; }
 stty -a >"$tmp/before"
-HERDR_LIVE_LOG="$tmp/log/herdr-live.log" "$root/bin/herdr-live" &
+HERDR_LIVE_HEADLESS="$headless" HERDR_LIVE_LOG="$tmp/log/herdr-live.log" "$root/bin/herdr-live" &
 pid=\$!
 echo "\$pid" >"$tmp/pid"
 i=0
-until grep -qs 'herdr-live started' "$tmp/log/herdr-live.log"; do
+ready() { grep -qs 'herdr-live started' "$tmp/log/herdr-live.log" && grep -qs '$client' "$tmp/log/herdr-live.log"; }
+until ready; do
   i=\$((i + 1))
   if [ "\$i" -gt $((timeout * 2)) ] || ! alive "\$pid"; then
     kill -KILL "\$pid" 2>/dev/null
@@ -73,6 +83,18 @@ echo "PASS: tty settings unchanged"
 grep -q 'herdr-live started' "$log" || fail "log lacks 'herdr-live started'"
 grep -q 'herdr-live stopped' "$log" || fail "log lacks 'herdr-live stopped'"
 echo "PASS: log has started and stopped"
+if [ "$attached" = 1 ]; then
+  grep -q 'terminal client started' "$log" || fail "log lacks 'terminal client started'"
+  echo "PASS: log has terminal client started"
+  if [ "$fake_tty" = 0 ]; then
+    [ "$verbose" = 1 ] && dump
+    exit 0
+  fi
+  echo "NOTE: fake tty kernel; attached smoke does not exercise /dev/tty"
+else
+  ! grep -q 'terminal client started' "$log" || fail "headless run started a terminal client"
+  echo "PASS: headless, no terminal client"
+fi
 # Darwin script(1) echoes "^D" plus backspaces when its own stdin hits EOF; that is script, not the VM.
 [ -z "$(tr -d '\r\n\b' <"$tmp/transcript" | sed 's/^\^D//')" ] || fail "terminal output: $(cat "$tmp/transcript")"
 echo "PASS: terminal transcript empty"

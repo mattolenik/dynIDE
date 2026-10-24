@@ -16,14 +16,17 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   alias HerdrTerm.Cells
   alias HerdrTerm.Client.Term.Theme
 
-  @type rows_by_pane :: %{pos_integer => tuple | [{non_neg_integer, binary}]}
+  @typedoc "Packed rows per pane id; panes absent here fall back to their `{:inline, rows}`."
+  @type rows_by_pane :: %{
+          pos_integer => tuple | [{non_neg_integer, binary}] | %{non_neg_integer => binary}
+        }
 
   @spec frame(Scene.t(), rows_by_pane, Theme.t()) :: [{non_neg_integer, binary}]
   def frame(%Scene{size: %{cols: cols, rows: rows}} = scene, rows_by_pane, theme) do
     panes = Enum.map(scene.panes, &prep_pane(&1, scene, rows_by_pane, theme))
     status = status_rows(scene.chrome, theme)
 
-    for y <- 0..(rows - 1) do
+    for y <- 0..(rows - 1)//1 do
       segs = Enum.flat_map(panes, &pane_segs(&1, y)) ++ Map.get(status, y, [])
       {y, assemble(segs, cols)}
     end
@@ -70,13 +73,17 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
       cy: r.y,
       cw: r.w,
       ch: r.h,
-      src: rows_source(Map.get(rows_by_pane, pane.id)),
+      src: rows_source(Map.get(rows_by_pane, pane.id, inline(pane.rows))),
       overlays: pane.overlays,
       border: prep_border(pane.border, style, Theme.glyphs(theme))
     }
   end
 
+  defp inline({:inline, rows}), do: rows
+  defp inline(_ref), do: nil
+
   defp rows_source(nil), do: %{}
+  defp rows_source(m) when is_map(m), do: m
   defp rows_source(t) when is_tuple(t), do: t
   defp rows_source(list) when is_list(list), do: Map.new(list)
 
