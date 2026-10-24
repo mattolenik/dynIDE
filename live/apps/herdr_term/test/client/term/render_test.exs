@@ -43,14 +43,18 @@ defmodule HerdrTerm.Client.Term.RenderTest do
   end
 
   test "a failing Compose drops the frame and keeps the render state", %{render: render} do
-    :sys.replace_state(render, &%{&1 | theme: :broken})
+    # a broken theme fails the chrome layout, which keeps the (here broken) old one
+    broken = %{base: :broken, top: %{}, hits: [], dim: false}
+    :sys.replace_state(render, &%{&1 | theme: :broken, chrome: broken})
     send(render, {:scene, Fixture.load("single_pane_80x24")})
     refute_receive {:frame, _, _}, 100
-    assert %{theme: :broken, scene: %{}} = :sys.get_state(render)
+    assert %{theme: :broken, scene: %{}, chrome: ^broken} = :sys.get_state(render)
 
-    # fixed with no new damage or scene: the dropped frame is retried in full
+    # fixed with no new damage or scene: the dropped frame is retried in full, and the
+    # retry recomputes the layout for the new theme
     :sys.replace_state(render, &%{&1 | theme: Theme.default()})
     assert_receive {:frame, _, %{repaint: true}}, 1500
+    assert %{base: %{23 => _}} = :sys.get_state(render).chrome
   end
 
   test "a failing rows fetch keeps the cached rows and still renders", %{
@@ -112,6 +116,53 @@ defmodule HerdrTerm.Client.Term.RenderTest do
       true -> Process.sleep(10) && eventually(f, n - 1)
     end
   end
+
+  describe "chrome layout" do
+    setup %{render: render} do
+      input = Client.whereis(:sys.get_state(render).id, :input)
+      :erlang.trace(input, true, [:receive])
+      on_exit(fn -> if Process.alive?(input), do: :erlang.trace(input, false, [:receive]) end)
+      %{input: input}
+    end
+
+    test "hits go to Input when they change, once", %{render: render, input: input} do
+      sc = Fixture.load("two_tabs_80x24")
+      send(render, {:scene, sc})
+      assert_receive {:trace, ^input, :receive, {:chrome_hits, hits}}
+      assert Enum.any?(hits, &(&1.path == [:tabs, :new_tab]))
+      assert :sys.get_state(render).chrome.hits == hits
+
+      # same hits (only the status title changed): no message, layout recomputed
+      [tabs, status] = sc.chrome.children
+      title = %{status | children: Enum.map(status.children, &retitle/1)}
+      send(render, {:scene, %{sc | chrome: %{sc.chrome | children: [tabs, title]}}})
+      assert_receive {:frame, _, _}
+      refute_receive {:trace, ^input, :receive, {:chrome_hits, _}}, 50
+      assert :sys.get_state(render).chrome_key |> elem(0) |> inspect() =~ "zz-title"
+
+      send(render, {:scene, Fixture.load("single_pane_80x24")})
+      assert_receive {:trace, ^input, :receive, {:chrome_hits, hits2}}
+      assert hits2 != hits
+    end
+
+    test "a failing layout keeps the old one", %{render: render} do
+      sc = Fixture.load("two_tabs_80x24")
+      send(render, {:scene, sc})
+      assert_receive {:frame, _, _}
+      layout = :sys.get_state(render).chrome
+      :sys.replace_state(render, &%{&1 | theme: :broken})
+      send(render, {:scene, %{sc | size: %{cols: 81, rows: 24}}})
+
+      assert eventually(fn ->
+               :sys.get_state(render).chrome_key |> elem(1) |> Map.get(:cols) == 81
+             end)
+
+      assert :sys.get_state(render).chrome == layout
+    end
+  end
+
+  defp retitle(%{id: :title} = n), do: %{n | text: "zz-title"}
+  defp retitle(n), do: n
 
   test "a scene re-fetches only new panes and panes whose layout_gen changed", %{
     render: render,

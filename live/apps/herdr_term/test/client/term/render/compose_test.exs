@@ -5,7 +5,7 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
   alias HerdrScene.Scene
   alias HerdrScene.Scene.{Node, Overlay, Pane}
   alias HerdrTerm.Cells
-  alias HerdrTerm.Client.Term.Render.Compose
+  alias HerdrTerm.Client.Term.Render.{Chrome, Compose}
   alias HerdrTerm.Client.Term.Theme
 
   @theme Theme.default()
@@ -32,13 +32,6 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
       rect: %{x: 0, y: 9, w: 40, h: 1},
       children: [
         %Node{role: :text, id: :mode, text: "TERMINAL", token: :accent},
-        %Node{
-          role: :tabs,
-          id: :tabs,
-          children: [
-            %Node{role: :tab, id: {:tab, 1}, text: "shell", props: %{index: 1, active: true}}
-          ]
-        },
         %Node{role: :text, id: :title, text: "", token: :muted},
         %Node{role: :text, id: :hint, text: "ctrl+b", token: :muted}
       ]
@@ -66,7 +59,7 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
         [pad.("left") <> pad.("right")] ++
         List.duplicate(border <> border, 6) ++
         ["└" <> String.duplicate("─", 18) <> "┘" <> "└" <> String.duplicate("─", 18) <> "┘"] ++
-        ["TERMINAL  1:shell " <> String.duplicate(" ", 16) <> "ctrl+b"]
+        ["TERMINAL" <> String.duplicate(" ", 26) <> "ctrl+b"]
 
     frame = Compose.frame(scene(), rows(), @theme)
     assert texts(frame) == expected
@@ -80,7 +73,6 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
     assert Enum.at(cells(frame, 0), 5).fg == :default
     status = cells(frame, 9)
     assert Enum.at(status, 0).attrs == [:bold]
-    assert Enum.at(status, 10).attrs == [:inverse]
     assert Enum.at(status, 35).attrs == [:faint]
   end
 
@@ -203,12 +195,55 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
     end
   end
 
-  test "a top-level tab bar draws on its own row, status tabs keep working" do
+  test "a top-level tab bar draws on its own row" do
     frame = Compose.frame(Fixture.load("two_tabs_80x24"), %{}, @theme)
     top = hd(texts(frame))
     assert String.slice(top, 0, 26) == String.duplicate(" ", 26)
-    assert String.slice(top, 26, 12) == " 1:1   2:2  "
+    assert String.slice(top, 26, 20) == "   1    " <> " " <> "   2    " <> " + "
     assert List.last(texts(frame)) =~ ~r/^TERMINAL /
+  end
+
+  test "frame/4 and screen/5 with a precomputed chrome layout equal frame/3 and screen/4" do
+    for name <- Fixture.names() do
+      sc = Fixture.load(name)
+      layout = Chrome.layout(sc.chrome, sc.size, @theme)
+      assert Compose.frame(sc, %{}, @theme, layout) == Compose.frame(sc, %{}, @theme)
+      assert Compose.screen(sc, %{}, %{}, @theme, layout) == Compose.screen(sc, %{}, %{}, @theme)
+    end
+  end
+
+  defp with_modal(sc, props) do
+    modal = %Node{role: :modal, id: {:modal, 0}, rect: %{x: 5, y: 2, w: 10, h: 3}, props: props}
+    %{sc | chrome: %{sc.chrome | children: sc.chrome.children ++ [modal]}}
+  end
+
+  test "top-layer regions are spliced over panes and chrome" do
+    full = %{1 => Tuple.duplicate(Cells.text(String.duplicate("x", 18), @s), 7)}
+    frame = Compose.frame(with_modal(scene(), %{kind: :confirm}), full, @theme)
+    assert Enum.all?(frame, fn {_, b} -> Cell.cols(b) == 40 end)
+    # the modal box blanks its rect (x 5..14, rows 2..4) over pane 1's content
+    for y <- 2..4 do
+      assert String.slice(Enum.at(texts(frame), y), 0, 20) ==
+               "│xxxx" <> String.duplicate(" ", 10) <> "xxxx│"
+    end
+
+    assert String.slice(Enum.at(texts(frame), 1), 0, 20) ==
+             "│" <> String.duplicate("x", 18) <> "│"
+  end
+
+  test "a dimming modal fades every cell outside the top layer" do
+    sc = with_modal(scene(), %{kind: :confirm, dim: true})
+    frame = Compose.frame(sc, rows(), @theme)
+    # rows without a top segment: every cell faint
+    for y <- [0, 1, 9], c <- cells(frame, y), do: assert(:faint in c.attrs)
+    # a row with the modal: faint outside, the box itself untouched
+    row = cells(frame, 3)
+    assert :faint in Enum.at(row, 4).attrs
+    assert :faint in Enum.at(row, 15).attrs
+    refute :faint in Enum.at(row, 5).attrs
+    refute :faint in Enum.at(row, 14).attrs
+    # status bold stays and gains faint
+    assert Enum.at(cells(frame, 9), 0).attrs -- [:bold, :faint] == []
   end
 
   test "zero rows yields no rows" do
@@ -294,7 +329,13 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
     assert Enum.all?(frame, fn {_, b} -> Cell.cols(b) == 100 end)
     digest = :crypto.hash(:sha256, Enum.map(frame, fn {y, b} -> [<<y::16>>, b] end))
 
+    # pane rows (0..29) unchanged since M7; the status row follows the chrome rasterizer
+    panes = :crypto.hash(:sha256, Enum.map(Enum.take(frame, 30), fn {y, b} -> [<<y::16>>, b] end))
+
+    assert Base.encode16(panes, case: :lower) ==
+             "d2317d73ca6a68e081753d6c242d10d43a8c5437e5f6f8afc693d074ead9da63"
+
     assert Base.encode16(digest, case: :lower) ==
-             "877ee358451f2053cd8870aff7dcf1bfaf533c4df609e2e8826b3f1dd29b3540"
+             "f8ae1a4440151a0d996835a2dedc01f825e92adea18d8a87313185afd905f521"
   end
 end

@@ -2,18 +2,22 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   @moduledoc """
   Pure rasterizer: a `HerdrScene.Scene` plus packed pane rows becomes full
   screen rows of packed cells. Each screen row is built once as a list of
-  pieces (borders, `Cells.fit` slices of pane rows, status text) and joined
-  once (plain pieces as sub-binaries, else `Cells.concat/1`); pane content
-  is never touched per cell except where an overlay applies.
+  pieces (borders, `Cells.fit` slices of pane rows, the chrome layout's base
+  segments) and joined once (plain pieces as sub-binaries, else
+  `Cells.concat/1`); pane content is never touched per cell except where an
+  overlay applies. The chrome layout (`Render.Chrome.layout/3`) is passed in
+  precomputed; the forms without it compute it.
 
   Pieces on a row are expected to be disjoint (borders win over the content
-  they overlap; otherwise the leftmost piece wins).
+  they overlap; otherwise the leftmost piece wins). Top-layer segments are
+  then spliced over the row; with `dim`, every cell outside them gets `:faint`.
   """
 
   alias HerdrScene.Cell
   alias HerdrScene.Scene
-  alias HerdrScene.Scene.{Node, Pane}
+  alias HerdrScene.Scene.Pane
   alias HerdrTerm.Cells
+  alias HerdrTerm.Client.Term.Render.Chrome
   alias HerdrTerm.Client.Term.Theme
 
   @typedoc "Packed rows per pane id; panes absent here fall back to their `{:inline, rows}`."
@@ -25,28 +29,50 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   @spec screen(Scene.t(), rows_by_pane, %{pos_integer => map | nil}, Theme.t()) ::
           {[{non_neg_integer, binary}], {{non_neg_integer, non_neg_integer}, Scene.shape()} | nil}
   def screen(scene, rows_by_pane, cursors, theme),
-    do: {frame(scene, rows_by_pane, theme), cursor(scene, cursors)}
+    do: screen(scene, rows_by_pane, cursors, theme, layout(scene, theme))
+
+  @spec screen(Scene.t(), rows_by_pane, %{pos_integer => map | nil}, Theme.t(), Chrome.t()) ::
+          {[{non_neg_integer, binary}], {{non_neg_integer, non_neg_integer}, Scene.shape()} | nil}
+  def screen(scene, rows_by_pane, cursors, theme, chrome),
+    do: {frame(scene, rows_by_pane, theme, chrome), cursor(scene, cursors)}
 
   @spec frame(Scene.t(), rows_by_pane, Theme.t()) :: [{non_neg_integer, binary}]
-  def frame(%Scene{size: %{cols: cols, rows: rows}} = scene, rows_by_pane, theme) do
+  def frame(scene, rows_by_pane, theme),
+    do: frame(scene, rows_by_pane, theme, layout(scene, theme))
+
+  @spec frame(Scene.t(), rows_by_pane, Theme.t(), Chrome.t()) :: [{non_neg_integer, binary}]
+  def frame(%Scene{size: %{cols: cols, rows: rows}} = scene, rows_by_pane, theme, chrome) do
     {panes, _cache} =
       Enum.map_reduce(scene.panes, %{}, &prep_pane(&1, &2, scene, rows_by_pane, theme))
 
     panes
-    |> segs_by_row(status_rows(scene.chrome, theme), rows)
-    |> Enum.map(&assemble(&1, cols))
-    |> Enum.with_index(fn row, y -> {y, row} end)
+    |> segs_by_row(chrome.base, rows)
+    |> Enum.with_index(fn segs, y -> {y, segs |> assemble(cols) |> top(chrome, y, cols)} end)
   end
 
-  # per screen row, its segments in pane order then status; a pane is visited only
+  defp layout(scene, theme), do: Chrome.layout(scene.chrome, scene.size, theme)
+
+  # per screen row, its segments in pane order then chrome; a pane is visited only
   # for the rows its rect or border spans
-  defp segs_by_row(panes, status, rows) do
+  defp segs_by_row(panes, base, rows) do
     spans = for p <- panes, do: {span(p), p}
 
     for y <- 0..(rows - 1)//1 do
       segs = for {{lo, hi}, p} <- spans, y >= lo and y < hi, seg <- pane_segs(p, y), do: seg
-      segs ++ Map.get(status, y, [])
+      segs ++ Map.get(base, y, [])
     end
+  end
+
+  # top layer: dim the assembled row (ponytail: decodes the row; only while a dimming
+  # modal is open), then splice each top segment over it, later segments win
+  defp top(row, %{dim: false, top: top}, _y, _cols) when map_size(top) == 0, do: row
+
+  defp top(row, %{dim: dim, top: top}, y, cols) do
+    row = if dim, do: Cells.restyle(row, 0, cols, add_attrs: [:faint]), else: row
+
+    Enum.reduce(Map.get(top, y, []), row, fn {x, w, piece}, row ->
+      Cell.concat([Cells.fit(row, 0, x), piece, Cells.fit(row, x + w, cols - x - w)])
+    end)
   end
 
   defp span(%{cy: cy, ch: ch, border: nil}), do: {cy, cy + ch}
@@ -271,81 +297,4 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   end
 
   defp swap?({fx, fy}, {tx, ty}), do: {fy, fx} > {ty, tx}
-
-  # chrome
-
-  defp status_rows(nil, _), do: %{}
-
-  defp status_rows(node, theme) do
-    node
-    |> statuses()
-    |> Enum.flat_map(&status_segs(&1, theme))
-    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
-  end
-
-  # ponytail: a top-level `:tabs` region is drawn like status tabs until M13 Task 3's
-  # chrome rasterizer replaces this
-  defp statuses(%Node{role: role} = n) when role in [:status, :tabs], do: [n]
-  defp statuses(%Node{children: cs}), do: Enum.flat_map(cs, &statuses/1)
-
-  defp status_segs(%Node{rect: nil}, _), do: []
-
-  defp status_segs(%Node{rect: r, children: children}, theme) do
-    base = Theme.style(theme, :default)
-    {hints, rest} = Enum.split_with(children, &(&1.id == :hint))
-    left = rest |> Enum.flat_map(&pieces(&1, theme)) |> join(base)
-    hint = hints |> List.last() |> hint_piece(theme)
-    hw = if hint, do: Cell.cols(hint), else: 0
-
-    first =
-      if hint && hw <= r.w do
-        clipped = clip(left, r.w - hw, base)
-        Cells.concat([clipped, hint])
-      else
-        clip(left, r.w, base)
-      end
-
-    for y <- r.y..(r.y + r.h - 1)//1 do
-      {y, {r.x, r.w, if(y == r.y, do: first, else: Cells.blank(r.w, base))}}
-    end
-  end
-
-  defp hint_piece(nil, _), do: nil
-  defp hint_piece(%Node{text: t}, _) when t in [nil, ""], do: nil
-  defp hint_piece(%Node{text: t, token: tok}, theme), do: Cells.text(t, Theme.style(theme, tok))
-
-  defp pieces(%Node{role: :text, text: t}, _) when t in [nil, ""], do: []
-
-  defp pieces(%Node{role: :text, text: t, token: tok}, theme),
-    do: [Cells.text(t, Theme.style(theme, tok))]
-
-  defp pieces(%Node{role: :tab} = n, theme), do: [tab_piece(n, theme)]
-  defp pieces(%Node{role: :divider}, _), do: []
-
-  defp pieces(%Node{role: :tabs, children: tabs}, theme),
-    do: Enum.map(tabs, &tab_piece(&1, theme))
-
-  defp pieces(%Node{children: cs}, theme), do: Enum.flat_map(cs, &pieces(&1, theme))
-
-  defp tab_piece(%Node{text: name, props: props}, theme) do
-    token = if Map.get(props, :active), do: :inverse, else: :muted
-    Cells.text(" #{Map.get(props, :index)}:#{name} ", Theme.style(theme, token))
-  end
-
-  defp join([], _), do: Cell.blank_row(0)
-
-  defp join(pieces, base) do
-    pieces |> Enum.intersperse(Cells.blank(1, base)) |> Cells.concat()
-  end
-
-  # exactly w cells: clip long rows, pad short ones with the status background
-  defp clip(row, w, base) do
-    n = Cell.cols(row)
-
-    cond do
-      n > w -> Cells.fit(row, 0, w)
-      n == w -> row
-      true -> Cells.concat([row, Cells.blank(w - n, base)])
-    end
-  end
 end

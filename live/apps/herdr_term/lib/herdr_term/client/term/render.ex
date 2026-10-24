@@ -12,6 +12,10 @@ defmodule HerdrTerm.Client.Term.Render do
   composing, so a burst of damage costs one fetch per frame and a keystroke one fetch.
   The host cursor is the focused pane's cached cursor placed in its rect.
 
+  Chrome: the layout (`Render.Chrome.layout/3`, guarded) is cached and recomputed only
+  when the scene's chrome or size or the theme changed; a failing layout keeps the old
+  one. When its hits change they go to Input as `{:chrome_hits, hits}`.
+
   Rows (inline): the rows listed in a scene's `{:inline, rows}` replace those rows of the
   pane's cache and unlisted rows keep it (`{:inline, []}` changes nothing);
   `{:rows, id, gen, rows}` merges the same way; the cursor is the scene's.
@@ -32,7 +36,7 @@ defmodule HerdrTerm.Client.Term.Render do
   alias HerdrScene.Protocol
   alias HerdrScene.Scene
   alias HerdrTerm.{Client, Kernel}
-  alias HerdrTerm.Client.Term.Render.Compose
+  alias HerdrTerm.Client.Term.Render.{Chrome, Compose}
   alias HerdrTerm.Client.Term.Theme
   alias HerdrTerm.Tty.Owner
 
@@ -53,7 +57,9 @@ defmodule HerdrTerm.Client.Term.Render do
     :timer,
     :notice,
     :theme,
+    :chrome_key,
     transport: :ref,
+    chrome: %{base: %{}, top: %{}, hits: [], dim: false},
     rows: %{},
     cursors: %{},
     refs: %{},
@@ -83,6 +89,7 @@ defmodule HerdrTerm.Client.Term.Render do
   def handle_cast({:input_up, pid}, state) do
     state = Map.merge(%__MODULE__{}, state)
     if state.session, do: send(pid, {:session, state.session})
+    if state.chrome.hits != [], do: send(pid, {:chrome_hits, state.chrome.hits})
     {:noreply, state}
   end
 
@@ -120,7 +127,7 @@ defmodule HerdrTerm.Client.Term.Render do
 
     cursors = Map.take(state.cursors, ids)
     state = %{state | scene: scene, rows: rows, dirty: dirty, refs: refs, cursors: cursors}
-    {:noreply, schedule(state)}
+    {:noreply, state |> chrome() |> schedule()}
   end
 
   def handle_info(:repaint, state) do
@@ -223,6 +230,26 @@ defmodule HerdrTerm.Client.Term.Render do
     if pid = Client.whereis(state.id, :input), do: send(pid, msg)
   end
 
+  # chrome layout, once per chrome/size/theme change
+
+  defp chrome(%{scene: scene, theme: theme} = state) do
+    key = {scene.chrome, scene.size, theme}
+
+    if key == state.chrome_key, do: state, else: relayout(state, key)
+  end
+
+  # a failing layout (logged by the Guard) keeps the old one until the next change
+  defp relayout(state, {chrome, size, theme} = key) do
+    case Guard.run_twice(Chrome, :layout, [chrome, size, theme], @compose) do
+      {:ok, layout} ->
+        if layout.hits != state.chrome.hits, do: send_input(state, {:chrome_hits, layout.hits})
+        %{state | chrome: layout, chrome_key: key}
+
+      {:failed, _} ->
+        %{state | chrome_key: key}
+    end
+  end
+
   # pacing
 
   defp schedule(%{scene: nil} = state), do: state
@@ -243,8 +270,10 @@ defmodule HerdrTerm.Client.Term.Render do
 
   defp render(state) do
     state = Enum.reduce(state.dirty, %{state | dirty: MapSet.new()}, &fetch(&2, &1))
+    # a no-op unless the theme changed since the scene (the key compare is a pointer check)
+    state = chrome(state)
     scene = state.scene
-    args = [scene, state.rows, state.cursors, state.theme]
+    args = [scene, state.rows, state.cursors, state.theme, state.chrome]
 
     case Guard.run_twice(Compose, :screen, args, @compose) do
       {:ok, {frame, cursor}} ->

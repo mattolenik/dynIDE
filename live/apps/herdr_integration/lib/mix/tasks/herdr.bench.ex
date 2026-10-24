@@ -11,7 +11,7 @@ if Mix.env() == :test do
 
       1. keystroke -> glass, idle, fast path and forced slow path
       2. second client: a key typed in client A, timed until client B (80x24) shows it
-      3. frame cost (`Compose.frame/3` + `Fake.Blit.frame/3`) at `--size`, 1 vs 15 full panes
+      3. frame cost (`Compose.frame/4` + `Fake.Blit.frame/3`) at `--size`, 1 vs 15 full panes
       4. scheduler stall and typing latency while 15 panes each get 100MiB of output
 
     Prints a markdown table and writes `_build/bench/m3.json` (`m3-real.json` with
@@ -20,8 +20,9 @@ if Mix.env() == :test do
     terminal and the frame-cost geometry. `--quick` (or `HERDR_BENCH_QUICK=1`)
     shrinks every metric 10x. `--flood-mb N` sets the bytes per flooded pane (MiB,
     default 100). `--compose raw|inline|budget` picks how frame cost calls Compose:
-    `raw` (default) is M3's direct `Compose.frame/3`; `inline` and `budget` go through
-    `HerdrReload.Guard.run/4` on `Compose.screen/4` like Render, without and with its
+    `raw` (default) is M3's direct `Compose.frame/4` (chrome layout precomputed, as
+    Render caches it); `inline` and `budget` go through
+    `HerdrReload.Guard.run/4` on `Compose.screen/5` like Render, without and with its
     50ms budget (a worker per frame). With `--kernel real` the typed pane runs `cat` (tty echo) and each
     flooded pane runs `cat` of one generated file (in `HERDR_REAL_KERNEL_TMP`, default
     the system tmp dir). Compiled only in `:test` because it drives the clients with
@@ -35,7 +36,7 @@ if Mix.env() == :test do
     alias HerdrServer.Kernel.Fake.{Keeper, Pty}
     alias HerdrServer.Pane.Rows
     alias HerdrTerm.Client
-    alias HerdrTerm.Client.Term.Render.Compose
+    alias HerdrTerm.Client.Term.Render.{Chrome, Compose}
     alias HerdrTerm.Client.Term.Theme
     alias HerdrTerm.Kernel.Fake.{Blit, Tty}
 
@@ -369,6 +370,7 @@ if Mix.env() == :test do
       {cols, rows} = cfg.size
       {:ok, tty} = Tty.open(%{size: {cols, rows, 0, 0}})
       theme = Theme.default()
+      theme = {theme, Chrome.layout(scene.chrome, scene.size, theme)}
       full = full_rows(scene, "x")
       alt = full_rows(scene, "y")
       [%{id: one} | _] = scene.panes
@@ -393,12 +395,15 @@ if Mix.env() == :test do
       %{panes: length(scene.panes), repaint: repaint, dirty: dirty}
     end
 
-    defp compose("raw", scene, rows, theme), do: Compose.frame(scene, rows, theme)
-    defp compose("inline", scene, rows, theme), do: guarded(scene, rows, theme, [])
-    defp compose("budget", scene, rows, theme), do: guarded(scene, rows, theme, budget_ms: 50)
+    # the chrome layout is computed once per chrome change in Render, so once here
+    defp compose("raw", scene, rows, {theme, chrome}),
+      do: Compose.frame(scene, rows, theme, chrome)
 
-    defp guarded(scene, rows, theme, opts) do
-      args = [scene, rows, %{}, theme]
+    defp compose("inline", scene, rows, tc), do: guarded(scene, rows, tc, [])
+    defp compose("budget", scene, rows, tc), do: guarded(scene, rows, tc, budget_ms: 50)
+
+    defp guarded(scene, rows, {theme, chrome}, opts) do
+      args = [scene, rows, %{}, theme, chrome]
       {:ok, {frame, _}} = HerdrReload.Guard.run(Compose, :screen, args, [scan: false] ++ opts)
       frame
     end
@@ -661,7 +666,7 @@ if Mix.env() == :test do
       (cursor kept inside both rects; B detaches afterwards). Slow path = fast-path
       `:persistent_term` republished with `passthrough: false` (re-asserted before each key),
       so keys go client Input -> Client.Session -> App.Store. Client frames are paced at
-      min_frame_interval_ms. Frame cost = `Compose.frame/3` + `Fake.Blit.frame/3`,
+      min_frame_interval_ms. Frame cost = `Compose.frame/4` + `Fake.Blit.frame/3`,
       #{cfg.warmup} warmup + #{cfg.iters} iterations, on a dedicated fake tty. #{String.trim_trailing(flood_method(cfg, st))}
 
       Environment: OTP #{env.otp}, Elixir #{env.elixir}, #{env.schedulers} schedulers, #{env.os}

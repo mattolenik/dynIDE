@@ -48,10 +48,10 @@ defmodule HerdrIntegration.StatusLineTest do
     assert text =~ "r3 2m tests 1 failed handoff graceful g2 w"
     assert String.ends_with?(text, "ctrl+b")
 
-    # 6 tabs go on the tab bar row, not the status row
+    # 6 tabs go on the tab bar row, not the status row; the "+" button does not fit
     tabs = Enum.reduce(1..5, app, fn _, a -> new_tab(a) end)
     [top | _] = rows = screen(tabs, %{client | notice: notice})
-    assert top =~ " 5:5   6:6 "
+    assert String.ends_with?(top, "   5    " <> " " <> "   6    …")
     assert List.last(rows) == text
 
     # 50 cols: handoff dropped, reload and tests kept, notice clipped, hint intact

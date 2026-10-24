@@ -7,7 +7,12 @@ defmodule HerdrTerm.Client.Term.Theme do
   alias HerdrScene.Cell
   alias HerdrTerm.Cells
 
-  @type t :: %{styles: %{atom => Cell.t()}, glyphs: %{atom => binary}}
+  @type glyphs :: %{atom => binary | %{atom => binary}}
+  @type t :: %{styles: %{atom => Cell.t()}, glyphs: glyphs}
+
+  # badge glyphs per agent state (inventory §2), for `indicators: :dots | :symbols`
+  @state_dots %{blocked: "●", done: "●", working: "●", idle: "○", unknown: "·"}
+  @state_symbols %{blocked: "×", done: "✓", working: "◐", idle: "○", unknown: "·"}
 
   @spec default() :: t
   def default do
@@ -19,9 +24,38 @@ defmodule HerdrTerm.Client.Term.Theme do
         focus: Cells.style(fg: {:palette, 2}),
         warning: Cells.style(fg: {:palette, 3}),
         error: Cells.style(fg: {:palette, 1}),
-        inverse: Cells.style(attrs: [:inverse])
+        inverse: Cells.style(attrs: [:inverse]),
+        success: Cells.style(fg: {:palette, 2}),
+        info: Cells.style(fg: {:palette, 6}),
+        strong: Cells.style(attrs: [:bold]),
+        # tab bar: panel bg on accent (active), overlay0 on surface0 (others)
+        selected: Cells.style(fg: {:palette, 0}, bg: {:palette, 4}),
+        surface: Cells.style(fg: {:palette, 7}, bg: {:palette, 8})
       },
-      glyphs: %{h: "─", v: "│", tl: "┌", tr: "┐", bl: "└", br: "┘"}
+      glyphs: %{
+        h: "─",
+        v: "│",
+        tl: "┌",
+        tr: "┐",
+        bl: "└",
+        br: "┘",
+        edge: "│",
+        collapse: "«",
+        expand: "»",
+        bullet: "●",
+        hollow: "○",
+        dot: "·",
+        sep: " · ",
+        cursor: "▸",
+        check: "✓",
+        enter: "↵",
+        ellipsis: "…",
+        rule: "─",
+        tree_mid: "├─",
+        tree_end: "└─",
+        state_dots: @state_dots,
+        state_symbols: @state_symbols
+      }
     }
   end
 
@@ -33,6 +67,6 @@ defmodule HerdrTerm.Client.Term.Theme do
   def border_style(theme, true), do: style(theme, :focus)
   def border_style(theme, false), do: style(theme, :muted)
 
-  @spec glyphs(t) :: %{atom => binary}
+  @spec glyphs(t) :: glyphs
   def glyphs(%{glyphs: glyphs}), do: glyphs
 end

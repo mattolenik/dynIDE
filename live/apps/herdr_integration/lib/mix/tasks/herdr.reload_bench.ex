@@ -48,7 +48,7 @@ if Mix.env() == :test do
 
     @view "apps/herdr_server/lib/herdr_server/view.ex"
     @status "apps/herdr_server/lib/herdr_server/view/status.ex"
-    @compose "apps/herdr_term/lib/herdr_term/client/term/render/compose.ex"
+    @tabs "apps/herdr_term/lib/herdr_term/client/term/render/chrome/tabs.ex"
     @ui "apps/herdr_server/lib/herdr_server/app/ui.ex"
     @session "apps/herdr_server/lib/herdr_server/app/session.ex"
     @node "apps/herdr_scene/lib/herdr_scene/scene/node.ex"
@@ -172,17 +172,14 @@ if Mix.env() == :test do
     # -- scenarios ------------------------------------------------------------
 
     defp scenario("render", client, cfg) do
-      old = ~S|Cells.text(" #{Map.get(props, :index)}:#{name} ", Theme.style(theme, token))|
+      # the tab label line of the tab bar rasterizer; the marker lands in every tab
+      old = ~S[label = to_string(name || "")]
 
       edit_loop(
         client,
         cfg,
-        @compose,
-        fn i ->
-          {old,
-           ~S|Cells.text(" #{Map.get(props, :index)}:#{name}| <>
-             "rmk#{i}z" <> ~S| ", Theme.style(theme, token))|}
-        end,
+        @tabs,
+        fn i -> {old, old <> ~s| <> "rmk#{i}z"|} end,
         &"rmk#{&1}z"
       )
     end
