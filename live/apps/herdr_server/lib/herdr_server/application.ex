@@ -56,6 +56,8 @@ defmodule HerdrServer.Application do
 
     with {:ok, pid} <- Supervisor.start_link(children, opts) do
       :ok = Handoff.Link.restored()
+      # held back in a VM that could have been a standby (config/runtime.exs)
+      :ok = HerdrReload.Application.start_deferred()
       Logger.info("herdr-live started")
       {:ok, pid}
     end
