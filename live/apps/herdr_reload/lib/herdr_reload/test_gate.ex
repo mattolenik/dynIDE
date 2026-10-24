@@ -59,12 +59,19 @@ defmodule HerdrReload.TestGate do
     end
   end
 
+  # lib/<app>/x.ex is tested by test/x_test.exs (the repo's convention) or test/<app>/x_test.exs
   defp lib_test(root, app, rest) do
-    base = Path.join(rest)
+    if String.ends_with?(List.last(rest), ".ex") do
+      stem = rest |> Path.join() |> String.replace_suffix(".ex", "_test.exs")
+      flat = if hd(rest) == app and length(rest) > 1, do: [Path.join(tl(rest))], else: []
+      flat = Enum.map(flat, &String.replace_suffix(&1, ".ex", "_test.exs"))
 
-    if String.ends_with?(base, ".ex"),
-      do: test_file(root, app, [String.replace_suffix(base, ".ex", "_test.exs")]),
-      else: []
+      Enum.find_value([stem | flat], [], fn cand ->
+        with [] <- test_file(root, app, [cand]), do: nil
+      end)
+    else
+      []
+    end
   end
 
   defp test_file(root, app, rest) do
@@ -189,7 +196,13 @@ defmodule HerdrReload.TestGate do
       left ->
         # exactly the pid we started, never by name
         System.cmd("kill", ["-9", Integer.to_string(pid)], stderr_to_stdout: true)
-        Port.close(port)
+        # the port closes itself on the exit status
+        receive do
+          {^port, {:exit_status, _}} -> :ok
+        after
+          2_000 -> :ok
+        end
+
         :timeout
     end
   end

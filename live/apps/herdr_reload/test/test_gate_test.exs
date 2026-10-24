@@ -6,7 +6,7 @@ defmodule HerdrReload.TestGateTest do
 
   setup do
     root = Path.join(System.tmp_dir!(), "gate_#{System.unique_integer([:positive])}")
-    for f <- ~w(apps/a/lib/a/x.ex apps/a/lib/a/y.ex apps/a/test/a/x_test.exs apps/b/lib/z.ex) do
+    for f <- ~w(apps/a/lib/a/x.ex apps/a/lib/a/y.ex apps/a/lib/a/w.ex apps/a/test/w_test.exs apps/a/test/a/x_test.exs apps/b/lib/z.ex) do
       File.mkdir_p!(Path.dirname(Path.join(root, f)))
       File.write!(Path.join(root, f), "")
     end
@@ -26,6 +26,8 @@ defmodule HerdrReload.TestGateTest do
 
     both = [p(root, "apps/a/lib/a/x.ex"), p(root, "apps/a/test/a/x_test.exs")]
     assert TestGate.tests_for(both, root) == %{a => ["test/a/x_test.exs"]}
+    # the repo's convention drops the app-namespace dir
+    assert TestGate.tests_for([p(root, "apps/a/lib/a/w.ex")], root) == %{a => ["test/w_test.exs"]}
     assert TestGate.tests_for([p(root, "apps/a/lib/a/y.ex")], root) == %{}
     assert TestGate.tests_for([p(root, "apps/b/lib/z.ex")], root) == %{}
     assert TestGate.tests_for([p(root, "config/config.exs"), "/elsewhere/x.ex"], root) == %{}
