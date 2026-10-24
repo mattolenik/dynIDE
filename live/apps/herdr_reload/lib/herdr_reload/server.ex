@@ -113,7 +113,40 @@ defmodule HerdrReload.Server do
        ring: Ring.new(Keyword.get(opts, :ring_depth, 8)),
        last_rolled_back: :none,
        next_id: 1
-     }}
+     }, {:continue, :sync_loaded}}
+  end
+
+  # Ruling 28: a promoted standby runs the code it preloaded at boot, while edits the
+  # primary reloaded since then are on disk (this cache). Load those, so the cache is
+  # what runs; no batch is recorded (the old code's beam is gone). NIF modules are never
+  # reloaded (their library stays as loaded); a load blocked by old code is logged.
+  @impl true
+  def handle_continue(:sync_loaded, s) do
+    stale =
+      for {mod, bin} <- s.cache,
+          :code.is_loaded(mod) != false,
+          {:ok, {_, md5}} <- [:beam_lib.md5(bin)],
+          md5 != mod.module_info(:md5),
+          not nif?(bin),
+          do: {mod, bin}
+
+    errors = load_all(stale, s.loader_opts)
+
+    for {mod, e} <- errors,
+        do: Logger.warning("reload sync of #{inspect(mod)} failed: #{inspect(e)}")
+
+    if stale != [],
+      do: Logger.info("reload loaded #{length(stale) - length(errors)} modules changed on disk")
+
+    {:noreply, s}
+  end
+
+  # unreadable imports: leave it alone too
+  defp nif?(bin) do
+    case :beam_lib.chunks(bin, [:imports]) do
+      {:ok, {_, [imports: i]}} -> {:erlang, :load_nif, 2} in i
+      _ -> true
+    end
   end
 
   @impl true

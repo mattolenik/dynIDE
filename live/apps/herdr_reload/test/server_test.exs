@@ -302,6 +302,44 @@ defmodule HerdrReload.ServerTest do
     assert [_, _] = rejected(dir, 2, Toy.V)
   end
 
+  # ruling 28: a promoted standby runs the code it loaded at boot, older than the disk
+  test "start loads loaded modules whose beam on disk differs, never a NIF module" do
+    x_src = fn n ->
+      "defmodule Toy.X do\n  def x, do: #{n}\n  def load, do: :erlang.load_nif(~c\"none\", 0)\nend\n"
+    end
+
+    {dir, _} = toy!(:toy_s_stale)
+    HerdrReload.ReloadCase.write_source!(dir, "lib/x.ex", x_src.(1))
+    assert {:ok, _} = Server.reload([path(dir, "x")])
+    old = for m <- [Toy.V, Toy.X], into: %{}, do: {m, File.read!(beam!(:toy_s_stale, dir, m))}
+
+    # another VM (the primary) compiles v 2 and x 2 to disk
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    HerdrReload.ReloadCase.write_source!(dir, "lib/x.ex", x_src.(2))
+    assert {:ok, _} = Server.reload([path(dir, "v"), path(dir, "x")])
+    stop_supervised!(Server)
+
+    # this VM still runs the code it loaded before (the standby's boot-time preload)
+    for {m, bin} <- old do
+      unload(m)
+      {:module, ^m} = :code.load_binary(m, ~c"#{m}.beam", bin)
+    end
+
+    assert {v(), Module.concat([Toy.X]).x()} == {1, 1}
+    looper = spawn(fn -> Module.concat([Toy.V]).loop() end)
+
+    start_supervised!({Server, project_dir: dir, app: :toy_s_stale})
+    # a call is served after the start-up sync
+    assert Server.batches() == []
+    assert v() == 2
+    assert Module.concat([Toy.X]).x() == 1
+    assert Process.alive?(looper)
+    send(looper, :stop)
+
+    # the disk is the server's cache: the same source again is no change
+    assert Server.reload([path(dir, "v")]) == :noop
+  end
+
   test "a module new in a rolled-back batch leaves only its rejected beam" do
     {dir, _} = toy!(:toy_s_disk_new)
     HerdrReload.ReloadCase.write_source!(dir, "lib/x.ex", "defmodule Toy.X do\nend\n")
@@ -359,7 +397,10 @@ defmodule HerdrReload.ServerTest do
     assert Server.last_rolled_back() == :none
     HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
     HerdrReload.ReloadCase.write_source!(dir, "lib/w.ex", w_src(2))
-    assert {:ok, %Batch{id: 2, state_at_load: 2}} = Server.reload([path(dir, "v"), path(dir, "w")])
+
+    assert {:ok, %Batch{id: 2, state_at_load: 2}} =
+             Server.reload([path(dir, "v"), path(dir, "w")])
+
     HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(3))
     assert {:ok, %Batch{id: 3, state_at_load: 3}} = Server.reload([path(dir, "v")])
 
