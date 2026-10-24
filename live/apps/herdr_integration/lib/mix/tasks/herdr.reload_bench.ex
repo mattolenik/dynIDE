@@ -53,7 +53,7 @@ if Mix.env() == :test do
     @node "apps/herdr_scene/lib/herdr_scene/scene/node.ex"
     @actions "apps/herdr_server/lib/herdr_server/app/actions.ex"
 
-    @view_left "left = [mode(mode), tabs(ws)]"
+    @view_left "left = [mode(client.mode), tabs(ws)]"
 
     @impl Mix.Task
     def run(args) do
