@@ -1,4 +1,5 @@
 pub mod cell;
+pub mod vt;
 
 use rustler::Error;
 
