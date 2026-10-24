@@ -225,14 +225,25 @@ defmodule HerdrTerm.Tty.OwnerTest do
       assert Process.whereis(Protocol.local_client_name()) == nil
     end
 
-    test "a client that fails to start counts against the limit", %{ep: ep} do
-      opts = [
-        endpoint: ep,
-        tty_opts: %{error: :enxio},
-        restart_delay_ms: 10,
-        max_restarts: 3,
-        restart_window_ms: 60_000
-      ]
+    test "a client that cannot open the host tty is not restarted", %{ep: ep} do
+      opts = [endpoint: ep, tty_opts: %{error: :enxio}, restart_delay_ms: 10, max_restarts: 3]
+
+      log =
+        capture_log([level: :info], fn -> assert HerdrTerm.Application.run_local(opts) == :ok end)
+
+      # environmental (no host terminal): logged once, the VM runs headless
+      assert [_] = Regex.scan(~r/terminal client not started: \{:tty_open, :enxio\}/, log)
+      refute log =~ "proc=local_client"
+      assert Process.whereis(Protocol.local_client_name()) == nil
+    end
+
+    test "a client that fails to start otherwise counts against the limit", %{ep: ep} do
+      # the name is taken: start_child fails with {:already_started, _}, not a tty error
+      squatter = spawn(fn -> Process.sleep(:infinity) end)
+      Process.register(squatter, Protocol.local_client_name())
+      on_exit(fn -> Process.exit(squatter, :kill) end)
+
+      opts = [endpoint: ep, restart_delay_ms: 10, max_restarts: 3, restart_window_ms: 60_000]
 
       log =
         capture_log([level: :info], fn -> assert HerdrTerm.Application.run_local(opts) == :ok end)
@@ -240,7 +251,6 @@ defmodule HerdrTerm.Tty.OwnerTest do
       assert length(Regex.scan(~r/proc=local_client action=restarted/, log)) == 3
       assert length(Regex.scan(~r/terminal client not started/, log)) == 4
       assert log =~ ~r/proc=local_client action=gave_up/
-      assert Process.whereis(Protocol.local_client_name()) == nil
     end
 
     test "a deliberate stop of the local client is not restarted", %{ep: ep} do

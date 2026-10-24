@@ -50,7 +50,8 @@ defmodule HerdrTerm.Application do
   # handoff `:begin` is started again (it repaints) if the handoff is aborted; a client
   # that crashed (any reason but normal/shutdown) is restarted after `restart_delay_ms`
   # (200), at most `max_restarts` (3) per `restart_window_ms` (60 000), then the VM runs
-  # headless. The starter ends when the client stops otherwise or the handoff completes.
+  # headless. A start that fails to open the host tty (`{:tty_open, _}`, no terminal) is
+  # not retried: the VM runs headless at once. The starter ends when the client stops otherwise or the handoff completes.
   @spec run_local(keyword) :: :ok
   def run_local(opts), do: run_local(opts, [])
 
@@ -73,8 +74,15 @@ defmodule HerdrTerm.Application do
         end
 
       {:error, reason} ->
-        # a start failure counts as a crash: a rollback may have fixed the code by then
-        restart_local(opts, restarts, reason)
+        case why(reason) do
+          # no host terminal (e.g. enxio): environmental, already logged; run headless
+          {:tty_open, _} ->
+            :ok
+
+          # any other start failure counts as a crash: a rollback may have fixed the code
+          _ ->
+            restart_local(opts, restarts, reason)
+        end
     end
 
     :ok
