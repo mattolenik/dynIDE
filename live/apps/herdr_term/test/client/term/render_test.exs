@@ -29,6 +29,9 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     %{render: Client.render(sup), tty: tty, rows: rows, session: session}
   end
 
+  # the pane's first row: screen row 0 is the tab bar
+  defp top(tty), do: Enum.at(Blit.screen(tty), 1)
+
   defp set_rows(agent, id, text),
     do: Agent.update(agent, &Map.put(&1, id, {0, {Cells.text(text, @s)}, nil}))
 
@@ -36,7 +39,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     set_rows(rows, 1, "hello")
     send(render, {:scene, Fixture.load("single_pane_80x24")})
     assert_receive {:frame, _, %{repaint: true}}
-    assert hd(Blit.screen(tty)) =~ "hello"
+    assert top(tty) =~ "hello"
   end
 
   test "a failing Compose drops the frame and keeps the render state", %{render: render} do
@@ -61,7 +64,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     Agent.update(rows, &Map.put(&1, 1, :boom))
     send(render, {:damage, 1, 2})
     assert_receive {:frame, _, _}
-    assert hd(Blit.screen(tty)) =~ "hello"
+    assert top(tty) =~ "hello"
   end
 
   test "damage is paced and the last frame has the last rows", %{
@@ -80,7 +83,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     assert_receive {:frame, _, %{repaint: false}}
     Process.sleep(50)
     assert length(drain()) <= 1
-    assert hd(Blit.screen(tty)) =~ "v50"
+    assert top(tty) =~ "v50"
   end
 
   test "a dead session re-attaches and repaints", %{render: render, session: session} do
@@ -151,10 +154,10 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     inline = fn rows -> %{scene | panes: [%{p | rows: {:inline, rows}}]} end
     send(render, {:scene, inline.([{0, Cells.text("seeded", @s)}])})
     assert_receive {:frame, _, _}
-    assert hd(Blit.screen(tty)) =~ "seeded"
+    assert top(tty) =~ "seeded"
     send(render, {:scene, %{inline.([]) | chrome: nil}})
     assert_receive {:frame, _, _}
-    assert hd(Blit.screen(tty)) =~ "seeded"
+    assert top(tty) =~ "seeded"
   end
 
   test "scene with {:inline, [{1, b}]} after a full pane keeps row 0", %{render: render, tty: tty} do
@@ -190,7 +193,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     assert_receive {:frame, _, _}
     send(render, {:rows, 1, 0, [{0, Cells.text("inline", @s)}]})
     assert_receive {:frame, _, %{repaint: false}}
-    assert hd(Blit.screen(tty)) =~ "inline"
+    assert top(tty) =~ "inline"
     notice = %{level: :info, text: "hi"}
     send(render, {:notice, notice})
     assert :sys.get_state(render).notice == notice

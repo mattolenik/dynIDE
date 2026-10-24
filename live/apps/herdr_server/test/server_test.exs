@@ -179,7 +179,7 @@ defmodule HerdrServer.ServerTest do
     Process.exit(pid, :kill)
     assert_receive {^c, {:damage, 1, _}}, 100
     {_gen, rows, _cursor} = Rows.fetch(1)
-    assert tuple_size(rows) == 23
+    assert tuple_size(rows) == 22
     assert [{new, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
     assert new != pid
   end
@@ -190,15 +190,15 @@ defmodule HerdrServer.ServerTest do
     {c2, s2} = client(%{cols: 120, rows: 40})
     sc2 = scene(c2)
     assert hd(s1.panes).rect != hd(sc2.panes).rect
-    assert hd(sc2.panes).rect == %{x: 0, y: 0, w: 120, h: 39}
+    assert hd(sc2.panes).rect == %{x: 26, y: 1, w: 94, h: 38}
 
     input(s1pid, c1, 1, {:focus, true})
     assert_receive {^c1, {:ack, 1}}
-    assert vt_size(1) == {80, 23}
+    assert vt_size(1) == {54, 22}
 
     input(s2, c2, 1, {:focus, true})
     assert_receive {^c2, {:ack, 1}}
-    assert vt_size(1) == {120, 39}
+    assert vt_size(1) == {94, 38}
   end
 
   test "presses take the session fast path, consumed releases are swallowed per client" do
@@ -251,13 +251,16 @@ defmodule HerdrServer.ServerTest do
 
   test "inline clients get full rows and cursors in scenes, and rows on damage" do
     {c, s} = client(%{cols: 80, rows: 24}, :inline)
-    assert %Scene{panes: [%{rows: {:inline, rows}, cursor: %{x: 0}}], cursor: %{x: 0}} = scene(c)
-    assert length(rows) == 23
+    # the scene cursor is in screen cells: the pane starts right of the sidebar, under the tabs
+    assert %Scene{panes: [%{rows: {:inline, rows}, cursor: %{x: 0}}], cursor: %{x: 26, y: 1}} =
+             scene(c)
+
+    assert length(rows) == 22
     flush(c)
 
     # the cursor moves: the scene is re-pushed with the new rows and cursor
     input(s, c, 1, Event.key("y"))
-    assert %Scene{panes: [%{rows: {:inline, rows}}], cursor: %{x: 1, y: 0}} = scene(c)
+    assert %Scene{panes: [%{rows: {:inline, rows}}], cursor: %{x: 27, y: 1}} = scene(c)
     assert text(rows |> Map.new() |> Map.fetch!(0)) =~ ~r/^y/
 
     # cursor unchanged: only rows
@@ -265,7 +268,7 @@ defmodule HerdrServer.ServerTest do
     Fake.Vt.force_full(vt(1))
     Fake.Pty.output(pty(1), "")
     assert_receive {^c, {:rows, 1, _, rows}}, 500
-    assert length(rows) == 23
+    assert length(rows) == 22
     assert Protocol.validate_server_msg({:rows, 1, 0, rows}) == :ok
   end
 
@@ -696,12 +699,12 @@ defmodule HerdrServer.ServerTest do
   test "when the driving client leaves, the pty size goes back to the remaining client" do
     {c1, _s1} = client()
     scene(c1)
-    assert vt_size(1) == {80, 23}
+    assert vt_size(1) == {54, 22}
     {c2, s2} = client(%{cols: 120, rows: 40})
     scene(c2)
-    assert vt_size(1) == {120, 39}
+    assert vt_size(1) == {94, 38}
     send(s2, {:detach})
-    assert eventually(fn -> vt_size(1) == {80, 23} end)
+    assert eventually(fn -> vt_size(1) == {54, 22} end)
   end
 
   test "the driving client's cell_px reaches the pty" do
@@ -712,7 +715,7 @@ defmodule HerdrServer.ServerTest do
     :erlang.trace(pane, true, [:call])
     input(s, c, 1, {:resize, %{cols: 100, rows: 30, cell_px: {9, 18}}})
     assert_receive {^c, {:ack, 1}}
-    assert_receive {:trace, ^pane, :call, {Fake.Pty, :resize, [_, 100, 29, {9, 18}]}}, 500
+    assert_receive {:trace, ^pane, :call, {Fake.Pty, :resize, [_, 74, 28, {9, 18}]}}, 500
     :erlang.trace(pane, false, [:call])
   end
 

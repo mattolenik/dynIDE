@@ -9,6 +9,43 @@
     props: %{},
     children: [
       %HerdrScene.Scene.Node{
+        role: :tabs,
+        id: :tabs,
+        rect: %{x: 26, y: 0, h: 1, w: 54},
+        text: nil,
+        token: nil,
+        props: %{},
+        children: [
+          %HerdrScene.Scene.Node{
+            role: :tab,
+            id: {:tab, 1},
+            rect: nil,
+            text: "1",
+            token: nil,
+            props: %{active: false, index: 1, zoomed: false},
+            children: []
+          },
+          %HerdrScene.Scene.Node{
+            role: :tab,
+            id: {:tab, 2},
+            rect: nil,
+            text: "2",
+            token: nil,
+            props: %{active: true, index: 2, zoomed: false},
+            children: []
+          },
+          %HerdrScene.Scene.Node{
+            role: :button,
+            id: :new_tab,
+            rect: nil,
+            text: nil,
+            token: nil,
+            props: %{action: :new_tab},
+            children: []
+          }
+        ]
+      },
+      %HerdrScene.Scene.Node{
         role: :status,
         id: :status,
         rect: %{x: 0, y: 23, h: 1, w: 80},
@@ -24,34 +61,6 @@
             token: :default,
             props: %{mode: :terminal},
             children: []
-          },
-          %HerdrScene.Scene.Node{
-            role: :tabs,
-            id: :tabs,
-            rect: nil,
-            text: nil,
-            token: nil,
-            props: %{},
-            children: [
-              %HerdrScene.Scene.Node{
-                role: :tab,
-                id: {:tab, 1},
-                rect: nil,
-                text: "1",
-                token: nil,
-                props: %{active: false, index: 1},
-                children: []
-              },
-              %HerdrScene.Scene.Node{
-                role: :tab,
-                id: {:tab, 2},
-                rect: nil,
-                text: "2",
-                token: nil,
-                props: %{active: true, index: 2},
-                children: []
-              }
-            ]
           },
           %HerdrScene.Scene.Node{
             role: :text,
@@ -79,7 +88,7 @@
   panes: [
     %HerdrScene.Scene.Pane{
       id: 2,
-      rect: %{x: 0, y: 0, h: 23, w: 80},
+      rect: %{x: 26, y: 1, h: 22, w: 54},
       border: nil,
       rows: {:ref, 2, 0},
       cursor: nil,

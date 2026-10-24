@@ -19,13 +19,16 @@ defmodule HerdrServer.App.Actions do
 
   alias HerdrServer.App.{Commands, Focus, Keybinds, Session, Ui}
   alias HerdrServer.Layout
+  alias HerdrServer.View.Frame
 
   @type app :: %{session: Session.t(), focus: Focus.t(), ui: Ui.t()}
   @type effect :: tuple()
 
   @spec init(%{cols: pos_integer(), rows: pos_integer()}) :: {app(), [effect()]}
   def init(%{cols: c, rows: r}) do
-    area = %{x: 0, y: 0, w: c, h: max(r - 1, 1)}
+    size = %{cols: c, rows: r}
+    ui = %Ui{keybinds: Keybinds.default()}
+    area = area(size, ui)
     layout = Layout.new(1)
 
     session = %Session{
@@ -40,14 +43,11 @@ defmodule HerdrServer.App.Actions do
       active_workspace: 1,
       panes: %{1 => %{title: nil, layout_gen: 0}},
       next_id: 2,
+      size: size,
       area: area
     }
 
-    app = %{
-      session: session,
-      focus: %Focus{pane: 1},
-      ui: %Ui{keybinds: Keybinds.default()}
-    }
+    app = %{session: session, focus: %Focus{pane: 1}, ui: ui}
 
     {app, [{:spawn, 1, size_of(layout, area, 1)}]}
   end
@@ -63,7 +63,7 @@ defmodule HerdrServer.App.Actions do
   def apply(app, {:focus, b}) when is_boolean(b), do: to_focused(app, :focus_report, b)
 
   def apply(app, {:resize, %{cols: c, rows: r}}),
-    do: {put_in(app.session.area, %{x: 0, y: 0, w: c, h: max(r - 1, 1)}), []}
+    do: {reframe(put_in(app.session.size, %{cols: c, rows: r})), []}
 
   def apply(app, {:mouse, m} = event) do
     hit = Enum.find(content_rects(app), &inside?(&1.rect, m.x, m.y))
@@ -211,7 +211,20 @@ defmodule HerdrServer.App.Actions do
   @spec detach(app()) :: {app(), [effect()]}
   def detach(app), do: {app, [{:detach}]}
 
+  @doc "Collapses or expands the sidebar (herdr `toggle_sidebar`); the pane area follows."
+  @spec toggle_sidebar(app()) :: {app(), [effect()]}
+  def toggle_sidebar(app),
+    do: {reframe(update_in(app.ui.sidebar.collapsed, &(not &1))), []}
+
   # --- helpers ---
+
+  # the driver's pane area, at least 1x1 so a spawn never asks for an empty pty
+  defp area(size, ui) do
+    r = Frame.regions(size, ui).panes
+    %{r | w: max(r.w, 1), h: max(r.h, 1)}
+  end
+
+  defp reframe(app), do: put_in(app.session.area, area(app.session.size, app.ui))
 
   defp ws(%{session: s}), do: Enum.find(s.workspaces, &(&1.id == s.active_workspace))
 

@@ -714,8 +714,9 @@ def herdr_stress():
         cols, rows = 120, 40
         h = Herdr(tmp, cols, rows)
         h.start()
-        # model of the pane rects (status row excluded); only the centres are used
-        panes = [(0.0, 0.0, float(cols), float(rows - 1))]
+        # model of the pane rects (right of the 26-col sidebar, under the tab bar, above the
+        # status row); only the centres are used
+        panes = [(26.0, 1.0, float(cols - 26), float(rows - 2))]
         while len(panes) < 15:
             x, y, w, hh = max(panes, key=lambda r: r[2] * r[3])
             panes.remove((x, y, w, hh))

@@ -40,7 +40,8 @@ defmodule HerdrServer.App.Keybinds do
         {"-", []} => a(:split, [:vertical]),
         {"x", []} => a(:close_pane),
         {"r", []} => {Keys, :enter_mode, [:resize]},
-        {"q", []} => a(:detach)
+        {"q", []} => a(:detach),
+        {"b", []} => a(:toggle_sidebar)
       }
       |> Map.merge(Map.new(1..9, &{{Integer.to_string(&1), []}, a(:switch_tab, [&1])}))
       |> Map.merge(Map.new(nav, fn {k, d} -> {{k, []}, a(:focus_dir, [d])} end))

@@ -9,21 +9,27 @@ defmodule HerdrServer.ViewTest do
   alias HerdrServer.Client.State
   alias HerdrServer.RuntimeStatus
   alias HerdrServer.View
+  alias HerdrServer.View.Status
 
   defp client(c, r, transport \\ :ref, mode \\ :terminal),
     do: %State{size: %{cols: c, rows: r}, transport: transport, mode: mode}
 
   defp status(scene), do: Node.find(scene.chrome, [:status])
   defp child(scene, id), do: Node.find(scene.chrome, [:status, id])
+  defp tabs_node(scene), do: Node.find(scene.chrome, [:tabs])
+  defp dividers(scene), do: Enum.filter(scene.chrome.children, &(&1.role == :divider))
 
   test "single pane" do
     s = View.compute(fresh(80, 24), client(80, 24))
     assert :ok = Scene.validate(s)
 
-    assert [%{id: 1, rect: %{x: 0, y: 0, w: 80, h: 23}, border: nil, rows: {:ref, 1, 0}}] =
+    assert [%{id: 1, rect: %{x: 26, y: 1, w: 54, h: 22}, border: nil, rows: {:ref, 1, 0}}] =
              s.panes
 
     assert status(s).rect == %{x: 0, y: 23, w: 80, h: 1}
+    assert tabs_node(s).rect == %{x: 26, y: 0, w: 54, h: 1}
+    assert [:mode | _] = Enum.map(status(s).children, & &1.id)
+    refute Enum.any?(status(s).children, &(&1.role == :tabs))
     assert s.focus == %{pane: 1, chrome: nil}
     assert child(s, :hint).text == "ctrl+b"
   end
@@ -31,9 +37,12 @@ defmodule HerdrServer.ViewTest do
   test "two panes side by side" do
     s = View.compute(pfx(fresh(120, 40), "v"), client(120, 40))
     assert :ok = Scene.validate(s)
-    assert [%{rect: %{x: 1, y: 1, w: 58, h: 37}}, %{rect: %{x: 61, y: 1, w: 58, h: 37}}] = s.panes
-    assert [%{border: %{rect: %{x: 0, w: 60}}}, _] = s.panes
-    assert [%Node{id: {:divider, []}, rect: %{x: 60, y: 0, w: 1, h: 39}}] = tl(s.chrome.children)
+
+    assert [%{rect: %{x: 27, y: 2, w: 45, h: 36}}, %{rect: %{x: 74, y: 2, w: 45, h: 36}}] =
+             s.panes
+
+    assert [%{border: %{rect: %{x: 26, w: 47}}}, _] = s.panes
+    assert [%Node{id: {:divider, []}, rect: %{x: 73, y: 1, w: 1, h: 38}}] = dividers(s)
   end
 
   test "per-client rects, same pane ids" do
@@ -62,8 +71,13 @@ defmodule HerdrServer.ViewTest do
 
   test "tabs mark the active one" do
     s = View.compute(pfx(fresh(80, 24), "c"), client(80, 24))
-    tabs = child(s, :tabs).children
-    assert [%{props: %{index: 1, active: false}}, %{props: %{index: 2, active: true}}] = tabs
+
+    assert [
+             %{role: :tab, props: %{index: 1, active: false, zoomed: false}},
+             %{role: :tab, props: %{index: 2, active: true}},
+             %{role: :button, id: :new_tab, props: %{action: :new_tab}}
+           ] = tabs_node(s).children
+
     assert s.focus.pane == 2
   end
 
@@ -109,25 +123,41 @@ defmodule HerdrServer.ViewTest do
   end
 
   test "tiny clients never raise and validate" do
-    for {c, r} <- [{5, 2}, {1, 1}, {3, 1}], app <- [fresh(80, 24), many(fresh(80, 24), 6)] do
+    apps = [fresh(80, 24), many(fresh(80, 24), 6), pfx(pfx(fresh(80, 24), "b"), "c")]
+
+    for c <- Enum.to_list(1..30) ++ [46, 50], r <- 1..8, app <- apps do
       s = View.compute(app, client(c, r))
       assert :ok = Scene.validate(s), "#{c}x#{r}"
       assert status(s).rect == %{x: 0, y: r - 1, w: c, h: 1}
     end
   end
 
-  test "a notice renders after the tabs, truncated to the free width, dropped when tiny" do
+  test "pane rects and dividers never overlap the sidebar or the tab bar" do
+    for app <- [many(fresh(120, 40), 15), pfx(many(fresh(120, 40), 4), "b")] do
+      s = View.compute(app, client(120, 40))
+      assert :ok = Scene.validate(s)
+      %{x: tx, y: 0, h: 1} = tabs_node(s).rect
+      assert tx in [4, 26]
+      rects = Enum.map(s.panes, &((&1.border && &1.border.rect) || &1.rect))
+
+      for r <- rects ++ Enum.map(dividers(s), & &1.rect) do
+        assert r.x >= tx and r.y >= 1 and r.y + r.h <= 39
+      end
+    end
+  end
+
+  test "a notice renders after the mode, truncated to the free width, dropped when tiny" do
     notice = %{level: :warning, text: String.duplicate("w", 200)}
     s = View.compute(fresh(80, 24), %{client(80, 24) | notice: notice})
     assert :ok = Scene.validate(s)
-    assert [:mode, :tabs, :notice, :title, :hint] == Enum.map(status(s).children, & &1.id)
+    assert [:mode, :notice, :title, :hint] == Enum.map(status(s).children, & &1.id)
     n = child(s, :notice)
     assert %Node{role: :text, token: :warning} = n
-    # 80 - "TERMINAL " - " 1:1 " and gap - "ctrl+b" and gap
-    assert String.length(n.text) == 80 - 9 - 6 - 7
+    # 80 - "TERMINAL " - "ctrl+b" and gap
+    assert String.length(n.text) == 80 - 9 - 7
 
     assert child(View.compute(fresh(80, 24), client(80, 24)), :notice) == nil
-    tiny = View.compute(fresh(24, 10), %{client(24, 10) | notice: notice})
+    tiny = View.compute(fresh(19, 10), %{client(19, 10) | notice: notice})
     assert child(tiny, :notice) == nil
     info = View.compute(fresh(80, 24), %{client(80, 24) | notice: %{notice | level: :info}})
     assert child(info, :notice).token == :muted
@@ -135,7 +165,7 @@ defmodule HerdrServer.ViewTest do
 
   defp tabs(app, n), do: Enum.reduce(2..n//1, app, fn _, a -> pfx(a, "c") end)
 
-  test "runtime status sits after the tabs, before the notice, and the hint stays at 80 cols" do
+  test "runtime status sits after the mode, before the notice, and the hint stays at 50 cols" do
     rt =
       Enum.reduce(
         [
@@ -148,26 +178,26 @@ defmodule HerdrServer.ViewTest do
       )
 
     notice = %{level: :warning, text: String.duplicate("w", 200)}
-    c = %{client(80, 24) | notice: notice, runtime: rt}
+    c = %{client(50, 24) | notice: notice, runtime: rt}
     s = View.compute(tabs(fresh(80, 24), 6), c)
     assert :ok = Scene.validate(s)
     ids = Enum.map(status(s).children, & &1.id)
-    # 6 tabs leave 80 - 9 - 36 - 7 = 28: reload (6) and tests (15) fit, handoff (20) not
-    assert ids == [:mode, :tabs, :reload, :tests, :notice, :title, :hint]
+    # 50 - 9 - 7 = 34: reload (6) and tests (15) fit, handoff (20) not; tabs take no room
+    assert ids == [:mode, :reload, :tests, :notice, :title, :hint]
     assert %Node{text: "r3 2m", props: %{batch: 3, fanout: 2}} = child(s, :reload)
     assert child(s, :hint).text == "ctrl+b"
-    assert String.length(child(s, :notice).text) == 28 - 6 - 15
+    assert String.length(child(s, :notice).text) == 34 - 6 - 15
     # width/1 counts a gap after the last node (the hint) that is never drawn
-    assert View.width(status(s).children) - 1 <= 80
+    assert Status.width(status(s).children) - 1 <= 50
 
     # a wide client shows all three
     s = View.compute(tabs(fresh(200, 24), 6), %{client(200, 24) | runtime: rt})
 
-    assert [:mode, :tabs, :reload, :tests, :handoff, :title, :hint] ==
+    assert [:mode, :reload, :tests, :handoff, :title, :hint] ==
              Enum.map(status(s).children, & &1.id)
 
     # no runtime, no nodes
     s = View.compute(fresh(80, 24), client(80, 24))
-    assert [:mode, :tabs, :title, :hint] == Enum.map(status(s).children, & &1.id)
+    assert [:mode, :title, :hint] == Enum.map(status(s).children, & &1.id)
   end
 end

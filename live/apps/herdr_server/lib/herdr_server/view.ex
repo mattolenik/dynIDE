@@ -3,15 +3,16 @@ defmodule HerdrServer.View do
   Pure per-client scene computation: `compute(app, client)` turns app state into a
   frontend-neutral `HerdrScene.Scene`.
 
-    * The layout is computed at the client's own size (pane area = size minus the bottom
-      status row), so every client gets its own rects; pane ids are shared.
-    * Panes follow `Layout.panes` preorder. `Pane.rect` is the content rect, the border
-      carries the outer rect (see `Layout.borders/2`). Rows are `{:ref, id, layout_gen}`
-      (or `{:inline, []}` for inline clients; the caller fills rows). Cursors are nil here.
-    * Chrome: `:root` holding a `:status` node (`:mode`, `:tabs`, the runtime status
-      `:reload`, `:tests`, `:handoff` from `client.runtime` (`RuntimeStatus.nodes/2`, those
-      that fit), `:notice` when the client has one, `:title`, `:hint`) and one
-      `:divider` node per split, in `Layout.splits` preorder, after the status.
+    * Regions come from `View.Frame.regions/2` at the client's own size (sidebar, top tab
+      bar, full-width status row, pane area), so every client gets its own rects; pane ids
+      are shared. The sidebar region is reserved; its node comes later (M13 Task 4).
+    * Panes follow `Layout.panes` preorder inside the pane area. `Pane.rect` is the content
+      rect, the border carries the outer rect (see `Layout.borders/2`). Rows are
+      `{:ref, id, layout_gen}` (or `{:inline, []}` for inline clients; the caller fills
+      rows). Cursors are nil here.
+    * Chrome: `:root` holding the `:tabs` region (`View.Tabs`, omitted when the frame has no
+      tab bar), one `:divider` node per split in `Layout.splits` preorder, then the
+      `:status` region (`View.Status`).
     * Divider rect choice: with borders on, a split's boundary is `pos`, the first cell of
       the second child. The divider is the 1-cell line at `pos` (second child's leading
       border column or row), spanning the split's area. A client resolves
@@ -20,20 +21,18 @@ defmodule HerdrServer.View do
       the divider line itself is vertical (and `:vertical` gives a horizontal line).
     * Divider rects are clamped into the pane area; pane rects are inside it by
       `Layout.borders/2`, so tiny clients never produce invalid scenes.
-    * The `:mode` node shows the client's own input mode (`Client.State.mode`).
-    * Self-describing chrome: the `:mode` node has `props: %{mode: mode}`, the `:hint` node
-      `props: %{key: binary, mods: [atom]}` (the prefix key; empty props when hidden).
   """
 
   alias HerdrScene.Scene
   alias HerdrScene.Scene.{Node, Pane}
   alias HerdrServer.Client.State
   alias HerdrServer.Layout
-  alias HerdrServer.RuntimeStatus
+  alias HerdrServer.View.{Frame, Status, Tabs}
 
   @spec compute(map, State.t()) :: Scene.t()
   def compute(app, %State{size: %{cols: cols, rows: rows} = size, transport: transport} = client) do
-    area = %{x: 0, y: 0, w: cols, h: max(rows - 1, 0)}
+    regions = Frame.regions(size, app.ui)
+    area = regions.panes
     ws = Enum.find(app.session.workspaces, &(&1.id == app.session.active_workspace))
     tab = Enum.find(ws.tabs, &(&1.id == ws.active_tab))
     layout = tab.layout
@@ -47,7 +46,7 @@ defmodule HerdrServer.View do
     %Scene{
       size: %{cols: cols, rows: rows},
       panes: panes,
-      chrome: chrome(app, client, ws, layout, size, area),
+      chrome: chrome(app, client, ws, layout, regions),
       focus: %{pane: app.focus.pane, chrome: nil}
     }
   end
@@ -63,19 +62,8 @@ defmodule HerdrServer.View do
     }
   end
 
-  defp chrome(app, client, ws, layout, %{cols: cols, rows: rows}, area) do
-    left = [mode(client.mode), tabs(ws)]
-    hint = hint(client.mode, app.ui)
-    free = cols - width(left) - width([hint])
-    runtime = RuntimeStatus.nodes(client.runtime, free)
-    left = left ++ runtime
-
-    status = %Node{
-      role: :status,
-      id: :status,
-      rect: %{x: 0, y: rows - 1, w: cols, h: 1},
-      children: left ++ notice(client.notice, free - width(runtime)) ++ [title(app), hint]
-    }
+  defp chrome(app, client, ws, layout, %{panes: area} = regions) do
+    tabs = if regions.tabs, do: [Tabs.node(ws, regions.tabs)], else: []
 
     dividers =
       for s <- Layout.splits(layout, area) do
@@ -87,7 +75,8 @@ defmodule HerdrServer.View do
         }
       end
 
-    %Node{role: :root, id: :root, children: [status | dividers]}
+    status = Status.node(app, client, regions.status)
+    %Node{role: :root, id: :root, children: tabs ++ dividers ++ [status]}
   end
 
   defp divider_rect(%{direction: :horizontal, pos: pos, area: a}, area),
@@ -96,81 +85,9 @@ defmodule HerdrServer.View do
   defp divider_rect(%{direction: :vertical, pos: pos, area: a}, area),
     do: clamp(%{x: a.x, y: pos, w: a.w, h: 1}, area)
 
-  defp mode(m) do
-    {label, token} =
-      case m do
-        :terminal -> {"TERMINAL", :default}
-        :prefix -> {"PREFIX", :accent}
-        :resize -> {"RESIZE", :warning}
-      end
-
-    %{text(:mode, label, token) | props: %{mode: m}}
-  end
-
-  defp tabs(ws) do
-    children =
-      ws.tabs
-      |> Enum.with_index(1)
-      |> Enum.map(fn {t, i} ->
-        %Node{
-          role: :tab,
-          id: {:tab, t.id},
-          text: t.name,
-          props: %{index: i, active: t.id == ws.active_tab}
-        }
-      end)
-
-    %Node{role: :tabs, id: :tabs, children: children}
-  end
-
-  defp title(app) do
-    meta = Map.get(app.session.panes, app.focus.pane)
-    text(:title, (meta && meta.title) || "", :muted)
-  end
-
-  defp hint(mode, ui) do
-    case ui.keybinds.prefix do
-      [{key, mods} | _] when mode in [:terminal, :prefix] and ui.status.show_hints ->
-        label = Enum.map_join(mods ++ [key], "+", &to_string/1)
-        %{text(:hint, label, :muted) | props: %{key: key, mods: mods}}
-
-      _ ->
-        text(:hint, "", :muted)
-    end
-  end
-
-  # before the title so a long title cannot hide it; clipped to the cells left after the
-  # mode, tabs, runtime status and hint, dropped below 4 cells
-  defp notice(nil, _free), do: []
-  defp notice(_n, free) when free < 4, do: []
-
-  defp notice(%{level: level, text: text}, free) do
-    token = Map.get(%{error: :error, warning: :warning}, level, :muted)
-    [text(:notice, String.slice(text, 0, free), token)]
-  end
-
-  @doc "Cells a status renderer gives these nodes: text, tabs as \" i:name \", one gap after each."
-  @spec width([Node.t()]) :: integer
-  def width(nodes) do
-    nodes
-    |> Enum.map(fn
-      %Node{role: :tabs, children: tabs} ->
-        Enum.sum_by(tabs, &(String.length(" #{&1.props.index}:#{&1.text} ") + 1))
-
-      %Node{text: t} when t in [nil, ""] ->
-        0
-
-      %Node{text: t} ->
-        String.length(t) + 1
-    end)
-    |> Enum.sum()
-  end
-
-  defp text(id, text, token), do: %Node{role: :text, id: id, text: text, token: token}
-
-  defp clamp(r, %{w: cw, h: ch}) do
-    x = min(r.x, cw)
-    y = min(r.y, ch)
-    %{x: x, y: y, w: min(r.w, cw - x), h: min(r.h, ch - y)}
+  defp clamp(r, a) do
+    x = r.x |> max(a.x) |> min(a.x + a.w)
+    y = r.y |> max(a.y) |> min(a.y + a.h)
+    %{x: x, y: y, w: max(min(r.w, a.x + a.w - x), 0), h: max(min(r.h, a.y + a.h - y), 0)}
   end
 end

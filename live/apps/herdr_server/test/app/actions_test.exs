@@ -21,9 +21,27 @@ defmodule HerdrServer.App.ActionsTest do
   end
 
   test "init" do
-    assert {app, [{:spawn, 1, %{cols: 100, rows: 24}}]} = Actions.init(%{cols: 100, rows: 25})
-    assert app.session.area == %{x: 0, y: 0, w: 100, h: 24}
+    assert {app, [{:spawn, 1, %{cols: 74, rows: 23}}]} = Actions.init(%{cols: 100, rows: 25})
+    assert app.session.area == %{x: 26, y: 1, w: 74, h: 23}
+    assert app.session.size == %{cols: 100, rows: 25}
     assert app.focus.pane == 1
+  end
+
+  test "resize keeps the size and the frame's pane area" do
+    {app, []} = Actions.apply(fresh(), {:resize, %{cols: 120, rows: 40, cell_px: nil}})
+    assert app.session.size == %{cols: 120, rows: 40}
+    assert app.session.area == %{x: 26, y: 1, w: 94, h: 38}
+    {app, []} = Actions.apply(app, {:resize, %{cols: 30, rows: 1}})
+    assert app.session.area == %{x: 0, y: 0, w: 30, h: 1}
+  end
+
+  test "prefix b toggles the sidebar collapsed and recomputes the area" do
+    {app, []} = pfx(fresh(), "b")
+    assert app.ui.sidebar.collapsed
+    assert app.session.area == %{x: 4, y: 1, w: 96, h: 23}
+    {app, []} = pfx(app, "b")
+    refute app.ui.sidebar.collapsed
+    assert app.session.area == %{x: 26, y: 1, w: 74, h: 23}
   end
 
   test "split, focus, close" do
@@ -59,7 +77,7 @@ defmodule HerdrServer.App.ActionsTest do
   test "tabs" do
     {app, _} = pfx(fresh(), "v")
     {app, eff} = pfx(app, "c")
-    assert [{:spawn, 3, %{cols: 100, rows: 24}}] = eff
+    assert [{:spawn, 3, %{cols: 74, rows: 23}}] = eff
     assert app.focus.pane == 3 and hd(app.session.workspaces).active_tab == 2
     {app, _} = pfx(app, "p")
     assert hd(app.session.workspaces).active_tab == 1 and app.focus.pane == 2
@@ -74,7 +92,7 @@ defmodule HerdrServer.App.ActionsTest do
 
   test "closing last pane respawns; unknown id is a no-op" do
     {app, eff} = pfx(fresh(), "x")
-    assert [{:close, 1}, {:spawn, 2, %{cols: 100, rows: 24}}] = eff
+    assert [{:close, 1}, {:spawn, 2, %{cols: 74, rows: 23}}] = eff
     assert app.focus.pane == 2 and app.session.panes |> Map.keys() == [2]
     assert {^app, []} = Actions.apply(app, {:pane_exited, 99})
     assert {_, [{:close, 2}, {:spawn, 3, _}]} = Actions.apply(app, {:pane_exited, 2})
@@ -82,7 +100,8 @@ defmodule HerdrServer.App.ActionsTest do
 
   test "mouse" do
     {app, _} = pfx(fresh(), "v")
-    {:mouse, m} = {:mouse, %{kind: :press, button: :left, x: 10, y: 5, mods: [], px: nil}}
+    # pane 1's content starts at (27, 2): right of the sidebar, under the tab bar
+    {:mouse, m} = {:mouse, %{kind: :press, button: :left, x: 36, y: 6, mods: [], px: nil}}
     {app, [{:mouse, 1, {:mouse, rel}}]} = Actions.apply(app, {:mouse, m})
     assert app.focus.pane == 1 and rel.x == 9 and rel.y == 4
     # drag in non-focused pane is dropped; scroll in focused is forwarded
@@ -94,7 +113,7 @@ defmodule HerdrServer.App.ActionsTest do
   test "resize event, paste, focus, title" do
     app = fresh()
     {a, []} = Actions.apply(app, {:resize, %{cols: 200, rows: 50, cell_px: nil}})
-    assert a.session.area == %{x: 0, y: 0, w: 200, h: 49}
+    assert a.session.area == %{x: 26, y: 1, w: 174, h: 48}
     assert {_, [{:paste, 1, "x"}]} = Actions.apply(a, {:paste, "x"})
     assert {_, [{:focus_report, 1, true}]} = Actions.apply(a, {:focus, true})
     {a, []} = Actions.apply(a, {:pane_title, 1, "t"})

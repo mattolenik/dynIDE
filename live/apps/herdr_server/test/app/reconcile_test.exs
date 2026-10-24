@@ -81,7 +81,7 @@ defmodule HerdrServer.App.ReconcileTest do
 
   test "a workspace losing its last tab gets a fresh pane" do
     {new, eff} = Reconcile.run(fresh(), %{})
-    assert eff == [{:close, 1}, {:spawn, 2, %{cols: 100, rows: 24}}]
+    assert eff == [{:close, 1}, {:spawn, 2, %{cols: 74, rows: 23}}]
     assert [%{layout: l}] = ws(new).tabs
     assert Layout.pane_ids(l) == [2] and new.focus.pane == 2
     consistent!(new)

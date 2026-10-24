@@ -47,13 +47,15 @@ if Mix.env() == :test do
     @visible_timeout 5_000
 
     @view "apps/herdr_server/lib/herdr_server/view.ex"
+    @status "apps/herdr_server/lib/herdr_server/view/status.ex"
     @compose "apps/herdr_term/lib/herdr_term/client/term/render/compose.ex"
     @ui "apps/herdr_server/lib/herdr_server/app/ui.ex"
     @session "apps/herdr_server/lib/herdr_server/app/session.ex"
     @node "apps/herdr_scene/lib/herdr_scene/scene/node.ex"
     @actions "apps/herdr_server/lib/herdr_server/app/actions.ex"
 
-    @view_left "left = [mode(client.mode), tabs(ws)]"
+    # a list literal in View.Status whose nodes render on the status row
+    @view_left "left = [mode(client.mode)]"
 
     @impl Mix.Task
     def run(args) do
@@ -219,7 +221,7 @@ if Mix.env() == :test do
          String.trim_trailing(@view_left, "]") <>
            ", text(:bench, %HerdrServer.App.Ui{}.marker, :muted)]"}
 
-      warm = setup_edit(client, cfg, [{@view, [view]}, {@ui, [ui.(100)]}], "umk100z")
+      warm = setup_edit(client, cfg, [{@status, [view]}, {@ui, [ui.(100)]}], "umk100z")
       r = edit_loop(client, cfg, @ui, ui, &"umk#{&1}z")
 
       Map.merge(r, %{
@@ -266,7 +268,7 @@ if Mix.env() == :test do
       edit_loop(
         client,
         cfg,
-        @view,
+        @status,
         fn i ->
           {@view_left,
            String.trim_trailing(@view_left, "]") <> ~s|, text(:bench, "vmk#{i}z", :muted)]|}

@@ -283,7 +283,9 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
     |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
   end
 
-  defp statuses(%Node{role: :status} = n), do: [n]
+  # ponytail: a top-level `:tabs` region is drawn like status tabs until M13 Task 3's
+  # chrome rasterizer replaces this
+  defp statuses(%Node{role: role} = n) when role in [:status, :tabs], do: [n]
   defp statuses(%Node{children: cs}), do: Enum.flat_map(cs, &statuses/1)
 
   defp status_segs(%Node{rect: nil}, _), do: []

@@ -9,6 +9,43 @@
     props: %{},
     children: [
       %HerdrScene.Scene.Node{
+        role: :tabs,
+        id: :tabs,
+        rect: %{x: 26, y: 0, h: 1, w: 94},
+        text: nil,
+        token: nil,
+        props: %{},
+        children: [
+          %HerdrScene.Scene.Node{
+            role: :tab,
+            id: {:tab, 1},
+            rect: nil,
+            text: "1",
+            token: nil,
+            props: %{active: true, index: 1, zoomed: false},
+            children: []
+          },
+          %HerdrScene.Scene.Node{
+            role: :button,
+            id: :new_tab,
+            rect: nil,
+            text: nil,
+            token: nil,
+            props: %{action: :new_tab},
+            children: []
+          }
+        ]
+      },
+      %HerdrScene.Scene.Node{
+        role: :divider,
+        id: {:divider, []},
+        rect: %{x: 73, y: 1, h: 38, w: 1},
+        text: nil,
+        token: nil,
+        props: %{path: [], direction: :horizontal},
+        children: []
+      },
+      %HerdrScene.Scene.Node{
         role: :status,
         id: :status,
         rect: %{x: 0, y: 39, h: 1, w: 120},
@@ -24,25 +61,6 @@
             token: :default,
             props: %{mode: :terminal},
             children: []
-          },
-          %HerdrScene.Scene.Node{
-            role: :tabs,
-            id: :tabs,
-            rect: nil,
-            text: nil,
-            token: nil,
-            props: %{},
-            children: [
-              %HerdrScene.Scene.Node{
-                role: :tab,
-                id: {:tab, 1},
-                rect: nil,
-                text: "1",
-                token: nil,
-                props: %{active: true, index: 1},
-                children: []
-              }
-            ]
           },
           %HerdrScene.Scene.Node{
             role: :text,
@@ -63,15 +81,6 @@
             children: []
           }
         ]
-      },
-      %HerdrScene.Scene.Node{
-        role: :divider,
-        id: {:divider, []},
-        rect: %{x: 60, y: 0, h: 39, w: 1},
-        text: nil,
-        token: nil,
-        props: %{path: [], direction: :horizontal},
-        children: []
       }
     ]
   },
@@ -79,11 +88,11 @@
   panes: [
     %HerdrScene.Scene.Pane{
       id: 1,
-      rect: %{x: 1, y: 1, h: 37, w: 58},
+      rect: %{x: 27, y: 2, h: 36, w: 45},
       border: %{
         title: nil,
         edges: [:top, :bottom, :left, :right],
-        rect: %{x: 0, y: 0, h: 39, w: 60}
+        rect: %{x: 26, y: 1, h: 38, w: 47}
       },
       rows: {:ref, 1, 0},
       cursor: nil,
@@ -92,11 +101,11 @@
     },
     %HerdrScene.Scene.Pane{
       id: 2,
-      rect: %{x: 61, y: 1, h: 37, w: 58},
+      rect: %{x: 74, y: 2, h: 36, w: 45},
       border: %{
         title: nil,
         edges: [:top, :bottom, :left, :right],
-        rect: %{x: 60, y: 0, h: 39, w: 60}
+        rect: %{x: 73, y: 1, h: 38, w: 47}
       },
       rows: {:ref, 2, 0},
       cursor: nil,

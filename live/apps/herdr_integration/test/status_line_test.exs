@@ -1,6 +1,6 @@
 defmodule HerdrIntegration.StatusLineTest do
   # The runtime status nodes from View reach the terminal client's status row through
-  # Compose unchanged (role :text), next to a long notice and tab list, at 80 cols.
+  # Compose unchanged (role :text), next to a long notice; tabs have their own row.
   use ExUnit.Case, async: true
 
   alias HerdrScene.Event
@@ -19,11 +19,12 @@ defmodule HerdrIntegration.StatusLineTest do
     elem(Kernel.apply(m, f, [app | a]), 0)
   end
 
-  defp status_row(app, client) do
+  defp status_row(app, client), do: app |> screen(client) |> List.last()
+
+  defp screen(app, client) do
     scene = View.compute(app, client)
     rows = Map.new(scene.panes, &{&1.id, {}})
-    {_, row} = scene |> Compose.frame(rows, Theme.default()) |> List.last()
-    Cells.to_text(row)
+    scene |> Compose.frame(rows, Theme.default()) |> Enum.map(&Cells.to_text(elem(&1, 1)))
   end
 
   test "reload, tests and handoff render on the status row; the hint stays" do
@@ -47,12 +48,16 @@ defmodule HerdrIntegration.StatusLineTest do
     assert text =~ "r3 2m tests 1 failed handoff graceful g2 w"
     assert String.ends_with?(text, "ctrl+b")
 
-    # 6 tabs: handoff dropped, reload and tests kept, notice clipped, hint intact
+    # 6 tabs go on the tab bar row, not the status row
     tabs = Enum.reduce(1..5, app, fn _, a -> new_tab(a) end)
-    text = status_row(tabs, %{client | notice: notice})
-    assert String.length(text) == 80
-    assert text =~ " 6:6  r3 2m tests 1 failed w"
+    [top | _] = rows = screen(tabs, %{client | notice: notice})
+    assert top =~ " 5:5   6:6 "
+    assert List.last(rows) == text
+
+    # 50 cols: handoff dropped, reload and tests kept, notice clipped, hint intact
+    text = status_row(tabs, %{client | notice: notice, size: %{cols: 50, rows: 24}})
+    assert String.length(text) == 50
+    assert text =~ ~r/^TERMINAL r3 2m tests 1 failed w+ ctrl\+b$/
     refute text =~ "handoff"
-    assert String.ends_with?(text, "ctrl+b")
   end
 end
