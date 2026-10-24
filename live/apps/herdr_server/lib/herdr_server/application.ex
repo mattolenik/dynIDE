@@ -14,13 +14,12 @@ defmodule HerdrServer.Application do
     # a configured fake keeper runs beside the real one (M1's own tests need Native.Keeper)
     fake_keeper = if keeper == HerdrServer.Native.Keeper, do: [], else: [keeper]
 
-    # Order follows design.md "Supervision trees": Keeper, then the app. Reload is
+    # Order follows design.md "Supervision trees": Keeper, the table owner, then the app. Reload is
     # its own app (herdr_reload), started before this one as a dependency.
     children =
-      [HerdrServer.Native.Keeper] ++
+      [HerdrServer.Native.Keeper, HerdrServer.Mirror] ++
         fake_keeper ++
         [
-          HerdrServer.Pane.Rows,
           {Registry, keys: :duplicate, name: HerdrServer.Client.Registry},
           {Registry, keys: :unique, name: HerdrServer.Pane.Registry},
           HerdrServer.App.Store,

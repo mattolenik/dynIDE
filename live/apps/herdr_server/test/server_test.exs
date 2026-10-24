@@ -278,31 +278,138 @@ defmodule HerdrServer.ServerTest do
     assert {_gen, _rows, %{x: 1, y: 0}} = Rows.fetch(1)
   end
 
-  test "a Store restart stops sessions; a re-attach gets a fresh pane and no orphans" do
-    {c, s} = client()
+  # splits pane 1, waits for the debounced mirror write
+  defp two_panes(c, s) do
     scene(c)
     input(s, c, 1, Event.key("b", [:ctrl]))
     input(s, c, 2, Event.key("v"))
     scene_until(c, &(length(&1.panes) == 2))
-    ref = Process.monitor(s)
+    Process.sleep(50)
+  end
+
+  defp kill_store do
     old = Process.whereis(Store)
-    [{old_pane, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
+    Process.exit(old, :kill)
+    assert eventually(fn -> Process.whereis(Store) not in [nil, old] end)
+  end
 
-    log =
-      capture_log(fn ->
-        Process.exit(old, :kill)
-        assert_receive {:DOWN, ^ref, :process, ^s, :normal}, 500
-        assert eventually(fn -> Process.whereis(Store) not in [nil, old] end)
-        {c2, _} = client()
-        assert %Scene{panes: [%{id: 1}]} = scene(c2)
-      end)
+  test "a Store restart adopts the mirrored app; sessions survive with a full scene" do
+    {c, s} = client()
+    {c2, s2} = client(%{cols: 100, rows: 30})
+    two_panes(c, s)
+    flush(c)
+    flush(c2)
+    old = Store.snapshot()
+    kids = Rows.kernel_ids()
+    panes = Enum.map([1, 2], &Registry.lookup(HerdrServer.Pane.Registry, &1))
 
-    refute log =~ "could not start"
+    kill_store()
+
+    assert %Scene{panes: [_, _]} = scene(c)
+    assert %Scene{panes: [_, _]} = scene(c2)
+    assert Process.alive?(s) and Process.alive?(s2)
+    new = Store.snapshot()
+    assert new.session == old.session
+    assert new.focus == old.focus
+    assert Rows.kernel_ids() == kids
+    assert Enum.map([1, 2], &Registry.lookup(HerdrServer.Pane.Registry, &1)) == panes
+    assert length(Fake.Keeper.ids()) == 2
+
+    # the adopted app takes input, and the re-subscribed sessions see its changes
+    input(s, c, 3, Event.key("b", [:ctrl]))
+    input(s, c, 4, Event.key("v"))
+    assert %Scene{panes: [_, _, _]} = scene_until(c2, &(length(&1.panes) == 3))
+  end
+
+  test "a Store restart drops panes whose kernel id is gone and closes unmapped kernels" do
+    {c, s} = client()
+    two_panes(c, s)
+    kid = Rows.kernel_id(2)
+    :ets.delete(:herdr_pane_kernel, 2)
+
+    kill_store()
+
+    assert %Scene{panes: [%{id: 1}]} = scene_until(c, &(length(&1.panes) == 1))
+    assert Map.keys(Store.snapshot().session.panes) == [1]
+    assert Fake.Keeper.lookup(kid) == :error
     assert [_] = Fake.Keeper.ids()
-    assert [{1, _}] = Rows.kernel_ids()
-    assert [{new_pane, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
-    assert new_pane != old_pane
-    assert Registry.lookup(HerdrServer.Pane.Registry, 2) == []
+    assert eventually(fn -> Registry.lookup(HerdrServer.Pane.Registry, 2) == [] end)
+  end
+
+  test "a restarted pane server of a hidden pane starts hidden" do
+    {c, s} = client()
+    scene(c)
+    input(s, c, 1, Event.key("b", [:ctrl]))
+    input(s, c, 2, Event.key("c"))
+    scene_until(c, &match?([%{id: 2}], &1.panes))
+    [{pid, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
+    assert :sys.get_state(pid).hidden
+    Process.exit(pid, :kill)
+
+    assert eventually(fn ->
+             match?([{p, _}] when p != pid, Registry.lookup(HerdrServer.Pane.Registry, 1))
+           end)
+
+    [{new, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
+    assert :sys.get_state(new).hidden
+  end
+
+  test "the mirror owner has no call or cast handlers of its own" do
+    src = File.read!(to_string(HerdrServer.Mirror.module_info(:compile)[:source]))
+    refute src =~ ~r/def handle_/
+    assert :ets.info(:herdr_pane_rows, :owner) == Process.whereis(HerdrServer.Mirror)
+    assert :ets.info(:herdr_pane_kernel, :owner) == Process.whereis(HerdrServer.Mirror)
+  end
+
+  test "Store mirror writes are debounced: one write per changed sub-struct" do
+    {c, _s} = client()
+    scene(c)
+    Process.sleep(50)
+    store = Process.whereis(Store)
+    :erlang.trace_pattern({HerdrServer.Mirror, :put, 2}, true, [:local])
+    :erlang.trace(store, true, [:call])
+    for n <- 1..10, do: Store.event_async({:pane_title, 1, "t#{n}"})
+    Process.sleep(60)
+    :erlang.trace(store, false, [:call])
+
+    keys = collect_puts([])
+    assert keys == [{:app, :session}]
+    assert HerdrServer.Mirror.app().session.panes[1].title == "t10"
+  end
+
+  defp collect_puts(acc) do
+    receive do
+      {:trace, _, :call, {HerdrServer.Mirror, :put, [k, _]}} -> collect_puts([k | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  test "a re-attaching client pid gets its mirrored presentation state; it goes with the client" do
+    parent = self()
+    HerdrServer.Mirror.put({:client, parent}, %{viewports: %{1 => 3}, hover: {1, 2}})
+
+    info = %{
+      kind: :term,
+      transport: :ref,
+      size: %{cols: 80, rows: 24},
+      cell_px: nil,
+      caps: %{},
+      client: parent
+    }
+
+    {:ok, session, _} = GenServer.call(Protocol.endpoint(), {:attach, info})
+    st = :sys.get_state(session)
+    assert st.viewports == %{1 => 3}
+    assert st.hover == {1, 2}
+
+    pid = spawn(fn -> receive do: (:go -> :ok) end)
+    HerdrServer.Mirror.put({:client, pid}, %{viewports: %{}, hover: nil})
+    {:ok, s2, _} = GenServer.call(Protocol.endpoint(), {:attach, %{info | client: pid}})
+    ref = Process.monitor(s2)
+    send(pid, :go)
+    assert_receive {:DOWN, ^ref, :process, _, _}, 500
+    assert HerdrServer.Mirror.client(pid) == nil
   end
 
   test "when the driving client leaves, the pty size goes back to the remaining client" do

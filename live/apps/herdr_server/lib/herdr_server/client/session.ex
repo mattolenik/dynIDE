@@ -20,8 +20,13 @@ defmodule HerdrServer.Client.Session do
   go to `App.Store.event/2`, bindings to `App.Store.run/2`. When the client's mode
   changes, the session sends `{:input_mode, mode}` to the input's `from` pid before its
   `{:ack, seq}`, and re-pushes the scene (the status shows the mode). Non-key events go
-  to `App.Store` with this client's size. The session monitors the Store and stops when it dies, so the client
-  re-attaches to the fresh one.
+  to `App.Store` with this client's size. The session monitors the Store; when it dies
+  the session waits for the restarted one (polling every 10 ms, up to 1 s, else it
+  stops), re-subscribes and pushes a full scene of the adopted app.
+
+  The presentation fields (`@presentation`) are mirrored per client pid
+  (`HerdrServer.Mirror.client/1`) when an input changes them; `info.mirrored` (from
+  `Client.Endpoint`) seeds them on a re-attach. The entry goes when the client goes.
   """
   use GenServer, restart: :temporary
 
@@ -29,10 +34,19 @@ defmodule HerdrServer.Client.Session do
   alias HerdrScene.Protocol
   alias HerdrServer.App.{Keybinds, Store}
   alias HerdrServer.Client.{Keys, State}
+  alias HerdrServer.Mirror
   alias HerdrServer.Pane.Rows
   alias HerdrServer.View
 
+  @presentation [:viewports, :hover]
+  @store_wait_ms 10
+  @store_tries 100
+
   def start_link(info), do: GenServer.start_link(__MODULE__, info)
+
+  @doc "The mirrored subset of a `Client.State`."
+  @spec presentation(State.t()) :: map
+  def presentation(state), do: Map.take(state, @presentation)
 
   @impl true
   def init(info) do
@@ -49,6 +63,8 @@ defmodule HerdrServer.Client.Session do
       monitor: Process.monitor(info.client),
       store_monitor: Process.monitor(Store)
     }
+
+    state = struct(state, Map.take(info[:mirrored] || %{}, @presentation))
 
     {:ok, state, {:continue, :attach}}
   end
@@ -106,13 +122,25 @@ defmodule HerdrServer.Client.Session do
     {:stop, :normal, state}
   end
 
-  # client gone, or Store restarted (its new app is unknown to us: the client re-attaches)
-  def handle_info({:DOWN, ref, :process, _, _}, state) do
+  def handle_info({:DOWN, ref, :process, _, _}, %{monitor: ref} = state) do
+    state = Map.merge(%State{}, state)
+    Mirror.delete({:client, state.client})
+    {:stop, :normal, state}
+  end
+
+  # the Store restarted from the mirror: follow it and repaint in full
+  def handle_info({:DOWN, ref, :process, _, _}, %{store_monitor: ref} = state) do
     state = Map.merge(%State{}, state)
 
-    if ref in [state.monitor, state.store_monitor],
-      do: {:stop, :normal, state},
-      else: {:noreply, state}
+    case await_store(@store_tries) do
+      nil ->
+        {:stop, :normal, state}
+
+      pid ->
+        state = %{state | store_monitor: Process.monitor(pid), last_scene: nil}
+        :ok = Store.subscribe(self())
+        {:noreply, push(state, Store.snapshot())}
+    end
   end
 
   # stale damage for closed panes, unknown messages: ignore
@@ -121,13 +149,30 @@ defmodule HerdrServer.Client.Session do
     {:noreply, state}
   end
 
+  defp await_store(0), do: nil
+
+  defp await_store(n) do
+    with nil <- Process.whereis(Store) do
+      Process.sleep(@store_wait_ms)
+      await_store(n - 1)
+    end
+  end
+
   # --- input ---
 
-  defp input(state, {:resize, %{cols: c, rows: r} = m}, _from) do
+  # presentation fields can only change on input: mirror them then
+  defp input(state, ev, from) do
+    new = apply_input(state, ev, from)
+    p = presentation(new)
+    if p != presentation(state), do: Mirror.put({:client, new.client}, p)
+    new
+  end
+
+  defp apply_input(state, {:resize, %{cols: c, rows: r} = m}, _from) do
     resized(%{state | size: %{cols: c, rows: r}, cell_px: m.cell_px})
   end
 
-  defp input(%{keybinds: %{}} = state, {:key, _} = ev, from) do
+  defp apply_input(%{keybinds: %{}} = state, {:key, _} = ev, from) do
     case Guard.run_twice(Keys, :resolve, [Map.take(state, [:mode, :swallow]), state.keybinds, ev]) do
       {:ok, {%{mode: mode, swallow: swallow}, result}} ->
         keyed(%{state | mode: mode, swallow: swallow}, state.mode, result, from)
@@ -140,7 +185,7 @@ defmodule HerdrServer.Client.Session do
     end
   end
 
-  defp input(state, ev, _from) do
+  defp apply_input(state, ev, _from) do
     Store.event(ev, driving_size(state))
     state
   end

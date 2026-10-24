@@ -5,7 +5,8 @@ defmodule HerdrServer.Pane.Server do
   (`Pane.Rows`, with the cursor read on the same damage) and tells every registered client session `{:pane_damage, id, gen}`.
   Pane exit and title events go to `App.Store` by cast (the Store calls this process, so
   calling back would be a cycle). Kernel events carry the keeper id (`state.kernel_id`,
-  from `Pane.Rows.kernel_id/1`); this process translates them to its pane id.
+  from `Pane.Rows.kernel_id/1`); this process translates them to its pane id. `hidden` is
+  mirrored (`HerdrServer.Mirror.pane/1`) so a restarted server starts with it.
 
   This is the only caller of `dirty_rows/1` (one shared read cursor per vt).
   """
@@ -14,7 +15,7 @@ defmodule HerdrServer.Pane.Server do
   require Logger
 
   alias HerdrServer.App.Store
-  alias HerdrServer.Kernel
+  alias HerdrServer.{Kernel, Mirror}
   alias HerdrServer.Pane.{Rows, State}
 
   def start_link(id), do: GenServer.start_link(__MODULE__, id, name: via(id))
@@ -47,7 +48,9 @@ defmodule HerdrServer.Pane.Server do
     with kid when kid != nil <- Rows.kernel_id(id),
          {:ok, %{vt: vt, pty: pty}} <- Kernel.keeper().lookup(kid) do
       kernel_ok(id, :subscribe, Kernel.pty().subscribe(pty, self()))
-      {:ok, reload(%State{id: id, kernel_id: kid, vt: vt, pty: pty})}
+      # a restart keeps the visibility the Store last set (the pty kept it too)
+      hidden = match?(%{hidden: true}, Mirror.pane(id))
+      {:ok, reload(%State{id: id, kernel_id: kid, vt: vt, pty: pty, hidden: hidden})}
     else
       _ -> :ignore
     end
@@ -64,6 +67,7 @@ defmodule HerdrServer.Pane.Server do
   def handle_call({:hidden, hidden?}, _from, state) do
     state = Map.merge(%State{}, state)
     kernel_ok(state.id, :set_hidden, Kernel.pty().set_hidden(state.pty, hidden?))
+    :ok = Mirror.put({:pane, state.id}, %{hidden: hidden?})
     state = %{state | hidden: hidden?}
     {:reply, :ok, if(hidden?, do: state, else: reload(state))}
   end

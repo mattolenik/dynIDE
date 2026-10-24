@@ -17,10 +17,13 @@ defmodule HerdrServer.App.Store do
       its value changed. It carries no input mode: modes are per client.
     * A spawn that fails (keeper open or pane server start) sends the origin a warning
       notice and closes the pane again, as `{:pane_exited, id}`.
-    * A Store restart starts from an empty app: `init/1` closes every pane the keeper
-      still holds (and its `Pane.Server`), and live sessions stop on the Store's `:DOWN`
-      so their clients re-attach. Adopting the surviving panes instead is M4's ETS-mirror
-      job.
+    * `app.session`, `app.focus`, `app.ui` and the bookkeeping below (`@book`) are
+      mirrored to `HerdrServer.Mirror`, debounced (one 20 ms timer; only changed entries
+      are written; flushed on `terminate/2`). A restarted Store adopts the mirrored app
+      (`App.Restore.adopt/1`: dead panes are dropped as `{:pane_exited, id}`, missing
+      `Pane.Server`s restarted), re-monitors the mirrored sessions and republishes the
+      fast path; sessions re-subscribe and push full scenes. Only an empty mirror starts
+      fresh (closing whatever the keeper still holds).
   """
   use GenServer
 
@@ -28,8 +31,8 @@ defmodule HerdrServer.App.Store do
 
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
-  alias HerdrServer.App.{Actions, Keybinds}
-  alias HerdrServer.{Kernel, Layout}
+  alias HerdrServer.App.{Actions, Keybinds, Restore}
+  alias HerdrServer.{Kernel, Layout, Mirror}
   alias HerdrServer.Pane.{Input, Rows, Server}
   alias HerdrServer.Pane.Supervisor, as: Panes
 
@@ -43,7 +46,13 @@ defmodule HerdrServer.App.Store do
             clients: %{},
             sizes: %{},
             hidden: MapSet.new(),
-            fast: nil
+            fast: nil,
+            mirrored: %{},
+            flush: nil
+
+  # Store fields mirrored as {:store, key}; `hidden` is recomputed by settle/1
+  @book [:driver, :driver_pid, :clients, :sizes]
+  @flush_ms 20
 
   def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
 
@@ -82,16 +91,34 @@ defmodule HerdrServer.App.Store do
 
   @impl true
   def init(:ok) do
-    # a restarted Store forgets the app: close what the previous incarnation left open
-    close_all()
-    :persistent_term.erase(Protocol.fast_path_key())
-    {:ok, %__MODULE__{}}
+    case Mirror.app() do
+      nil ->
+        # a fresh start: close what a previous incarnation without a mirror left open
+        Restore.close_all()
+        :persistent_term.erase(Protocol.fast_path_key())
+        {:ok, %__MODULE__{}}
+
+      app ->
+        {:ok, adopt(app)}
+    end
   end
+
+  defp adopt(app) do
+    Enum.each(Restore.adopt(app), &event_async({:pane_exited, &1}))
+    book = Map.new(@book, &{&1, Mirror.get({:store, &1})})
+    state = struct(%__MODULE__{app: app}, Enum.reject(book, &(elem(&1, 1) == nil)))
+    subs = Map.new(state.clients, fn {pid, _} -> {pid, Process.monitor(pid)} end)
+    fast = :persistent_term.get(Protocol.fast_path_key(), nil)
+    dirty(%{state | subs: subs, fast: fast}) |> settle() |> publish_fast()
+  end
+
+  @impl true
+  def terminate(_reason, state), do: flush(Map.merge(%__MODULE__{}, state))
 
   @impl true
   def handle_call({:event, ev, size}, {origin, _}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:reply, :ok, handle_event(state, ev, size, origin)}
+    {:reply, :ok, state |> handle_event(ev, size, origin) |> dirty()}
   end
 
   def handle_call(:snapshot, _from, state) do
@@ -107,21 +134,27 @@ defmodule HerdrServer.App.Store do
 
   def handle_call(:reset, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    close_all()
+    Restore.close_all()
     :persistent_term.erase(Protocol.fast_path_key())
-    {:reply, :ok, %__MODULE__{subs: state.subs}}
+    for k <- [:session, :focus, :ui], do: Mirror.delete({:app, k})
+    {:reply, :ok, %__MODULE__{subs: state.subs, flush: state.flush}}
   end
 
   @impl true
   def handle_cast({:event, ev}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, handle_event(state, ev, nil, nil)}
+    {:noreply, state |> handle_event(ev, nil, nil) |> dirty()}
   end
 
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, handoff(%{state | subs: Map.delete(state.subs, pid)}, pid)}
+    {:noreply, handoff(%{state | subs: Map.delete(state.subs, pid)}, pid) |> dirty()}
+  end
+
+  def handle_info(:flush, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, flush(%{state | flush: nil})}
   end
 
   def handle_info(_other, state) do
@@ -242,7 +275,7 @@ defmodule HerdrServer.App.Store do
   end
 
   defp effect(state, {:close, id}, _origin) do
-    close(id)
+    Restore.close(id)
     %{state | sizes: Map.delete(state.sizes, id), hidden: MapSet.delete(state.hidden, id)}
   end
 
@@ -265,21 +298,6 @@ defmodule HerdrServer.App.Store do
   defp io({:detach}, origin) when is_pid(origin), do: send(origin, {:detach})
   defp io({:detach}, _origin), do: :ok
   defp io(other, _), do: Logger.warning("unknown effect #{inspect(other)}")
-
-  # idempotent: closing an already-gone pane is a no-op everywhere
-  defp close(id) do
-    Panes.stop_pane(id)
-    kid = Rows.kernel_id(id)
-    if kid, do: Kernel.keeper().close(kid)
-    Rows.delete(id)
-  end
-
-  # every pane this Store mapped, then anything else the keeper still holds
-  defp close_all do
-    Enum.each(Rows.kernel_ids(), fn {id, _kid} -> close(id) end)
-    keeper = Kernel.keeper()
-    Enum.each(keeper.ids(), &keeper.close/1)
-  end
 
   defp notice(origin, n) when is_pid(origin), do: send(origin, {:notice, n})
   defp notice(_origin, n), do: Logger.info("notice: #{inspect(n)}")
@@ -356,5 +374,22 @@ defmodule HerdrServer.App.Store do
       :persistent_term.put(Protocol.fast_path_key(), fast)
       %{state | fast: fast}
     end
+  end
+
+  # --- mirror ---
+
+  defp dirty(%{flush: nil} = state),
+    do: %{state | flush: Process.send_after(self(), :flush, @flush_ms)}
+
+  defp dirty(state), do: state
+
+  defp flush(%{app: nil} = state), do: state
+
+  defp flush(%{app: app} = state) do
+    entries =
+      Map.new(@book, &{{:store, &1}, Map.fetch!(state, &1)})
+      |> Map.merge(Map.new([:session, :focus, :ui], &{{:app, &1}, Map.fetch!(app, &1)}))
+
+    %{state | mirrored: Mirror.put_changed(entries, state.mirrored)}
   end
 end

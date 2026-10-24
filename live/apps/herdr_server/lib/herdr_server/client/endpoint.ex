@@ -3,6 +3,8 @@ defmodule HerdrServer.Client.Endpoint do
   Client discovery (contract decision 5): registered as `HerdrScene.Protocol.endpoint()`.
   `{:attach, info}` starts a `Client.Session` and replies
   `{:ok, session_pid, %{rows: {HerdrServer.Pane.Rows, :fetch, []}}}` or `{:error, reasons}`.
+  A client pid that re-attaches gets its mirrored presentation state back
+  (`HerdrServer.Mirror.client/1`, passed to the session as `info.mirrored`).
   """
   use GenServer
 
@@ -22,6 +24,7 @@ defmodule HerdrServer.Client.Endpoint do
 
     reply =
       with :ok <- Protocol.validate_client_msg(msg),
+           info = Map.put(info, :mirrored, HerdrServer.Mirror.client(info.client)),
            {:ok, pid} <- Sessions.start_session(info) do
         {:ok, pid, %{rows: {HerdrServer.Pane.Rows, :fetch, []}}}
       else
