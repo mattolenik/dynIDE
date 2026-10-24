@@ -445,6 +445,17 @@ impl Inner {
         self.suspend_with(|| {
             // SAFETY: plain syscall; signals our own process group.
             unsafe { libc::kill(0, libc::SIGSTOP) };
+            // Linux hands a process-wide signal to the main thread, so this
+            // (scheduler) thread returns from kill before the group stop
+            // reaches it and would re-raw the tty first. A thread-directed
+            // stop holds it here; SIGCONT flushes the extra one on Linux.
+            // XNU stops the caller inside kill and keeps a thread-pending
+            // stop across SIGCONT, so this would stop macOS twice.
+            #[cfg(target_os = "linux")]
+            // SAFETY: plain syscall; signals the calling thread.
+            unsafe {
+                libc::raise(libc::SIGSTOP)
+            };
         })
     }
 
@@ -566,11 +577,13 @@ mod tests {
         assert_eq!(rc, 0, "openpty: {}", io::Error::last_os_error());
         // SAFETY: openpty returned owned fds.
         let (master, slave) = unsafe { (File::from_raw_fd(m), File::from_raw_fd(s)) };
-        // SAFETY: ttyname returns a NUL-terminated static buffer or null.
-        let name = unsafe { libc::ttyname(slave.as_raw_fd()) };
-        assert!(!name.is_null());
-        // SAFETY: non-null C string from ttyname.
-        let path = unsafe { std::ffi::CStr::from_ptr(name) }
+        // ttyname_r: glibc's ttyname shares one static buffer across threads.
+        let mut buf = [0 as libc::c_char; 128];
+        // SAFETY: buf is writable for buf.len() bytes.
+        let rc = unsafe { libc::ttyname_r(slave.as_raw_fd(), buf.as_mut_ptr(), buf.len()) };
+        assert_eq!(rc, 0, "ttyname_r: {}", io::Error::from_raw_os_error(rc));
+        // SAFETY: ttyname_r wrote a NUL-terminated string into buf.
+        let path = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
             .to_string_lossy()
             .into_owned();
         Pty {
@@ -827,14 +840,21 @@ mod tests {
     }
 
     /// Fills the host's output queue directly; the master is never read.
+    /// Linux moves pty output to the master's line discipline from a
+    /// workqueue, freeing room after EAGAIN, so refill until it stays full.
     fn fill(tty: &TtyResource) {
         let junk = [b'x'; 4096];
-        loop {
-            match (&tty.inner.file).write(&junk) {
-                Ok(_) => {}
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(e) => panic!("fill: {e}"),
+        let mut wrote = true;
+        while wrote {
+            wrote = false;
+            loop {
+                match (&tty.inner.file).write(&junk) {
+                    Ok(_) => wrote = true,
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(e) => panic!("fill: {e}"),
+                }
             }
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 
