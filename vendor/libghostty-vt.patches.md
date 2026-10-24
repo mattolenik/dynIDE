@@ -228,3 +228,48 @@ just test-one kitty_file_image_survives
 (cd vendor/libghostty-vt && zig build test-lib-vt -Dtest-filter='experimental PNG')
 just check
 ```
+
+## 0008 restore snapshot screen pages with room to grow
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0008-growable-restored-pages.patch`
+
+herdr issue: none; found by the herdr-live M6 gate (scrollback lost after
+repeated kernel snapshot round trips)
+
+upstream discussion: not opened
+
+upstream pr: not opened
+
+vendored base: `44f2a44df7e8c4a0c6df3f7d872ef3d7ead88e51`
+
+local files:
+
+- `vendor/libghostty-vt/src/terminal/snapshot/page.zig`
+- `vendor/libghostty-vt/src/terminal/snapshot/screen.zig`
+
+reason: PAGE records carry no row capacity, so SCREEN pages were restored with
+row capacity equal to their row count. The newest page was then full, and the
+next output row started a new page; the following snapshot froze that page at
+one row. Each pool-sized page is charged a whole pool item against
+`max_scrollback_bytes`, so every encode/restore trip with new output added
+about one item (409600 bytes at 100 columns) of nearly empty pages, until the
+limit pruned real history one page per trip (trip 18 at 10 MB). SCREEN pages
+that fit a standard pool page are now allocated with the row capacity PageList
+gives a new page of that width, at the same memory cost. The page decoder
+accepts a destination with extra row capacity; every other capacity field must
+still match exactly. The wire format is unchanged and snapshots encoded before
+this patch decode as before.
+
+remove when: upstream restores snapshot pages so that the newest page keeps
+growing in place (or encodes row capacity), and the verification below passes
+without this patch.
+
+verification:
+
+```sh
+(cd live/native/herdr_kernel && cargo test --locked snapshot_round_trips_keep_scrollback)
+(cd vendor/libghostty-vt && zig build test-lib-vt -Dtest-filter=snapshot)
+just maintenance-test
+```

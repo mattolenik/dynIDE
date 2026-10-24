@@ -376,12 +376,14 @@ pub fn decode(
         });
         defer builder.deinit();
 
-        // Allocate each PAGE at its declared capacity and decode directly into
-        // builder-owned storage, avoiding an intermediate page representation.
+        // Allocate each PAGE at its declared capacity, with room to grow
+        // rows, and decode directly into builder-owned storage, avoiding an
+        // intermediate page representation. Without growth room the newest
+        // page could not take the next output row (see growableCapacity).
         for (0..header.page_count) |_| {
             var decoder: page.Decoder = undefined;
             try decoder.init(source);
-            const native_page = try builder.allocatePage(decoder.capacity());
+            const native_page = try builder.allocatePage(decoder.growableCapacity());
             try decoder.decode(native_page, alloc);
         }
 

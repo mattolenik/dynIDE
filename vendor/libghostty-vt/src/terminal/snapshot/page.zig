@@ -204,6 +204,27 @@ pub const Decoder = struct {
         return self.header.pageCapacity() catch unreachable;
     }
 
+    /// Return the capacity to allocate for a page that may keep growing.
+    ///
+    /// PAGE records carry no row capacity, so a page allocated at exactly
+    /// `capacity` is full and the next row starts a new page. Restored once
+    /// per snapshot round trip, that leaves a nearly empty page behind each
+    /// trip, each charged a whole pool item against the scrollback limit.
+    /// When the page fits a standard pool page anyway, raise its row capacity
+    /// to what PageList gives a new page of that width; the pool item costs
+    /// the same. Other capacities, and pages that do not fit, stay exact.
+    pub fn growableCapacity(self: *const Decoder) TerminalPageCapacity {
+        const exact = self.capacity();
+        const std_cap = terminal_page.std_capacity;
+        const native = std_cap.adjust(.{ .cols = exact.cols }) catch return exact;
+        if (native.rows <= exact.rows) return exact;
+        var cap = exact;
+        cap.rows = native.rows;
+        const std_size = TerminalPage.layout(std_cap).total_size;
+        if (TerminalPage.layout(cap).total_size > std_size) return exact;
+        return cap;
+    }
+
     /// Largest remaining PAGE payload staged into one contiguous buffer.
     /// This comfortably covers every payload a standard-capacity page can
     /// produce while keeping the allocation an untrusted length can force
@@ -212,7 +233,8 @@ pub const Decoder = struct {
 
     /// Decode the remaining payload into caller-owned native page storage.
     ///
-    /// The destination must be freshly initialized with `capacity`. `alloc`
+    /// The destination must be freshly initialized with `capacity`, or with
+    /// more row capacity such as `growableCapacity`. `alloc`
     /// is used only for temporary staging, ID remaps, and integrity-check
     /// storage.
     pub fn decode(
@@ -220,7 +242,11 @@ pub const Decoder = struct {
         destination: *TerminalPage,
         alloc: Allocator,
     ) DecodeError!void {
-        if (!std.meta.eql(destination.capacity, self.capacity())) {
+        const exact = self.capacity();
+        var expected = destination.capacity;
+        if (expected.rows < exact.rows) return error.InvalidDestinationCapacity;
+        expected.rows = exact.rows;
+        if (!std.meta.eql(expected, exact)) {
             return error.InvalidDestinationCapacity;
         }
 

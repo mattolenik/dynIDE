@@ -903,6 +903,30 @@ mod tests {
         assert!(after.contains("500"));
     }
 
+    /// Each kill -9 or kernel-restart handoff is one encode/restore trip; history must
+    /// survive many of them (m6 task 4d: one page was pruned per trip from trip 18).
+    #[test]
+    fn snapshot_round_trips_keep_scrollback() {
+        const MAX: usize = 10_000_000;
+        let lines = |vt: &Vt| {
+            vt.read_text(TextRange::Screen)
+                .expect("read")
+                .lines()
+                .filter(|l| l.trim_start().starts_with('L'))
+                .count()
+        };
+        let mut vt = Vt::new(100, 30, MAX).expect("vt");
+        for n in 1..=3000 {
+            vt.write(format!("L{n}\r\n").as_bytes());
+        }
+        assert_eq!(lines(&vt), 3000);
+        for i in 1..=30 {
+            vt = roundtrip(&vt, MAX);
+            vt.write(format!("L{}\r\n", 3000 + i).as_bytes());
+            assert_eq!(lines(&vt), 3000 + i, "trip {i}");
+        }
+    }
+
     #[test]
     fn snapshot_roundtrip_alt_screen() {
         let vt = Vt::new(80, 24, 1_000_000).expect("vt");
