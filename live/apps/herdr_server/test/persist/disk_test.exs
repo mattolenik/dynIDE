@@ -105,6 +105,55 @@ defmodule HerdrServer.Persist.DiskTest do
     refute first in final
   end
 
+  @root System.cmd("id", ["-u"]) |> elem(0) |> String.trim() == "0"
+
+  @tag skip: if(@root, do: "root reads a 0000 file")
+  test "an unreadable file is moved aside, not left for the Writer", %{cfg: cfg, path: path} do
+    File.mkdir_p!(cfg.dir)
+    File.write!(path, envelope(%{}))
+    File.chmod!(path, 0o000)
+
+    log = capture_log(fn -> assert Disk.read(cfg) == {:error, :eacces} end)
+    assert log =~ ~r/persist_error .*op=read reason=:eacces moved=session\.t\.etf\.bad-\d+/
+    assert [moved] = aside(cfg)
+    assert moved =~ ~r/^session\.t\.etf\.bad-\d+$/
+    refute File.exists?(path)
+    assert Disk.read(cfg) == :none
+  end
+
+  test "set_aside moves the scrollback dir with the file, the 5 newest kept", %{
+    cfg: cfg,
+    path: path
+  } do
+    other = %{cfg | name: "u"}
+    :ok = Disk.write_scrollback(other, 1, "other", 80)
+
+    dirs =
+      for n <- 1..6 do
+        :ok = Disk.write(cfg, snapshot())
+        :ok = Disk.write_scrollback(cfg, 1, "history #{n}", 80)
+        capture_log(fn -> :ok = Disk.set_aside(cfg, :test) end)
+        [file] = aside(cfg) |> Enum.take(-1)
+        "session.t.etf." <> suffix = file
+        dir = Path.join(cfg.dir, "session.t.scrollback.#{suffix}")
+
+        assert File.read!(Path.join(dir, "1.etf")) |> :erlang.binary_to_term() |> Map.get(:bytes) ==
+                 "history #{n}"
+
+        dir
+      end
+
+    refute File.exists?(path)
+    refute File.exists?(Disk.scrollback_dir(cfg))
+    kept = cfg.dir |> File.ls!() |> Enum.filter(&String.starts_with?(&1, "session.t.scrollback."))
+    assert length(kept) == 5
+    refute File.exists?(hd(dirs))
+    assert Enum.all?(tl(dirs), &File.dir?/1)
+    assert length(aside(cfg)) == 5
+    # another session's scrollback is not touched
+    assert Disk.read_scrollback(other, 1) == "other"
+  end
+
   test "scrollback round trip, prune and corrupt file", %{cfg: cfg} do
     assert Disk.read_scrollback(cfg, 1) == nil
     assert Disk.write_scrollback(cfg, 1, "one\r\n", 80) == :ok

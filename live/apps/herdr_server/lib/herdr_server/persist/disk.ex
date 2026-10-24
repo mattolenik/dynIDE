@@ -9,9 +9,10 @@ defmodule HerdrServer.Persist.Disk do
   file in the same dir, `:file.sync`, rename), files are 0600 and directories this
   module creates are 0700. Reads use `binary_to_term(.., [:safe])`.
 
-  A snapshot file that does not decode is renamed aside (`.bad-<ms>`, or `.v<N>-<ms>`
-  for a newer schema version) so the next start begins fresh; the 5 newest moved-aside
-  files of a session name are kept.
+  A snapshot file that does not decode or cannot be read is renamed aside (`.bad-<ms>`,
+  or `.v<N>-<ms>` for a newer schema version) so the next start begins fresh and no write
+  replaces it; its scrollback dir moves with it (`session.<name>.scrollback.<tag>-<ms>`,
+  same tag and ms). The 5 newest moved-aside files, and dirs, of a session name are kept.
 
   `config/0` is `config :herdr_server, HerdrServer.Persist` over the defaults, with
   `dir` and `name` resolved from the raw values `runtime.exs` sets.
@@ -101,8 +102,9 @@ defmodule HerdrServer.Persist.Disk do
   end
 
   @doc """
-  Reads the snapshot. `:none` when there is no file; a file that does not decode is
-  moved aside and gives `{:error, reason}`. Every error is logged as `persist_error op=read`.
+  Reads the snapshot. `:none` when there is no file; a file that does not decode or
+  cannot be read (any error but `:enoent`) is moved aside and gives `{:error, reason}`.
+  Every error is logged as `persist_error op=read`.
   """
   @spec read(cfg) :: {:ok, Schema.snapshot(), integer} | :none | {:error, term}
   def read(cfg) do
@@ -118,9 +120,9 @@ defmodule HerdrServer.Persist.Disk do
       {:error, :enoent} ->
         :none
 
+      # eacces, eio, emfile..: moved aside so the Writer does not replace an unread file
       {:error, reason} ->
-        HerdrReload.Telemetry.event(:persist_error, op: :read, reason: inspect(reason))
-        {:error, reason}
+        quarantine(cfg, path, reason)
     end
   end
 
@@ -140,8 +142,9 @@ defmodule HerdrServer.Persist.Disk do
   defp session({:error, _} = err), do: err
 
   @doc """
-  Moves the snapshot file aside (`.bad-<ms>`, the 5 newest kept) after it decoded but
-  could not be restored, so a later write does not replace the only copy. Logs one
+  Moves the snapshot file and its scrollback dir aside (`.bad-<ms>`, the 5 newest kept)
+  after it decoded but could not be restored, so a later write does not replace the only
+  copy. Logs one
   `persist_error op=read` line (`moved=none` when there is no file).
   """
   @spec set_aside(cfg, term) :: :ok
@@ -166,8 +169,9 @@ defmodule HerdrServer.Persist.Disk do
         _ -> "bad"
       end
 
-    to = aside_path(path, tag, System.os_time(:millisecond))
+    {to, ms} = aside_path(path, tag, System.os_time(:millisecond))
     moved = File.rename(path, to)
+    if moved == :ok, do: set_aside_scrollback(cfg, tag, ms)
     prune_aside(cfg)
 
     HerdrReload.Telemetry.event(:persist_error,
@@ -182,23 +186,36 @@ defmodule HerdrServer.Persist.Disk do
   # a free name: bumps the ms suffix on a collision so the order stays strict
   defp aside_path(path, tag, ms) do
     to = "#{path}.#{tag}-#{ms}"
-    if File.exists?(to), do: aside_path(path, tag, ms + 1), else: to
+    if File.exists?(to), do: aside_path(path, tag, ms + 1), else: {to, ms}
+  end
+
+  # the pane ids in the scrollback belong to the set-aside snapshot: they move with it
+  defp set_aside_scrollback(cfg, tag, ms) do
+    dir = scrollback_dir(cfg)
+    if File.exists?(dir), do: File.rename(dir, "#{dir}.#{tag}-#{ms}")
   end
 
   defp prune_aside(cfg) do
-    re = ~r/^session\.#{Regex.escape(cfg.name)}\.etf\.(?:bad|v\d+)-(\d+)$/
+    name = Regex.escape(cfg.name)
+    files = ~r/^session\.#{name}\.etf\.(?:bad|v\d+)-(\d+)$/
+    dirs = ~r/^session\.#{name}\.scrollback\.(?:bad|v\d+)-(\d+)$/
 
     case File.ls(cfg.dir) do
       {:ok, names} ->
-        names
-        |> Enum.flat_map(&aside_entry(re, &1))
-        |> Enum.sort(:desc)
-        |> Enum.drop(@keep_aside)
-        |> Enum.each(fn {_, n} -> File.rm(Path.join(cfg.dir, n)) end)
+        prune_matching(cfg.dir, names, files)
+        prune_matching(cfg.dir, names, dirs)
 
       {:error, _} ->
         :ok
     end
+  end
+
+  defp prune_matching(dir, names, re) do
+    names
+    |> Enum.flat_map(&aside_entry(re, &1))
+    |> Enum.sort(:desc)
+    |> Enum.drop(@keep_aside)
+    |> Enum.each(fn {_, n} -> File.rm_rf(Path.join(dir, n)) end)
   end
 
   defp aside_entry(re, name) do
