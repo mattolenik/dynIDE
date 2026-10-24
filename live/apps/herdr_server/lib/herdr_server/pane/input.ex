@@ -27,8 +27,45 @@ defmodule HerdrServer.Pane.Input do
 
   defp kernel_mods(ev), do: %{ev | mods: Enum.filter(ev.mods, &(&1 in @mods))}
 
-  @spec paste(binary, pos_integer) :: :ok
-  def paste(bin, id), do: write(id, &bracket(&1, bin))
+  @chunk 65_536
+
+  @doc """
+  Writes `bin` in chunks of at most #{@chunk} bytes, bracketed when the pane enabled
+  bracketed paste, without blocking. On the first write error it stops and returns
+  `{:error, {:truncated, n}}` (`n` = paste bytes written); a bracketed paste then gets
+  one attempt to write the end marker alone so the pane leaves paste mode.
+  """
+  @spec paste(binary, pos_integer) :: :ok | {:error, {:truncated, non_neg_integer}}
+  def paste(bin, id) do
+    with kid when kid != nil <- Rows.kernel_id(id),
+         {:ok, %{vt: vt, pty: pty}} <- Kernel.keeper().lookup(kid) do
+      bracketed? = on?(Kernel.vt().mode(vt, :bracketed_paste))
+      chunks = chunks(bin)
+      chunks = if bracketed?, do: [{"\e[200~", 0}] ++ chunks ++ [{"\e[201~", 0}], else: chunks
+      paste_chunks(id, pty, chunks, bracketed?, 0)
+    else
+      _ -> :ok
+    end
+  end
+
+  defp chunks(<<c::binary-size(@chunk), rest::binary>>), do: [{c, @chunk} | chunks(rest)]
+  defp chunks(<<>>), do: []
+  defp chunks(c), do: [{c, byte_size(c)}]
+
+  defp paste_chunks(_id, _pty, [], _bracketed?, _n), do: :ok
+
+  defp paste_chunks(id, pty, [{bytes, len} | rest], bracketed?, n) do
+    case Kernel.pty().write(pty, bytes) do
+      :ok ->
+        paste_chunks(id, pty, rest, bracketed?, n + len)
+
+      {:error, reason} ->
+        warn(id, reason)
+        # the start marker went out but the end marker did not: one attempt to close paste mode
+        if bracketed? and bytes != "\e[200~", do: Kernel.pty().write(pty, "\e[201~")
+        {:error, {:truncated, n}}
+    end
+  end
 
   @spec focus(boolean, pos_integer) :: :ok
   def focus(focused?, id), do: write(id, &Kernel.vt().encode_focus(&1, focused?))
@@ -65,10 +102,6 @@ defmodule HerdrServer.Pane.Input do
       Process.put(key, now)
       Logger.warning("pane #{id}: input dropped (#{inspect(reason)})")
     end
-  end
-
-  defp bracket(vt, bin) do
-    if on?(Kernel.vt().mode(vt, :bracketed_paste)), do: "\e[200~" <> bin <> "\e[201~", else: bin
   end
 
   defp on?({:stale, b}), do: b

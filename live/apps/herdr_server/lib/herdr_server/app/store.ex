@@ -242,7 +242,12 @@ defmodule HerdrServer.App.Store do
 
   defp io({:key, id, ev}, _), do: Input.key(ev, id)
   defp io({:mouse, id, ev}, _), do: Input.mouse(ev, id)
-  defp io({:paste, id, bin}, _), do: Input.paste(bin, id)
+
+  defp io({:paste, id, bin}, origin) do
+    with {:error, {:truncated, n}} <- Input.paste(bin, id),
+         do: notice(origin, %{level: :warning, text: "paste truncated after #{n} bytes"})
+  end
+
   defp io({:focus_report, id, f}, _), do: Input.focus(f, id)
   defp io({:notice, n}, origin), do: notice(origin, n)
   defp io({:detach}, origin), do: notice(origin, %{level: :info, text: "detach not implemented"})

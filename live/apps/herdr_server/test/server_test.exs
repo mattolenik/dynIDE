@@ -307,6 +307,47 @@ defmodule HerdrServer.ServerTest do
     assert Fake.Vt.read_text(vt(1), {:rows, 0..0}) == ""
   end
 
+  test "pastes are written in 64 KiB chunks; a mid-paste rejection notifies and closes paste mode" do
+    {c, s} = client()
+    scene(c)
+    :ok = Fake.Vt.set_mode(vt(1), :bracketed_paste, true)
+    big = :binary.copy("p", 5 * 65_536 - 10)
+
+    input(s, c, 1, {:paste, big})
+    assert_receive {^c, {:ack, 1}}
+    refute_received {^c, {:notice, _}}
+    writes = Fake.Pty.writes(pty(1))
+    assert ["\e[200~" | _] = writes
+    assert List.last(writes) == "\e[201~"
+
+    assert writes |> Enum.slice(1..-2//1) |> Enum.map(&byte_size/1) == [
+             65_536,
+             65_536,
+             65_536,
+             65_536,
+             65_526
+           ]
+
+    # start marker and two chunks go out, the third is rejected
+    :ok = Fake.Pty.backpressure_once_after(pty(1), 3)
+    input(s, c, 2, {:paste, big})
+
+    assert_receive {^c,
+                    {:notice, %{level: :warning, text: "paste truncated after 131072 bytes"}}},
+                   500
+
+    assert_receive {^c, {:ack, 2}}
+    assert [_, _, "\e[200~", _, _, "\e[201~"] = Enum.take(Fake.Pty.writes(pty(1)), -6)
+  end
+
+  test "a hollow block cursor is stored as a block" do
+    {c, _s} = client()
+    scene(c)
+    :ok = Fake.Vt.set_cursor_shape(vt(1), :block_hollow)
+    Fake.Pty.output(pty(1), "z")
+    assert eventually(fn -> match?({_, _, %{x: 1, shape: :block}}, Rows.fetch(1)) end)
+  end
+
   defp eventually(fun, tries \\ 50) do
     cond do
       fun.() -> true

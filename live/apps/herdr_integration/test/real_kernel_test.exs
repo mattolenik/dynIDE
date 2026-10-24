@@ -11,7 +11,8 @@ defmodule HerdrIntegration.RealKernelTest do
   @moduletag timeout: 120_000
 
   alias HerdrIntegration.Driver
-  alias HerdrServer.Pane.Rows
+  alias HerdrScene.Event
+  alias HerdrServer.Pane.{Input, Rows}
 
   # SHELL is read in the VM (System.get_env); the rest must reach the child via :pane_env
   @pane_env [{"PS1", "$ "}, {"BASH_SILENCE_DEPRECATION_WARNING", "1"}]
@@ -28,19 +29,21 @@ defmodule HerdrIntegration.RealKernelTest do
     prev_shell = System.get_env("SHELL")
     System.put_env("SHELL", "/bin/sh")
     Application.put_env(:herdr_server, :pane_env, @pane_env)
-    restart_server(@real)
 
+    # registered first, so a failed restart onto the real kernel still restores the fake
     on_exit(fn ->
       restart_server(prev_kernel)
       Application.delete_env(:herdr_server, :pane_env)
       if prev_shell, do: System.put_env("SHELL", prev_shell), else: System.delete_env("SHELL")
     end)
 
+    restart_server(@real)
+
     {:ok, big: big_file()}
   end
 
   defp restart_server(kernel) do
-    :ok = Application.stop(:herdr_server)
+    _ = Application.stop(:herdr_server)
     Application.put_env(:herdr_server, :kernel, kernel)
     {:ok, _} = Application.ensure_all_started(:herdr_server)
   end
@@ -98,6 +101,44 @@ defmodule HerdrIntegration.RealKernelTest do
 
     assert Driver.wait_screen(client, fn _ -> length(Driver.scene(client).panes) == 1 end, 5000)
     assert Rows.kernel_id(second) == nil
+  end
+
+  test "a 2 MiB paste into cat either lands whole or reports truncation" do
+    client = Driver.start_client({80, 24})
+    assert Driver.wait_screen(client, &prompt?(Driver.scene(client), 1, &1), 5000)
+    Driver.type(client, "cat > /dev/null\r")
+    Process.sleep(100)
+    line = String.duplicate("y", 63) <> "\n"
+    paste = :binary.copy(line, div(2 * 1024 * 1024, 64))
+
+    case Input.paste(paste, 1) do
+      :ok -> :ok
+      {:error, {:truncated, n}} -> assert n < byte_size(paste) and rem(n, 65_536) == 0
+    end
+
+    # the pane still answers once its write queue drains (keys typed into a full queue are
+    # dropped, so retry): end cat, run a command
+    assert Enum.any?(1..20, fn _ ->
+             Driver.type(client, "\x03")
+             Driver.type(client, "echo after-paste\r")
+             Driver.wait_screen(client, &line?(Driver.scene(client), 1, &1, "after-paste"), 500)
+           end)
+  end
+
+  test "events outside M1's input vocabulary are translated or dropped, never raised" do
+    client = Driver.start_client({80, 24})
+    assert Driver.wait_screen(client, &prompt?(Driver.scene(client), 1, &1), 5000)
+    Driver.type(client, "exec cat\r")
+    Process.sleep(100)
+    move = {:mouse, %{kind: :move, button: :none, x: 0, y: 0, mods: [:hyper], px: nil}}
+    assert Input.mouse(move, 1) == :ok
+    # :hyper is not an M1 modifier: dropped, the key still types
+    for k <- ["h", "y", "p"], do: assert(Input.key(Event.key(k, [:hyper]), 1) == :ok)
+
+    assert Driver.wait_screen(
+             client,
+             &(rows(Driver.scene(client), 1, &1) |> Enum.join() =~ "hyp")
+           )
   end
 
   defp rows(scene, id, screen) do

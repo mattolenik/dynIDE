@@ -38,6 +38,7 @@ if Mix.env() == :test do
     @key_timeout_ms 5000
     @mailbox_limit 100
     @flood_end "FLOOD-END"
+    @flood_timeout_ms 120_000
 
     @impl Mix.Task
     def run(args) do
@@ -153,17 +154,17 @@ if Mix.env() == :test do
       sup
     end
 
-    defp until(check, left) do
+    defp until(check, left, what \\ "client did not come up") do
       cond do
         check.() ->
           :ok
 
         left <= 0 ->
-          Mix.raise("bench: client did not come up")
+          Mix.raise("bench: #{what}")
 
         true ->
           Process.sleep(5)
-          until(check, left - 5)
+          until(check, left - 5, what)
       end
     end
 
@@ -405,15 +406,8 @@ if Mix.env() == :test do
       {:ok, %{pty: pty}} = Kernel.keeper().lookup(Rows.kernel_id(id))
       until(fn -> text(id) =~ "$" end, 5000)
       :ok = Kernel.pty().write(pty, "cat #{file}\r")
-      wait_for(fn -> text(id) =~ @flood_end end)
+      until(fn -> text(id) =~ @flood_end end, @flood_timeout_ms, "pane #{id}: cat did not finish")
       0
-    end
-
-    defp wait_for(check) do
-      unless check.() do
-        Process.sleep(20)
-        wait_for(check)
-      end
     end
 
     # Fake.Pty applies no backpressure; yield 1ms while its or the vt's mailbox is deep.

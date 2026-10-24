@@ -22,6 +22,8 @@ defmodule HerdrServer.Kernel.Fake.Pty do
             last_sent: 0,
             timer: nil,
             backpressure: false,
+            reject_after: nil,
+            writes: [],
             closed: false
 
   @impl HerdrServer.Kernel.Pty
@@ -45,6 +47,12 @@ defmodule HerdrServer.Kernel.Fake.Pty do
   After `kill/2` (which sends `{:exit, id, {:signal, n}}` once) writes are `{:error, :closed}`.
   """
   def set_backpressure(pty, on?), do: GenServer.call(pty, {:backpressure, on?})
+
+  @doc "Test hook: accept `k` more writes, reject the next one with backpressure, then accept."
+  def backpressure_once_after(pty, k), do: GenServer.call(pty, {:reject_after, k})
+
+  @doc "Test hook: the last 100 accepted writes, oldest first."
+  def writes(pty), do: GenServer.call(pty, :writes)
 
   @impl HerdrServer.Kernel.Pty
   def resize(pty, cols, rows, cell_px), do: GenServer.call(pty, {:resize, cols, rows, cell_px})
@@ -91,10 +99,28 @@ defmodule HerdrServer.Kernel.Fake.Pty do
     {:reply, {:error, :backpressure}, state}
   end
 
+  def handle_call({:write, _bin}, _from, %{reject_after: 0} = state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, {:error, :backpressure}, %{state | reject_after: nil}}
+  end
+
   def handle_call({:write, bin}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
+    left = if state.reject_after, do: state.reject_after - 1
+    log = Enum.take([IO.iodata_to_binary(bin) | state.writes], 100)
+    state = %{state | reject_after: left, writes: log}
     {:noreply, state} = handle_cast({:output, IO.iodata_to_binary(bin)}, state)
     {:reply, :ok, state}
+  end
+
+  def handle_call({:reject_after, k}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, %{state | reject_after: k}}
+  end
+
+  def handle_call(:writes, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, Enum.reverse(state.writes), state}
   end
 
   def handle_call({:backpressure, on?}, _from, state) do

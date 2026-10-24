@@ -12,15 +12,21 @@ defmodule HerdrServer.Kernel do
   @doc "Caches the configured kernel modules. Called by `HerdrServer.Application.start/2`."
   @spec load() :: :ok
   def load do
-    env = Application.get_env(:herdr_server, :kernel, [])
+    env =
+      case Application.fetch_env(:herdr_server, :kernel) do
+        {:ok, env} -> env
+        :error -> raise "config :herdr_server, :kernel is not set (see live/config/config.exs)"
+      end
 
-    mods = %{
-      vt: Keyword.get(env, :vt, HerdrServer.Kernel.Fake.Vt),
-      pty: Keyword.get(env, :pty, HerdrServer.Kernel.Fake.Pty),
-      keeper: Keyword.get(env, :keeper, HerdrServer.Kernel.Fake.Keeper)
-    }
-
+    mods = Map.new([:vt, :pty, :keeper], &{&1, fetch!(env, &1)})
     :persistent_term.put(@key, mods)
+  end
+
+  defp fetch!(env, key) do
+    case Keyword.fetch(env, key) do
+      {:ok, mod} -> mod
+      :error -> raise "config :herdr_server, :kernel has no #{inspect(key)} module"
+    end
   end
 
   @spec vt() :: module
