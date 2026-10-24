@@ -38,7 +38,13 @@ defmodule HerdrServer.Application do
           HerdrServer.Client.Supervisor,
           HerdrServer.Client.Endpoint,
           HerdrServer.ReloadNotices
-        ] ++ control()
+        ] ++
+        control() ++
+        [
+          # last: it stops first, writing a final snapshot while Store and Keeper still run;
+          # ignores itself unless persistence is enabled
+          HerdrServer.Persist.Writer
+        ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
