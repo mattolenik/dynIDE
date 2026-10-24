@@ -30,7 +30,8 @@ defmodule HerdrServer.MixProject do
     [
       {:herdr_scene, in_umbrella: true},
       {:herdr_reload, in_umbrella: true},
-      {:rustler, "~> 0.38.0", runtime: false}
+      {:rustler, "~> 0.38.0", runtime: false},
+      {:stream_data, "~> 1.1", only: :test}
     ]
   end
 
