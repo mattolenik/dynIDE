@@ -37,6 +37,14 @@ fail() {
 # Inner script: runs inside the pty. $1 = run name, $2 = how to stop (TERM or KILL).
 cat >"$tmp/inner.sh" <<INNER
 run=\$1
+if [ "\$2" = EARLY ]; then
+  stty cols 120 rows 40
+  stty -a >"$tmp/before.\$run"
+  "$root/scripts/tty_guard.sh" sh -c 'exit 3'
+  echo \$? >"$tmp/status.\$run"
+  stty -a >"$tmp/after.\$run"
+  exit 0
+fi
 alive() { st=\$(ps -o stat= -p "\$1" 2>/dev/null); [ -n "\$st" ] && [ "\${st#Z}" = "\$st" ]; }
 stty cols 120 rows 40
 stty -a >"$tmp/before.\$run"
@@ -88,7 +96,7 @@ has() { LC_ALL=C grep -q "$(printf %b "$2")" "$tmp/transcript.$1"; }
 # the transcript ends with leaving the alt screen (ignoring Darwin script(1)'s
 # "^D" plus backspaces at EOF, and line ends)
 ends_restored() {
-  [ "$(LC_ALL=C tr -d '\r\n\b^D' <"$tmp/transcript.$1" | tail -c 8)" = "$(printf '\033[?1049l')" ]
+  [ "$(LC_ALL=C tr -d '\r\n\b' <"$tmp/transcript.$1" | LC_ALL=C sed 's/\^D//g' | tr -d '\n' | tail -c 8)" = "$(printf '\033[?1049l')" ]
 }
 
 in_pty term TERM
@@ -115,6 +123,16 @@ echo "PASS: kill -9 of the VM: guard exits with the VM's status 137"
 cmp -s "$tmp/before.kill" "$tmp/after.kill" || fail "kill: stty changed: $(diff "$tmp/before.kill" "$tmp/after.kill")"
 ends_restored kill || fail "kill: transcript does not end with the guard's restore"
 echo "PASS: kill -9 of the VM: guard restored the tty settings and wrote the restore sequence"
+
+in_pty early EARLY
+[ "$(cat "$tmp/status.early")" = 3 ] || fail "early: exit status $(cat "$tmp/status.early") (wanted 3)"
+cmp -s "$tmp/before.early" "$tmp/after.early" || fail "early: stty changed: $(diff "$tmp/before.early" "$tmp/after.early")"
+esc=$(printf '\033')
+has early '\033\\[<u' || fail "early: no kitty pop in the guard's restore"
+LC_ALL=C sed "s/${esc}\[?1049h${esc}\[<u//g" "$tmp/transcript.early" | LC_ALL=C grep -q "${esc}\[<u" &&
+  fail "early: a kitty pop outside the alt-screen sandwich (would pop the main screen's stack)"
+ends_restored early || fail "early: transcript does not end with the guard's restore"
+echo "PASS: early non-zero exit: guard exits 3, stty unchanged, kitty pop only inside the alt-screen sandwich"
 
 [ "$verbose" = 1 ] && dump
 exit 0

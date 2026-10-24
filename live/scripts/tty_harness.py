@@ -23,9 +23,10 @@ status 0, the restore sequence (kitty pop, alt screen left) and unchanged
 tty settings.
 
 herdr-stress: the same launch, then grows to 15 panes (each time clicking the
-largest pane with an SGR mouse press, then prefix v or -), cats a 20 MB file
-five times in one pane while typing in another, and checks the typed echo shows up (and
-when, relative to the end of the cat), then quits.
+largest pane with an SGR mouse press, then prefix v or -), cats a 21 MB file
+in a loop in one pane while typing in another, checks the typed echo shows up
+while the loop still runs (it stops only after that) and reports its latency,
+then quits.
 
 Prints PASS lines; exits 1 on the first failure. Every mode SIGKILLs the
 process groups it started on any exit, including Ctrl-C. The 120 s deadline
@@ -594,20 +595,21 @@ def herdr_stress():
         cat_pane, typed_pane = panes[0], panes[-1]
         cx, cy, cw, ch = cat_pane
         h.click(int(cx + cw / 2), int(cy + ch / 2))
-        t0 = time.monotonic()
-        # five passes, so the cat is still running when the typing lands
-        h.send(f'for i in 1 2 3 4 5; do cat {big}; done; echo END""-CAT\r'.encode())
+        # the cat repeats until the harness creates `stop`, which it does only after
+        # the typed echo showed: the echo is structurally during the cat
+        stop = os.path.join(tmp, "stop")
+        h.send(f'while [ ! -e {stop} ]; do cat {big}; done; echo END""-CAT\r'.encode())
         h.until(lambda: re.search(r"\d{8} x", h.screen.text()), "cat output on screen", timeout=20)
         tx, ty, tw, th = typed_pane
         h.click(int(tx + tw / 2), int(ty + th / 2))
+        t0 = time.monotonic()
         h.send(b'echo typed""-ok\r')
         h.until(lambda: h.shows("typed-ok"), "typed echo during the cat", timeout=30)
-        typed_at = time.monotonic() - t0
-        during = not h.shows("END-CAT")
+        latency = time.monotonic() - t0
+        ok(not h.shows("END-CAT"), f"stress: typed echo shown during the cat, {latency * 1000:.0f} ms after the keys")
+        open(stop, "w").close()
         h.until(lambda: h.shows("END-CAT"), "end of the cat", timeout=120)
-        cat_at = time.monotonic() - t0
-        ok(during, f"stress: typed echo shown at {typed_at:.2f}s, 5 x {size / 1e6:.1f} MB cat ended at "
-                 f"{cat_at:.2f}s ({'during' if during else 'after'} the cat)")
+        ok(True, f"stress: the {size / 1e6:.1f} MB cat loop ended once told to")
         h.until(lambda: re.search(r"00300000 x", h.screen.text()), "last cat line", timeout=10)
         ok(True, "stress: the cat pane shows its last line")
         h.quit()
