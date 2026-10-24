@@ -1,0 +1,6 @@
+# Linux check image for herdr-live (used by ../linux_check.sh).
+FROM localhost/herdr-m2-check
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    htop inotify-tools procps rsync \
+ && rm -rf /var/lib/apt/lists/*
