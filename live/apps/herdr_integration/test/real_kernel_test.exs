@@ -117,9 +117,14 @@ defmodule HerdrIntegration.RealKernelTest do
     end
 
     # the pane still answers once its write queue drains (keys typed into a full queue are
-    # dropped, so retry): end cat, run a command
+    # dropped, so retry): end cat, then run a command. Two loops: a ^C sent with the command
+    # reaches the shell at its prompt, and dash drops the typeahead line on SIGINT.
     assert Enum.any?(1..20, fn _ ->
              Driver.type(client, "\x03")
+             Driver.wait_screen(client, &line?(Driver.scene(client), 1, &1, "$"), 500)
+           end)
+
+    assert Enum.any?(1..20, fn _ ->
              Driver.type(client, "echo after-paste\r")
              Driver.wait_screen(client, &line?(Driver.scene(client), 1, &1, "after-paste"), 500)
            end)
