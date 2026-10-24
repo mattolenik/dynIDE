@@ -2,12 +2,15 @@
 # Smoke test: herdr-live boots with the terminal client attached (no
 # HERDR_LIVE_HEADLESS) on the real /dev/tty of a script(1) pty, sized 120x40.
 # Run 1: logs 'terminal client started', paints a frame (alt screen entered,
-# TERMINAL status), stops on SIGTERM with status 0 and 'herdr-live stopped',
-# the transcript ends with the restore (alt screen left, modes reset) and the
-# tty settings are unchanged. Run 2: kill -9 of the primary VM; the broker
-# hands off to a new VM whose client repaints, then SIGTERM stops it with status
-# 0, the tty settings unchanged and the restore at the end. Run 3: tty_guard.sh
-# (still used by live-demo) on an early non-zero exit.
+# TERMINAL status), then one graceful `herdr-live kernel-restart`: the old
+# client restores the tty, the new VM adopts the app (Store) and its client
+# starts and puts the tty back in raw mode. It stops on SIGTERM with status 0
+# and 'herdr-live stopped', the transcript ends with the restore (alt screen
+# left, modes reset) and the tty settings are unchanged. Run 2: kill -9 of the
+# primary VM; the broker hands off to a new VM that adopts the app and whose
+# client repaints, then SIGTERM stops it with status 0, the tty settings
+# unchanged and the restore at the end. Run 3: tty_guard.sh (still used by
+# live-demo) on an early non-zero exit.
 # Usage: attached_smoke.sh [-v]    (SMOKE_TIMEOUT seconds to boot, default 600)
 set -u
 verbose=0
@@ -69,6 +72,18 @@ until ready; do
   sleep 0.5
 done
 sleep 1
+if [ "\$2" = TERM ]; then
+  HERDR_LIVE_RUNTIME_DIR="$tmp/rt.\$run" "$root/bin/herdr-live" kernel-restart >"$tmp/restart.\$run" 2>&1
+  echo \$? >"$tmp/restart_status.\$run"
+  i=0
+  until [ "\$(grep -c 'terminal client started' "\$log")" -ge 2 ]; do
+    i=\$((i + 1))
+    [ "\$i" -gt 120 ] && break
+    sleep 0.5
+  done
+  sleep 1
+  stty -a >"$tmp/mid.\$run"
+fi
 if [ "\$2" = KILL ]; then
   # bin/herdr-live execs the broker; kill -9 its primary VM, wait for the
   # handoff and the new VM's client, then stop the broker like run 1
@@ -105,6 +120,13 @@ in_pty() {
 }
 
 has() { LC_ALL=C grep -q "$(printf %b "$2")" "$tmp/transcript.$1"; }
+# occurrences of the fixed string $2 in run $1's transcript
+count() { LC_ALL=C grep -oF "$(printf %b "$2")" "$tmp/transcript.$1" | wc -l | tr -d ' '; }
+# the promoted VM adopted the app from the broker (M3 Store adoption)
+adopted_app() {
+  grep -q 'handoff: adopted app with panes \[[0-9]' "$1" || fail "$2: log lacks 'handoff: adopted app with panes [..]'"
+  ! grep -q 'unusable app/store entry' "$1" || fail "$2: $(grep 'unusable app/store entry' "$1")"
+}
 # the transcript ends with leaving the alt screen (ignoring Darwin script(1)'s
 # "^D" plus backspaces at EOF, and line ends)
 ends_restored() {
@@ -127,14 +149,28 @@ has term '\033\\[?1006l' || fail "transcript lacks the mouse mode reset"
 echo "PASS: SIGTERM: transcript ends with the restore (alt screen left, modes reset)"
 cmp -s "$tmp/before.term" "$tmp/after.term" || fail "term: stty changed: $(diff "$tmp/before.term" "$tmp/after.term")"
 echo "PASS: SIGTERM: tty settings unchanged"
+[ "$(cat "$tmp/restart_status.term" 2>/dev/null)" = 0 ] && grep -q '^ok' "$tmp/restart.term" ||
+  fail "kernel-restart: status $(cat "$tmp/restart_status.term" 2>/dev/null): $(cat "$tmp/restart.term" 2>/dev/null)"
+grep -q 'herdr-broker: handoff graceful' "$log" || fail "kernel-restart: log lacks 'herdr-broker: handoff graceful'"
+[ "$(grep -c 'terminal client started' "$log")" -ge 2 ] || fail "kernel-restart: the new VM started no terminal client"
+adopted_app "$log" kernel-restart
+echo "PASS: kernel-restart: graceful handoff, app adopted, the new VM's client started"
+[ "$(count term '\033[?1049h')" -ge 2 ] && [ "$(count term '\033[?1049l')" -ge 2 ] ||
+  fail "kernel-restart: the old client did not restore the tty before the new one took it"
+grep -q -- '-icanon' "$tmp/mid.term" || fail "kernel-restart: tty not raw under the new client: $(cat "$tmp/mid.term")"
+echo "PASS: kernel-restart: old client restored the tty, the new client re-entered raw mode"
+left=$(vm_pids "$log" | while read -r p; do kill -0 "$p" 2>/dev/null && echo "$p"; done)
+[ -z "$left" ] || fail "kernel-restart: vm pids still running: $left"
+echo "PASS: kernel-restart: no vm left"
 
 in_pty kill KILL
 log="$tmp/log.kill"
 [ -n "$(cat "$tmp/vm.kill" 2>/dev/null)" ] || fail "kill: no primary_pid in the broker status"
 grep -q 'herdr-broker: handoff crash' "$log" || fail "kill: log lacks 'herdr-broker: handoff crash'"
 [ "$(grep -c 'terminal client started' "$log")" -ge 2 ] || fail "kill: the new VM started no terminal client"
+adopted_app "$log" kill
 [ "$(cat "$tmp/status.kill")" = 0 ] || fail "kill: exit status $(cat "$tmp/status.kill") (wanted 0); log: $(tail -n 20 "$log" 2>&1)"
-echo "PASS: kill -9 of the VM: broker handed off, the new VM's client started, SIGTERM exit status 0"
+echo "PASS: kill -9 of the VM: broker handed off, app adopted, the new VM's client started, SIGTERM exit status 0"
 cmp -s "$tmp/before.kill" "$tmp/after.kill" || fail "kill: stty changed: $(diff "$tmp/before.kill" "$tmp/after.kill")"
 ends_restored kill || fail "kill: transcript does not end with the restore"
 echo "PASS: kill -9 of the VM: tty settings unchanged, transcript ends with the restore"

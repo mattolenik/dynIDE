@@ -66,7 +66,6 @@ code =
   catch
     kind, reason ->
       IO.puts("HANDOFF_SMOKE fail #{Exception.format(kind, reason, __STACKTRACE__)}")
-      IO.puts(D.tail("/tmp/hl-smoke/herdr-live.log"))
       1
   end
 

@@ -18,9 +18,12 @@ defmodule HandoffDriver do
   @doc "PATH for the VMs and panes: the caller's plus Homebrew (htop on macOS)."
   def path, do: System.get_env("PATH", "/usr/bin:/bin") <> ":/opt/homebrew/bin:/usr/local/bin"
 
-  @doc "Boots `bin/herdr-live` headless under `/tmp/hl-<tag>` and waits for a primary."
+  @doc """
+  Boots `bin/herdr-live` headless under `/tmp/hl-<tag>-<our os pid>` (runtime and log
+  dir unique per run, so concurrent runs never share a socket) and waits for a primary.
+  """
   def start_broker(tag) do
-    dir = "/tmp/hl-#{tag}"
+    dir = "/tmp/hl-#{tag}-#{System.pid()}"
     File.rm_rf!(dir)
     File.mkdir_p!(dir)
     log = Path.join(dir, "herdr-live.log")
@@ -44,13 +47,14 @@ defmodule HandoffDriver do
       ])
 
     {:os_pid, os_pid} = Port.info(port, :os_pid)
-    b = %{dir: Path.join(dir, "rt"), log: log, os_pid: os_pid, port: port}
+    b = %{dir: Path.join(dir, "rt"), root: dir, log: log, os_pid: os_pid, port: port}
 
     try do
       wait(fn -> match?(%{"primary_gen" => g} when g != "-", status(b.dir)) end, 600_000)
     rescue
       e ->
         stop_broker(b)
+        outlived(vm_pids(b))
         IO.puts(:stderr, "broker did not start; log tail:\n" <> tail(log))
         reraise e, __STACKTRACE__
     end
@@ -59,8 +63,10 @@ defmodule HandoffDriver do
   end
 
   @doc """
-  Runs `fun.(broker)` and always stops the broker (and any VM) afterwards:
-  `{fun_result, broker_exit_status}`, or the failure re-raised after the stop.
+  Runs `fun.(broker)` and always stops the broker afterwards:
+  `{fun_result, broker_exit_status}`, where the status is `{:outlived, pids}` when a VM
+  or pane child outlived the stop (they are killed then), or the failure re-raised
+  after the stop (log tail on stderr). The run dir is removed after a clean run.
   """
   def with_broker(tag, fun) do
     b = start_broker(tag)
@@ -71,10 +77,48 @@ defmodule HandoffDriver do
       catch
         kind, reason ->
           stop_broker(b)
+          outlived(vm_pids(b))
+          IO.puts(:stderr, "log tail (#{b.log}):\n" <> tail(b.log))
           :erlang.raise(kind, reason, __STACKTRACE__)
       end
 
-    {r, stop_broker(b)}
+    panes = pane_pids(b)
+
+    case {r, stop_broker(b), outlived(vm_pids(b) ++ panes)} do
+      {r, st, []} ->
+        if st == 0, do: File.rm_rf(b.root)
+        {r, st}
+
+      {r, _st, left} ->
+        IO.puts(:stderr, "outlived the broker stop: #{inspect(left)}; log #{b.log}")
+        {r, {:outlived, left}}
+    end
+  end
+
+  # every pane child still known to the primary
+  defp pane_pids(b) do
+    c = connect(b.dir)
+
+    try do
+      Enum.map(request(c, :panes), fn {_id, p} -> "#{p}" end)
+    after
+      :gen_tcp.close(c)
+    end
+  rescue
+    _ -> []
+  end
+
+  # pids still alive 3 s after the stop (SIGHUP'd children need a moment), then killed
+  defp outlived(pids) do
+    try do
+      wait(fn -> not Enum.any?(pids, &alive?/1) end, 3_000, 50)
+      []
+    rescue
+      _ ->
+        left = Enum.filter(pids, &alive?/1)
+        for p <- left, do: System.cmd("kill", ["-KILL", p], stderr_to_stdout: true)
+        left
+    end
   end
 
   def connect(dir) do
@@ -161,7 +205,7 @@ defmodule HandoffDriver do
     end
   end
 
-  @doc "SIGTERM, wait for the broker's exit status, then make sure no VM is left."
+  @doc "SIGTERM and wait for the broker's exit status (`:killed` after 30 s)."
   def stop_broker(%{port: port} = b) do
     System.cmd("kill", ["-TERM", "#{b.os_pid}"], stderr_to_stdout: true)
 
@@ -173,10 +217,6 @@ defmodule HandoffDriver do
           System.cmd("kill", ["-KILL", "#{b.os_pid}"], stderr_to_stdout: true)
           :killed
       end
-
-    for p <- vm_pids(b),
-        alive?(p),
-        do: System.cmd("kill", ["-KILL", "#{p}"], stderr_to_stdout: true)
 
     st
   end

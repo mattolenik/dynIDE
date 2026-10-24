@@ -141,7 +141,6 @@ code =
   catch
     kind, reason ->
       IO.puts("KILL9 fail #{Exception.format(kind, reason, __STACKTRACE__)}")
-      IO.puts(D.tail("/tmp/hl-kill9/herdr-live.log"))
       1
   end
 

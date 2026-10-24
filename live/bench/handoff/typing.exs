@@ -82,7 +82,6 @@ code =
   catch
     kind, reason ->
       IO.puts("TYPING fail #{Exception.format(kind, reason, __STACKTRACE__)}")
-      IO.puts(D.tail("/tmp/hl-typing/herdr-live.log"))
       1
   end
 
