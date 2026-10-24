@@ -20,7 +20,8 @@ Conventions:
 M0 skeleton
 ├── M1 kernel: vt + pty ──┐
 ├── M2 kernel: tty + blit ┤
-└── M3 brain core ────────┼── (M3 runs against a fake kernel until M1/M2 land)
+└── M3 server core +  ────┼── (M3 runs against a fake kernel until M1/M2 land)
+    terminal client
                           ▼
             ┌─────────────┴─────────────┐
             ▼                           ▼
@@ -45,37 +46,43 @@ M11 detection        M12 API + CLI      M13 chrome + UX
                           ▼
                     M14 plugins
                           ▼
-            ┌─────────────┴─────────────┐
-            ▼                           ▼
-     M15 remote attach           M16 long tail
-            └─────────────┬─────────────┘
-                          ▼
-                M17 release + distribution
+            ┌─────────────┼─────────────┐
+            ▼             ▼             ▼
+     M15 GUI client  M16 remote    M17 long tail
+                     attach
+                          └──────┬──────┘
+                                 ▼
+                      M18 release + distribution
 ```
 
 M4 and M5 are independent and can be owned by separate agents. After M7,
-M8/M9 are independent, as are M11–M13 and M15–M16. Windows is deferred; see
-the end of this document.
+M8/M9 are independent, as are M11–M13 and M15–M17. The first release (M18)
+does not wait for the GUI client. Windows is deferred; see the end of this
+document.
 
 ---
 
 ## M0: project skeleton and tooling
 
-**Goal.** A buildable, testable repo layout that holds the Elixir brain and the
-Rust kernel side by side with the existing herdr tree, so later milestones
-have somewhere to land and a CI gate from day one.
+**Goal.** A buildable, testable repo layout that holds the Elixir umbrella and
+the Rust NIF crates side by side with the existing herdr tree, so later
+milestones have somewhere to land and a CI gate from day one.
 
 **Depends on.** Nothing.
 
 **Scope.**
-- Decide and record repo layout: Elixir app at `live/` with the Rustler crate
-  at `live/native/herdr_kernel`, depending on `crates/ghostty-vt` and
-  `vendor/` in place. The Rust `src/` tree stays as reference until the M6
-  gate passes, then is pruned in M7.
-- Mix project with `consolidate_protocols: false` in dev, `-noshell -noinput`
+- Repo layout per design.md "Repo layout": Mix umbrella at `live/` with
+  `apps/herdr_scene`, `apps/herdr_server`, `apps/herdr_term`; Rustler crates
+  at `live/native/herdr_kernel` (links `crates/ghostty-vt`, `vendor/` in
+  place) and `live/native/herdr_term`. The Rust `src/` tree stays as
+  reference until the M6 gate passes, then is pruned in M7.
+- Dependency rule enforced by a test: `herdr_server` and `herdr_term` depend
+  on `herdr_scene`; neither depends on the other; `herdr_scene` depends on
+  nothing.
+- Umbrella with `consolidate_protocols: false` in dev, `-noshell -noinput`
   boot via a `herdr-live` launcher script, file logger, no stdout writes.
-- Rustler crate compiling with `panic = "unwind"`, a hello NIF, and
-  `crates/ghostty-vt` linked.
+- Both Rustler crates compiling with `panic = "unwind"`, a hello NIF each,
+  `crates/ghostty-vt` linked into `herdr_kernel` only.
 - `just` recipes: `live-test`, `live-check` (format, credo, dialyzer, cargo
   clippy, ExUnit, cargo test), `live-run`, `live-bench`.
 - CI job running `just live-check` on Linux and macOS.
@@ -93,7 +100,7 @@ have somewhere to land and a CI gate from day one.
   SIGTERM with the tty untouched.
 - `CLAUDE.md` reviewed against design.md rules.
 
-**Design refs.** The split; State layout.
+**Design refs.** The split; Repo layout; State layout.
 
 ---
 
@@ -107,8 +114,9 @@ without raw stream bytes ever crossing the boundary.
 **Parallel with.** M2, M3.
 
 **Scope.**
-- Packed cell format: fixed-width record spec, documented with a byte diagram
-  and a shared test vector used by both Rust and Elixir tests.
+- Packed cell format: fixed-width record spec in `herdr_scene`, documented
+  with a byte diagram and shared test vectors that both Rust crates and the
+  Elixir apps must pass.
 - `Native.Vt`: `new`, `resize`, `dirty_rows`, `full_rows`, `read_text`
   (dirty-CPU), `scrollbar`, `scroll_to`, `mode`, `kitty_keyboard_flags`,
   `link_at`, `graphics_placements`.
@@ -146,15 +154,15 @@ without raw stream bytes ever crossing the boundary.
   the VM stays up.
 - Rust + ExUnit: packed-cell test vector round-trips.
 
-**Design refs.** Native.Vt; Native.Pty; Rules.
+**Design refs.** herdr_kernel: Native.Vt; herdr_kernel: Native.Pty; Rules.
 
 ---
 
-## M2: kernel — Tty and Blit
+## M2: terminal-client kernel — Tty and Blit
 
-**Goal.** The kernel can take the host terminal into raw mode, deliver its
-input bytes, and paint a full screen of packed rows with diff-based ANSI
-output, restoring the terminal on every exit path.
+**Goal.** The `herdr_term` crate can take the host terminal into raw mode,
+deliver its input bytes, and paint a full screen of packed rows with
+diff-based ANSI output, restoring the terminal on every exit path.
 
 **Depends on.** M0.
 **Parallel with.** M1, M3.
@@ -170,8 +178,8 @@ output, restoring the terminal on every exit path.
   last frame; full-repaint path.
 - Blit runs on a dedicated kernel thread, never a dirty scheduler.
 - Kitty keyboard protocol query at open; result exposed to the BEAM.
-- A throwaway `live-demo` that wires M1 + M2 directly (one pane, no brain) to
-  prove the pipe end to end.
+- A throwaway `live-demo` that wires M1 + M2 directly (one pane, no server
+  logic) to prove the pipe end to end.
 
 **Out of scope.** Composition, overlays, multiple panes.
 
@@ -185,14 +193,17 @@ output, restoring the terminal on every exit path.
 - Rust test: blocked host tty (reader stopped) does not block the caller of
   `write`; frames are dropped, not queued unbounded.
 
-**Design refs.** Native.Tty; Native.Blit.
+**Design refs.** herdr_term: Native.Tty; herdr_term: Native.Blit.
 
 ---
 
-## M3: brain core — state, input, layout, render
+## M3: server core and terminal client
 
 **Goal.** A usable multi-pane multiplexer in Elixir: splits, focus, keybinds,
-mouse, a status bar, composed in the brain from packed rows.
+mouse, a status bar. The server emits scenes through the client protocol;
+the terminal client, attached through that protocol even locally, renders
+them. This is the milestone that bakes in the multi-frontend shape, so the
+scene contract is designed here, not retrofitted.
 
 **Depends on.** M0. Integrates with M1/M2 when they land; starts against a
 fake kernel.
@@ -202,38 +213,58 @@ fake kernel.
 - `Kernel.Fake`: in-memory implementation of the `Native.*` contracts for
   tests and for developing M3 before M1/M2 exist. Keep it; it becomes the
   test double for everything after.
-- Structs: `App.Session`, `App.Focus`, `App.Ui`, `Pane.State`; `Map.merge`
-  defaulting in every callback.
+- `herdr_scene`: `%Scene{}`, `Scene.Pane`, `Scene.Overlay`, `Scene.Node`
+  (chrome tree with roles, content, theme tokens; no glyphs or colours), the
+  neutral input event vocabulary, validators, and golden fixtures. Published
+  first; everything else in M3 consumes it.
+- Client protocol: attach/detach, scene push, rows push for inline
+  transports, notices. `Client.Supervisor` / `Client.Session` per attached
+  client with `Client.State` (kind, size, cell px, requested viewports,
+  hover). Local terminal client attaches through it, in-VM.
+- Structs: `App.Session`, `App.Focus`, `App.Ui`, `Pane.State`,
+  `Client.State`; `Map.merge` defaulting in every callback.
 - `App.Store` with thin callbacks and a `safe_apply` placeholder (plain
   `try`; the real `Reload.Guard` arrives in M4).
 - `App.Actions`: open/close/split/focus/resize pane, tabs, modes.
-- `Input.Parse`: CSI u, legacy keys, SGR mouse, bracketed paste, focus
-  events, terminal query reply windows; parser state held in `Input.Reader`.
-- `Input.Reader` with the focused-pane fast path via `:persistent_term`.
+- `Client.Term.Input`: CSI u, legacy keys, SGR mouse, bracketed paste, focus
+  events, terminal query reply windows → neutral events; parser state held
+  in the GenServer; focused-pane fast path via `:persistent_term`.
 - Keybind tables as `{M, F, A}`; default bindings mirroring herdr's.
-- `View.compute`: tile layout to rects per pane plus chrome specs; port of
-  `src/layout.rs` semantics (splits, navigation directions, borders).
-- `Render.compose`: slice pane rows into screen rows, borders, focused-pane
-  highlight, status bar, cursor; placeholder overlay hooks for selection and
-  links.
-- `Render.Loop`: event-driven with minimum inter-frame interval, pending
-  mark while in flight, full-damage on resize or restart.
-- `Pane.Supervisor` / `Pane.Server` with resubscribe-on-restart.
+- `View.compute/2`: per client; tile layout to pane rects plus a chrome tree
+  with a `:status` node; port of `src/layout.rs` semantics (splits,
+  navigation directions, borders expressed as scene data, not glyphs).
+- `Client.Term.Render`: rasterize the chrome tree to cells, slice pane rows
+  into screen rows, focused-pane highlight, cursor; overlay hooks for
+  selection and links; event-driven with a minimum inter-frame interval,
+  pending mark while in flight, full repaint on resize or restart.
+- `Pane.Supervisor` / `Pane.Server` with resubscribe-on-restart; damage
+  routed to every attached `Client.Session`.
+- Scene snapshot test harness: dump the scene for a given state and client
+  size as a golden fixture, independent of any renderer. These fixtures are
+  what the GUI client (M15) is built against.
 
-**Out of scope.** Reload, persistence, copy mode, sidebar, modals, detection.
+**Out of scope.** Reload, persistence, copy mode, sidebar, modals, detection,
+any transport other than in-VM.
 
 **Exit criteria.**
 - Manual: open 15 panes via keybinds, run `htop` in several, `cat` a large
   file in one, type in another; no visible tearing.
-- Benchmark harness (`just live-bench`) reports: keystroke → glass p95 idle,
-  frame cost at 1 vs 15 full panes at fixed geometry, scheduler stall max
-  during `cat` 100MB in 15 panes. Numbers recorded; targets are judged at M5.
+- Manual: a second local terminal client (another terminal window) attached
+  at a different size shows the same session correctly; typing in one is
+  visible in the other.
+- Benchmark harness (`just live-bench`) reports: keystroke → glass p95 idle
+  (through the client protocol), frame cost at 1 vs 15 full panes at fixed
+  geometry, scheduler stall max during `cat` 100MB in 15 panes. Numbers
+  recorded; targets are judged at M6.
 - ExUnit on `Kernel.Fake`: layout, focus navigation, key parsing property
-  tests (round-trip against `encode_key` vectors), compose output for a
-  known frame.
+  tests (round-trip against `encode_key` vectors), scene golden fixtures,
+  rasterized output for a known scene.
+- Architecture test: no module in `herdr_server` references `Client.Term.*`
+  or `Native.Tty`/`Native.Blit`; no module in `herdr_term` references
+  `App.*` or `Native.Vt`/`Native.Pty`.
 
-**Design refs.** Supervision tree; State layout; Rendering pipeline; Input
-pipeline.
+**Design refs.** Scene contract; Client protocol; Supervision trees; State
+layout; Rendering pipeline; Input pipeline.
 
 ---
 
@@ -245,7 +276,8 @@ second, and a bad edit rolls back automatically with state intact.
 **Depends on.** M3.
 
 **Scope.**
-- `Reload.Watcher`: filesystem events on `live/lib/**`, 50ms debounce.
+- `Reload.Watcher`: filesystem events on `live/apps/*/lib/**`, 50ms
+  debounce; reload spans every umbrella app.
 - `Reload.Compiler`: drives Mix's incremental compiler in a Task, returns
   the recompiled module set (fan-out), surfaces compile errors.
 - Batch record `{batch_id, modules, previous_beams, state_at_load}` in an
@@ -261,8 +293,9 @@ second, and a bad edit rolls back automatically with state intact.
 - Exercise-keyed rollback window with wall-clock floor.
 - Dev-time local-fun scan of new state in `Reload.Guard`; rejects with a
   message naming the module and key.
-- ETS mirrors for `App.*` and `Pane.State`, owned by `Native.Keeper` with
-  `heir`, debounced, per sub-struct / per pane; restart-from-ETS path.
+- ETS mirrors for `App.*`, `Pane.State`, and `Client.State`, owned by
+  `Native.Keeper` with `heir`, debounced, per sub-struct / per pane / per
+  client; restart-from-ETS path pushes a full scene to affected clients.
 - `herdr-live rollback [n]` command and status-line notices for compile
   error, loaded, rolled back, rejected.
 
@@ -271,10 +304,12 @@ second, and a bad edit rolls back automatically with state intact.
 **Exit criteria.**
 - Each row of the design.md slice-1 metrics table that concerns reload has
   a reproducible script under `live/bench/reload/` and a recorded number:
-  edit `Render.compose`; add a field to `App.Ui`; add a field to
-  `App.Session` (fan-out count recorded); infinite loop in `View.compute`;
-  closure placed in state then second reload; rollback after a pane spawned
-  in the window; reload while `cat` runs in 15 panes.
+  edit `Client.Term.Render`; edit `View.compute` (chrome tree change); add a
+  field to `App.Ui`; add a field to `App.Session` (fan-out count recorded);
+  add a field to a `Scene` struct (fan-out across apps recorded); infinite
+  loop in `View.compute`; closure placed in state then second reload;
+  rollback after a pane spawned in the window; reload while `cat` runs in
+  15 panes.
 - ExUnit: `Reload.Guard` unit tests for each failure class and for
   attribution.
 
@@ -325,13 +360,13 @@ breadth work is paid for.
 
 **Scope.**
 - Run the full slice-1 metrics table from design.md on Linux and macOS,
-  three runs each, recorded in `results/m5-gate.md` with hardware and
+  three runs each, recorded in `results/m6-gate.md` with hardware and
   commit.
 - For every miss: root cause and one of (a) a bounded fix inside the slice,
   (b) an accepted architecture change written back into design.md, or
   (c) a no-go recommendation.
 - Include the M5 kernel-restart metric (`kill -9` with 15 shells, children
-  alive, under one second p95) in the table.
+  alive, under one second p95) and the second-client metric in the table.
 - Specifically test the composition-cost fallback question: if 15-pane full
   repaints miss, prototype the policy-free compose-helper NIF and re-measure.
 - Decision record (ADR): go / no-go / go-with-changes.
@@ -410,16 +445,17 @@ channels.
 **Parallel with.** M8.
 
 **Scope.**
-- Scrollback scrolling via `scroll_to`, scrollbar overlay in
-  `Render.compose`, mouse wheel, keyboard.
+- Scrollback scrolling via `scroll_to`, scrollbar as a scene overlay drawn
+  by `Client.Term.Render`, mouse wheel, keyboard.
 - Copy mode and selection: character/word/line, across pane boundaries,
-  clipboard via OSC 52 to the host and system clipboard where available.
+  expressed as semantic overlays in the scene; clipboard via OSC 52 to the
+  host and system clipboard where available.
 - Hover links and click-to-open with modifiers.
 - OSC trackers moved to Elixir from kernel splitter events: title, pwd,
   default colors and theme queries, kitty keyboard state, XTGETTCAP,
   DECSCUSR.
 - Bracketed paste with size limits; focus in/out passthrough; bell.
-- Terminal query roundtrips (DA, DSR, color) between host, brain, and child.
+- Terminal query roundtrips (DA, DSR, color) between host, server, and child.
 - Resize reflow behaviour verified against herdr's.
 
 **Exit criteria.**
@@ -436,8 +472,9 @@ pane rects, across splits and scrolling.
 **Depends on.** M9.
 
 **Scope.**
-- `graphics_placements` consumption in `Render.compose`; clipping; z-order
-  with chrome; placement emission alongside cells in `Native.Blit`.
+- `graphics_placements` carried in `Scene.Pane`; `Client.Term.Render` clips,
+  orders against chrome, and emits placement commands alongside cells
+  through `Native.Blit`.
 - Image source forwarding and file-backed transmission as herdr does today.
 - Cleanup on pane close and on reload.
 
@@ -504,12 +541,23 @@ modals, settings, onboarding, consistent affordances.
 **Scope.**
 - Sidebar with pane/agent tokens; tabs and workspaces; drag-to-resize
   splits; modal framework reused for settings, confirmations, onboarding.
-- Theme system and terminal-theme detection.
+  Every one of these is a chrome-tree node type in `herdr_scene` plus a
+  rasterizer in `Client.Term.Render`; nothing is drawn directly.
+- `:chrome` input events: hit-testing chrome nodes to paths on the client,
+  actions resolved on the server.
+- Theme system as named tokens in the scene; terminal-theme detection and
+  token resolution in the terminal client.
 - Keybind editing UI and config file format (TOML or JSONC as herdr).
 - Notifications and sound hooks.
+- Dev-only HTML scene renderer (`mix herdr.scene.html`): a few hundred lines
+  that render a scene fixture to a static page. It exists to prove a second
+  consumer can draw every node type without terminal assumptions, before
+  M15 commits to one.
 
 **Exit criteria.**
 - Side-by-side manual review against herdr for each screen; recorded gaps.
+- Every chrome node type has a golden scene fixture and renders in both the
+  terminal client and the HTML renderer.
 
 ---
 
@@ -533,35 +581,69 @@ plugins too.
 
 ---
 
-## M15: remote attach and multi-client
+## M15: GUI client
 
-**Goal.** Attach to a herdr-live server from another machine or terminal with
-a client of a different size, over SSH, using the same packed-row render path.
+**Goal.** A second frontend consuming the same scenes and emitting the same
+events, proving the server is frontend-neutral and giving herdr-live a
+windowed UI.
 
-**Depends on.** M13.
-**Parallel with.** M16.
+**Depends on.** M13 (every chrome node type exists and has fixtures), M16
+(a socket transport, since the GUI may run out of process).
+**Parallel with.** M17.
 
 **Scope.**
-- Client node: `Tty.Owner`, `Input.Reader`, `Render.Loop`, `Native.Blit`
-  local; rows from the server composed per client size and cell px.
-- Transport: plain socket over SSH or TLS distribution; never epmd exposed.
-- Per-client state (viewport, selection) in the client; shared session
-  state on the server.
-- Reconnect semantics; client-local failure notices that do not disconnect
-  other clients.
+- Technology decision (ADR): LiveView in a webview (Tauri/wry) is the
+  leading candidate because the client stays in Elixir and hot reload plus
+  the Guard apply to it. Alternatives recorded with the live-editing cost.
+- `apps/herdr_gui`: attaches with `kind: :gui`; reports cell size from its
+  font metrics; renders pane rows to a canvas from packed cells; draws the
+  chrome tree as widgets; renders overlays natively; emits neutral events
+  including `px` coordinates.
+- Kitty graphics placements drawn as images.
+- Reload notices and rollback surfaced in the GUI as in the terminal.
+- Packaging for the GUI alongside the server release.
 
 **Exit criteria.**
-- Two clients of different sizes attached simultaneously; typing in one is
-  visible in the other; disconnect/reconnect preserves the session.
+- The GUI and a terminal client attached to the same session simultaneously,
+  both correct, typing in either visible in both.
+- Every M13 chrome fixture renders in the GUI with no change to
+  `herdr_server`. Any server change needed to make the GUI work is a defect
+  in the scene contract and is recorded as such.
+- Live edit of a GUI render module reflected in the running window in under
+  a second.
 
 ---
 
-## M16: long tail
+## M16: remote attach
+
+**Goal.** Attach to a herdr-live server from another machine or terminal over
+SSH. Because the terminal client already speaks the client protocol, this is
+a transport and a reconnect story, not a rendering one.
+
+**Depends on.** M12 (API surface for session discovery and auth).
+**Parallel with.** M15, M17.
+
+**Scope.**
+- Socket transport for the client protocol: length-prefixed ETF over a unix
+  socket forwarded through SSH, or TLS distribution; never epmd exposed.
+- `{:inline, rows}` scenes for socket clients; row push batching.
+- Reconnect semantics; client-local failure notices that do not disconnect
+  other clients; handoff-aware re-attach during kernel restart.
+- `herdr-live attach <host>` CLI.
+
+**Exit criteria.**
+- Remote and local clients of different sizes attached simultaneously;
+  typing in one is visible in the other; disconnect/reconnect preserves the
+  session; kernel restart on the server keeps the remote client attached.
+
+---
+
+## M17: long tail
 
 **Goal.** The remaining herdr features users rely on.
 
 **Depends on.** M13.
-**Parallel with.** M15.
+**Parallel with.** M15, M16.
 
 **Scope.** Inventory from herdr `src/`, each as its own task: git worktree
 management, agent resume, product announcements and release notes display,
@@ -573,15 +655,16 @@ dropped with a reason.
 
 ---
 
-## M17: release and distribution
+## M18: release and distribution
 
 **Goal.** Installable builds and an update channel.
 
-**Depends on.** M15, M16.
+**Depends on.** M16, M17. The GUI client (M15) ships when ready; the first
+release is terminal-only.
 
 **Scope.**
 - Self-contained release per platform (Mix release with bundled ERTS plus
-  the kernel `.so`), single-command install.
+  both NIF `.so`s), single-command install.
 - Update command and channel manifest; kernel restart (M5) used for
   in-place updates so sessions survive.
 - Homebrew/Nix packaging; docs site content for herdr-live.
@@ -599,7 +682,7 @@ Not scheduled. When it is picked up it needs: a ConPTY backend for
 events, the Windows Terminal cursor-anchor quirk from `render_ansi.rs`), a
 kernel-restart story without SCM_RIGHTS (handle duplication into the new
 process, or a documented fallback to disk restore), packaging with the
-app-local ConPTY runtime, and a Windows CI job. Nothing before M17 should
+app-local ConPTY runtime, and a Windows CI job. Nothing before M18 should
 make it harder: keep platform code behind the `Native.*` contracts.
 
 ---
@@ -610,10 +693,13 @@ Four agents can start as soon as M0 lands:
 
 | agent | milestone | note |
 |---|---|---|
-| A | M1 | kernel Vt + Pty; owns the packed cell spec and must publish it first |
-| B | M2 | kernel Tty + Blit; consumes the packed cell spec |
-| C | M3 | brain core against `Kernel.Fake`; swaps to real NIFs as A/B land |
+| A | M1 | `herdr_kernel` Vt + Pty; owns the packed cell spec in `herdr_scene` and must publish it first |
+| B | M2 | `herdr_term` Tty + Blit; consumes the packed cell spec |
+| C | M3 | server core and terminal client against `Kernel.Fake`; owns the scene and event contracts in `herdr_scene` and publishes them before building on them; swaps to real NIFs as A/B land |
 | D | M4 prep | `Reload.Compiler` and `Reload.Guard` can be built and unit-tested against toy modules before M3 exists |
+
+`herdr_scene` has two early owners (A for packed cells, C for scene and
+events) in disjoint files; C arbitrates conflicts.
 
 Second wave, as soon as M1 and M2 land: agent E on M5 (kernel restart), in
 parallel with D finishing M4. M6 is a single-owner gate. After M7, the
