@@ -273,10 +273,24 @@ class Shell:
                         start, label)
         vm = int(m.group(1))
         try:
-            pgroups.add(os.getpgid(vm))
+            self.job = os.getpgid(vm)
         except OSError:
             fail(f"{label}: VM pid {vm} from the screen is not running")
+        pgroups.add(self.job)
         return vm
+
+    def ended(self, at, what):
+        """After the demo job ends: the restore sequence and a prompt follow,
+        and the tty is cooked again. Returns the job's exit status."""
+        at = self.expect(ALT_OFF, at, f"restore after {what}")
+        self.expect(PROMPT, at, f"prompt after {what}")
+        pgroups.discard(self.job)
+        ok(lflag(self.fd) & COOKED == COOKED, f"{what}: restore sequence, prompt, tty cooked")
+        out = self.run(b"echo demo-exit=$?", f"exit status after {what}")
+        m = re.search(r"demo-exit=(\d+)", out)
+        if not m:
+            fail(f"{what}: no exit status in {out!r}")
+        return int(m.group(1))
 
     def run(self, cmd, label):
         """Runs a shell command at the prompt; returns its output."""
@@ -294,7 +308,8 @@ def demo():
                    LIVE_DEMO_LOG=os.path.join(tmp, "live-demo.log"))
         sh = Shell(env)
         sh.expect(PROMPT, 0, "first prompt")
-        sh.run(b"set -m", "set -m")
+        # Job control on; no line editor, so the tty stays cooked at the prompt.
+        sh.run(b"set -m; set +o emacs 2>/dev/null; set +o vi 2>/dev/null", "shell setup")
 
         start = sh.send(b"bin/live-demo\n")
         at = sh.expect(ALT_ON, start, "alt screen")
@@ -322,27 +337,30 @@ def demo():
         sh.winsize(100, 30)
         vm = sh.paint(b"100x30", at, "resized frame")
         # Resize repaints every cell (Blit clears only after reset, not on resize).
-        painted = screen(transcript[at:])
-        ok(all(len(painted.get(y, "")) >= 100 for y in range(30)),
-           "resize: SIGWINCH repaints all 100x30 cells")
+        sh.expect(lambda _: all(len(screen(transcript[at:]).get(y, "")) >= 100 for y in range(30)),
+                  at, "full 100x30 repaint")
+        ok(True, "resize: SIGWINCH repaints all 100x30 cells")
 
         at = len(transcript)
         os.kill(vm, signal.SIGKILL)
-        at = sh.expect(ALT_OFF, at, "wrapper restore after kill -9")
-        sh.expect(PROMPT, at, "prompt after kill -9")
-        ok(True, "kill -9: wrapper writes the restore sequence and the shell prompts")
-        out = sh.run(b"echo demo-exit=$?", "exit status after kill -9")
-        ok("demo-exit=137" in out, f"kill -9: wrapper exits with the VM's status 137 ({out!r})")
+        status = sh.ended(at, "kill -9")
+        ok(status == 137, f"kill -9: wrapper exits with the VM's status 137 (got {status})")
         out = sh.run(b"stty -a", "stty -a after kill -9")
-        ok(word(out, "icanon") and word(out, "echo"), "kill -9: tty cooked again (icanon echo)")
+        ok(word(out, "icanon") and word(out, "echo"), "kill -9: stty -a shows icanon echo")
 
+        # A signal to the stopped job reaches the wrapper sh too; it must still restore.
         start = sh.send(b"bin/live-demo\n")
         sh.paint(b"100x30", start, "second run first paint")
-        at = sh.send(b"q")
-        at = sh.expect(ALT_OFF, at, "restore on q")
-        sh.expect(PROMPT, at, "prompt after q")
-        out = sh.run(b"echo demo-exit=$?", "exit status after q")
-        ok("demo-exit=0" in out, f"quit: q exits 0 ({out!r})")
+        at = sh.send(b"\x1a")
+        sh.expect(PROMPT, sh.expect(ALT_OFF, at, "alt screen left on Ctrl-Z"), "prompt after Ctrl-Z")
+        # fg: a job continued in the background would stop again on its tty writes.
+        status = sh.ended(sh.send(b"kill %1; fg\n"), "kill %1")
+        ok(status != 0, f"kill %1: wrapper exits non-zero (got {status})")
+
+        start = sh.send(b"bin/live-demo\n")
+        sh.paint(b"100x30", start, "third run first paint")
+        status = sh.ended(sh.send(b"q"), "q")
+        ok(status == 0, f"quit: q exits 0 (got {status})")
         os.write(sh.fd, b"exit\n")
     if verbose:
         print("--- transcript", repr(bytes(transcript)), sep="\n")
@@ -353,6 +371,8 @@ if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if a != "-v"]
     if len(args) != 1 or args[0] not in modes:
         sys.exit(__doc__)
+    # CI cancellation: let `finally` kill the process groups.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     try:
         modes[args[0]]()
     finally:

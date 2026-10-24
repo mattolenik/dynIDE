@@ -38,7 +38,7 @@ defmodule Mix.Tasks.HerdrTerm.Demo do
   def run(_args) do
     Mix.Task.run("app.config")
     :ok = :os.set_signal(:sigwinch, :handle)
-    :ok = :gen_event.add_handler(:erl_signal_server, Winch, self())
+    :ok = :gen_event.add_sup_handler(:erl_signal_server, Winch, self())
     {:ok, tty} = Tty.open()
     :ok = Tty.subscribe(tty, self())
     {:ok, _} = :timer.send_interval(250, :tick)
