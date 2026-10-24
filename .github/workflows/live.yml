@@ -9,6 +9,8 @@ permissions:
 
 env:
   RUST_TOOLCHAIN_VERSION: 1.96.1
+  # Only branch pushes save caches; PR caches are PR-private and crowd out master's.
+  SAVE_CACHES: ${{ github.event_name == 'push' }}
 
 concurrency:
   group: live-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -40,10 +42,38 @@ jobs:
         with:
           tool: just
 
+      # Zig downloads vary from seconds to minutes; reuse the verified install.
+      - name: Restore Zig compiler
+        id: zig-compiler
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/herdr-zig-0.16.0
+          key: zig-compiler-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0
+
       - name: Install Zig
+        if: steps.zig-compiler.outputs.cache-hit != 'true'
         uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
         with:
           version: 0.16.0
+
+      # Zig's C-header cache keys include the compiler installation path.
+      - name: Stabilize Zig installation path on Unix
+        env:
+          ZIG_RESTORED: ${{ steps.zig-compiler.outputs.cache-hit }}
+        run: |
+          stable_zig="$RUNNER_TEMP/herdr-zig-0.16.0"
+          if [ "$ZIG_RESTORED" != "true" ]; then
+            mv "$(dirname "$(command -v zig)")" "$stable_zig"
+          fi
+          echo "$stable_zig" >> "$GITHUB_PATH"
+          echo "ZIG=$stable_zig/zig" >> "$GITHUB_ENV"
+
+      - name: Save Zig compiler
+        if: steps.zig-compiler.outputs.cache-hit != 'true' && env.SAVE_CACHES == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/herdr-zig-0.16.0
+          key: zig-compiler-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0
 
       - name: Install Erlang and Elixir (Linux)
         if: runner.os == 'Linux'
@@ -79,6 +109,15 @@ jobs:
             live/_build
           key: live-${{ runner.os }}-${{ steps.beam.outputs.id }}-${{ hashFiles('live/mix.lock') }}
           restore-keys: live-${{ runner.os }}-${{ steps.beam.outputs.id }}-
+
+      - name: Cache native targets
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            live/native/herdr_kernel/target
+            live/native/herdr_term/target
+          key: live-native-${{ runner.os }}-${{ env.RUST_TOOLCHAIN_VERSION }}-${{ hashFiles('live/native/*/Cargo.lock') }}
+          restore-keys: live-native-${{ runner.os }}-${{ env.RUST_TOOLCHAIN_VERSION }}-
 
       - name: Run live-check
         run: just live-check
