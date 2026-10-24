@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end host tty checks for HerdrTerm.Native.Tty under a real pty.
 
-Usage: tty_harness.py destructor|demo [-v]
+Usage: tty_harness.py destructor|demo|herdr|herdr-stress [-v]
 
 destructor: runs scripts/tty_destructor.exs in the BEAM as the pty's session
 leader. Answers each kitty/DA1 probe, then checks: the destructor of a killed
@@ -13,6 +13,19 @@ repaints fully.
 demo: drives bin/live-demo as a job of an interactive /bin/sh (job control on)
 in a pty: first paint, input, Ctrl-Z / fg with full repaint, SIGWINCH resize,
 kill -9 of the VM (the wrapper restores the tty), and `q` exiting 0.
+
+herdr: runs bin/herdr-live attached (real tty and blit kernels, real server
+kernel) as the session leader of a 120x40 pty: first frame (alt screen,
+TERMINAL status), prefix v and prefix - split (three shell prompts), typing
+`echo hi-from""-pty` shows the shell's output, a resize to 100x30 repaints
+(SIGWINCH), prefix q (detach) quits with
+status 0, the restore sequence (kitty pop, alt screen left) and unchanged
+tty settings.
+
+herdr-stress: the same launch, then grows to 15 panes (each time clicking the
+largest pane with an SGR mouse press, then prefix v or -), cats a 20 MB file
+five times in one pane while typing in another, and checks the typed echo shows up (and
+when, relative to the end of the cat), then quits.
 
 Prints PASS lines; exits 1 on the first failure. Every mode SIGKILLs the
 process groups it started on any exit, including Ctrl-C. The 120 s deadline
@@ -220,6 +233,60 @@ def screen(data):
     return {cy: "".join(r.get(c, " ") for c in range(max(r) + 1)) for cy, r in rows.items()}
 
 
+class Screen:
+    """An incremental `screen()`: feed() output chunks (escape sequences and
+    UTF-8 may be split across chunks), rows() for the current text rows."""
+
+    SEQ = re.compile(r"\x1b\[([0-9;:?<>=]*)[ -/]*([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+    PARTIAL = re.compile(r"\x1b(?:\[[0-9;:?<>=]*[ -/]*|\][^\x07\x1b]*\x1b?)?")
+
+    def __init__(self):
+        import codecs
+        self.utf8 = codecs.getincrementaldecoder("utf-8")("replace")
+        self.pending = ""
+        self.cells, self.y, self.x = {}, 0, 0
+
+    def feed(self, data):
+        text = self.pending + self.utf8.decode(bytes(data))
+        self.pending = ""
+        i, n = 0, len(text)
+        while i < n:
+            ch = text[i]
+            if ch == "\x1b":
+                m = self.SEQ.match(text, i)
+                if m:
+                    if m.group(2) == "H":
+                        parts = (m.group(1).split(";") + ["", ""])[:2]
+                        self.y, self.x = (int(p or 1) - 1 for p in parts)
+                    elif m.group(2) == "J" and m.group(1) == "2":
+                        self.cells = {}
+                    i = m.end()
+                elif self.PARTIAL.fullmatch(text, i):
+                    self.pending = text[i:]
+                    return
+                else:
+                    i += 2
+                continue
+            if ch == "\r":
+                self.x = 0
+            elif ch == "\n":
+                self.y += 1
+            elif ch >= " ":
+                self.cells[(self.y, self.x)] = ch
+                self.x += 2 if unicodedata.east_asian_width(ch) in "WF" else 1
+            i += 1
+
+    def rows(self):
+        rows = {}
+        for (cy, cx), ch in self.cells.items():
+            rows.setdefault(cy, {})[cx] = ch
+        return ["".join(rows.get(y, {}).get(c, " ") for c in range(max(rows.get(y, {0: 0})) + 1))
+                for y in range(max(rows, default=-1) + 1)]
+
+    def text(self):
+        return "\n".join(self.rows())
+
+
 def word(text, w):
     """`w` present as an stty -a flag (not `-w` or a longer flag)."""
     return re.search(rf"(?<![-\w]){w}(?!\w)", text) is not None
@@ -371,8 +438,185 @@ def demo():
         print("--- transcript", repr(bytes(transcript)), sep="\n")
 
 
+class Herdr:
+    """bin/herdr-live attached, leading the session of a fresh cols x rows pty."""
+
+    def __init__(self, tmp, cols, rows):
+        self.log = os.path.join(tmp, "herdr-live.log")
+        self.master, slave = os.openpty()
+        fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+        self.before = config(self.master)
+        self.screen = Screen()
+        self.answered = 0
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("ENV", "BASH_ENV", "HERDR_SOCKET_PATH", "HERDR_CLIENT_SOCKET_PATH",
+                            "HERDR_LIVE_HEADLESS")}
+        # the panes' shell: plain sh with a known prompt
+        env.update(SHELL="/bin/sh", PS1="$ ", HISTFILE="/dev/null", TERM="xterm-256color",
+                   HERDR_LIVE_LOG=self.log)
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os.setsid()
+                fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+                os.dup2(slave, 0)
+                os.dup2(slave, 1)
+                os.dup2(slave, 2)
+                os.close(self.master)
+                os.execve(os.path.join(LIVE, "bin", "herdr-live"), ["herdr-live"], env)
+            finally:
+                os._exit(127)
+        os.close(slave)
+        self.pid = pid
+        pgroups.add(pid)
+
+    def pump(self, wait=0.05):
+        """Reads for at most `wait` seconds (a busy stream never starves the checks)."""
+        at, end = len(transcript), time.monotonic() + wait
+        while (left := end - time.monotonic()) > 0 and select.select([self.master], [], [], left)[0]:
+            try:
+                data = os.read(self.master, 65536)
+            except OSError:
+                break
+            if not data:
+                break
+            transcript.extend(data)
+        self.screen.feed(transcript[at:])
+        while transcript.count(PROBE) > self.answered:
+            os.write(self.master, REPLY)
+            self.answered += 1
+
+    def until(self, check, label, timeout=None):
+        end = min(DEADLINE, time.monotonic() + timeout) if timeout else DEADLINE
+        while True:
+            got = check()
+            if got:
+                return got
+            if time.monotonic() > end:
+                if verbose:
+                    print("--- screen", self.screen.text(), sep="\n")
+                fail(f"timed out waiting for {label}")
+            self.pump()
+
+    def send(self, data):
+        os.write(self.master, data)
+
+    def prompts(self):
+        return sum(len(re.findall(r"\$ ", row)) for row in self.screen.rows())
+
+    def shows(self, text):
+        return text in self.screen.text()
+
+    def click(self, x, y):
+        at = f"{x + 1};{y + 1}".encode()
+        self.send(b"\x1b[<0;" + at + b"M\x1b[<0;" + at + b"m")
+
+    def start(self):
+        self.until(lambda: os.path.exists(self.log) and "terminal client started" in open(self.log).read(),
+                   "terminal client started")
+        self.until(lambda: ALT_ON in transcript and self.shows("TERMINAL") and self.prompts() >= 1,
+                   "first frame with TERMINAL and a prompt")
+        ok(True, "herdr: alt screen, first frame with TERMINAL status and the pane's prompt")
+
+    def quit(self):
+        at = len(transcript)
+        self.send(b"\x02q")
+        status = None
+        while status is None:
+            if time.monotonic() > DEADLINE:
+                fail("timed out waiting for herdr-live to exit after prefix q")
+            self.pump()
+            pid, st = os.waitpid(self.pid, os.WNOHANG)
+            if pid:
+                status = st
+        pgroups.discard(self.pid)
+        self.pump(0.1)
+        after = bytes(transcript[at:])
+        ok(os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0,
+           f"quit: prefix q (detach) exits 0 (got {status})")
+        ok(b"\x1b[<u" in after and after.rfind(ALT_OFF) > after.rfind(b"\x1b[<u"),
+           "quit: kitty flags popped, then the alt screen left")
+        ok(config(self.master) == self.before, "quit: tty settings unchanged")
+        log = open(self.log).read()
+        ok("herdr-live stopped" in log, "quit: log has herdr-live stopped")
+
+
+def herdr():
+    with tempfile.TemporaryDirectory() as tmp:
+        compile_then_start_clock(tmp)
+        h = Herdr(tmp, 120, 40)
+        h.start()
+        h.send(b"\x02v")
+        h.until(lambda: h.prompts() >= 2, "second prompt after prefix v")
+        h.send(b"\x02-")
+        h.until(lambda: h.prompts() >= 3, "third prompt after prefix -")
+        ok(True, "herdr: prefix v and prefix - split (three prompts)")
+        h.send(b'echo hi-from""-pty\r')
+        h.until(lambda: h.shows("hi-from-pty"), "the shell's echo output")
+        ok(b"hi-from-pty" in transcript, "herdr: typed echo ran in the focused pane (hi-from-pty)")
+        fcntl.ioctl(h.master, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
+        h.until(lambda: len(h.screen.rows()) >= 30 and h.screen.rows()[29].startswith("TERMINAL"),
+                "status row on row 30 after the resize")
+        ok(True, "herdr: SIGWINCH to 100x30 moves the status row to row 30")
+        h.quit()
+    if verbose:
+        print("--- screen", h.screen.text(), sep="\n")
+
+
+def herdr_stress():
+    global DEADLINE
+    with tempfile.TemporaryDirectory() as tmp:
+        compile_then_start_clock(tmp)
+        DEADLINE += 120
+        big = os.path.join(tmp, "big.txt")
+        with open(big, "w") as f:
+            for n in range(1, 300_001):
+                f.write(f"{n:08d} " + "x" * 60 + "\n")
+        size = os.path.getsize(big)
+        cols, rows = 120, 40
+        h = Herdr(tmp, cols, rows)
+        h.start()
+        # model of the pane rects (status row excluded); only the centres are used
+        panes = [(0.0, 0.0, float(cols), float(rows - 1))]
+        while len(panes) < 15:
+            x, y, w, hh = max(panes, key=lambda r: r[2] * r[3])
+            panes.remove((x, y, w, hh))
+            h.click(int(x + w / 2), int(y + hh / 2))
+            if w > 2 * hh:
+                h.send(b"\x02v")
+                panes += [(x, y, w / 2, hh), (x + w / 2, y, w / 2, hh)]
+            else:
+                h.send(b"\x02-")
+                panes += [(x, y, w, hh / 2), (x, y + hh / 2, w, hh / 2)]
+            want = len(panes)
+            h.until(lambda: h.prompts() >= want, f"{want} prompts", timeout=10)
+        ok(h.prompts() == 15, f"stress: 15 panes by click + split (prompts {h.prompts()})")
+        cat_pane, typed_pane = panes[0], panes[-1]
+        cx, cy, cw, ch = cat_pane
+        h.click(int(cx + cw / 2), int(cy + ch / 2))
+        t0 = time.monotonic()
+        # five passes, so the cat is still running when the typing lands
+        h.send(f'for i in 1 2 3 4 5; do cat {big}; done; echo END""-CAT\r'.encode())
+        h.until(lambda: re.search(r"\d{8} x", h.screen.text()), "cat output on screen", timeout=20)
+        tx, ty, tw, th = typed_pane
+        h.click(int(tx + tw / 2), int(ty + th / 2))
+        h.send(b'echo typed""-ok\r')
+        h.until(lambda: h.shows("typed-ok"), "typed echo during the cat", timeout=30)
+        typed_at = time.monotonic() - t0
+        during = not h.shows("END-CAT")
+        h.until(lambda: h.shows("END-CAT"), "end of the cat", timeout=120)
+        cat_at = time.monotonic() - t0
+        ok(during, f"stress: typed echo shown at {typed_at:.2f}s, 5 x {size / 1e6:.1f} MB cat ended at "
+                 f"{cat_at:.2f}s ({'during' if during else 'after'} the cat)")
+        h.until(lambda: re.search(r"00300000 x", h.screen.text()), "last cat line", timeout=10)
+        ok(True, "stress: the cat pane shows its last line")
+        h.quit()
+    if verbose:
+        print("--- screen", h.screen.text(), sep="\n")
+
+
 if __name__ == "__main__":
-    modes = {"destructor": destructor, "demo": demo}
+    modes = {"destructor": destructor, "demo": demo, "herdr": herdr, "herdr-stress": herdr_stress}
     args = [a for a in sys.argv[1:] if a != "-v"]
     if len(args) != 1 or args[0] not in modes:
         sys.exit(__doc__)
