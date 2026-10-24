@@ -41,7 +41,7 @@ the recovery map for the coordinating session: trust this file and
 | M4 reload + rollback | merged | (deleted) | agent | be57f9ff | phase 1 at 54093015; phase 2: 16 commits, results/m4.md; all slice-1 reload targets met (render p95 462ms, view 371ms, ui_field@15 panes 759ms, view_loop 72ms, cat15 588ms); tests 51/80/84/160/11+5; live-check verified green by coordinator |
 | M5 kernel restart | merged | (deleted) | agent | 09672219 | 31 commits; results/m5.md; kill -9 @15 panes warm p50 58-66ms, nearest-rank p95 148ms over 48 runs (one 1085ms outlier), cold 1.0-1.1s; typing through kernel-restart 1600/1600 bytes; standby 127MB RSS; Linux never compiled (podman wedged); live-check verified green by coordinator |
 | M6 gate | done: GO with changes | (deleted) | agent | 0ab8cc5a | 27 commits; results/m6-gate.md; adr/0001 accepted by the human 2026-10-24; 15 rows met on macOS and Linux, 2 restated (frame ratio, flood stall); live-check verified green by coordinator |
-| M7 self-hosting | not started | | | | human dogfood week |
+| M7 self-hosting | in progress | live/m7 | agent | | dispatched from 97699eec; builds the loop, prunes src/ (tag herdr-reference first), delivers the dogfooding kit; the week itself is the human's |
 | M8 persistence | not started | | | | |
 | M9 terminal fidelity | not started | | | | |
 | M10 kitty graphics | not started | | | | |
