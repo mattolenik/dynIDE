@@ -59,6 +59,7 @@ the recovery map for the coordinating session: trust this file and
 - 2026-10-23: ledger created; Erlang/Elixir install started; M0 owner dispatched.
 - 2026-10-23: M0 DONE_WITH_CONCERNS at 179cd23e; coordinator re-ran `just live-check` on merged tree: exit 0. Fast-forwarded into herdr-live. Concerns carried: Linux CI never executed (no push); the M0 owner's Linux subagent added a 6 GiB swapfile at /var/tmp/swapf inside the podman VM and left a `herdr-linux-check` image.
 - 2026-10-23: wave 1 dispatched: M1, M2, M3, M4-prep owners on live/m1..m4 from 179cd23e.
+- 2026-10-23: M1 SPEC_PUBLISHED at 03846db6 (HerdrScene.Cell: 32-byte LE records, per-row trailer for long clusters, 15 golden vectors from an independent Python encoder, docs/herdr-live/packed-cells.md). Merged into herdr-live; herdr_scene 21 tests pass. M1 resumed for phase 2; M2 and M3 told to rebase.
 
 ## Rulings
 
