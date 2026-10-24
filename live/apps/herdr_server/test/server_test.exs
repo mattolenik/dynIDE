@@ -328,6 +328,34 @@ defmodule HerdrServer.ServerTest do
     assert %Scene{panes: [_, _, _]} = scene_until(c2, &(length(&1.panes) == 3))
   end
 
+  test "a Store restart shows panes the mirror's active tab holds though their servers are hidden" do
+    {c, s} = client()
+    scene(c)
+    input(s, c, 1, Event.key("b", [:ctrl]))
+    input(s, c, 2, Event.key("c"))
+    scene_until(c, &match?([%{id: 2}], &1.panes))
+    [{p1, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
+    assert :sys.get_state(p1).hidden
+    Process.sleep(50)
+
+    # the switch back to tab 1 reached the mirror, but the Store died before hiding
+    # tab 2's pane and showing pane 1
+    session = HerdrServer.Mirror.get({:app, :session})
+    [ws] = session.workspaces
+    HerdrServer.Mirror.put({:app, :session}, %{session | workspaces: [%{ws | active_tab: 1}]})
+    focus = HerdrServer.Mirror.get({:app, :focus})
+    HerdrServer.Mirror.put({:app, :focus}, %{focus | pane: 1})
+
+    # a supervised stop and restart: does not count towards the restart intensity
+    :ok = Supervisor.terminate_child(HerdrServer.Supervisor, Store)
+    {:ok, _} = Supervisor.restart_child(HerdrServer.Supervisor, Store)
+
+    assert eventually(fn -> not :sys.get_state(p1).hidden end)
+    assert_receive {^c, {:damage, 1, _}}, 1000
+    [{p2, _}] = Registry.lookup(HerdrServer.Pane.Registry, 2)
+    assert eventually(fn -> :sys.get_state(p2).hidden end)
+  end
+
   test "a Store restart drops panes whose kernel id is gone and closes unmapped kernels" do
     {c, s} = client()
     two_panes(c, s)
@@ -446,6 +474,40 @@ defmodule HerdrServer.ServerTest do
     input(s, c, 6, Event.key("v"))
     assert %Scene{panes: [_, _]} = scene_until(c, &(length(&1.panes) == 2))
     assert Map.has_key?(Store.snapshot().session.panes, 3)
+  end
+
+  test "session guarded calls attribute to the configured reload server" do
+    {c, s} = client()
+    scene(c)
+    fake_reload(:none)
+    :sys.replace_state(s, &%{&1 | keybinds: %{broken: true}})
+    :erlang.trace_pattern({HerdrServer.Client.Keys, :resolve, 3}, true, [:local])
+    :erlang.trace(s, true, [:call])
+    input(s, c, 1, Event.key("q"))
+    assert_receive {^c, {:notice, %{level: :error, text: "keys failed: " <> _}}}, 500
+    :erlang.trace(s, false, [:call])
+    # the fake blames batch 7, so the guard re-runs once: two calls
+    assert_received {:trace, ^s, :call, {HerdrServer.Client.Keys, :resolve, _}}
+    assert_received {:trace, ^s, :call, {HerdrServer.Client.Keys, :resolve, _}}
+  end
+
+  test "a restore never reuses a pane id spawned and closed since the load" do
+    {c, s} = client()
+    assert_receive {^c, {:scene, _}}, 500
+    Process.sleep(50)
+    at_load = HerdrServer.Mirror.app()
+    split(c, s)
+    input(s, c, 3, Event.key("b", [:ctrl]))
+    input(s, c, 4, Event.key("x"))
+    scene_until(c, &(length(&1.panes) == 1))
+    assert Store.snapshot().session.next_id == 3
+    fake_reload({:ok, 7, at_load})
+    boom_on_z()
+
+    input(s, c, 5, Event.key("b", [:ctrl]))
+    input(s, c, 6, Event.key("z"))
+    assert_receive {^c, {:notice, %{level: :warning, text: "state restored" <> _}}}, 500
+    assert Store.snapshot().session.next_id == 3
   end
 
   test "a repeat Actions failure with no state to restore discards the event" do

@@ -112,6 +112,23 @@ defmodule HerdrReload.GuardTest do
     assert {:ok, %{cb: _}} = Guard.run(Fixture, :f, [:fun], [scan: false] ++ @nosrv)
   end
 
+  test "a re-run that returns a local fun again is not a second rejected notice" do
+    fun_src = fn n -> "defmodule Toy.A do\n  def f(:fun), do: %{n: #{n}, cb: fn -> 1 end}\nend\n" end
+    dir = toy!(:toy_g_rerun_fun, %{"lib/a.ex" => fun_src.(1)})
+    HerdrReload.ReloadCase.write_source!(dir, "lib/a.ex", fun_src.(2))
+    assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "a")])
+    start_supervised!(Notices)
+    Notices.subscribe()
+
+    capture_log(fn ->
+      assert {:failed, {:local_fun, Toy.A, [:cb]}, 2} =
+               Guard.run_twice_attributed(Toy.A, :f, [:fun], scan: true)
+    end)
+
+    assert_receive {:herdr_reload, {:rejected, Toy.A, [:cb]}}
+    refute_receive {:herdr_reload, {:rejected, _, _}}, 100
+  end
+
   test "a raise rolls back only the batch that owns the failing module" do
     dir = toy!(:toy_g_attr, %{"lib/a.ex" => a_src(1), "lib/b.ex" => b_src(1)})
     HerdrReload.ReloadCase.write_source!(dir, "lib/a.ex", a_src(2))

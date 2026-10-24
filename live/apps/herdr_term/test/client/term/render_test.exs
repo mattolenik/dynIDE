@@ -4,6 +4,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
 
   alias HerdrScene.Fixture
   alias HerdrTerm.{Cells, Client}
+  alias HerdrTerm.Client.Term.Theme
   alias HerdrTerm.Kernel.Fake.Blit
   alias HerdrTerm.Test.FakeServer
 
@@ -43,6 +44,10 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     send(render, {:scene, Fixture.load("single_pane_80x24")})
     refute_receive {:frame, _, _}, 100
     assert %{theme: :broken, scene: %{}} = :sys.get_state(render)
+
+    # fixed with no new damage or scene: the dropped frame is retried in full
+    :sys.replace_state(render, &%{&1 | theme: Theme.default()})
+    assert_receive {:frame, _, %{repaint: true}}, 1500
   end
 
   test "a failing rows fetch keeps the cached rows and still renders", %{

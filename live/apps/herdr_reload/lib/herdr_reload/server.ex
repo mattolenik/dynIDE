@@ -6,6 +6,11 @@ defmodule HerdrReload.Server do
   processes are never blocked, and callers needing a rollback during a compile
   simply wait (every call uses `:infinity`).
 
+  After a rollback the source still holds the rolled-back code, but its beam is the
+  previous one. Only a content change of that source reloads it: re-saving or touching
+  the same bytes is skipped here (unchanged since its last compile) and Mix would find
+  nothing to do anyway (unchanged digest).
+
   A public ETS table named like the server holds Guard counters, `{mod, count}`
   and `{:total, count}`, which decide whether a batch is still live.
 

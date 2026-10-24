@@ -230,7 +230,9 @@ defmodule HerdrServer.Client.Session do
   end
 
   defp apply_input(%{keybinds: %{}} = state, {:key, _} = ev, from) do
-    case Guard.run_twice(Keys, :resolve, [Map.take(state, [:mode, :swallow]), state.keybinds, ev]) do
+    case Guard.run_twice(Keys, :resolve, [Map.take(state, [:mode, :swallow]), state.keybinds, ev],
+           server: Store.reload_server()
+         ) do
       {:ok, {%{mode: mode, swallow: swallow}, result}} ->
         keyed(%{state | mode: mode, swallow: swallow}, state.mode, result, from)
 
@@ -270,10 +272,12 @@ defmodule HerdrServer.Client.Session do
     case :persistent_term.get(Protocol.fast_path_key(), nil) do
       %{passthrough: true, write: {mod, f, a}, intercept: i} ->
         # a failure in either call sends the event the slow path
-        with {:ok, key} <- Guard.run_twice(Keybinds, :normalize, [k, m]),
+        with {:ok, key} <-
+               Guard.run_twice(Keybinds, :normalize, [k, m], server: Store.reload_server()),
              false <- MapSet.member?(i, key),
              # ponytail: a write that writes then raises is re-sent after a rollback
-             {:ok, :ok} <- Guard.run_twice(mod, f, [ev | a], scan: false),
+             {:ok, :ok} <-
+               Guard.run_twice(mod, f, [ev | a], scan: false, server: Store.reload_server()),
              do: true,
              else: (_ -> false)
 
@@ -341,7 +345,11 @@ defmodule HerdrServer.Client.Session do
       notice: state.notice
     }
 
-    case Guard.run_twice(View, :compute, [app, view_state], budget_ms: 50, scan: false) do
+    case Guard.run_twice(View, :compute, [app, view_state],
+           budget_ms: 50,
+           scan: false,
+           server: Store.reload_server()
+         ) do
       {:ok, scene} ->
         send_scene(state, if(state.transport == :inline, do: fill(scene), else: scene))
 

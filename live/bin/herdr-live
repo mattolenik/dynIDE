@@ -7,6 +7,8 @@
 #
 # herdr-live rollback [n]: roll back the newest n live reload batches (default 1)
 # through the control socket of the running instance (HerdrServer.Control).
+# A rolled-back source is reloaded again only when its content changes: re-saving
+# or touching the same bytes does nothing (edit it, or revert it, to reload).
 if [ "${1:-}" = rollback ]; then
   sock=${HERDR_LIVE_CONTROL:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/control.sock}
   [ -S "$sock" ] || { echo "herdr-live is not running" >&2; exit 1; }

@@ -77,8 +77,14 @@ defmodule HerdrServer.ControlTest do
     dir = Path.dirname(p)
     File.mkdir_p!(dir)
     File.chmod!(dir, 0o755)
-    start_supervised!({Control, path: p, server: fake_server([])})
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        start_supervised!({Control, path: p, server: fake_server([])})
+      end)
+
     assert File.stat!(dir).mode |> Bitwise.band(0o777) == 0o755
+    assert log =~ "group/other"
     stop_supervised!(Control)
 
     assert :ignore = Control.init(path: Path.join(dir, "missing/c.sock"), server: nil)
@@ -91,7 +97,7 @@ defmodule HerdrServer.ControlTest do
     assert :ignore = Control.init(path: Path.join(ro, "c.sock"), server: nil)
   end
 
-  test "the default state dir is created 0700, an existing one keeps its mode" do
+  test "the default state dir is created 0700, an existing open one is locked to 0700" do
     base = Path.join(System.tmp_dir!(), "hls#{System.unique_integer([:positive])}")
     on_exit(fn -> File.rm_rf!(base) end)
     old = Map.take(System.get_env(), ["HERDR_LIVE_CONTROL", "XDG_STATE_HOME"])
@@ -109,9 +115,10 @@ defmodule HerdrServer.ControlTest do
     assert ask(Path.join(dir, "control.sock"), "rollback\n") == "ok none\n"
     stop_supervised!(Control)
 
+    # an old launcher made it 0755; macOS ignores the socket's own 0600
     File.chmod!(dir, 0o755)
     start_supervised!({Control, server: fake_server([])})
-    assert File.stat!(dir).mode |> Bitwise.band(0o777) == 0o755
+    assert File.stat!(dir).mode |> Bitwise.band(0o777) == 0o700
   end
 
   test "a hung reload server times out with an error reply" do

@@ -7,9 +7,12 @@ defmodule HerdrServer.Control do
   Line protocol, one command per connection: `rollback [N]\\n` (N >= 1, default 1) replies
   `ok <batch ids>\\n` (`ok none\\n` when nothing was rolled back) or `error <msg>\\n`.
   Ruling: a stopgap until M12's API; local only, never a network listener.
+  After a rollback only a content change of a rolled-back source reloads it (a re-save
+  or touch of the same bytes does not).
 
-  Only the default dir is created (0700 when created here; an existing dir keeps its
-  mode); a custom path's dir must exist. A stale socket at the path is replaced; another
+  Only the default dir is created (0700). macOS ignores socket modes, so an existing
+  default dir owned by this user is chmodded 0700 and one owned by another user is refused;
+  a custom path's dir must exist and keeps its mode (a warning if group/other can enter). A stale socket at the path is replaced; another
   live instance's socket, a non-socket file, a missing dir or an overlong path make this
   one run without a control socket (logged), never failing app start.
   Options: `path`, `server` (the `HerdrReload.Server`, default its registered name),
@@ -54,12 +57,13 @@ defmodule HerdrServer.Control do
   defp check_length(path) when byte_size(path) > 103, do: {:error, "path too long"}
   defp check_length(_), do: :ok
 
-  # Only the default state dir is created, and chmodded 0700 only when created here: a
-  # dir someone else made (or a symlink) keeps its mode.
+  # Only the default state dir is created (0700). macOS ignores socket modes, so the dir
+  # is the access check: an existing default dir of ours is locked to 0700, one owned by
+  # another user is refused; a custom dir is left alone, with a warning if it is open.
   defp ensure_dir(dir) do
     case File.lstat(dir) do
-      {:ok, %{type: :directory}} ->
-        :ok
+      {:ok, %{type: :directory} = st} ->
+        if dir == default_dir(), do: lock(dir, st), else: warn_open(dir, st)
 
       {:error, :enoent} ->
         if dir == default_dir(), do: create(dir), else: {:error, "#{dir} does not exist"}
@@ -70,6 +74,29 @@ defmodule HerdrServer.Control do
       {:error, _} = e ->
         errmsg(e)
     end
+  end
+
+  defp lock(dir, %{uid: uid, mode: mode}) do
+    cond do
+      uid != my_uid() -> {:error, "#{dir} is owned by another user"}
+      Bitwise.band(mode, 0o077) != 0 -> errmsg(File.chmod(dir, 0o700))
+      true -> :ok
+    end
+  end
+
+  defp warn_open(dir, %{mode: mode}) do
+    if Bitwise.band(mode, 0o077) != 0,
+      do: Logger.warning("#{dir} is group/other-accessible: on macOS other users can connect")
+
+    :ok
+  end
+
+  # nil (unknown) never equals a uid: the dir is then refused
+  defp my_uid do
+    with {out, 0} <- System.cmd("id", ["-u"]),
+         {uid, ""} <- Integer.parse(String.trim(out)),
+         do: uid,
+         else: (_ -> nil)
   end
 
   defp create(dir), do: errmsg(with(:ok <- File.mkdir_p(dir), do: File.chmod(dir, 0o700)))

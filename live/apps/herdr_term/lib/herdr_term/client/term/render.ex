@@ -19,7 +19,8 @@ defmodule HerdrTerm.Client.Term.Render do
   Frames are at least `:min_frame_interval_ms` (default 6) apart with at most one
   pending timer. A frame repaints fully on the first frame, after a re-attach, when the
   scene size changes and on `:repaint` (`Tty.Owner` sends it when the tty resumes). A
-  failing compose or cursor keeps the last frame. `{:detached, reason}` goes to `Tty.Owner`.
+  failing compose keeps the last frame and retries a full repaint every 500ms; a failing
+  cursor keeps the last frame. `{:detached, reason}` goes to `Tty.Owner`.
   """
 
   use GenServer
@@ -35,6 +36,7 @@ defmodule HerdrTerm.Client.Term.Render do
   alias HerdrTerm.Tty.Owner
 
   @retry_ms 50
+  @retry_frame_ms 500
   # compose can hang on a bad edit; its result is a transient frame
   @compose [budget_ms: 50, scan: false]
 
@@ -255,8 +257,10 @@ defmodule HerdrTerm.Client.Term.Render do
 
         %{state | repaint: false, last_size: scene.size, last_at: now()}
 
+      # The screen still shows the frame before: retry in full, not at the next damage.
+      # ponytail: fixed 500ms retry while Compose keeps failing (one error log each)
       {:failed, _} ->
-        state
+        %{state | repaint: true, timer: Process.send_after(self(), :frame, @retry_frame_ms)}
     end
   end
 

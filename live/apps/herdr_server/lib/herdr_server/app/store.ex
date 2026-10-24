@@ -31,8 +31,9 @@ defmodule HerdrServer.App.Store do
     * A repeat failure of `Actions.apply` (the guard rolled back batch K and the old code
       failed on the same event too) restores the `state_at_load` of the reload server's
       `last_rolled_back/1` batch when it is K or older, reconciled with the keeper as
-      above (keeping the current pane area, and each pane's `layout_gen` at least its
-      current one, so a ref client never sees a gen twice), and warns every subscriber.
+      above (keeping the current pane area, `next_id` and each pane's `layout_gen` at
+      least their current values, so no id or gen is seen twice), and warns every
+      subscriber.
       Without such a state, or on an unattributed failure, the event is discarded with an
       error notice.
       The reload server is `config :herdr_server, :reload_server` (default
@@ -125,8 +126,13 @@ defmodule HerdrServer.App.Store do
 
     case reconcile(state, app) do
       {:ok, state} ->
-        Enum.each(Map.keys(state.app.session.panes), &Restore.ensure_server/1)
-        dirty(state) |> settle() |> publish_fast()
+        ids = Map.keys(state.app.session.panes)
+        Enum.each(ids, &Restore.ensure_server/1)
+        # settle only acts where it disagrees: start from what the pane servers hold
+        hidden =
+          for id <- ids, match?(%{hidden: true}, Mirror.pane(id)), into: MapSet.new(), do: id
+
+        dirty(%{state | hidden: hidden}) |> settle() |> publish_fast()
 
       :failed ->
         Restore.close_all()
@@ -136,7 +142,7 @@ defmodule HerdrServer.App.Store do
   end
 
   defp reconcile(state, app) do
-    case Guard.run_twice(Reconcile, :run, [app, Restore.live()]) do
+    case Guard.run_twice(Reconcile, :run, [app, Restore.live()], server: reload_server()) do
       {:ok, {app, effects}} ->
         {:ok, Enum.reduce(effects, %{state | app: app}, &effect(&2, &1, nil))}
 
@@ -288,7 +294,10 @@ defmodule HerdrServer.App.Store do
     end
   end
 
-  defp reload_server, do: Application.get_env(:herdr_server, :reload_server, HerdrReload.Server)
+  @doc false
+  # the reload server every herdr_server Guard call attributes to
+  @spec reload_server() :: GenServer.server()
+  def reload_server, do: Application.get_env(:herdr_server, :reload_server, HerdrReload.Server)
 
   # Batch `k`'s new code corrupted state the old code then failed on: go back to a state
   # from before `k` was loaded (`k`'s own; the Guard's re-run never rolls back an older
@@ -297,7 +306,7 @@ defmodule HerdrServer.App.Store do
     with {:ok, id, at_load} when id <= k and at_load != nil <- last_rolled_back(),
          at_load = put_in(at_load.session.area, app.session.area),
          {:ok, state} <- reconcile(state, at_load) do
-      state = %{state | app: keep_gens(state.app, app)}
+      state = %{state | app: keep_monotonic(state.app, app)}
       n = %{level: :warning, text: "state restored to batch #{id}; actions since were lost"}
 
       if state.subs == %{},
@@ -313,9 +322,11 @@ defmodule HerdrServer.App.Store do
   defp restore(_state, _k), do: :none
 
   # A ref client re-fetches a pane only when its layout_gen changes: a restored older gen
-  # (or an adopted pane's 0) would repeat one it has seen, with another size.
-  defp keep_gens(restored, app) do
+  # (or an adopted pane's 0) would repeat one it has seen, with another size. Pane ids
+  # spawned (and maybe closed) since the load must not be handed out again either.
+  defp keep_monotonic(restored, app) do
     gens = for {id, %{layout_gen: g}} <- app.session.panes, into: %{}, do: {id, g}
+    restored = update_in(restored.session.next_id, &max(&1, app.session.next_id))
 
     update_in(restored.session.panes, fn panes ->
       Map.new(panes, fn {id, m} -> {id, %{m | layout_gen: max(m.layout_gen, gens[id] || 0)}} end)
@@ -400,9 +411,10 @@ defmodule HerdrServer.App.Store do
   defp settle(%{app: %{session: s}} = state) do
     ws = Enum.find(s.workspaces, &(&1.id == s.active_workspace))
     tab = Enum.find(ws.tabs, &(&1.id == ws.active_tab))
+    g = [scan: false, server: reload_server()]
 
-    with {:ok, panes} <- Guard.run_twice(Layout, :panes, [tab.layout, s.area], scan: false),
-         {:ok, rects} <- Guard.run_twice(Layout, :borders, [panes, s.area], scan: false) do
+    with {:ok, panes} <- Guard.run_twice(Layout, :panes, [tab.layout, s.area], g),
+         {:ok, rects} <- Guard.run_twice(Layout, :borders, [panes, s.area], g) do
       visible = MapSet.new(rects, & &1.id)
 
       state =
@@ -439,7 +451,7 @@ defmodule HerdrServer.App.Store do
   defp publish_fast(%{app: nil} = state), do: state
 
   defp publish_fast(%{app: %{focus: f, ui: ui}} = state) do
-    case Guard.run_twice(Keybinds, :intercept_set, [ui.keybinds]) do
+    case Guard.run_twice(Keybinds, :intercept_set, [ui.keybinds], server: reload_server()) do
       {:ok, intercept} -> publish_fast(state, f, intercept)
       # keeps the previous fast path
       {:failed, _} -> state

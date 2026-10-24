@@ -196,7 +196,8 @@ defmodule HerdrReload.Guard do
 
     case scan?(opts) && LocalFuns.find(value) do
       {:local_fun, fun_mod, path} = failure ->
-        Notices.broadcast({:rejected, fun_mod, path})
+        # the re-run after a rollback repeats the first run's notice: say it once
+        if Keyword.get(opts, :attribute, true), do: Notices.broadcast({:rejected, fun_mod, path})
         failed(Enum.uniq([fun_mod, mod]), failure, server, opts)
 
       _ ->
