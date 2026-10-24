@@ -25,7 +25,7 @@ envinfo() {
   fi
 }
 
-load() { if [ "$os" = darwin ]; then uptime | sed 's/.*load averages*: //'; else cut -d' ' -f1-3 /proc/loadavg; fi; }
+load() { if [ "$os" = darwin ]; then echo "$(uptime | sed 's/.*load averages*: //') idle=$(top -l 1 -n 0 | sed -n 's/.*sys, \([0-9.]*%\) idle.*/\1/p')"; else cut -d' ' -f1-3 /proc/loadavg; fi; }
 
 run() {
   local name=$1; shift
