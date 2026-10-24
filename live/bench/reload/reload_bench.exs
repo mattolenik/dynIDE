@@ -47,7 +47,8 @@ defmodule ReloadBench do
   def stats(label, xs) do
     s = Enum.sort(xs)
     n = length(s)
-    [label, "min #{Enum.min(s)}", "median #{Enum.at(s, div(n, 2))}", "p95 #{Enum.at(s, min(n - 1, ceil(n * 0.95) - 1))}", "ms"]
+    # n is 10 or less: a p95 would be the max
+    [label, "min #{Enum.min(s)}", "median #{Enum.at(s, div(n, 2))}", "max #{List.last(s)}", "ms"]
     |> Enum.join("  ")
     |> IO.puts()
   end
@@ -156,6 +157,6 @@ try do
   IO.puts("    fan-out per iteration: #{inspect(Enum.map(rs, &elem(&1, 1)))}")
 after
   File.write!(scene, orig)
-  # let the restore reload settle so beams match the source again
-  Process.sleep(1500)
+  # wait for the restore's reload so beams match the source again
+  ReloadBench.await_loaded(15_000)
 end
