@@ -116,7 +116,7 @@ defmodule HerdrServer.ViewTest do
   end
 
   test "a notice renders after the tabs, truncated to the free width, dropped when tiny" do
-    notice = %{level: :warning, text: String.duplicate("w", 200), until: :sticky}
+    notice = %{level: :warning, text: String.duplicate("w", 200)}
     s = View.compute(fresh(80, 24), %{client(80, 24) | notice: notice})
     assert :ok = Scene.validate(s)
     assert [:mode, :tabs, :notice, :title, :hint] == Enum.map(status(s).children, & &1.id)

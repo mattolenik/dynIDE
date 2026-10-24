@@ -34,6 +34,7 @@ fail() {
 cat >"$tmp/inner.sh" <<INNER
 alive() { st=\$(ps -o stat= -p "\$1" 2>/dev/null); [ -n "\$st" ] && [ "\${st#Z}" = "\$st" ]; }
 stty -a >"$tmp/before"
+export HERDR_LIVE_CONTROL="$tmp/control.sock"
 HERDR_LIVE_HEADLESS=1 HERDR_LIVE_LOG="$tmp/log/herdr-live.log" "$root/bin/herdr-live" &
 pid=\$!
 echo "\$pid" >"$tmp/pid"
@@ -48,6 +49,7 @@ until grep -qs 'herdr-live started' "$tmp/log/herdr-live.log"; do
   fi
   sleep 0.5
 done
+"$root/bin/herdr-live" rollback >"$tmp/rb_up" 2>&1; echo \$? >"$tmp/rb_up.status"
 kill -TERM "\$pid"
 i=0
 while alive "\$pid" && [ "\$i" -lt 80 ]; do
@@ -57,6 +59,7 @@ while alive "\$pid" && [ "\$i" -lt 80 ]; do
 done
 wait "\$pid"
 echo \$? >"$tmp/status"
+"$root/bin/herdr-live" rollback >"$tmp/rb_down" 2>&1; echo \$? >"$tmp/rb_down.status"
 stty -a >"$tmp/after"
 INNER
 
@@ -77,6 +80,13 @@ grep -q 'herdr-live stopped' "$log" || fail "log lacks 'herdr-live stopped'"
 echo "PASS: log has started and stopped"
 ! grep -q 'terminal client started' "$log" || fail "headless run started a terminal client"
 echo "PASS: headless, no terminal client"
+[ "$(cat "$tmp/rb_up" 2>&1)" = "ok none" ] && [ "$(cat "$tmp/rb_up.status")" = 0 ] ||
+  fail "rollback while running: $(cat "$tmp/rb_up" "$tmp/rb_up.status" 2>&1)"
+echo "PASS: herdr-live rollback answers ok none"
+[ "$(cat "$tmp/rb_down" 2>&1)" = "herdr-live is not running" ] && [ "$(cat "$tmp/rb_down.status")" = 1 ] ||
+  fail "rollback after stop: $(cat "$tmp/rb_down" "$tmp/rb_down.status" 2>&1)"
+[ ! -e "$tmp/control.sock" ] || fail "control socket left behind"
+echo "PASS: herdr-live rollback after stop exits 1, socket removed"
 # Darwin script(1) echoes "^D" plus backspaces when its own stdin hits EOF; that is script, not the VM.
 [ -z "$(tr -d '\r\n\b' <"$tmp/transcript" | sed 's/^\^D//')" ] || fail "terminal output: $(cat "$tmp/transcript")"
 echo "PASS: terminal transcript empty"

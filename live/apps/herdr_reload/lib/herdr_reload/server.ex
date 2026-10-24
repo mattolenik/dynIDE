@@ -41,9 +41,9 @@ defmodule HerdrReload.Server do
   @spec rollback(pos_integer()) :: {:ok, [pos_integer()]}
   def rollback(n \\ 1) when is_integer(n), do: rollback(__MODULE__, n)
 
-  @spec rollback(server(), pos_integer()) :: {:ok, [pos_integer()]}
-  def rollback(server, n),
-    do: GenServer.call(server, {:rollback, n}, :infinity)
+  @spec rollback(server(), pos_integer(), timeout()) :: {:ok, [pos_integer()]}
+  def rollback(server, n, timeout \\ :infinity),
+    do: GenServer.call(server, {:rollback, n}, timeout)
 
   @doc "Blames a failure on the newest live batch touching `stack_modules` and rolls it back."
   @spec fail(server(), [module()], term()) :: {:rolled_back, pos_integer()} | :unattributed

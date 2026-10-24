@@ -130,4 +130,17 @@ defmodule HerdrServer.ReloadNoticesTest do
     # only reload errors are sticky
     assert next_notice(c) == nil
   end
+
+  test "a repeated notice re-arms its timer without re-pushing the scene" do
+    Application.put_env(:herdr_server, :notice_ms, info: 120, warning: 120)
+    c = client()
+    HerdrReload.Notices.broadcast({:loaded, 1, [A]})
+    assert %{token: :muted} = next_notice(c)
+    Process.sleep(70)
+    HerdrReload.Notices.broadcast({:loaded, 2, [A]})
+    assert_receive {^c, {:notice, %{text: "reloaded 1 modules"}}}, 500
+    # the first timer would have fired 50 ms from now
+    refute_receive {^c, {:scene, _}}, 100
+    assert next_notice(c) == nil
+  end
 end

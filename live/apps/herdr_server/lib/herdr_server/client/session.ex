@@ -187,21 +187,23 @@ defmodule HerdrServer.Client.Session do
   # Forwarded to the client and shown in the status line until it expires (info 3 s,
   # warning 8 s, `config :herdr_server, :notice_ms`) or a newer notice replaces it. A
   # reload error stays until then (the next reload's notice replaces it).
+  # The same level and text again only re-arms the timer (no repaint).
   defp notice(state, %{level: level, text: text} = n) do
     send(state.client, {:notice, n})
     ref = make_ref()
     ms = Application.get_env(:herdr_server, :notice_ms, info: 3000, warning: 8000)
 
-    until =
-      if level == :error and n[:source] == :reload do
-        :sticky
-      else
-        t = if level == :info, do: ms[:info], else: ms[:warning]
-        Process.send_after(self(), {:notice_expired, ref}, t)
-        System.monotonic_time(:millisecond) + t
-      end
+    if level != :error or n[:source] != :reload do
+      t = if level == :info, do: ms[:info], else: ms[:warning]
+      Process.send_after(self(), {:notice_expired, ref}, t)
+    end
 
-    repaint(%{state | notice: %{level: level, text: text, until: until, ref: ref}})
+    new = %{level: level, text: text, ref: ref}
+
+    case state.notice do
+      %{level: ^level, text: ^text} -> %{state | notice: new}
+      _ -> repaint(%{state | notice: new})
+    end
   end
 
   # the Store may be restarting: the session follows it and repaints then

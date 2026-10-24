@@ -23,7 +23,8 @@ if [ "${1:-}" = rollback ]; then
 fi
 log=${HERDR_LIVE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/herdr-live.log}
 case $log in /*) ;; *) log=$PWD/$log ;; esac
-mkdir -p "$(dirname "$log")" || exit 1
+# 0700 when created here: the control socket (HerdrServer.Control) lives beside the log
+(umask 077 && mkdir -p "$(dirname "$log")") || exit 1
 # resolve symlinks (portable: no readlink -f on macOS)
 self=$0
 while [ -L "$self" ]; do
