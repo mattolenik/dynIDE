@@ -26,7 +26,10 @@ defmodule HerdrServer.Client.Session do
 
   The presentation fields (`@presentation`) are mirrored per client pid
   (`HerdrServer.Mirror.client/1`) when an input changes them; `info.mirrored` (from
-  `Client.Endpoint`) seeds them on a re-attach. The entry goes when the client goes.
+  `Client.Endpoint`) seeds them on a re-attach. The entry goes when the session stops
+  normally (client gone, detach, Store gone); a crash keeps it for the re-attach.
+  If the restarted Store dies while the session re-subscribes, the client gets
+  `{:detached, :store_restart}`.
   """
   use GenServer, restart: :temporary
 
@@ -118,6 +121,7 @@ defmodule HerdrServer.Client.Session do
   # event from this session
   def handle_info({:detach}, state) do
     state = Map.merge(%State{}, state)
+    Mirror.delete({:client, state.client})
     send(state.client, {:detached, :requested})
     {:stop, :normal, state}
   end
@@ -134,12 +138,21 @@ defmodule HerdrServer.Client.Session do
 
     case await_store(@store_tries) do
       nil ->
+        Mirror.delete({:client, state.client})
         {:stop, :normal, state}
 
       pid ->
         state = %{state | store_monitor: Process.monitor(pid), last_scene: nil}
-        :ok = Store.subscribe(self())
-        {:noreply, push(state, Store.snapshot())}
+
+        case follow() do
+          {:ok, app} ->
+            {:noreply, push(state, app)}
+
+          :error ->
+            Mirror.delete({:client, state.client})
+            send(state.client, {:detached, :store_restart})
+            {:stop, :normal, state}
+        end
     end
   end
 
@@ -147,6 +160,14 @@ defmodule HerdrServer.Client.Session do
   def handle_info(_other, state) do
     state = Map.merge(%State{}, state)
     {:noreply, state}
+  end
+
+  # the new Store may die too while we call it
+  defp follow do
+    :ok = Store.subscribe(self())
+    {:ok, Store.snapshot()}
+  catch
+    :exit, _ -> :error
   end
 
   defp await_store(0), do: nil

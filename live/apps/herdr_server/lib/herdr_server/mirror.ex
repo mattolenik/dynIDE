@@ -1,8 +1,11 @@
 defmodule HerdrServer.Mirror do
   @moduledoc """
   Owner of every server ETS table, so a crash of the processes that write them loses
-  nothing. Started right after `Native.Keeper`; its only code is `init/1` (no
-  `handle_call`/`handle_cast`: nothing calls it, so it has nothing to crash on).
+  nothing. Started right after `Native.Keeper`. A bare `:proc_lib` process, not a
+  GenServer: it creates the tables, then hibernates and drops every message it gets
+  (calls, casts, system messages), so nothing sent to it can stop it. Hibernating
+  between messages keeps no stack in this module, so reloading it twice does not purge
+  (kill) the owner. It only stops with its supervisor (an exit signal).
 
     * `:herdr_pane_rows`, `:herdr_pane_kernel`: the row cache and pane -> kernel id map
       (API in `Pane.Rows`).
@@ -13,18 +16,33 @@ defmodule HerdrServer.Mirror do
 
   The functions below are plain ETS reads and writes; they run in the caller.
   """
-  use GenServer
 
   @mirror :herdr_mirror
 
-  def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+  def child_spec(arg), do: %{id: __MODULE__, start: {__MODULE__, :start_link, [arg]}}
 
-  @impl true
-  def init(:ok) do
+  @spec start_link(term) :: {:ok, pid}
+  def start_link(_), do: :proc_lib.start_link(__MODULE__, :init, [])
+
+  @doc false
+  def init do
+    true = Process.register(self(), __MODULE__)
+
     for t <- [:herdr_pane_rows, :herdr_pane_kernel, @mirror],
         do: :ets.new(t, [:named_table, :public, :set, read_concurrency: true])
 
-    {:ok, nil}
+    :proc_lib.init_ack({:ok, self()})
+    :proc_lib.hibernate(__MODULE__, :wake, [])
+  end
+
+  @doc false
+  # woken by a message: drop it and sleep again
+  def wake do
+    receive do
+      _ -> :ok
+    end
+
+    :proc_lib.hibernate(__MODULE__, :wake, [])
   end
 
   @doc "The mirrored app (`%{session, focus, ui}`), or nil when any part is missing."

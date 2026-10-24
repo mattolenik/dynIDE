@@ -354,11 +354,61 @@ defmodule HerdrServer.ServerTest do
     assert :sys.get_state(new).hidden
   end
 
-  test "the mirror owner has no call or cast handlers of its own" do
-    src = File.read!(to_string(HerdrServer.Mirror.module_info(:compile)[:source]))
-    refute src =~ ~r/def handle_/
-    assert :ets.info(:herdr_pane_rows, :owner) == Process.whereis(HerdrServer.Mirror)
-    assert :ets.info(:herdr_pane_kernel, :owner) == Process.whereis(HerdrServer.Mirror)
+  test "the mirror owner survives stray calls, casts, messages and reloads of its module" do
+    mirror = Process.whereis(HerdrServer.Mirror)
+    tables = Enum.map([:herdr_pane_rows, :herdr_pane_kernel, :herdr_mirror], &:ets.whereis/1)
+    HerdrServer.Mirror.put(:probe, 1)
+
+    catch_exit(GenServer.call(HerdrServer.Mirror, :bogus, 50))
+    GenServer.cast(HerdrServer.Mirror, :bogus)
+    send(HerdrServer.Mirror, :bogus)
+    catch_exit(:sys.get_state(HerdrServer.Mirror, 50))
+
+    # two reloads purge the first version: a process running it would be killed
+    {mod, bin, file} = :code.get_object_code(HerdrServer.Mirror)
+    for _ <- 1..2, do: {:module, ^mod} = :code.load_binary(mod, file, bin)
+    Process.sleep(20)
+
+    assert Process.whereis(HerdrServer.Mirror) == mirror
+
+    assert Enum.map([:herdr_pane_rows, :herdr_pane_kernel, :herdr_mirror], &:ets.whereis/1) ==
+             tables
+
+    assert :ets.info(:herdr_pane_rows, :owner) == mirror
+    assert HerdrServer.Mirror.get(:probe) == 1
+    HerdrServer.Mirror.delete(:probe)
+  end
+
+  test "a session whose new Store dies while it re-subscribes detaches its client" do
+    {c, s} = client()
+    scene(c)
+    ref = Process.monitor(s)
+    sup = HerdrServer.Supervisor
+    :sys.suspend(sup)
+
+    try do
+      fake = spawn(fn -> receive do: ({:"$gen_call", _, {:subscribe, _}} -> exit(:boom)) end)
+      old = Process.whereis(Store)
+      Process.exit(old, :kill)
+      assert eventually(fn -> Process.whereis(Store) == nil end)
+      Process.register(fake, Store)
+      assert_receive {^c, {:detached, :store_restart}}, 1000
+      assert_receive {:DOWN, ^ref, :process, ^s, :normal}, 500
+    after
+      :sys.resume(sup)
+    end
+
+    assert eventually(fn -> is_pid(Process.whereis(Store)) end)
+  end
+
+  test "a detach deletes the client's mirror entry" do
+    {c, s} = client()
+    scene(c)
+    HerdrServer.Mirror.put({:client, c}, %{viewports: %{}, hover: nil})
+    ref = Process.monitor(s)
+    send(s, {:detach})
+    assert_receive {:DOWN, ^ref, :process, ^s, :normal}, 500
+    assert HerdrServer.Mirror.client(c) == nil
   end
 
   test "Store mirror writes are debounced: one write per changed sub-struct" do
