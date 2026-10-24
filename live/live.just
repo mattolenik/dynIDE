@@ -8,6 +8,7 @@ live-test:
     cd '{{live_dir}}' && mix test
     cd '{{live_dir}}/apps/herdr_integration' && mix test --only real_kernel
     for c in {{live_crates}}; do (cd '{{live_dir}}/native'/$c && cargo test --locked) || exit 1; done
+    python3 -m unittest discover -s '{{live_dir}}/scripts' -p 'test_log_summary.py'
 
 # Milestone gate: lint, types, tests, launcher, handoff and attached smokes, tty harness
 # (M2 destructor and demo; herdr-live attached on the real kernels, then 15 panes + cat flood)
@@ -25,6 +26,10 @@ live-check:
     python3 '{{live_dir}}/scripts/tty_harness.py' demo
     python3 '{{live_dir}}/scripts/tty_harness.py' herdr
     python3 '{{live_dir}}/scripts/tty_harness.py' herdr-stress
+
+# Summarise a herdr-live log (reloads, rollbacks, handoffs, session losses); args: [LOG ...] [--since ISO] [--json]
+live-log-summary *args:
+    python3 '{{live_dir}}/scripts/log_summary.py' {{args}}
 
 # Compile, then run herdr-live
 live-run:
