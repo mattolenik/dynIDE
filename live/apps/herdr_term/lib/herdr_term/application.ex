@@ -66,7 +66,7 @@ defmodule HerdrTerm.Application do
           end
 
         cond do
-          clear_local_stop() -> if handoff_phase() == :begin, do: await_abort(opts), else: :ok
+          clear_local_stop() -> if_handoff(opts)
           handoff_phase() == :begin -> await_abort(opts)
           reason == :normal -> :ok
           true -> restart_local(opts, restarts, reason)
@@ -79,6 +79,8 @@ defmodule HerdrTerm.Application do
 
     :ok
   end
+
+  defp if_handoff(opts), do: if(handoff_phase() == :begin, do: await_abort(opts), else: :ok)
 
   @local_stop {__MODULE__, :local_stop}
 
