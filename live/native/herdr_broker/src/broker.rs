@@ -3,7 +3,7 @@
 //! by the primary VM, keeps a warm standby, and runs the crash and graceful
 //! handoffs (m5 plan rulings 3, 7-15).
 
-use crate::log::log;
+use crate::log::{event, log};
 use herdr_fdpass::{self as fp, kind, Frame};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{self, Read};
@@ -693,6 +693,7 @@ impl<S: Spawner> Broker<S> {
                 self.promote(gen);
                 let ms = t0.elapsed().as_millis();
                 log!("handoff crash gen={from} -> gen={to} entries={k} ms={ms}");
+                event!("broker_handoff", "kind" => "crash", "from" => from, "to" => to, "entries" => k, "ms" => ms);
                 self.record("crash", ms);
                 self.go_idle();
             }
@@ -706,6 +707,7 @@ impl<S: Spawner> Broker<S> {
                 self.promote(gen);
                 let ms = t0.elapsed().as_millis();
                 log!("handoff graceful gen={old} -> gen={to} entries={sent} ms={ms}");
+                event!("broker_handoff", "kind" => "graceful", "from" => old, "to" => to, "entries" => sent, "ms" => ms);
                 self.record("graceful", ms);
                 let old_alive = match self.vms.get_mut(&old) {
                     Some(v) => {
@@ -816,7 +818,7 @@ impl<S: Spawner> Broker<S> {
         self.staged.clear();
         loop {
             if attempts >= 3 {
-                self.fallback_restore();
+                self.fallback_restore(from);
                 return;
             }
             let Some(to) = reuse.take().or_else(|| self.spawn_vm(Role::Target)) else {
@@ -880,13 +882,15 @@ impl<S: Spawner> Broker<S> {
             "handoff failed: {reason} (crash gen={from} -> gen={to}, attempt {})",
             attempts + 1
         );
+        event!("broker_handoff_failed", "reason" => reason, "from" => from, "to" => to);
         self.kill(to);
         self.crash_try(from, attempts + 1, t0, None);
     }
 
     /// Ruling 13's disk-restore hook (M8), then a fresh VM; held fds close.
-    fn fallback_restore(&mut self) {
+    fn fallback_restore(&mut self, lost: u64) {
         log!("handoff failed; disk restore not implemented (M8)");
+        event!("session_lost", "reason" => "disk_restore_not_implemented", "gen" => lost);
         self.entries.clear();
         self.deadline = None;
         match self.spawn_vm(Role::Primary) {
@@ -921,6 +925,7 @@ impl<S: Spawner> Broker<S> {
             }
             None => {
                 log!("handoff failed: spawn failed");
+                event!("broker_handoff_failed", "reason" => "spawn failed", "from" => old, "to" => "none");
                 self.reply_restart(false, "failed: spawn failed");
                 self.go_idle();
             }
@@ -932,6 +937,7 @@ impl<S: Spawner> Broker<S> {
             return;
         };
         log!("handoff failed: {reason} (graceful gen={old} -> gen={to})");
+        event!("broker_handoff_failed", "reason" => reason, "from" => old, "to" => to);
         self.kill(to);
         self.staged.clear();
         self.plan = Plan::Thawing {
@@ -1110,7 +1116,15 @@ impl<S: Spawner> Broker<S> {
 
     /// First death signal (link EOF or reap) of `gen`.
     fn vm_died(&mut self, gen: u64, ready: bool, how: &str) {
+        let role = if self.primary == Some(gen) {
+            "primary"
+        } else if self.standby == Some(gen) {
+            "standby"
+        } else {
+            "target"
+        };
         log!("vm gen={gen} died status={how}");
+        event!("broker_vm_exit", "gen" => gen, "status" => how, "role" => role);
         let lost: Vec<u64> = self
             .requests
             .iter()

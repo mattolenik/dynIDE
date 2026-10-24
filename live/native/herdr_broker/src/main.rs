@@ -12,7 +12,7 @@ mod log;
 mod tty;
 mod vm;
 
-use crate::log::log;
+use crate::log::{event, log};
 use std::ffi::OsString;
 use std::os::fd::IntoRawFd;
 use std::os::unix::fs::PermissionsExt;
@@ -92,6 +92,7 @@ fn run(dir: &Path, sock: PathBuf, argv: Vec<OsString>) -> i32 {
     let guard = (!headless)
         .then(|| tty::Guard::open_path("/dev/tty"))
         .flatten();
+    event!("broker_start", "pid" => std::process::id());
     let cfg = broker::Config::new(sock.clone());
     let spawner = vm::Real { argv, sock };
     let outcome = broker::Broker::new(cfg, spawner, sig).and_then(|mut b| b.run());
@@ -106,6 +107,7 @@ fn run(dir: &Path, sock: PathBuf, argv: Vec<OsString>) -> i32 {
         g.restore(crashed);
     }
     log!("stopped");
+    event!("broker_stop", "pid" => std::process::id());
     code
 }
 
