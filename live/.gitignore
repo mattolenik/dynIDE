@@ -4,3 +4,4 @@
 *.ez
 erl_crash.dump
 /apps/*/priv/native/
+/apps/*/tmp/
