@@ -217,7 +217,7 @@ Off by default. It adds about a second per save, so it is for risky edits.
 - Mapping: `apps/<app>/lib/x.ex` (or `lib/<app>/x.ex`) runs `apps/<app>/test/x_test.exs`
   when it exists; a saved test file maps to itself. No mapped test: reload as usual
   (`tests result=none`; the status line drops its tests node, no notice).
-- The tests run in a separate `mix test` OS process (`MIX_ENV=test`, broker and control
+- The tests run in a separate `mix test` OS process (`MIX_ENV=test`, broker and API
   env removed, 120 s timeout) before compile. Only a pass loads.
 - A failing or erroring run blocks the load and keeps the path blocked. Every later gated
   save re-runs the blocked paths' tests too; a pass loads everything and clears the set.
@@ -236,6 +236,24 @@ Off by default. It adds about a second per save, so it is for risky edits.
   whatever is on disk).
 - Cost, measured on `view.ex` (n=5): save to "tests passed" median 861 ms, save to loaded
   median 981 ms (results/m7.md, Task 6 bench `bench/reload/test_gate_bench.exs`), against about 190 ms without the gate (results/m6-gate.md).
+
+## Driving herdr-live from a pane
+
+The launcher exports `HERDR_LIVE_BIN` (absolute path of `live/bin/herdr-live`) and
+`HERDR_LIVE_API` (the resolved API socket) before starting the broker, and the server
+gives each pane shell `HERDR_PANE_ID` (`p<N>`). An agent in a pane drives this instance
+with `"$HERDR_LIVE_BIN" <verb>`; output is JSON on stdout (`pane read`: text), errors are
+JSON on stderr with exit 1, usage errors exit 2.
+
+- `pane split [<pane_id>] --direction right|down`: prints `pane.pane_id` of the new pane.
+- `pane run <pane_id> <command>`, `pane send-text`, `pane send-keys`.
+- `pane wait-output [<pane_id>] --match S [--timeout MS]`, `pane read [<pane_id>]`
+  (omitted id: `$HERDR_PANE_ID`).
+- `pane list`, `pane current`, `workspace ...`, `tab ...`, `events subscribe ...`.
+- `agent ...` answers `not_available` until M11 detection.
+
+Every verb, param and error: [api.md](api.md). `herdr-live help` lists the verbs.
+`python3 live/scripts/tty_harness.py agent` (in `just live-check`) runs this loop.
 
 ## Telemetry
 
@@ -260,12 +278,15 @@ lists are comma-joined.
 | `broker_handoff`, `broker_handoff_failed` | broker, per handoff | `kind` `from` `to` `entries` `ms` / `reason` `from` `to` |
 | `session_lost` | broker: children not carried (`reason` `gen`); Store: live panes closed or orphaned (`proc=store`, `reason` `fresh_restart`/`reconcile_failed`/`carry_unusable`, `panes`) | `reason` and `gen` or `proc` `panes` |
 | `broker_vm_exit`, `broker_start`, `broker_stop` | broker lifecycle | `gen` `status` `role` / `pid` |
+| `api_connect` | API connection accepted | `conns` (open count) |
+| `api_denied` | API request refused before a handler ran | `method` `code` |
+| `api_error` | API handler failed (`internal`/`timeout`/`backpressure`/`events_lost`) | `method` `code` `msg` |
 
 `result=stale` means the reload was skipped because another source changed during the run.
 
 Summary: `just live-log-summary [LOG ...] [--since ISO8601] [--json]`, which runs
 `python3 live/scripts/log_summary.py`. It reports reloads, rollbacks, handoffs, test
-runs and session losses. Exit status is 0 unless a log is unreadable.
+runs, API connects/denials/errors and session losses. Exit status is 0 unless a log is unreadable.
 
 The dogfooding exit criterion counts exactly: session_losses = `session_lost` lines
 (broker fallback restore, Store closing or orphaning live panes) + unclean broker
@@ -316,7 +337,7 @@ grep -E 'herdr-event (session_lost|crash|broker_handoff_failed)' "$L"
   harness and smokes compile into the same `_build/dev` and selfhost writes into the
   watched tree). Do not run builds in parallel in one worktree. Inside a pane,
   `just live-test` and focused `mix test` are safe: the test VM drops the inherited
-  broker and control env (`config/runtime.exs`).
+  broker and API env (`config/runtime.exs`).
 - One instance per log file: two brokers writing one log produce false `broker_died`
   losses in `log_summary`.
 - Self-hosted tty check: `python3 live/scripts/tty_harness.py selfhost` (drives herdr-live

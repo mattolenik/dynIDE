@@ -67,7 +67,7 @@ class LogSummaryTest(unittest.TestCase):
             "compile_errors", "rollbacks", "rollback_reasons", "guard_failures", "tests",
             "syncs", "handoffs", "handoff_ms_p50", "handoff_ms_p95", "handoff_ms_max",
             "crashes", "store_restarts", "restores", "persist_writes",
-            "persist_scrollback_writes", "persist_errors", "session_losses", "unparsed",
+            "persist_scrollback_writes", "persist_errors", "api", "session_losses", "unparsed",
             "exit_criterion"])
         self.assertIn("rollbacks: manual 1, auto 1", out)
         self.assertIn("handoffs: crash 2, graceful 1, failed 1", out)
@@ -152,6 +152,30 @@ class LogSummaryTest(unittest.TestCase):
         self.assertEqual(
             f["msg"],
             'undefined function foo/1 (expected "Mod" to define it; path C:\\tmp\\x.ex)')
+
+    def test_api_section(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".log") as f:
+            f.write("herdr-event api_connect ts=1 conns=1\n"
+                    "herdr-event api_connect ts=2 conns=2\n"
+                    "herdr-event api_connect ts=3 conns=1\n"
+                    "herdr-event api_denied ts=4 method=agent.list code=not_available\n"
+                    "herdr-event api_denied ts=5 method=nope code=unknown_method\n"
+                    "herdr-event api_denied ts=6 method=agent.get code=not_available\n"
+                    'herdr-event api_error ts=7 method=pane.read code=timeout msg="slow pane"\n')
+            f.flush()
+            got = json.loads(run(f.name, "--json").stdout)
+            out = run(f.name).stdout.splitlines()
+        self.assertEqual(got["api"], {
+            "connects": 3, "conns_max": 2,
+            "denied": {"not_available": 2, "unknown_method": 1},
+            "errors": {"timeout": 1}})
+        self.assertIn("api: connects 3, conns_max 2, denied not_available 2, unknown_method 1, "
+                      "errors timeout 1", out)
+
+    def test_api_section_empty(self):
+        got = json.loads(run(FIXTURE, "--json").stdout)
+        self.assertEqual(got["api"], {"connects": 0, "conns_max": 0, "denied": {}, "errors": {}})
+        self.assertIn("api: connects 0, conns_max 0, denied none, errors none", run(FIXTURE).stdout)
 
     def test_malformed_and_plain_lines(self):
         self.assertIsNone(log_summary.parse_line("just a log line"))

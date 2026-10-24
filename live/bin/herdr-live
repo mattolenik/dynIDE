@@ -92,6 +92,8 @@ case ${1:-} in
     ;;
 esac
 export MIX_ENV="${MIX_ENV:-dev}"
+# pane shells inherit both: an agent in a pane runs "$HERDR_LIVE_BIN" pane ... against this instance
+export HERDR_LIVE_BIN="$root/bin/herdr-live" HERDR_LIVE_API="$sock"
 exec </dev/null >>"$log" 2>&1
 build || exit 1
 # +Bi: the VMs share the broker's process group, so a terminal ^C must not

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end host tty checks for HerdrTerm.Native.Tty under a real pty.
 
-Usage: tty_harness.py destructor|demo|herdr|herdr-stress|selfhost|persist [-v]
+Usage: tty_harness.py destructor|demo|herdr|herdr-stress|selfhost|persist|agent [-v]
 
 destructor: runs scripts/tty_destructor.exs in the BEAM as the pty's session
 leader. Answers each kitty/DA1 probe, then checks: the destructor of a killed
@@ -51,7 +51,17 @@ cwds, two tabs, a side-by-side split). Run 2 on the same state dir: the log has
 `persist_restore source=disk reason=boot`, the screen shows m8-marker-b (scrollback
 replay), the focused pane's `pwd` is dir-b; 3 s, prefix q, dump B. PASS when A == B.
 
-herdr, herdr-stress, selfhost and persist launch bin/herdr-live and compile into the
+agent: an agent in a pane drives herdr-live through the CLI. The same launch
+(120x40); the first pane's shell runs "$HERDR_LIVE_BIN" (exported by the
+launcher, as is HERDR_LIVE_API) with output into the run's temp dir: pane split
+--direction right (split.json has pane.pane_id, two prompts), pane run <id>
+'echo agent-""marker', pane wait-output <id> --match agent-marker, pane read
+<id> (contains agent-marker), pane list (2 panes, the caller's HERDR_PANE_ID
+among them), agent list (stderr has code not_available) and 10 timed pings
+(mean latency printed). Prefix q exits 0 and log_summary.py reports api
+connects >= 5 and session_losses 0.
+
+herdr, herdr-stress, selfhost, persist and agent launch bin/herdr-live and compile into the
 shared _build/dev, so they skip (print SKIP, exit 0) inside a herdr-live pane:
 pane shells inherit the VM's HERDR_BROKER_SOCK. Run them outside the dogfood
 instance (another terminal or worktree).
@@ -489,7 +499,7 @@ class Herdr:
         env = {k: v for k, v in os.environ.items()
                if k not in ("ENV", "BASH_ENV", "HERDR_SOCKET_PATH", "HERDR_CLIENT_SOCKET_PATH",
                             "HERDR_LIVE_HEADLESS", "HERDR_LIVE_TEST_ON_SAVE", "HERDR_BROKER_SOCK",
-                            "HERDR_LIVE_SESSION", "HERDR_LIVE_PERSIST")}
+                            "HERDR_LIVE_SESSION", "HERDR_LIVE_PERSIST", "HERDR_PANE_ID", "HERDR_LIVE_BIN")}
         # the panes' shell: plain sh with a known prompt; sockets and session files of
         # this instance only (never the human's session.default.etf)
         self.state = os.path.join(tmp, "state")
@@ -908,15 +918,68 @@ def persist():
         print("--- screen", h.screen.text(), sep="\n")
 
 
+def agent():
+    with tempfile.TemporaryDirectory() as tmp:
+        compile_then_start_clock(tmp)
+        h = Herdr(tmp, 120, 40)
+        h.start()
+        t = lambda name: os.path.join(tmp, name)
+
+        def shell(cmd, done, label, timeout=60):
+            """Types `cmd` into the focused (first) pane, then waits for `touch done`."""
+            h.send(f"{cmd}; touch {t(done)}\r".encode())
+            h.until(lambda: os.path.exists(t(done)), label, timeout=timeout)
+
+        bin_ = '"$HERDR_LIVE_BIN"'
+        shell(f'echo "$HERDR_PANE_ID" > {t("me.txt")}; {bin_} pane split --direction right > {t("split.json")}',
+              "s1", "pane split from the pane")
+        h.until(lambda: h.prompts() >= 2, "two prompts after pane split", timeout=30)
+        try:
+            split = json.load(open(t("split.json")))
+            new = split["pane"]["pane_id"]
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            fail(f"agent: split.json has no pane.pane_id ({e}: {open(t('split.json')).read()!r})")
+        ok(isinstance(new, str) and new.startswith("p"), f"agent: pane split printed pane.pane_id {new}")
+        shell(f"{bin_} pane run {new} 'echo agent-\"\"marker' > {t('run.json')}"
+              f" && {bin_} pane wait-output {new} --match agent-marker --timeout 10000 > {t('wait.json')}"
+              f"; {bin_} pane read {new} > {t('read.txt')}", "s2", "pane run, wait-output and read")
+        read = open(t("read.txt")).read()
+        ok("agent-marker" in read, "agent: pane read of the new pane contains agent-marker")
+        shell(f"{bin_} pane list > {t('list.json')}; {bin_} agent list 2> {t('agent.err')}", "s3",
+              "pane list and agent list")
+        me = open(t("me.txt")).read().strip()
+        try:
+            ids = [p["pane_id"] for p in json.load(open(t("list.json")))["panes"]]
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            fail(f"agent: pane list output unreadable ({e})")
+        ok(len(ids) == 2 and me in ids and new in ids,
+           f"agent: pane list has 2 panes with the caller's HERDR_PANE_ID {me} ({ids})")
+        err = open(t("agent.err")).read()
+        ok('"code":"not_available"' in err, f"agent: agent list answers not_available ({err.strip()})")
+        shell(f"a=$(date +%s%N); i=0; while [ $i -lt 10 ]; do {bin_} ping > /dev/null || echo x >> {t('pingfail')};"
+              f" i=$((i + 1)); done; b=$(date +%s%N); echo $(((b - a) / 10000000)) > {t('lat.txt')}",
+              "s4", "10 timed pings", timeout=90)
+        ok(not os.path.exists(t("pingfail")), "agent: 10 pings from the pane succeeded")
+        lat = open(t("lat.txt")).read().strip()
+        ok(lat.isdigit(), f"agent: ping latency {lat} ms mean over 10 CLI calls from a pane")
+        h.quit()
+        s = json.loads(subprocess.run([sys.executable, os.path.join(LIVE, "scripts", "log_summary.py"),
+                                       h.log, "--json"], capture_output=True, text=True, check=True).stdout)
+        ok(s["api"]["connects"] >= 5, f"agent: log summary api connects >= 5 ({s['api']})")
+        ok(s["session_losses"] == 0, f"agent: log summary session_losses 0 ({s['session_losses']})")
+    if verbose:
+        print("--- screen", h.screen.text(), sep="\n")
+
+
 if __name__ == "__main__":
     modes = {"destructor": destructor, "demo": demo, "herdr": herdr, "herdr-stress": herdr_stress,
-             "selfhost": selfhost, "persist": persist}
+             "selfhost": selfhost, "persist": persist, "agent": agent}
     args = [a for a in sys.argv[1:] if a != "-v"]
     if len(args) != 1 or args[0] not in modes:
         sys.exit(__doc__)
     # a pane of a running herdr-live inherits the VM's env: these modes would compile into
     # and reload that instance's own _build
-    if args[0] in ("herdr", "herdr-stress", "selfhost", "persist") and os.environ.get("HERDR_BROKER_SOCK"):
+    if args[0] in ("herdr", "herdr-stress", "selfhost", "persist", "agent") and os.environ.get("HERDR_BROKER_SOCK"):
         print(f"SKIP: {args[0]}: running inside herdr-live (run live-check outside it, see editing-live.md)")
         sys.exit(0)
     # CI cancellation: let `finally` kill the process groups.

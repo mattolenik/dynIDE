@@ -180,6 +180,9 @@ Full guide: `docs/herdr-live/editing-live.md`. Human checks: `docs/herdr-live/re
   session_losses = `session_lost` lines (broker fallback restore, Store closing
   or orphaning live panes) + unclean broker restarts; store_restarts are not
   losses.
+- Pane shells get `HERDR_PANE_ID`, `HERDR_LIVE_BIN` and `HERDR_LIVE_API` (the API
+  socket): `"$HERDR_LIVE_BIN" pane split|run|read|wait-output|list ...` drives the
+  running instance; reference in `docs/herdr-live/api.md`.
 - Metrics: `just live-bench-reload|handoff|glass|os-floor`;
   `live/bench/gate_round.sh <tag>` runs the whole slice-1 table. Self-hosted
   tty check: `python3 live/scripts/tty_harness.py selfhost`.

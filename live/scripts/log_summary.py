@@ -81,6 +81,7 @@ def iso(ms):
 def summarize(events, unparsed=0):
     c = Counter()
     rb_reasons, crashes, hand_ms = Counter(), Counter(), []
+    api_denied, api_errors, conns_max = Counter(), Counter(), 0
     fanout_max = modules = 0
     syncs = 0
     broker_up = False
@@ -141,6 +142,13 @@ def summarize(events, unparsed=0):
             c["persist_scrollback_writes" if f.get("kind") == "scrollback" else "persist_writes"] += 1
         elif kind == "persist_error":
             c["persist_errors"] += 1
+        elif kind == "api_connect":
+            c["api_connects"] += 1
+            conns_max = max(conns_max, to_int(f.get("conns")))
+        elif kind == "api_denied":
+            api_denied[f.get("code", "unknown")] += 1
+        elif kind == "api_error":
+            api_errors[f.get("code", "unknown")] += 1
     hand_ms.sort()
     stamps = [e[1] for e in events]
     return {
@@ -166,6 +174,8 @@ def summarize(events, unparsed=0):
         "persist_writes": c["persist_writes"],
         "persist_scrollback_writes": c["persist_scrollback_writes"],
         "persist_errors": c["persist_errors"],
+        "api": {"connects": c["api_connects"], "conns_max": conns_max,
+                "denied": dict(sorted(api_denied.items())), "errors": dict(sorted(api_errors.items()))},
         "session_losses": c["session_losses"],
         "unparsed": unparsed,
     }
@@ -200,6 +210,8 @@ def render_text(s):
         ("persist_writes", s["persist_writes"]),
         ("persist_scrollback_writes", s["persist_scrollback_writes"]),
         ("persist_errors", s["persist_errors"]),
+        ("api", f"connects {s['api']['connects']}, conns_max {s['api']['conns_max']}, "
+                f"denied {kv(s['api']['denied'])}, errors {kv(s['api']['errors'])}"),
         ("session_losses", n),
         ("unparsed", s["unparsed"]),
         ("exit_criterion", f"session_losses=0 -> {'OK' if n == 0 else f'FAIL ({n})'}"),
