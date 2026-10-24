@@ -9,10 +9,16 @@ defmodule HerdrTerm.Client.Term.RenderTest do
 
   @s Cells.style([])
 
-  def rows(id, agent), do: Agent.get(agent, &Map.get(&1, id))
+  def rows(id, agent) do
+    Agent.get(agent, fn m ->
+      send(Map.get(m, :test), {:fetched, id})
+      Map.get(m, id)
+    end)
+  end
 
   setup do
-    rows = start_supervised!({Agent, fn -> %{} end})
+    test = self()
+    rows = start_supervised!({Agent, fn -> %{test: test} end})
     ep = FakeServer.unique_name()
     FakeServer.start(self(), ep, {__MODULE__, :rows, [rows]})
     sup = start_supervised!({Client, endpoint: ep})
@@ -23,7 +29,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
   end
 
   defp set_rows(agent, id, text),
-    do: Agent.update(agent, &Map.put(&1, id, {0, {Cells.text(text, @s)}}))
+    do: Agent.update(agent, &Map.put(&1, id, {0, {Cells.text(text, @s)}, nil}))
 
   test "a scene renders a full repaint", %{render: render, tty: tty, rows: rows} do
     set_rows(rows, 1, "hello")
@@ -60,6 +66,60 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     assert_receive {:attached, _, session2}
     assert session2 != session
     send(render, {:scene, Fixture.load("single_pane_80x24")})
+    assert_receive {:frame, _, %{repaint: true}}
+  end
+
+  test "a scene re-fetches only new panes and panes whose layout_gen changed", %{
+    render: render,
+    rows: rows
+  } do
+    set_rows(rows, 1, "a")
+    scene = Fixture.load("single_pane_80x24")
+    send(render, {:scene, scene})
+    assert_receive {:frame, _, _}
+    assert_received {:fetched, 1}
+    send(render, {:scene, %{scene | chrome: nil}})
+    assert_receive {:frame, _, _}
+    refute_received {:fetched, _}
+    [p] = scene.panes
+    {:ref, 1, lg} = p.rows
+    send(render, {:scene, %{scene | panes: [%{p | rows: {:ref, 1, lg + 1}}]}})
+    assert_receive {:frame, _, _}
+    assert_received {:fetched, 1}
+  end
+
+  test "the host cursor is the focused pane's cached cursor in its rect", %{
+    render: render,
+    rows: rows
+  } do
+    c = %{x: 3, y: 2, shape: :bar, visible: true}
+    Agent.update(rows, &Map.put(&1, 1, {0, {Cells.text("x", @s)}, c}))
+    scene = Fixture.load("single_pane_80x24")
+    send(render, {:scene, scene})
+    [%{rect: r}] = scene.panes
+    want = {r.x + 3, r.y + 2}
+    assert_receive {:frame, _, %{cursor: ^want}}
+  end
+
+  test "inline scene rows replace the cache, empty inline rows keep it", %{
+    render: render,
+    tty: tty
+  } do
+    scene = Fixture.load("single_pane_80x24")
+    [p] = scene.panes
+    inline = fn rows -> %{scene | panes: [%{p | rows: {:inline, rows}}]} end
+    send(render, {:scene, inline.([{0, Cells.text("seeded", @s)}])})
+    assert_receive {:frame, _, _}
+    assert hd(Blit.screen(tty)) =~ "seeded"
+    send(render, {:scene, %{inline.([]) | chrome: nil}})
+    assert_receive {:frame, _, _}
+    assert hd(Blit.screen(tty)) =~ "seeded"
+  end
+
+  test ":repaint forces a full repaint", %{render: render} do
+    send(render, {:scene, Fixture.load("single_pane_80x24")})
+    assert_receive {:frame, _, %{repaint: true}}
+    send(render, :repaint)
     assert_receive {:frame, _, %{repaint: true}}
   end
 

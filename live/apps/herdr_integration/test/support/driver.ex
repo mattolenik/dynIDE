@@ -26,10 +26,14 @@ defmodule HerdrIntegration.Driver do
   @doc "Resets the server's app state (closes every pane)."
   def reset, do: Store.reset()
 
-  @doc "Starts a client with a fake tty of `{cols, rows}` and waits for its first frame."
-  def start_client({cols, rows}) do
+  @doc """
+  Starts a client with a fake tty of `{cols, rows}` and waits for its first frame.
+  `opts` go to the client (e.g. `transport: :inline`).
+  """
+  def start_client({cols, rows}, opts \\ []) do
     id = make_ref()
-    client = start_supervised!({Client, id: id, tty_opts: [size: {cols, rows, 0, 0}]}, id: id)
+    opts = [id: id, tty_opts: [size: {cols, rows, 0, 0}]] ++ opts
+    client = start_supervised!({Client, opts}, id: id)
     true = wait(client, fn -> scene(client) != nil and Blit.frames(tty(client)) != [] end)
     client
   end
@@ -46,6 +50,9 @@ defmodule HerdrIntegration.Driver do
   end
 
   def screen(client), do: Blit.screen(tty(client))
+
+  @doc "Host cursor of the client's latest frame (`{x, y}` or nil)."
+  def cursor(client), do: tty(client) |> Blit.frames() |> List.last() |> Map.fetch!(:cursor)
 
   @doc "The latest scene the client received (from its Render process state)."
   def scene(client), do: :sys.get_state(Client.render(client)).scene
@@ -105,7 +112,7 @@ defmodule HerdrIntegration.Driver do
 
     rows =
       Map.new(scene.panes, fn %{id: id} ->
-        {_gen, tuple} = Rows.fetch(id)
+        {_gen, tuple, _cursor} = Rows.fetch(id)
         {id, tuple}
       end)
 
@@ -115,18 +122,20 @@ defmodule HerdrIntegration.Driver do
   @doc """
   Records every `Fake.Blit.frame/3` call of the client's Render process (call
   tracing; `Fake.Blit` keeps only row indices) and checks each frame is a full
-  grid of the scene size with every row exactly `cols` cells wide.
+  grid of the scene size with every row exactly `cols` cells wide. Also counts
+  the Render's row fetches (`Pane.Rows.fetch/1` calls, the rows MFA) per pane.
   """
   def trace_frames(client) do
     render = Client.render(client)
     {cols, rows, _, _} = Tty.size(tty(client))
-    tracer = spawn_link(fn -> tracer(%{count: 0, bad: []}, cols, rows) end)
+    tracer = spawn_link(fn -> tracer(fresh(), cols, rows) end)
     :erlang.trace_pattern({Blit, :frame, 3}, true, [:local])
+    :erlang.trace_pattern({Rows, :fetch, 1}, true, [:local])
     :erlang.trace(render, true, [:call, {:tracer, tracer}])
     tracer
   end
 
-  @doc "`%{count: frames, bad: [{frame_no, why}]}` from a `trace_frames/1` tracer."
+  @doc "`%{count: frames, bad: [{frame_no, why}], fetches: [pane_id]}` from a `trace_frames/1` tracer."
   def frame_stats(tracer) do
     send(tracer, {:stats, self()})
 
@@ -148,11 +157,16 @@ defmodule HerdrIntegration.Driver do
     end
   end
 
+  defp fresh, do: %{count: 0, bad: [], fetches: []}
+
   defp tracer(acc, cols, rows) do
     receive do
       {:reset, from} ->
         send(from, {:reset, self()})
-        tracer(%{count: 0, bad: []}, cols, rows)
+        tracer(fresh(), cols, rows)
+
+      {:trace, _pid, :call, {Rows, :fetch, [id]}} ->
+        tracer(%{acc | fetches: acc.fetches ++ [id]}, cols, rows)
 
       {:trace, _pid, :call, {Blit, :frame, [_tty, frame, _opts]}} ->
         n = acc.count + 1

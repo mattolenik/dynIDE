@@ -11,7 +11,9 @@ defmodule HerdrServer.ServerTest do
   alias HerdrScene.{Cell, Event, Protocol, Scene}
   alias HerdrServer.App.Store
   alias HerdrServer.Kernel.Fake
-  alias HerdrServer.Pane.Rows
+  alias HerdrServer.Pane.{Input, Rows}
+
+  import ExUnit.CaptureLog
 
   setup do
     reset()
@@ -109,7 +111,7 @@ defmodule HerdrServer.ServerTest do
     assert_receive {^c, {:ack, 1}}
     assert_receive {^c, {:damage, 1, _}}, 500
     Process.sleep(20)
-    {_gen, rows} = Rows.fetch(1)
+    {_gen, rows, _cursor} = Rows.fetch(1)
     assert text(elem(rows, 0)) =~ ~r/^x/
 
     assert fast().passthrough == true
@@ -130,7 +132,7 @@ defmodule HerdrServer.ServerTest do
     [{pid, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
     Process.exit(pid, :kill)
     assert_receive {^c, {:damage, 1, _}}, 100
-    {_gen, rows} = Rows.fetch(1)
+    {_gen, rows, _cursor} = Rows.fetch(1)
     assert tuple_size(rows) == 23
     assert [{new, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
     assert new != pid
@@ -185,14 +187,127 @@ defmodule HerdrServer.ServerTest do
     assert Process.alive?(c)
   end
 
-  test "inline clients receive full rows" do
+  test "inline clients get full rows and cursors in scenes, and rows on damage" do
     {c, s} = client(%{cols: 80, rows: 24}, :inline)
-    assert %Scene{panes: [%{rows: {:inline, []}}]} = scene(c)
+    assert %Scene{panes: [%{rows: {:inline, rows}, cursor: %{x: 0}}], cursor: %{x: 0}} = scene(c)
+    assert length(rows) == 23
     flush(c)
+
+    # the cursor moves: the scene is re-pushed with the new rows and cursor
     input(s, c, 1, Event.key("y"))
+    assert %Scene{panes: [%{rows: {:inline, rows}}], cursor: %{x: 1, y: 0}} = scene(c)
+    assert text(rows |> Map.new() |> Map.fetch!(0)) =~ ~r/^y/
+
+    # cursor unchanged: only rows
+    flush(c)
+    Fake.Vt.force_full(vt(1))
+    Fake.Pty.output(pty(1), "")
     assert_receive {^c, {:rows, 1, _, rows}}, 500
     assert length(rows) == 23
     assert Protocol.validate_server_msg({:rows, 1, 0, rows}) == :ok
+  end
+
+  test "ref scenes carry no cursors; damage does not re-push the scene" do
+    {c, s} = client()
+    assert %Scene{panes: [%{cursor: nil}], cursor: nil} = scene(c)
+    flush(c)
+    input(s, c, 1, Event.key("y"))
+    assert_receive {^c, {:damage, 1, _}}, 500
+    refute_receive {^c, {:scene, _}}, 50
+    assert {_gen, _rows, %{x: 1, y: 0}} = Rows.fetch(1)
+  end
+
+  test "a Store restart stops sessions; a re-attach gets a fresh pane and no orphans" do
+    {c, s} = client()
+    scene(c)
+    input(s, c, 1, Event.key("b", [:ctrl]))
+    input(s, c, 2, Event.key("v"))
+    scene_until(c, &(length(&1.panes) == 2))
+    ref = Process.monitor(s)
+    old = Process.whereis(Store)
+    [{old_pane, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
+
+    log =
+      capture_log(fn ->
+        Process.exit(old, :kill)
+        assert_receive {:DOWN, ^ref, :process, ^s, :normal}, 500
+        assert eventually(fn -> Process.whereis(Store) not in [nil, old] end)
+        {c2, _} = client()
+        assert %Scene{panes: [%{id: 1}]} = scene(c2)
+      end)
+
+    refute log =~ "already_open"
+    assert Fake.Keeper.pane_ids() == [1]
+    assert [{new_pane, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
+    assert new_pane != old_pane
+    assert Registry.lookup(HerdrServer.Pane.Registry, 2) == []
+  end
+
+  test "when the driving client leaves, the pty size goes back to the remaining client" do
+    {c1, _s1} = client()
+    scene(c1)
+    assert vt_size(1) == {80, 23}
+    {c2, s2} = client(%{cols: 120, rows: 40})
+    scene(c2)
+    assert vt_size(1) == {120, 39}
+    send(s2, {:detach})
+    assert eventually(fn -> vt_size(1) == {80, 23} end)
+  end
+
+  test "the driving client's cell_px reaches the pty" do
+    {c, s} = client()
+    scene(c)
+    input(s, c, 1, {:resize, %{cols: 100, rows: 30, cell_px: {9, 18}}})
+    assert_receive {^c, {:ack, 1}}
+    assert eventually(fn -> :sys.get_state(Store).driver.cell_px == {9, 18} end)
+    assert vt_size(1) == {100, 29}
+  end
+
+  test "a failed spawn warns the client and closes the pane again" do
+    {c, s} = client()
+    scene(c)
+    opts = %{cmd: "sh", args: [], env: [], cwd: ".", cols: 10, rows: 5}
+    {:ok, _} = Fake.Keeper.open(2, opts)
+    input(s, c, 1, Event.key("b", [:ctrl]))
+    input(s, c, 2, Event.key("v"))
+    assert_receive {^c, {:notice, %{level: :warning, text: "could not start pane 2" <> _}}}, 500
+    assert eventually(fn -> Map.keys(Store.snapshot().session.panes) == [1] end)
+    assert Fake.Keeper.lookup(2) == :error
+  end
+
+  test "a failing Keybinds.intercept_set keeps the Store alive and its fast path" do
+    {c, s} = client()
+    scene(c)
+    store = Process.whereis(Store)
+    :sys.replace_state(store, fn st -> put_in(st.app.ui.keybinds.prefix, :bad) end)
+    before = :sys.get_state(store)
+    input(s, c, 1, {:focus, true})
+    assert_receive {^c, {:ack, 1}}
+    after_ = :sys.get_state(store)
+    assert Process.whereis(Store) == store
+    assert {after_.app, after_.fast} == {before.app, before.fast}
+  end
+
+  test "pty backpressure drops input with one warning per pane per second" do
+    {c, _s} = client()
+    scene(c)
+    :ok = Fake.Pty.set_backpressure(pty(1), true)
+
+    log =
+      capture_log(fn ->
+        for k <- ~w(a b c), do: assert(Input.key(Event.key(k), 1) == :ok)
+      end)
+
+    assert length(String.split(log, "pane 1: input dropped")) == 2
+    assert Fake.Vt.read_text(vt(1), {:rows, 0..0}) == ""
+  end
+
+  defp eventually(fun, tries \\ 50) do
+    cond do
+      fun.() -> true
+      tries == 0 -> false
+      true -> Process.sleep(10) && eventually(fun, tries - 1)
+    end
   end
 
   test "bogus attach is rejected" do
@@ -251,7 +366,8 @@ defmodule HerdrServer.ServerTest do
     assert_receive {^c2, {:notice, %{level: :error}}}, 500
     assert_receive {^c2, {:ack, 1}}
     assert Process.whereis(Store) == store
-    assert :sys.get_state(store) == before
+    # only the activity record of c2 changed
+    assert %{:sys.get_state(store) | clients: nil} == %{before | clients: nil}
   end
 
   test "closing a pane makes stale damage harmless" do

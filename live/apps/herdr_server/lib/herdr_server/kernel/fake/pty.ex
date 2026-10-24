@@ -12,7 +12,14 @@ defmodule HerdrServer.Kernel.Fake.Pty do
 
   @interval 4
 
-  defstruct id: nil, vt: nil, subs: [], hidden: false, gen: 0, last_sent: 0, timer: nil
+  defstruct id: nil,
+            vt: nil,
+            subs: [],
+            hidden: false,
+            gen: 0,
+            last_sent: 0,
+            timer: nil,
+            backpressure: false
 
   @impl HerdrServer.Kernel.Pty
   def spawn(vt, _cmd, _args, _env, _cwd, _cols, _rows), do: start(nil, vt)
@@ -32,7 +39,10 @@ defmodule HerdrServer.Kernel.Fake.Pty do
   def output(pty, bin), do: GenServer.cast(pty, {:output, bin})
 
   @impl HerdrServer.Kernel.Pty
-  def write(pty, bin), do: GenServer.cast(pty, {:output, bin})
+  def write(pty, bin), do: GenServer.call(pty, {:write, bin})
+
+  @doc "Test hook: while on, `write/2` drops input and returns `{:error, :backpressure}`."
+  def set_backpressure(pty, on?), do: GenServer.call(pty, {:backpressure, on?})
 
   @impl HerdrServer.Kernel.Pty
   def resize(pty, cols, rows, cell_px), do: GenServer.call(pty, {:resize, cols, rows, cell_px})
@@ -66,6 +76,22 @@ defmodule HerdrServer.Kernel.Fake.Pty do
   end
 
   @impl GenServer
+  def handle_call({:write, _bin}, _from, %{backpressure: true} = state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, {:error, :backpressure}, state}
+  end
+
+  def handle_call({:write, bin}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, state} = handle_cast({:output, bin}, state)
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:backpressure, on?}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, %{state | backpressure: on?}}
+  end
+
   def handle_call({:subscribe, pid}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     Vt.force_full(state.vt)

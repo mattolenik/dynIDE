@@ -32,14 +32,29 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
     end
   end
 
-  @doc "Cursor position in screen cells, or nil."
-  @spec cursor(Scene.t()) :: {non_neg_integer, non_neg_integer} | nil
-  def cursor(%Scene{cursor: %{x: x, y: y}}), do: {x, y}
-  def cursor(_), do: nil
+  @doc """
+  Host cursor `{{x, y}, shape}` in screen cells, or nil: the focused pane's cursor from
+  `cursors` (pane id => pane-relative cursor, as read from the row cache) placed in its
+  rect, else the scene's own `cursor` (inline scenes carry it).
+  """
+  @spec cursor(Scene.t(), %{pos_integer => map | nil}) ::
+          {{non_neg_integer, non_neg_integer}, Scene.shape()} | nil
+  def cursor(%Scene{focus: %{pane: id}} = scene, cursors) do
+    pane = Enum.find(scene.panes, &(&1.id == id))
 
-  @spec cursor_shape(Scene.t()) :: Scene.shape() | nil
-  def cursor_shape(%Scene{cursor: %{shape: shape}}), do: shape
-  def cursor_shape(_), do: nil
+    case {pane, Map.fetch(cursors, id)} do
+      {%Pane{rect: r}, {:ok, c}} -> in_rect(c, r)
+      _ -> scene_cursor(scene.cursor)
+    end
+  end
+
+  defp in_rect(%{visible: true, x: x, y: y, shape: shape}, r) when y < r.h and r.w > 0,
+    do: {{r.x + min(x, r.w - 1), r.y + y}, shape}
+
+  defp in_rect(_hidden_or_nil, _r), do: nil
+
+  defp scene_cursor(%{x: x, y: y, shape: shape}), do: {{x, y}, shape}
+  defp scene_cursor(nil), do: nil
 
   # assembly
 

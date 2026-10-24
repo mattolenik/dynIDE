@@ -130,7 +130,7 @@ if Mix.env() == :test do
     # Types one char at a time on the pane's first row (clearing the pane when the
     # row is full) until `stop?.(count)`. Each sample waits for its frame; `:idle` then
     # waits until no frame came for longer than the client's frame pacing (a keystroke
-    # makes two frames: rows, then the cursor scene), `:paced` does not; both sleep 2ms.
+    # makes one frame: rows and cursor travel together), `:paced` does not; both sleep 2ms.
     defp type_loop(client, pane, stop?, mode),
       do: type_loop(client, pane, {stop?, mode}, pane.rect.w, [], 0)
 
@@ -459,9 +459,9 @@ if Mix.env() == :test do
       t1 = `at` of the latest logged `Fake.Blit` frame when the target cell first shows it
       (read together; an upper bound), samples with t1 < t0 are counted invalid.
       One keystroke at a time, waiting for its frame. Idle rows then wait until no frame for
-      min_frame_interval_ms + 2ms (each keystroke yields a rows frame then a cursor-scene
-      frame), then 2ms; the "2ms after each frame" row and flood typing only sleep 2ms, so
-      the second frame's pacing delays the next key's frame. Slow path = fast-path
+      min_frame_interval_ms + 2ms (each keystroke yields one frame: the cursor comes from
+      the row cache with the rows), then 2ms; the "2ms after each frame" row and flood
+      typing only sleep 2ms, so frame pacing can delay the next key's frame. Slow path = fast-path
       `:persistent_term` republished with `passthrough: false` (re-asserted before each key),
       so keys go client Input -> Client.Session -> App.Store. Client frames are paced at
       min_frame_interval_ms. Frame cost = `Compose.frame/3` + `Fake.Blit.frame/3`,

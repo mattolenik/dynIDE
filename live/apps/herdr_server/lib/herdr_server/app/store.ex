@@ -3,16 +3,24 @@ defmodule HerdrServer.App.Store do
   Holds the app state. Thin: every change goes through `App.Actions` via `SafeApply`, and
   this module only interprets the resulting effects.
 
-    * `event/2` (call, from a `Client.Session`): `size` is the calling client's size; a
-      client whose size differs from the current driver first resizes the app (contract
-      decision 4, latest active client drives). The app is initialised lazily by the
-      first event, at the first client's size.
+    * `event/2` (call, from a `Client.Session`): `size` is the calling client's size
+      (`%{cols, rows, cell_px}`); a client whose size differs from the current driver
+      first resizes the app (contract decision 4, latest active client drives). The app is
+      initialised lazily by the first event, at the first client's size.
+    * The Store remembers each session's last size. When the driving session goes down,
+      the latest active remaining session drives and pane sizes are re-settled at its size.
     * `event_async/1` (cast) is for processes the Store calls into (`Pane.Server`).
     * Subscribers get `{:app_changed, app}` after each event that changed the app. The
       Store only ever `send`s to sessions, so there is no call cycle.
     * After each event: panes of inactive tabs are hidden, active-tab panes are resized to
       their content rects (bumping `layout_gen`), and the fast-path term is republished if
       its value changed.
+    * A spawn that fails (keeper open or pane server start) sends the origin a warning
+      notice and closes the pane again, as `{:pane_exited, id}`.
+    * A Store restart starts from an empty app: `init/1` closes every pane the keeper
+      still holds (and its `Pane.Server`), and live sessions stop on the Store's `:DOWN`
+      so their clients re-attach. Adopting the surviving panes instead is M4's ETS-mirror
+      job.
   """
   use GenServer
 
@@ -24,11 +32,26 @@ defmodule HerdrServer.App.Store do
   alias HerdrServer.Pane.{Input, Rows, Server}
   alias HerdrServer.Pane.Supervisor, as: Panes
 
-  defstruct app: nil, subs: %{}, driver: nil, sizes: %{}, hidden: MapSet.new(), fast: nil
+  defstruct app: nil,
+            subs: %{},
+            driver: nil,
+            driver_pid: nil,
+            clients: %{},
+            sizes: %{},
+            hidden: MapSet.new(),
+            fast: nil
 
   def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
 
-  @spec event(tuple, %{cols: pos_integer, rows: pos_integer} | nil) :: :ok
+  @spec event(
+          tuple,
+          %{
+            required(:cols) => pos_integer,
+            required(:rows) => pos_integer,
+            optional(:cell_px) => {pos_integer, pos_integer} | nil
+          }
+          | nil
+        ) :: :ok
   def event(event, size), do: GenServer.call(__MODULE__, {:event, event, size})
 
   @spec event_async(tuple) :: :ok
@@ -45,7 +68,12 @@ defmodule HerdrServer.App.Store do
   def reset, do: GenServer.call(__MODULE__, :reset)
 
   @impl true
-  def init(:ok), do: {:ok, %__MODULE__{}}
+  def init(:ok) do
+    # a restarted Store forgets the app: close what the previous incarnation left open
+    Enum.each(Kernel.keeper().pane_ids(), &close/1)
+    :persistent_term.erase(Protocol.fast_path_key())
+    {:ok, %__MODULE__{}}
+  end
 
   @impl true
   def handle_call({:event, ev, size}, {origin, _}, state) do
@@ -80,7 +108,7 @@ defmodule HerdrServer.App.Store do
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, %{state | subs: Map.delete(state.subs, pid)}}
+    {:noreply, handoff(%{state | subs: Map.delete(state.subs, pid)}, pid)}
   end
 
   def handle_info(_other, state) do
@@ -92,13 +120,14 @@ defmodule HerdrServer.App.Store do
 
   # A failed batch (driver resize + event) is discarded whole; init commits on its own.
   defp handle_event(state, ev, size, origin) do
+    state = seen(state, size, origin)
     old = state.app
     state = if old == nil, do: commit(state, [{:init, first_size(ev, size)}], origin), else: state
 
     state =
       if state.app == nil,
         do: state,
-        else: commit(state, batch(state, ev, size), origin, &%{&1 | driver: size || &1.driver})
+        else: commit(state, batch(state, ev, size), origin, &drive(&1, size, origin))
 
     state = state |> settle() |> publish_fast()
     if state.app != old, do: Enum.each(Map.keys(state.subs), &send(&1, {:app_changed, state.app}))
@@ -108,10 +137,38 @@ defmodule HerdrServer.App.Store do
   defp batch(state, ev, size) do
     drive =
       if size != nil and size != state.driver and not match?({:resize, _}, ev),
-        do: [{:resize, Map.put(size, :cell_px, nil)}],
+        do: [{:resize, Map.put_new(size, :cell_px, nil)}],
         else: []
 
     drive ++ [ev]
+  end
+
+  defp drive(state, nil, _origin), do: state
+  defp drive(state, size, origin), do: %{state | driver: size, driver_pid: origin}
+
+  defp seen(state, size, origin) when is_pid(origin) and size != nil do
+    at = System.unique_integer([:monotonic])
+    %{state | clients: Map.put(state.clients, origin, %{size: size, at: at})}
+  end
+
+  defp seen(state, _size, _origin), do: state
+
+  # the driving session left: the latest active remaining one drives (re-settles sizes)
+  defp handoff(state, pid) do
+    state = %{state | clients: Map.delete(state.clients, pid)}
+
+    if pid == state.driver_pid and state.app != nil and state.clients != %{} do
+      {next, %{size: size}} = Enum.max_by(state.clients, fn {_, c} -> c.at end)
+
+      handle_event(
+        %{state | driver_pid: nil},
+        {:resize, Map.put_new(size, :cell_px, nil)},
+        size,
+        next
+      )
+    else
+      state
+    end
   end
 
   defp first_size({:resize, %{cols: c, rows: r}}, _), do: %{cols: c, rows: r}
@@ -141,7 +198,7 @@ defmodule HerdrServer.App.Store do
     end
   end
 
-  defp effect(state, {:spawn, id, %{cols: c, rows: r}}, _origin) do
+  defp effect(state, {:spawn, id, %{cols: c, rows: r}}, origin) do
     opts = %{
       cmd: System.get_env("SHELL", "/bin/sh"),
       args: [],
@@ -157,6 +214,9 @@ defmodule HerdrServer.App.Store do
     else
       err ->
         Logger.error("spawning pane #{id} failed: #{inspect(err)}")
+        notice(origin, %{level: :warning, text: "could not start pane #{id}: #{inspect(err)}"})
+        # after this event: drops the pane from the layout and closes whatever was opened
+        event_async({:pane_exited, id})
         state
     end
   end
@@ -193,16 +253,22 @@ defmodule HerdrServer.App.Store do
 
   defp settle(%{app: nil} = state), do: state
 
+  # a failing Layout keeps the previous pane sizes and visibility
   defp settle(%{app: %{session: s}} = state) do
     ws = Enum.find(s.workspaces, &(&1.id == s.active_workspace))
     tab = Enum.find(ws.tabs, &(&1.id == ws.active_tab))
-    rects = tab.layout |> Layout.panes(s.area) |> Layout.borders(s.area)
-    visible = MapSet.new(rects, & &1.id)
 
-    state =
-      Enum.reduce(Map.keys(s.panes), state, &hide(&2, &1, not MapSet.member?(visible, &1)))
+    with {:ok, panes} <- SafeApply.run(Layout, :panes, [tab.layout, s.area]),
+         {:ok, rects} <- SafeApply.run(Layout, :borders, [panes, s.area]) do
+      visible = MapSet.new(rects, & &1.id)
 
-    Enum.reduce(rects, state, &resize/2)
+      state =
+        Enum.reduce(Map.keys(s.panes), state, &hide(&2, &1, not MapSet.member?(visible, &1)))
+
+      Enum.reduce(rects, state, &resize/2)
+    else
+      {:failed, _} -> state
+    end
   end
 
   defp hide(state, id, hidden?) do
@@ -218,7 +284,7 @@ defmodule HerdrServer.App.Store do
   defp resize(%{id: id, rect: %{w: w, h: h}}, state) do
     case state.sizes do
       %{^id => old} when old != {w, h} and w > 0 and h > 0 ->
-        Server.resize(id, w, h)
+        Server.resize(id, w, h, state.driver && Map.get(state.driver, :cell_px))
         state = put_in(state.sizes[id], {w, h})
         update_in(state.app.session.panes[id].layout_gen, &(&1 + 1))
 
@@ -230,10 +296,18 @@ defmodule HerdrServer.App.Store do
   defp publish_fast(%{app: nil} = state), do: state
 
   defp publish_fast(%{app: %{focus: f, ui: ui}} = state) do
+    case SafeApply.run(Keybinds, :intercept_set, [ui.keybinds]) do
+      {:ok, intercept} -> publish_fast(state, f, intercept)
+      # keeps the previous fast path
+      {:failed, _} -> state
+    end
+  end
+
+  defp publish_fast(state, f, intercept) do
     fast = %{
       pane: f.pane,
       write: f.pane && {Input, :key, [f.pane]},
-      intercept: Keybinds.intercept_set(ui.keybinds),
+      intercept: intercept,
       passthrough: f.mode == :terminal and f.modal == []
     }
 

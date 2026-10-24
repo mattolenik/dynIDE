@@ -1,7 +1,7 @@
 defmodule HerdrTerm.Client.Term.Render.ComposeTest do
   use ExUnit.Case, async: true
 
-  alias HerdrScene.Cell
+  alias HerdrScene.{Cell, Fixture}
   alias HerdrScene.Scene
   alias HerdrScene.Scene.{Node, Overlay, Pane}
   alias HerdrTerm.Cells
@@ -134,8 +134,24 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
       )
 
     assert String.slice(top, 0, 20) == "┌a-very-long-title-┐"
-    assert Compose.cursor(%{sc | cursor: %{x: 3, y: 4, shape: :bar}}) == {3, 4}
-    assert Compose.cursor(sc) == nil
+    assert Compose.cursor(%{sc | cursor: %{x: 3, y: 4, shape: :bar}}, %{}) == {{3, 4}, :bar}
+    assert Compose.cursor(sc, %{}) == nil
+  end
+
+  test "the focused pane's cached cursor is placed in its content rect" do
+    sc = Fixture.load("two_pane_split_120x40")
+    [p1 | _] = sc.panes
+    sc = %{sc | focus: %{sc.focus | pane: p1.id}, cursor: %{x: 0, y: 0, shape: :bar}}
+    r = p1.rect
+    c = %{x: 2, y: 1, shape: :underline, visible: true}
+    assert Compose.cursor(sc, %{p1.id => c}) == {{r.x + 2, r.y + 1}, :underline}
+    # clamped into the rect, hidden or below the rect means no cursor
+    assert Compose.cursor(sc, %{p1.id => %{c | x: 10_000}}) ==
+             {{r.x + r.w - 1, r.y + 1}, :underline}
+
+    assert Compose.cursor(sc, %{p1.id => %{c | visible: false}}) == nil
+    assert Compose.cursor(sc, %{p1.id => %{c | y: r.h}}) == nil
+    assert Compose.cursor(sc, %{p1.id => nil}) == nil
   end
 
   test "partial borders and status overflow" do

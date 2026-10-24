@@ -4,18 +4,26 @@ defmodule HerdrServer.Client.Session do
   point of view). Owns the client's `Client.State`, computes its scene with `View.compute/2`
   (through `SafeApply`) and pushes `{:scene, scene}` only when it differs from the last one.
 
-  Pane damage is forwarded as `{:damage, id, gen}` (ref transport) or `{:rows, id, gen,
-  rows}` with the pane's full rows (inline transport), only for panes in the last scene;
-  damage to the focused pane also refreshes cursors. Client input is validated (server-
-  internal events are refused with a warning notice), checked against the fast path, else
-  sent to `App.Store`, and always acked.
+  Ref transport: scenes carry `{:ref, id, layout_gen}` and no cursors; pane damage is
+  forwarded as `{:damage, id, gen}` and the client reads rows and cursor from
+  `Pane.Rows`. Inline transport: every pushed scene carries each pane's full rows and
+  cursors plus the host `scene.cursor`; damage is forwarded as `{:rows, id, gen, rows}`
+  (full rows), and damage that moves the focused pane's cursor re-pushes the scene.
+  Damage for a pane not in the last scene is dropped: it belongs to a scene still on
+  its way (the Store notifies after the event that spawned the pane), and that scene
+  brings the pane's rows (inline: filled here; ref: fetched by the client for new refs).
+
+  Client input is validated (server-internal events are refused with a warning notice),
+  checked against the fast path, else sent to `App.Store` with this client's size, and
+  always acked. The session monitors the Store and stops when it dies, so the client
+  re-attaches to the fresh one.
   """
   use GenServer, restart: :temporary
 
   alias HerdrScene.Protocol
   alias HerdrServer.App.{Keybinds, Store}
   alias HerdrServer.Client.State
-  alias HerdrServer.Pane.{Rows, Server}
+  alias HerdrServer.Pane.Rows
   alias HerdrServer.{SafeApply, View}
 
   def start_link(info), do: GenServer.start_link(__MODULE__, info)
@@ -32,7 +40,8 @@ defmodule HerdrServer.Client.Session do
       cell_px: info.cell_px,
       caps: info.caps,
       client: info.client,
-      monitor: Process.monitor(info.client)
+      monitor: Process.monitor(info.client),
+      store_monitor: Process.monitor(Store)
     }
 
     {:ok, state, {:continue, :attach}}
@@ -55,18 +64,9 @@ defmodule HerdrServer.Client.Session do
     gen = latest(id, gen)
     scene = state.last_scene
 
-    cond do
-      scene == nil or not Enum.any?(scene.panes, &(&1.id == id)) ->
-        {:noreply, state}
-
-      scene.focus.pane == id ->
-        forward(state, id, gen)
-        {:noreply, send_scene(state, refresh_cursor(scene, id))}
-
-      true ->
-        forward(state, id, gen)
-        {:noreply, state}
-    end
+    if scene != nil and Enum.any?(scene.panes, &(&1.id == id)),
+      do: {:noreply, damaged(state, scene, id, gen)},
+      else: {:noreply, state}
   end
 
   def handle_info({:input, from, seq, ev} = msg, state) do
@@ -98,9 +98,13 @@ defmodule HerdrServer.Client.Session do
     {:stop, :normal, state}
   end
 
+  # client gone, or Store restarted (its new app is unknown to us: the client re-attaches)
   def handle_info({:DOWN, ref, :process, _, _}, state) do
     state = Map.merge(%State{}, state)
-    if ref == state.monitor, do: {:stop, :normal, state}, else: {:noreply, state}
+
+    if ref in [state.monitor, state.store_monitor],
+      do: {:stop, :normal, state},
+      else: {:noreply, state}
   end
 
   # stale damage for closed panes, unknown messages: ignore
@@ -116,16 +120,23 @@ defmodule HerdrServer.Client.Session do
   end
 
   defp input(state, ev) do
-    if not fast_path(ev), do: Store.event(ev, state.size)
+    if not fast_path(ev), do: Store.event(ev, driving_size(state))
     state
   end
+
+  defp driving_size(state), do: Map.put(state.size, :cell_px, state.cell_px)
 
   # Same check as an in-VM client (contract decision 6), for remote/GUI clients. Releases
   # always go through the Store so `focus.swallow` applies.
   defp fast_path({:key, %{key: k, mods: m, event: e}} = ev) when e != :release do
     case :persistent_term.get(Protocol.fast_path_key(), nil) do
       %{passthrough: true, write: {mod, f, a}, intercept: i} ->
-        not MapSet.member?(i, Keybinds.normalize(k, m)) and apply(mod, f, [ev | a]) == :ok
+        # a failure in either call sends the event the slow path
+        with {:ok, key} <- SafeApply.run(Keybinds, :normalize, [k, m]),
+             false <- MapSet.member?(i, key),
+             {:ok, :ok} <- SafeApply.run(mod, f, [ev | a]),
+             do: true,
+             else: (_ -> false)
 
       _ ->
         false
@@ -135,7 +146,7 @@ defmodule HerdrServer.Client.Session do
   defp fast_path(_ev), do: false
 
   defp resized(state) do
-    :ok = Store.event({:resize, Map.put(state.size, :cell_px, state.cell_px)}, state.size)
+    :ok = Store.event({:resize, driving_size(state)}, driving_size(state))
     push(state, Store.snapshot())
   end
 
@@ -149,25 +160,36 @@ defmodule HerdrServer.Client.Session do
     end
   end
 
-  defp forward(%{transport: :inline} = state, id, _gen) do
+  defp damaged(%{transport: :inline} = state, scene, id, gen) do
     case Rows.fetch(id) do
-      {gen, rows} ->
-        rows = rows |> Tuple.to_list() |> Enum.with_index(fn b, n -> {n, b} end)
-        send(state.client, {:rows, id, gen, rows})
+      {_gen, rows, cursor} ->
+        moved? = Enum.any?(scene.panes, &(&1.id == id and &1.cursor != cursor))
+
+        # ponytail: the focused cursor moving re-pushes every pane's full rows (the scene
+        # carries them, so no {:rows} then); M16 sends cursor-only updates
+        if moved? and scene.focus.pane == id do
+          send_scene(state, fill(scene))
+        else
+          send(state.client, {:rows, id, gen, indexed(rows)})
+          state
+        end
 
       nil ->
-        :ok
+        state
     end
   end
 
-  defp forward(state, id, gen), do: send(state.client, {:damage, id, gen})
+  defp damaged(state, _scene, id, gen) do
+    send(state.client, {:damage, id, gen})
+    state
+  end
 
   defp push(state, nil), do: state
 
   defp push(state, app) do
     case SafeApply.run(View, :compute, [app, state]) do
       {:ok, scene} ->
-        send_scene(state, with_cursors(scene))
+        send_scene(state, if(state.transport == :inline, do: fill(scene), else: scene))
 
       {:failed, reason} ->
         send(state.client, {:notice, %{level: :error, text: "view failed: #{inspect(reason)}"}})
@@ -182,19 +204,20 @@ defmodule HerdrServer.Client.Session do
     %{state | last_scene: scene}
   end
 
-  # ponytail: one cursor call per pane per scene compute; cache cursors if pane counts grow
-  defp with_cursors(scene) do
-    panes = Enum.map(scene.panes, &%{&1 | cursor: Server.cursor(&1.id)})
-    %{scene | panes: panes, cursor: host(panes, scene.focus.pane)}
-  end
-
-  # damage to one pane: only its cursor can have moved
-  defp refresh_cursor(scene, id) do
+  # inline transport: full rows and cursors in the scene (M16 optimizes)
+  defp fill(scene) do
     panes =
-      Enum.map(scene.panes, &if(&1.id == id, do: %{&1 | cursor: Server.cursor(id)}, else: &1))
+      Enum.map(scene.panes, fn pane ->
+        case Rows.fetch(pane.id) do
+          {_gen, rows, cursor} -> %{pane | rows: {:inline, indexed(rows)}, cursor: cursor}
+          nil -> %{pane | rows: {:inline, []}, cursor: nil}
+        end
+      end)
 
     %{scene | panes: panes, cursor: host(panes, scene.focus.pane)}
   end
+
+  defp indexed(rows), do: rows |> Tuple.to_list() |> Enum.with_index(fn b, n -> {n, b} end)
 
   defp host(panes, focus) do
     case Enum.find(panes, &(&1.id == focus)) do

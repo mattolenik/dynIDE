@@ -11,7 +11,8 @@ defmodule HerdrServer.Client.State do
     viewports: %{},
     hover: nil,
     last_scene: nil,
-    monitor: nil
+    monitor: nil,
+    store_monitor: nil
   ]
 
   @type t :: %__MODULE__{
@@ -24,6 +25,7 @@ defmodule HerdrServer.Client.State do
           viewports: map(),
           hover: term(),
           last_scene: term(),
-          monitor: reference() | nil
+          monitor: reference() | nil,
+          store_monitor: reference() | nil
         }
 end

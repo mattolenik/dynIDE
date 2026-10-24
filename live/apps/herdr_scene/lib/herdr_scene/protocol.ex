@@ -6,7 +6,9 @@ defmodule HerdrScene.Protocol do
 
     * `GenServer.call(endpoint(), {:attach, %{kind: :term | :gui, transport: :ref | :inline,
       size: %{cols, rows}, cell_px: {w, h} | nil, caps: map, client: pid}})`,
-      reply `{:ok, session_pid, %{rows: {m, f, a}}}`
+      reply `{:ok, session_pid, %{rows: {m, f, a}}}`; `apply(m, f, [pane_id | a])` returns
+      `{gen, rows_tuple, cursor | nil} | nil` (element n of `rows_tuple` = packed row n,
+      `cursor` pane-relative `%{x, y, shape, visible}`)
     * `{:input, from_pid, seq, event}` (event per `HerdrScene.Event`)
     * `{:detach}`
 
@@ -17,6 +19,10 @@ defmodule HerdrScene.Protocol do
     * `{:notice, %{level: :info | :warning | :error, text: binary}}`
     * `{:ack, seq}`
     * `{:handoff, map}`
+
+  Generations: `{:ref, id, layout_gen}` in a scene is the pane's layout generation;
+  the `gen` of `{:damage, ...}`, `{:rows, ...}` and the rows MFA is its content
+  generation. They are unrelated and must not be compared (see `Scene.Pane`).
 
   Maps are open: required keys must be valid, unknown extra keys are accepted.
 

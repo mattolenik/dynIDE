@@ -5,6 +5,8 @@ defmodule HerdrServer.Pane.Input do
   clients call `apply(Pane.Input, :key, [event, pane_id])`. Unknown panes are a no-op.
   """
 
+  require Logger
+
   alias HerdrServer.Kernel
 
   @spec key(tuple, pos_integer) :: :ok
@@ -21,12 +23,27 @@ defmodule HerdrServer.Pane.Input do
 
   defp write(id, encode) do
     with {:ok, %{vt: vt, pty: pty}} <- Kernel.keeper().lookup(id),
-         bytes when is_binary(bytes) and bytes != "" <- encode.(vt) do
-      # ponytail: {:error, :backpressure} drops the input; queue in Pane.Server if it shows up
-      _ = Kernel.pty().write(pty, bytes)
+         bytes when is_binary(bytes) and bytes != "" <- encode.(vt),
+         # ponytail: {:error, :backpressure} drops the input; queue in Pane.Server if it shows up
+         {:error, reason} <- Kernel.pty().write(pty, bytes) do
+      warn(id, reason)
     end
 
     :ok
+  end
+
+  @warn_every_ms 1000
+
+  # at most one warning per pane per second per calling process (the caller's dictionary
+  # keeps the time: writers are client processes, there is no process of our own here)
+  defp warn(id, reason) do
+    now = System.monotonic_time(:millisecond)
+    key = {__MODULE__, :warned, id}
+
+    if now - Process.get(key, now - @warn_every_ms) >= @warn_every_ms do
+      Process.put(key, now)
+      Logger.warning("pane #{id}: input dropped (#{inspect(reason)})")
+    end
   end
 
   defp bracket(vt, bin) do

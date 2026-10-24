@@ -2,7 +2,7 @@ defmodule HerdrServer.Pane.Server do
   @moduledoc """
   One per pane. Subscribes to its pty on init (so a restart resubscribes and gets a forced
   full damage), drains `dirty_rows` on `{:damage, ...}` into the shared row cache
-  (`Pane.Rows`) and tells every registered client session `{:pane_damage, id, gen}`.
+  (`Pane.Rows`, with the cursor read on the same damage) and tells every registered client session `{:pane_damage, id, gen}`.
   Pane exit and title events go to `App.Store` by cast (the Store calls this process, so
   calling back would be a cycle).
   """
@@ -18,16 +18,13 @@ defmodule HerdrServer.Pane.Server do
 
   defp via(id), do: {:via, Registry, {HerdrServer.Pane.Registry, id}}
 
-  @doc "Resizes vt and pty and repaints the row cache in full."
-  @spec resize(pos_integer, pos_integer, pos_integer) :: :ok | nil
-  def resize(id, cols, rows), do: call(id, {:resize, cols, rows})
+  @doc "Resizes vt and pty (`cell_px` is the driving client's, may be nil) and repaints."
+  @spec resize(pos_integer, pos_integer, pos_integer, {pos_integer, pos_integer} | nil) ::
+          :ok | nil
+  def resize(id, cols, rows, cell_px), do: call(id, {:resize, cols, rows, cell_px})
 
   @spec set_hidden(pos_integer, boolean) :: :ok | nil
   def set_hidden(id, hidden?), do: call(id, {:hidden, hidden?})
-
-  @doc "Cursor relative to the pane grid; nil if the pane is gone."
-  @spec cursor(pos_integer) :: map | nil
-  def cursor(id), do: call(id, :cursor)
 
   defp call(id, msg) do
     GenServer.call(via(id), msg)
@@ -46,7 +43,7 @@ defmodule HerdrServer.Pane.Server do
   def init(id) do
     case Kernel.keeper().lookup(id) do
       {:ok, %{vt: vt, pty: pty}} ->
-        :ok = Kernel.pty().subscribe(pty, self())
+        kernel_ok(id, :subscribe, Kernel.pty().subscribe(pty, self()))
         {:ok, reload(%State{id: id, vt: vt, pty: pty})}
 
       :error ->
@@ -55,23 +52,18 @@ defmodule HerdrServer.Pane.Server do
   end
 
   @impl true
-  def handle_call({:resize, cols, rows}, _from, state) do
+  def handle_call({:resize, cols, rows, cell_px}, _from, state) do
     state = Map.merge(%State{}, state)
-    :ok = Kernel.vt().resize(state.vt, cols, rows, nil)
-    :ok = Kernel.pty().resize(state.pty, cols, rows, nil)
+    kernel_ok(state.id, :vt_resize, Kernel.vt().resize(state.vt, cols, rows, cell_px))
+    kernel_ok(state.id, :pty_resize, Kernel.pty().resize(state.pty, cols, rows, cell_px))
     {:reply, :ok, reload(state)}
   end
 
   def handle_call({:hidden, hidden?}, _from, state) do
     state = Map.merge(%State{}, state)
-    :ok = Kernel.pty().set_hidden(state.pty, hidden?)
+    kernel_ok(state.id, :set_hidden, Kernel.pty().set_hidden(state.pty, hidden?))
     state = %{state | hidden: hidden?}
     {:reply, :ok, if(hidden?, do: state, else: reload(state))}
-  end
-
-  def handle_call(:cursor, _from, state) do
-    state = Map.merge(%State{}, state)
-    {:reply, Kernel.vt().cursor(state.vt), state}
   end
 
   @impl true
@@ -80,8 +72,12 @@ defmodule HerdrServer.Pane.Server do
     drain(id)
 
     case Kernel.vt().dirty_rows(state.vt) do
-      {_gen, []} ->
-        {:noreply, state}
+      # no row changed: publish only if the cursor moved
+      {gen, []} ->
+        cursor = Kernel.vt().cursor(state.vt)
+
+        {:noreply,
+         if(cursor == state.cursor, do: state, else: publish(%{state | gen: gen}, cursor))}
 
       {gen, dirty} ->
         {:noreply, publish(%{state | gen: gen, rows: Enum.reduce(dirty, state.rows, &put_row/2)})}
@@ -105,6 +101,14 @@ defmodule HerdrServer.Pane.Server do
     {:noreply, state}
   end
 
+  # a kernel error is logged and the pane keeps running on its previous size/visibility
+  defp kernel_ok(_id, _op, :ok), do: :ok
+
+  defp kernel_ok(id, op, other) do
+    Logger.warning("pane #{id}: #{op} failed: #{inspect(other)}")
+    :error
+  end
+
   defp put_row({n, b}, t) when n < tuple_size(t), do: put_elem(t, n, b)
   defp put_row(_row, t), do: t
 
@@ -122,14 +126,15 @@ defmodule HerdrServer.Pane.Server do
     publish(%{state | gen: gen, rows: rows |> Enum.map(&elem(&1, 1)) |> List.to_tuple()})
   end
 
-  defp publish(state) do
-    :ok = Rows.put(state.id, state.gen, state.rows)
+  defp publish(state, cursor \\ nil) do
+    cursor = cursor || Kernel.vt().cursor(state.vt)
+    :ok = Rows.put(state.id, state.gen, state.rows, cursor)
     msg = {:pane_damage, state.id, state.gen}
 
     Registry.dispatch(HerdrServer.Client.Registry, :clients, fn entries ->
       for {pid, _} <- entries, do: send(pid, msg)
     end)
 
-    state
+    %{state | cursor: cursor}
   end
 end

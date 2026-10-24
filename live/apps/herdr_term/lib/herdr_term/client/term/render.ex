@@ -4,13 +4,22 @@ defmodule HerdrTerm.Client.Term.Render do
   hands the session to Input, keeps the scene and a per-pane rows cache, and
   blits paced frames.
 
-  Rows: `{:damage, id, _}` marks pane `id` dirty and a new scene marks every
-  ref pane dirty; dirty panes are fetched through the attach reply's rows MFA
-  right before composing, so a burst of damage costs one fetch per frame.
-  Inline rows (`{:inline, rows}` panes, `{:rows, id, gen, rows}`) seed the same
-  cache. Frames are at least `:min_frame_interval_ms` (default 6) apart with at
-  most one pending timer. A frame repaints fully on the first frame, after a
-  re-attach, and when the scene size changes.
+  Option `transport` (`:ref`, default, or `:inline`) is sent in the attach.
+
+  Rows (ref): `{:damage, id, _}` marks pane `id` dirty; a new scene marks dirty only
+  panes that are new or whose `{:ref, id, layout_gen}` changed. Dirty panes are fetched
+  through the attach reply's rows MFA (rows and cursor in one call) right before
+  composing, so a burst of damage costs one fetch per frame and a keystroke one fetch.
+  The host cursor is the focused pane's cached cursor placed in its rect.
+
+  Rows (inline): non-empty `{:inline, rows}` in a scene replace the pane's cached rows,
+  `{:inline, []}` keeps them, `{:rows, id, gen, rows}` updates them; the cursor is the
+  scene's.
+
+  Frames are at least `:min_frame_interval_ms` (default 6) apart with at most one
+  pending timer. A frame repaints fully on the first frame, after a re-attach, when the
+  scene size changes and on `:repaint` (Input sends it when the tty resumes). A failing
+  compose or cursor keeps the last frame.
   """
 
   use GenServer
@@ -38,7 +47,10 @@ defmodule HerdrTerm.Client.Term.Render do
     :timer,
     :notice,
     :theme,
+    transport: :ref,
     rows: %{},
+    cursors: %{},
+    refs: %{},
     dirty: MapSet.new(),
     last_at: nil,
     repaint: true
@@ -56,7 +68,8 @@ defmodule HerdrTerm.Client.Term.Render do
        id: opts[:id],
        endpoint: Keyword.get(opts, :endpoint, Protocol.endpoint()),
        tty: Owner.tty(Client.via(opts[:id], :tty_owner)),
-       theme: Theme.default()
+       theme: Theme.default(),
+       transport: Keyword.get(opts, :transport, :ref)
      }}
   end
 
@@ -76,20 +89,37 @@ defmodule HerdrTerm.Client.Term.Render do
   def handle_info({:DOWN, mon, :process, _, _}, %{mon: mon} = state) do
     state = Map.merge(%__MODULE__{}, state)
     send_input(state, {:session, nil})
-    {:noreply, attach(%{state | session: nil, mon: nil, repaint: true})}
+    # forget the refs: the next scene re-fetches every pane
+    {:noreply, attach(%{state | session: nil, mon: nil, repaint: true, refs: %{}})}
   end
 
   def handle_info({:scene, %Scene{} = scene}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    ids = MapSet.new(scene.panes, & &1.id)
+    ids = Enum.map(scene.panes, & &1.id)
+    keep = MapSet.new(ids)
+    init = {Map.take(state.rows, ids), MapSet.filter(state.dirty, &(&1 in keep)), %{}}
 
-    {rows, dirty} =
-      Enum.reduce(scene.panes, {Map.take(state.rows, MapSet.to_list(ids)), MapSet.new()}, fn
-        %{id: id, rows: {:inline, r}}, {rows, dirty} -> {Map.put(rows, id, Map.new(r)), dirty}
-        %{id: id}, {rows, dirty} -> {rows, MapSet.put(dirty, id)}
+    {rows, dirty, refs} =
+      Enum.reduce(scene.panes, init, fn
+        %{rows: {:inline, []}}, acc ->
+          acc
+
+        %{id: id, rows: {:inline, r}}, {rows, dirty, refs} ->
+          {Map.put(rows, id, Map.new(r)), dirty, refs}
+
+        %{id: id, rows: {:ref, _, lg}}, {rows, dirty, refs} ->
+          fresh? = Map.get(state.refs, id) == lg and Map.has_key?(rows, id)
+          {rows, if(fresh?, do: dirty, else: MapSet.put(dirty, id)), Map.put(refs, id, lg)}
       end)
 
-    {:noreply, schedule(%{state | scene: scene, rows: rows, dirty: dirty})}
+    cursors = Map.take(state.cursors, ids)
+    state = %{state | scene: scene, rows: rows, dirty: dirty, refs: refs, cursors: cursors}
+    {:noreply, schedule(state)}
+  end
+
+  def handle_info(:repaint, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, schedule(%{state | repaint: true})}
   end
 
   def handle_info({:damage, id, _gen}, state) do
@@ -136,13 +166,16 @@ defmodule HerdrTerm.Client.Term.Render do
 
     req = %{
       kind: :term,
-      transport: :ref,
+      transport: state.transport,
       size: %{cols: cols, rows: rows},
       cell_px: cell_px,
       caps: %{},
       client: self()
     }
 
+    # Only exits: the endpoint can die or time out between whereis and the call, and
+    # that is just "not attached yet" (retry). Raises and throws are bugs and crash this
+    # process; this is not a SafeApply boundary.
     reply =
       try do
         GenServer.call(endpoint, {:attach, req})
@@ -188,29 +221,33 @@ defmodule HerdrTerm.Client.Term.Render do
   defp render(%{scene: nil} = state), do: state
 
   defp render(state) do
-    rows = Enum.reduce(state.dirty, state.rows, &fetch(&2, &1, state.rows_mfa))
-    state = %{state | rows: rows, dirty: MapSet.new()}
+    state = Enum.reduce(state.dirty, %{state | dirty: MapSet.new()}, &fetch(&2, &1))
     scene = state.scene
 
-    case SafeApply.run(Compose, :frame, [scene, rows, state.theme]) do
-      {:ok, frame} ->
-        repaint = state.repaint or scene.size != state.last_size
-        shape = Compose.cursor_shape(scene) || :block
-        opts = %{cursor: Compose.cursor(scene), shape: shape, repaint: repaint}
-        Kernel.blit().frame(state.tty, frame, opts)
-        %{state | repaint: false, last_size: scene.size, last_at: now()}
-
-      {:failed, _} ->
-        state
+    with {:ok, frame} <- SafeApply.run(Compose, :frame, [scene, state.rows, state.theme]),
+         {:ok, cursor} <- SafeApply.run(Compose, :cursor, [scene, state.cursors]) do
+      repaint = state.repaint or scene.size != state.last_size
+      {at, shape} = cursor || {nil, :block}
+      Kernel.blit().frame(state.tty, frame, %{cursor: at, shape: shape, repaint: repaint})
+      %{state | repaint: false, last_size: scene.size, last_at: now()}
+    else
+      {:failed, _} -> state
     end
   end
 
-  defp fetch(rows, _id, nil), do: rows
+  defp fetch(%{rows_mfa: nil} = state, _id), do: state
 
-  defp fetch(rows, id, {m, f, a}) do
+  defp fetch(%{rows_mfa: {m, f, a}} = state, id) do
     case SafeApply.run(m, f, [id | a]) do
-      {:ok, {_gen, tuple}} -> Map.put(rows, id, tuple)
-      _ -> rows
+      {:ok, {_gen, tuple, cursor}} ->
+        %{
+          state
+          | rows: Map.put(state.rows, id, tuple),
+            cursors: Map.put(state.cursors, id, cursor)
+        }
+
+      _ ->
+        state
     end
   end
 
