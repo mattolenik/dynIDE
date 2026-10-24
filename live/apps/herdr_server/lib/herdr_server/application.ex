@@ -58,10 +58,24 @@ defmodule HerdrServer.Application do
       :ok = Handoff.Link.restored()
       # held back in a VM that could have been a standby (config/runtime.exs)
       :ok = HerdrReload.Application.start_deferred()
-      Logger.info("herdr-live started")
+      announce_start()
       {:ok, pid}
     end
   end
+
+  @doc false
+  @spec announce_start() :: :ok
+  def announce_start do
+    Logger.info("herdr-live started")
+
+    HerdrReload.Telemetry.event(:vm_start,
+      gen: gen(),
+      role: :primary,
+      adopt: Handoff.Link.adopt_reason() || :fresh
+    )
+  end
+
+  defp gen, do: System.get_env("HERDR_LIVE_GEN") || "0"
 
   # the rollback socket only makes sense with the reload pipeline running
   defp control do
@@ -73,5 +87,6 @@ defmodule HerdrServer.Application do
   @impl true
   def stop(_state) do
     Logger.info("herdr-live stopped")
+    HerdrReload.Telemetry.event(:vm_stop, gen: gen())
   end
 end

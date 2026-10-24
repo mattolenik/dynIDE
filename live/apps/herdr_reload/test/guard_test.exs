@@ -158,6 +158,17 @@ defmodule HerdrReload.GuardTest do
     assert [%Batch{id: 2, rolled_back: true}, _] = Server.batches()
   end
 
+  test "a failure logs a guard_failure line, attributed to the batch that owns it" do
+    log = capture_log(fn -> Guard.run_twice(Fixture, :f, [:boom], @nosrv) end)
+    assert log =~ ~r/herdr-event guard_failure ts=\d{13} mfa=\S*Fixture.f\/1 kind=raise attributed=none/
+
+    dir = toy!(:toy_g_telemetry, %{"lib/a.ex" => a_src(1)})
+    HerdrReload.ReloadCase.write_source!(dir, "lib/a.ex", a_src(2))
+    assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "a")])
+    log = capture_log(fn -> Guard.run_twice(Toy.A, :f, [:boom], []) end)
+    assert log =~ ~r/herdr-event guard_failure .*mfa=Toy.A.f\/1 kind=raise attributed=2 /s
+  end
+
   test "run_twice does not re-run an unattributed failure and logs it once" do
     calls = :counters.new(1, [])
 

@@ -80,6 +80,10 @@ defmodule HerdrReload.Server do
   @spec batches(server()) :: [Batch.t()]
   def batches(server \\ __MODULE__), do: GenServer.call(server, :batches, :infinity)
 
+  @doc "Modules the promotion sync loaded at init (empty when none)."
+  @spec synced(server()) :: [module()]
+  def synced(server \\ __MODULE__), do: GenServer.call(server, :synced, :infinity)
+
   @doc "Name of the Guard counters table."
   @spec counters_table(server()) :: atom()
   def counters_table(server), do: GenServer.call(server, :counters_table, :infinity)
@@ -112,6 +116,7 @@ defmodule HerdrReload.Server do
        digests: %{},
        ring: Ring.new(Keyword.get(opts, :ring_depth, 8)),
        last_rolled_back: :none,
+       synced: [],
        next_id: 1
      }, {:continue, :sync_loaded}}
   end
@@ -135,10 +140,11 @@ defmodule HerdrReload.Server do
     for {mod, e} <- errors,
         do: Logger.warning("reload sync of #{inspect(mod)} failed: #{inspect(e)}")
 
-    if stale != [],
-      do: Logger.info("reload loaded #{length(stale) - length(errors)} modules changed on disk")
+    failed = Keyword.keys(errors)
+    synced = for {mod, _} <- stale, mod not in failed, do: mod
+    if stale != [], do: Notices.broadcast({:synced, synced}, failed: length(failed))
 
-    {:noreply, s}
+    {:noreply, Map.put(s, :synced, synced)}
   end
 
   # unreadable imports: leave it alone too
@@ -158,7 +164,11 @@ defmodule HerdrReload.Server do
     fresh = Enum.reject(paths, &(digests[&1] != nil and digests[&1] == s.digests[&1]))
     s_done = %{s | digests: Map.merge(s.digests, Map.take(digests, fresh))}
 
-    case fresh != [] && Compiler.compile(s.cache, fresh, s.mtimes, s.compile_opts) do
+    started = System.monotonic_time(:millisecond)
+    result = fresh != [] && Compiler.compile(s.cache, fresh, s.mtimes, s.compile_opts)
+    compile_ms = System.monotonic_time(:millisecond) - started
+
+    case result do
       false ->
         {:reply, :noop, s}
 
@@ -166,7 +176,7 @@ defmodule HerdrReload.Server do
         {:reply, :noop, %{s_done | mtimes: m}}
 
       {:ok, res} ->
-        {batch, s} = record(res, %{s_done | mtimes: res.mtimes})
+        {batch, s} = record(res, compile_ms, %{s_done | mtimes: res.mtimes})
         {:reply, {:ok, batch}, s}
 
       {:error, diags, mtimes} ->
@@ -208,9 +218,10 @@ defmodule HerdrReload.Server do
 
   def handle_call(:batches, _from, s), do: {:reply, Ring.batches(s.ring), s}
   def handle_call(:last_rolled_back, _from, s), do: {:reply, s.last_rolled_back, s}
+  def handle_call(:synced, _from, s), do: {:reply, Map.get(s, :synced, []), s}
   def handle_call(:counters_table, _from, s), do: {:reply, s.table, s}
 
-  defp record(res, s) do
+  defp record(res, compile_ms, s) do
     modules = Map.keys(res.changed) ++ res.removed
 
     state = state_at_load(s.state_at_load)
@@ -233,7 +244,7 @@ defmodule HerdrReload.Server do
 
     {ring, _evicted} = Ring.push(s.ring, batch)
 
-    Notices.broadcast({:loaded, batch.id, modules})
+    Notices.broadcast({:loaded, batch.id, modules}, compile_ms: compile_ms)
     {batch, %{s | ring: ring, next_id: s.next_id + 1, cache: apply_cache(s.cache, beams, [])}}
   end
 

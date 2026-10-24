@@ -2,6 +2,7 @@ defmodule HerdrReload.ServerTest do
   use HerdrReload.ReloadCase, async: false
 
   import ExUnit.CaptureIO
+  import ExUnit.CaptureLog
 
   alias HerdrReload.{Batch, Compiler, Notices, Server}
 
@@ -328,7 +329,17 @@ defmodule HerdrReload.ServerTest do
     assert {v(), Module.concat([Toy.X]).x()} == {1, 1}
     looper = spawn(fn -> Module.concat([Toy.V]).loop() end)
 
-    start_supervised!({Server, project_dir: dir, app: :toy_s_stale})
+    start_supervised!(Notices)
+    Notices.subscribe()
+
+    log =
+      capture_log(fn ->
+        start_supervised!({Server, project_dir: dir, app: :toy_s_stale})
+        assert Server.synced() == [Toy.V]
+      end)
+
+    assert log =~ ~r/herdr-event sync ts=\d{13} count=1 modules=Toy.V failed=0/
+    assert_receive {:herdr_reload, {:synced, [Toy.V]}}
     # a call is served after the start-up sync
     assert Server.batches() == []
     assert v() == 2
@@ -338,6 +349,14 @@ defmodule HerdrReload.ServerTest do
 
     # the disk is the server's cache: the same source again is no change
     assert Server.reload([path(dir, "v")]) == :noop
+  end
+
+  test "reload logs the compile time on its reload line" do
+    {dir, _} = toy!(:toy_s_ms)
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+
+    log = capture_log(fn -> assert {:ok, _} = Server.reload([path(dir, "v")]) end)
+    assert log =~ ~r/herdr-event reload ts=\d{13} batch=2 fanout=1 modules=Toy.V compile_ms=\d+/
   end
 
   test "a module new in a rolled-back batch leaves only its rejected beam" do

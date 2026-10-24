@@ -4,8 +4,13 @@ defmodule HerdrReload.Notices do
 
   Events: `{:compile_error, [diagnostic]}`, `{:loaded, batch_id, [module]}`,
   `{:rolled_back, batch_id, [module], reason}`, `{:rejected, module, path}`,
-  `{:purge_blocked, module, [pid_info]}`.
+  `{:purge_blocked, module, [pid_info]}`, `{:synced, [module]}` (the promotion sync
+  loaded modules changed on disk).
+
+  Every broadcast is also logged as a `herdr-event` line (`HerdrReload.Telemetry`).
   """
+
+  alias HerdrReload.Telemetry
 
   @doc "Child spec for the duplicate-key registry backing the notices."
   @spec child_spec(term()) :: Supervisor.child_spec()
@@ -20,9 +25,14 @@ defmodule HerdrReload.Notices do
     :ok
   end
 
-  @doc "Sends `event` to every subscriber; a no-op when the registry is not running."
-  @spec broadcast(term()) :: :ok
-  def broadcast(event) do
+  @doc """
+  Logs `event` as a telemetry line (`extra` adds fields) and sends it to every subscriber;
+  without the registry only the log happens.
+  """
+  @spec broadcast(term(), keyword()) :: :ok
+  def broadcast(event, extra \\ []) do
+    with {kind, fields} <- Telemetry.from_notice(event, extra), do: Telemetry.event(kind, fields)
+
     if Process.whereis(__MODULE__) do
       Registry.dispatch(__MODULE__, :events, &deliver(&1, event))
     end

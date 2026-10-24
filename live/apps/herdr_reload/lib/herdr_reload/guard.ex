@@ -13,7 +13,7 @@ defmodule HerdrReload.Guard do
   table named after the server (`mod` and `:total`).
   """
 
-  alias HerdrReload.{LocalFuns, Notices, Server}
+  alias HerdrReload.{LocalFuns, Notices, Server, Telemetry}
 
   require Logger
 
@@ -87,8 +87,9 @@ defmodule HerdrReload.Guard do
   defp plain(ok), do: ok
 
   defp logged_run(mod, fun, args, opts) do
-    with {:failed, failure, _} = failed <- attributed_run(mod, fun, args, opts) do
+    with {:failed, failure, attribution} = failed <- attributed_run(mod, fun, args, opts) do
       log(mod, fun, args, failure)
+      telemetry(mod, fun, args, failure, attribution)
       failed
     end
   end
@@ -101,6 +102,21 @@ defmodule HerdrReload.Guard do
       end
 
     Logger.error("#{inspect(mod)}.#{fun}/#{length(args)} failed: #{message(failure)}\n#{stack}")
+  end
+
+  defp telemetry(mod, fun, args, failure, attribution) do
+    attributed =
+      case attribution do
+        {:rolled_back, id} -> id
+        _ -> :none
+      end
+
+    Telemetry.event(:guard_failure,
+      mfa: "#{inspect(mod)}.#{fun}/#{length(args)}",
+      kind: elem(failure, 0),
+      attributed: attributed,
+      detail: message(failure)
+    )
   end
 
   @doc "One-line description of a failure, without its stack."

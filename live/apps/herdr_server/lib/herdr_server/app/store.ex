@@ -152,6 +152,8 @@ defmodule HerdrServer.App.Store do
         {:ok, %__MODULE__{}}
 
       app ->
+        # a mirrored app in this VM means the Store itself restarted
+        HerdrReload.Telemetry.event(:crash, proc: :store, reason: :restart, action: :restored)
         {:ok, adopt(app)}
     end
   end

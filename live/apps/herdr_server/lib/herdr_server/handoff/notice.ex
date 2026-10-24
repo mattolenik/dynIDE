@@ -22,7 +22,14 @@ defmodule HerdrServer.Handoff.Notice do
   end
 
   @spec broadcast(event) :: :ok
-  def broadcast(event) do
+  def broadcast({:handoff, %{phase: phase, gen: gen, panes: panes}} = event) do
+    HerdrReload.Telemetry.event(:handoff, phase: phase, gen: gen, panes: length(panes))
+    dispatch(event)
+  end
+
+  def broadcast(event), do: dispatch(event)
+
+  defp dispatch(event) do
     Registry.dispatch(__MODULE__, :handoff, fn subs ->
       for {pid, _} <- subs, do: send(pid, event)
     end)

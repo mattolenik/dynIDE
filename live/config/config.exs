@@ -18,6 +18,9 @@ import Config
 #       format: "$date $time [$level] $metadata$message\n",
 #       metadata: [:user_id]
 #
+# The default handler writes to the VM's stderr, which the launcher sends to the log file.
+config :logger, :default_formatter, format: "$date $time [$level] $message\n"
+
 config :herdr_reload, HerdrReload,
   enabled: config_env() == :dev,
   scan_local_funs: config_env() != :prod
