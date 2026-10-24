@@ -409,7 +409,7 @@ defmodule HerdrServer.Api.Spec do
           )
         ],
         "subscription_started",
-        [:not_found, :events_lost],
+        [:not_found, :not_available, :events_lost],
         "herdr-live events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] [--workspace <workspace_id>]"
       )
     ]

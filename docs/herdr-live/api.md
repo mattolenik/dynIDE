@@ -492,7 +492,7 @@ CLI: `herdr-live events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] 
 
 Result: `subscription_started` with `subscriptions` (integer).
 
-Errors: `invalid_params`, `not_found`, `events_lost`
+Errors: `invalid_params`, `not_found`, `not_available`, `events_lost`
 
 ## Methods: agent
 
