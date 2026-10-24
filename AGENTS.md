@@ -1,14 +1,10 @@
 # herdr-live
 
-A fork of herdr onto the BEAM: an Elixir server, Elixir clients, and a Rust
-NIF kernel, so an agent can edit the running multiplexer and see each change
-in under a second without losing terminals, scrollback, or layout. A bad edit
-must never take it down.
-
-Design: [docs/herdr-live/design.md](docs/herdr-live/design.md). Milestones:
-[docs/herdr-live/milestones.md](docs/herdr-live/milestones.md). Ledger and
-rulings: [docs/herdr-live/status.md](docs/herdr-live/status.md). When this
-file and design.md disagree, design.md wins; fix this file.
+herdr forked onto the BEAM: Elixir server and clients over a Rust NIF kernel,
+so an agent can edit the running multiplexer and see it in under a second
+without losing terminals, scrollback, or layout. A bad edit never takes it down.
+Rules come from `docs/herdr-live/design.md` (it wins over this file),
+`milestones.md`, and `status.md` (ledger, rulings) in the same directory.
 
 ## Operating model
 
@@ -16,13 +12,12 @@ file and design.md disagree, design.md wins; fix this file.
   `../herdr-live-worktrees/m<N>`, branched from `herdr-live`.
 - The coordinator session owns the `herdr-live` integration branch and
   `docs/herdr-live/status.md`. Milestone owners do not edit status.md.
-- Never push. Milestone owners commit on their branch without proposing
-  messages first (status.md ruling).
-- Milestone results: `docs/herdr-live/results/m<N>.md`. Decisions:
-  `docs/herdr-live/adr/NNNN-title.md` from
-  [0000-template.md](docs/herdr-live/adr/0000-template.md).
-- Human decision points: the M6 gate ADR, the M7 dogfooding week, the M15
-  GUI technology ADR. Everything else proceeds without asking.
+- Parallel owners rebase on `herdr-live` when a sibling lands, before their
+  own merge.
+- Never push. Owners commit on their branch without proposing messages first.
+- Results: `docs/herdr-live/results/m<N>.md`. ADRs:
+  `docs/herdr-live/adr/NNNN-short-title.md`, copied from `0000-template.md`.
+- Human decisions only at the M6 gate ADR, M7 dogfooding week, M15 GUI ADR.
 
 ## The split
 
@@ -35,15 +30,16 @@ the kernel owns bytes and OS resources on both sides.
   scrollbars, kitty placement, and chrome are decided in Elixir.
 - The server makes no display decisions. It emits a scene, never a cell of
   chrome or an escape sequence.
-- Frontends are clients, even locally. The in-VM terminal client talks to the
-  server only through the client protocol. Nothing is reachable only from
-  inside the terminal client.
+- Frontends are clients, even locally: the in-VM terminal client uses only
+  the client protocol, and nothing is reachable only from inside it.
 - The kernel must be restartable under live children (SCM_RIGHTS handoff).
 
 Shared session facts (pane/agent metadata, process and terminal state,
 events) belong in the server and its API; presentation state (colours,
 selection, hover, requested viewports) belongs in the client or
-`Client.State`, never `App.*`. Use neutral server names, not sidebar/row/widget.
+`Client.State`, never `App.*`. Server API, event, and runtime-fact names stay
+neutral (no sidebar/row/widget); chrome roles like `:sidebar` and `:tabs` are
+scene vocabulary and fine.
 
 ## Scene contract
 
@@ -62,20 +58,18 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
 - `live/` is a Mix umbrella. `live/apps/herdr_scene`: pure contracts and
   validators, no processes, no umbrella deps. `live/apps/herdr_server`:
   server layer. `live/apps/herdr_term`: terminal client.
-- Modules live under the app root module. Design name `Native.Vt` is
-  `HerdrServer.Native.Vt`; `Client.Term.Input` is
-  `HerdrTerm.Client.Term.Input`; `Native.Tty` is `HerdrTerm.Native.Tty`.
+- Modules live under the app root module: design `Native.Vt` is
+  `HerdrServer.Native.Vt`, `Client.Term.Input` is `HerdrTerm.Client.Term.Input`.
 - NIF crates: `live/native/herdr_kernel` (NIF module `HerdrServer.Native`,
   links `crates/ghostty-vt`, which builds vendored libghostty-vt with Zig
   0.16.0) and `live/native/herdr_term` (NIF module `HerdrTerm.Native`).
-  Rustler `~> 0.38.0`, crate `=0.38.0`. One NIF module per crate;
-  `Native.Vt`, `Native.Pty`, etc. are Elixir facades over it.
+  Rustler `~> 0.38.0`, crate `=0.38.0`. One NIF module per crate; the
+  design's `Native.*` modules are Elixir facades over it.
 - Each crate is its own Cargo workspace (empty `[workspace]`), so the root
   `[patch.crates-io] portable-pty` is not inherited: repeat it with
   `path = "../../../vendor/portable-pty"` when a crate needs portable-pty.
-- `live/bin/herdr-live`: dev launcher. Runs
-  `elixir --erl "-noshell -noinput" -S mix run --no-halt` with stdio sent to
-  `$HERDR_LIVE_LOG` (default
+- `live/bin/herdr-live`: dev launcher (`mix run --no-halt` under
+  `-noshell -noinput`), stdio sent to `$HERDR_LIVE_LOG` (default
   `${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/herdr-live.log`).
   SIGTERM stops it cleanly. Smoke test: `live/scripts/launcher_smoke.sh`.
 - Rust `src/` is herdr, kept as reference until the M6 gate, pruned in M7.
@@ -84,12 +78,12 @@ Adding an app: from `live/`, `mix new apps/<name>`; depend only on
 `{:herdr_scene, in_umbrella: true}`; set
 `consolidate_protocols: Mix.env() == :prod`.
 `live/apps/herdr_scene/test/dependency_rule_test.exs` discovers `apps/*` and
-fails any app that depends on another app besides `herdr_scene`.
+asserts every app except `herdr_scene` has exactly `[:herdr_scene]` as its
+umbrella deps, and `herdr_scene` has none.
 
-Adding a NIF: a `#[rustler::nif]` fn in the crate (registered by
-`rustler::init!`) plus a stub
-`def name(...), do: :erlang.nif_error(:nif_not_loaded)` in the crate's
-Elixir NIF module, then a facade function if it belongs to `Native.Vt` etc.
+Adding a NIF: a `#[rustler::nif]` fn (auto-registered by `rustler::init!`)
+plus `def name(...), do: :erlang.nif_error(:nif_not_loaded)` in the crate's
+Elixir NIF module, and a facade function in the `Native.*` module it belongs to.
 
 ## Principles
 
@@ -100,11 +94,12 @@ Elixir NIF module, then a facade function if it belongs to `Native.Vt` etc.
   `Detect`), which are testable without PTYs, NIFs, or processes.
 - **Render is pure.** `View.compute/2` returns a scene and
   `Client.Term.Render` turns scene + rows into cells; neither mutates state
-  or performs I/O. `Native.Blit` only diffs and writes.
-- **No god objects.** Split modules that do too many things.
+  or performs I/O. `Native.Blit` is the I/O end: it diffs packed rows and
+  writes ANSI, with no knowledge of panes or scenes.
+- **No god objects.** Split modules that do too many things; GenServer
+  callbacks stay thin.
 - **Platform code is isolated.** OS APIs live in the NIF crates (and
-  `src/platform/` in the reference tree). Elixir core modules have no OS
-  branches.
+  `src/platform/` in the reference tree); Elixir core has no OS branches.
 - **Detection is evidence-based.** Match explicit AND/OR gates over the
   bottom-buffer detection source, never whole-pane incidental text or the
   user-scrollable viewport. In the reference tree, follow the manifest
@@ -144,39 +139,28 @@ Elixir NIF module, then a facade function if it belongs to `Native.Vt` etc.
   Both crates set `panic = "unwind"` in dev and release profiles.
 - Dirty schedulers only for bounded calls. `write/2` reports backpressure
   instead of blocking a scheduler. No signal handlers installed from a NIF.
-- The VM runs `-noshell -noinput`. Never write to stdout; `Logger` goes to
-  the log file.
+- Never write to stdout (VM runs `-noshell -noinput`); `Logger` goes to file.
 
-## Code conventions
+## Code conventions and testing
 
 - Rust: no `unwrap()` in production code; `tracing` for logging; `#[allow]`
-  only with a comment explaining why. Platform-specific code is compile-gated
-  with `#[cfg(...)]` on items; `cfg!(...)` only for pure policy constants
-  whose branches compile everywhere.
-- Elixir: `mix format`, `mix credo --strict`, and `mix dialyzer` clean.
-- No new dependency without a reason; check existing ones first.
-- Do not break `cargo build` at the repo root.
-
-## Testing
-
-- `just live-test`: mix tests and cargo tests for both NIF crates.
-- `just live-check`: format, credo, dialyzer, cargo fmt/clippy, tests, and
-  launcher smoke. Run it before committing.
-- `just live-run` compiles and launches; `just live-bench` is a placeholder.
-  CI: `.github/workflows/live.yml`.
+  only with a comment explaining why. Platform code is compile-gated with
+  `#[cfg(...)]` on items; `cfg!(...)` only for policy constants.
+- No new dependency without a reason. Do not break root `cargo build`.
+- `just live-test`: mix and cargo tests. `just live-check` (format, credo
+  --strict, dialyzer, cargo fmt/clippy, tests, launcher smoke): run before
+  committing. `just live-run` launches. CI: `.github/workflows/live.yml`.
 - `just check` still covers the reference Rust tree but is not the gate.
 
 ## Vendored libghostty-vt
 
-`vendor/libghostty-vt.vendor.json` records the vendored upstream commit.
-Local patches are files under `vendor/patches/libghostty-vt/`, each indexed
-in `vendor/libghostty-vt.patches.md` with why, issue, upstream PR, base
-commit, touched files, verification, and removal condition. When updating
-libghostty-vt, drop patches upstream now contains and reapply the rest.
-`just maintenance-test` checks every patch is indexed and reverse-applies.
+`vendor/libghostty-vt.vendor.json` records the upstream commit. Each local
+patch in `vendor/patches/libghostty-vt/` is indexed in
+`vendor/libghostty-vt.patches.md` (why, issue, upstream PR, base commit,
+files, verification, removal condition). On update, drop patches upstream
+contains and reapply the rest; `just maintenance-test` checks the index.
 
 ## Commit style
 
 Lowercase conventional commits, descriptive subjects, no emojis, no AI
-co-author lines. Commit with explicit paths when other agents share the
-checkout.
+co-author lines. Commit explicit paths when other agents share the checkout.
