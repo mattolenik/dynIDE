@@ -120,6 +120,46 @@ defmodule HerdrServer.Persist.DiskTest do
     assert Disk.prune_scrollback(cfg, []) == :ok
   end
 
+  test "non-integer or non-positive scrollback ids never touch the filesystem", %{cfg: cfg} do
+    outside = Path.join(cfg.dir, "x.etf")
+    File.mkdir_p!(cfg.dir)
+    File.write!(outside, "keep me")
+
+    for bad <- ["../x", -1, 0, :x] do
+      assert Disk.write_scrollback(cfg, bad, "b", 80) == {:error, :bad_id}
+      assert Disk.read_scrollback(cfg, bad) == nil
+    end
+
+    assert File.read!(outside) == "keep me"
+    refute File.exists?(Disk.scrollback_dir(cfg))
+  end
+
+  test "pruning one session leaves a session named <name>.etf alone", %{cfg: cfg} do
+    other = %{cfg | name: "t.etf"}
+    File.mkdir_p!(cfg.dir)
+    theirs = for ms <- 1..6, do: "session.t.etf.etf.bad-#{ms}"
+    for n <- theirs, do: File.write!(Path.join(cfg.dir, n), "x")
+
+    File.write!(Disk.session_path(cfg), "junk")
+    capture_log(fn -> assert {:error, _} = Disk.read(cfg) end)
+
+    names = File.ls!(cfg.dir)
+    assert Enum.all?(theirs, &(&1 in names))
+    assert [_] = Enum.filter(names, &(&1 =~ ~r/^session\.t\.etf\.bad-\d+$/))
+    assert Disk.session_path(other) == Path.join(cfg.dir, "session.t.etf.etf")
+  end
+
+  test "sweep_tmp removes stale snapshot temp files only", %{cfg: cfg, path: path} do
+    assert Disk.sweep_tmp(cfg) == :ok
+    File.mkdir_p!(cfg.dir)
+    File.write!(path <> ".tmp-12", "partial")
+    File.write!(path <> ".tmp-99", "partial")
+    File.write!(Path.join(cfg.dir, "session.u.etf.tmp-1"), "other session")
+    assert Disk.write(cfg, snapshot()) == :ok
+    assert Disk.sweep_tmp(cfg) == :ok
+    assert File.ls!(cfg.dir) |> Enum.sort() == ["session.t.etf", "session.u.etf.tmp-1"]
+  end
+
   describe "resolve_name/1" do
     test "valid names pass, nil and empty give default" do
       assert Disk.resolve_name("work_1.a-b") == "work_1.a-b"

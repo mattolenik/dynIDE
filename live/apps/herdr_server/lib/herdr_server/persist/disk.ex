@@ -31,7 +31,6 @@ defmodule HerdrServer.Persist.Disk do
     scrollback_rows: 1000
   }
   @name_re ~r/^[A-Za-z0-9_.-]{1,64}$/
-  @aside_re ~r/\.(?:bad|v\d+)-(\d+)$/
   @keep_aside 5
   @scrollback_v 1
 
@@ -166,13 +165,12 @@ defmodule HerdrServer.Persist.Disk do
   end
 
   defp prune_aside(cfg) do
-    prefix = "session.#{cfg.name}.etf."
+    re = ~r/^session\.#{Regex.escape(cfg.name)}\.etf\.(?:bad|v\d+)-(\d+)$/
 
     case File.ls(cfg.dir) do
       {:ok, names} ->
         names
-        |> Enum.filter(&String.starts_with?(&1, prefix))
-        |> Enum.flat_map(&aside_entry/1)
+        |> Enum.flat_map(&aside_entry(re, &1))
         |> Enum.sort(:desc)
         |> Enum.drop(@keep_aside)
         |> Enum.each(fn {_, n} -> File.rm(Path.join(cfg.dir, n)) end)
@@ -182,8 +180,8 @@ defmodule HerdrServer.Persist.Disk do
     end
   end
 
-  defp aside_entry(name) do
-    case Regex.run(@aside_re, name) do
+  defp aside_entry(re, name) do
+    case Regex.run(re, name) do
       [_, ms] -> [{String.to_integer(ms), name}]
       nil -> []
     end
@@ -191,16 +189,22 @@ defmodule HerdrServer.Persist.Disk do
 
   # --- scrollback ---
 
-  @doc "Writes pane `id`'s scrollback bytes (rendered at `cols`) atomically."
+  @doc """
+  Writes pane `id`'s scrollback bytes (rendered at `cols`) atomically. Ids come from a
+  snapshot on disk: anything but a positive integer is `{:error, :bad_id}`.
+  """
   @spec write_scrollback(cfg, pos_integer, binary, pos_integer) :: :ok | {:error, term}
-  def write_scrollback(cfg, id, bytes, cols) when is_binary(bytes) and is_integer(cols) do
+  def write_scrollback(cfg, id, bytes, cols)
+      when is_integer(id) and id > 0 and is_binary(bytes) and is_integer(cols) do
     envelope = %{format: :herdr_live_scrollback, v: @scrollback_v, cols: cols, bytes: bytes}
     atomic_write(scrollback_path(cfg, id), encode(envelope))
   end
 
+  def write_scrollback(_cfg, _id, _bytes, _cols), do: {:error, :bad_id}
+
   @doc "Pane `id`'s scrollback bytes, or nil. A file that does not decode is deleted."
   @spec read_scrollback(cfg, pos_integer) :: binary | nil
-  def read_scrollback(cfg, id) do
+  def read_scrollback(cfg, id) when is_integer(id) and id > 0 do
     path = scrollback_path(cfg, id)
 
     with {:ok, bin} <- File.read(path),
@@ -216,6 +220,8 @@ defmodule HerdrServer.Persist.Disk do
         nil
     end
   end
+
+  def read_scrollback(_cfg, _id), do: nil
 
   @doc "Deletes every scrollback file except those of `keep_ids`."
   @spec prune_scrollback(cfg, [pos_integer]) :: :ok
@@ -233,7 +239,23 @@ defmodule HerdrServer.Persist.Disk do
     end
   end
 
-  defp scrollback_path(cfg, id), do: Path.join(scrollback_dir(cfg), "#{id}.etf")
+  defp scrollback_path(cfg, id) when is_integer(id) and id > 0,
+    do: Path.join(scrollback_dir(cfg), "#{id}.etf")
+
+  @doc "Removes stale snapshot temp files (`session.<name>.etf.tmp-*`) left by a crash."
+  @spec sweep_tmp(cfg) :: :ok
+  def sweep_tmp(cfg) do
+    prefix = "session.#{cfg.name}.etf.tmp-"
+
+    case File.ls(cfg.dir) do
+      {:ok, names} ->
+        for n <- names, String.starts_with?(n, prefix), do: File.rm(Path.join(cfg.dir, n))
+        :ok
+
+      {:error, _} ->
+        :ok
+    end
+  end
 
   # --- encoding and files ---
 
@@ -282,8 +304,11 @@ defmodule HerdrServer.Persist.Disk do
              :ok <- :file.write(fd, bin),
              do: :file.sync(fd)
 
-      :ok = :file.close(fd)
-      result
+      # a failed close is a failed write: the caller removes the temp
+      case {result, :file.close(fd)} do
+        {:ok, close} -> close
+        {err, _} -> err
+      end
     end
   end
 end
