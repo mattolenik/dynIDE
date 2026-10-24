@@ -4,7 +4,8 @@ defmodule HerdrServer.TelemetryTest do
   import ExUnit.CaptureLog
 
   alias HerdrServer.App.Store
-  alias HerdrServer.Handoff.Notice
+  alias HerdrServer.Handoff.{Link, Notice}
+  alias HerdrServer.Kernel.Fake.Keeper
 
   test "a handoff notice logs a handoff line" do
     log =
@@ -57,7 +58,7 @@ defmodule HerdrServer.TelemetryTest do
       assert log =~
                ~r/herdr-event session_lost ts=\d{13} proc=store reason=fresh_restart panes=1/
 
-      assert HerdrServer.Kernel.Fake.Keeper.ids() == []
+      assert Keeper.ids() == []
     end
 
     test "a fresh Store start with no panes logs nothing" do
@@ -78,12 +79,12 @@ defmodule HerdrServer.TelemetryTest do
     end
 
     test "an unusable carried app beside adopted panes logs session_lost" do
-      {:ok, kid} = HerdrServer.Kernel.Fake.Keeper.open(spec())
+      {:ok, kid} = Keeper.open(spec())
       blob = :erlang.term_to_binary(%{v: 1, app: %{session: %{}}, kernel_ids: [{1, kid}]})
-      :ok = HerdrServer.Handoff.Link.put_adopted_for_test([{"app/store", blob, []}])
+      :ok = Link.put_adopted_for_test([{"app/store", blob, []}])
 
       on_exit(fn ->
-        if pid = Process.whereis(HerdrServer.Handoff.Link), do: GenServer.stop(pid)
+        if pid = Process.whereis(Link), do: GenServer.stop(pid)
       end)
 
       log = capture_log(&restart_store/0)
