@@ -37,7 +37,7 @@ fail() {
 cat >"$tmp/inner.sh" <<INNER
 alive() { st=\$(ps -o stat= -p "\$1" 2>/dev/null); [ -n "\$st" ] && [ "\${st#Z}" = "\$st" ]; }
 stty -a >"$tmp/before"
-export HERDR_LIVE_CONTROL="$tmp/control.sock"
+export HERDR_LIVE_API="$tmp/api.sock"
 # session files (M8) under the run dir, never the real session
 export HERDR_LIVE_STATE_DIR="$tmp/state"
 HERDR_LIVE_HEADLESS=1 HERDR_LIVE_RUNTIME_DIR="$tmp/rt" HERDR_LIVE_LOG="$tmp/log/herdr-live.log" "$root/bin/herdr-live" &
@@ -90,7 +90,7 @@ echo "PASS: headless, no terminal client"
 echo "PASS: herdr-live rollback answers ok none"
 [ "$(cat "$tmp/rb_down" 2>&1)" = "herdr-live is not running" ] && [ "$(cat "$tmp/rb_down.status")" = 1 ] ||
   fail "rollback after stop: $(cat "$tmp/rb_down" "$tmp/rb_down.status" 2>&1)"
-[ ! -e "$tmp/control.sock" ] || fail "control socket left behind"
+[ ! -e "$tmp/api.sock" ] || fail "api socket left behind"
 echo "PASS: herdr-live rollback after stop exits 1, socket removed"
 # Darwin script(1) echoes "^D" plus backspaces when its own stdin hits EOF; that is script, not the VM.
 [ -z "$(tr -d '\r\n\b' <"$tmp/transcript" | sed 's/^\^D//')" ] || fail "terminal output: $(cat "$tmp/transcript")"

@@ -36,7 +36,7 @@ defmodule HandoffDriver do
       {~c"HERDR_LIVE_STATE_DIR", String.to_charlist(Path.join(dir, "state"))},
       {~c"HERDR_LIVE_SESSION", false},
       {~c"HERDR_LIVE_PERSIST", false},
-      {~c"HERDR_LIVE_CONTROL", String.to_charlist(Path.join(dir, "ctl.sock"))},
+      {~c"HERDR_LIVE_API", String.to_charlist(Path.join(dir, "ctl.sock"))},
       {~c"PATH", String.to_charlist(path())},
       {~c"HERDR_SOCKET_PATH", false},
       {~c"HERDR_CLIENT_SOCKET_PATH", false},

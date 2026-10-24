@@ -101,7 +101,7 @@ defmodule HerdrServer.Api.Spec do
         "reload.rollback",
         "reload",
         "Roll back the last n reload batches.",
-        [req("n", {:integer, 1, 100}, "Number of batches to roll back.")],
+        [opt("n", {:integer, 1, 100}, "Number of batches to roll back; default 1.")],
         "reload_rollback",
         [:not_available, :failed, :timeout],
         "herdr-live reload rollback [<n>]"

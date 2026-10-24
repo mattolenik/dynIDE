@@ -15,8 +15,8 @@ defmodule HerdrServer.Handoff.Link do
   subscribe to `Handoff.Notice`. On PREPARE the Link waits (at most 2 s) for the local
   client (`Protocol.local_client_name/0`) to stop, so its tty restore is done before the
   next VM's client can open the tty, and flushes `App.Store`'s pending HOLD. After the
-  freeze it stops `HerdrServer.Control` (removing its socket) so the next VM can serve
-  `herdr-live rollback`; THAW restarts it.
+  freeze it stops `HerdrServer.Api.Listener` (removing its socket) so the next VM can serve
+  the API; THAW restarts it.
 
   ctl REQUESTs are queued until `restored/0` has run (Application.start calls it once the
   supervisor is up, after FRESH as after an adoption), then run in order: a request the
@@ -278,8 +278,8 @@ defmodule HerdrServer.Handoff.Link do
     :ok = Store.flush_hold()
     state = drain_ctl(%{state | frozen: true})
     :ok = Keeper.prepare()
-    # the next VM serves `herdr-live rollback`: free the socket path for it
-    _ = Supervisor.terminate_child(HerdrServer.Supervisor, HerdrServer.Control)
+    # the next VM serves the API: free the socket path for it
+    _ = Supervisor.terminate_child(HerdrServer.Supervisor, HerdrServer.Api.Listener)
     send_frame(:prepared, "", [])
     {:noreply, state}
   end
@@ -287,7 +287,7 @@ defmodule HerdrServer.Handoff.Link do
   def handle_info({:herdr_link, _, @thaw, _, _}, state) do
     state = Map.merge(%__MODULE__{}, state)
     :ok = Keeper.thaw()
-    _ = Supervisor.restart_child(HerdrServer.Supervisor, HerdrServer.Control)
+    _ = Supervisor.restart_child(HerdrServer.Supervisor, HerdrServer.Api.Listener)
     :persistent_term.put(Protocol.handoff_key(), :aborted)
     notice(:aborted, state)
     later = :queue.to_list(state.later)

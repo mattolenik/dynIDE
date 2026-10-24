@@ -85,7 +85,7 @@ CLI: `herdr-live reload rollback [<n>]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
-| `n` | integer 1..100 | yes | Number of batches to roll back. |
+| `n` | integer 1..100 | no | Number of batches to roll back; default 1. |
 
 Result: `reload_rollback` with `batches` (list of integer).
 

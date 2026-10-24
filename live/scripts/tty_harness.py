@@ -56,7 +56,7 @@ shared _build/dev, so they skip (print SKIP, exit 0) inside a herdr-live pane:
 pane shells inherit the VM's HERDR_BROKER_SOCK. Run them outside the dogfood
 instance (another terminal or worktree).
 
-Every herdr-live launch gets its own HERDR_LIVE_LOG, HERDR_LIVE_CONTROL,
+Every herdr-live launch gets its own HERDR_LIVE_LOG, HERDR_LIVE_API,
 HERDR_LIVE_RUNTIME_DIR and HERDR_LIVE_STATE_DIR under the run's temp dir, so the
 CLI calls address that instance only and no run reads or writes the human's
 session file.
@@ -477,7 +477,7 @@ class Herdr:
     """bin/herdr-live attached, leading the session of a fresh cols x rows pty."""
 
     def __init__(self, tmp, cols, rows, run=""):
-        """`run` names the log, control socket and runtime dir, so two launches in one
+        """`run` names the log, API socket and runtime dir, so two launches in one
         temp dir (persist) stay apart; the state dir (session files) is the temp dir's."""
         self.log = os.path.join(tmp, f"herdr-live{run}.log")
         self.tmp = tmp
@@ -494,7 +494,7 @@ class Herdr:
         # this instance only (never the human's session.default.etf)
         self.state = os.path.join(tmp, "state")
         env.update(SHELL="/bin/sh", PS1="$ ", HISTFILE="/dev/null", TERM="xterm-256color",
-                   HERDR_LIVE_LOG=self.log, HERDR_LIVE_CONTROL=os.path.join(tmp, f"control{run}.sock"),
+                   HERDR_LIVE_LOG=self.log, HERDR_LIVE_API=os.path.join(tmp, f"api{run}.sock"),
                    HERDR_LIVE_RUNTIME_DIR=os.path.join(tmp, f"rt{run}"), HERDR_LIVE_STATE_DIR=self.state)
         self.env = env
         pid = os.fork()

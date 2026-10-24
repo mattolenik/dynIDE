@@ -176,7 +176,7 @@ Compile errors show file and line of the first diagnostic; the full text is in t
 ## Rollback, what it leaves on disk, and re-saving
 
 Rollback (automatic, or `live/bin/herdr-live rollback [n]` for the newest n batches;
-replies `ok <batch ids>`, `ok none` or `error ...`, through the local control socket of
+replies `ok <batch ids>`, `ok none` or `error ...`, through the local API socket of
 the primary VM) reloads each module's previous beam and also writes it back to its ebin
 path. What it leaves:
 
@@ -297,7 +297,7 @@ grep -E 'herdr-event (session_lost|crash|broker_handoff_failed)' "$L"
 | screen or layout reset | `herdr-event crash proc=store` and `session_lost` |
 | tty left raw | broker restores it at exit; if a VM died early, run `stty sane` |
 | screen frozen, VM still running (log has `crash proc=local_client action=gave_up`: the terminal client crashed past its restart limit and the VM runs headless) | from another terminal, `live/bin/herdr-live rollback` (undo the edit that broke the client), then `live/bin/herdr-live kernel-restart` (the new VM starts a fresh client on the tty) |
-| `herdr-live: not running` from `rollback` or `test-on-save` | the control socket moves with the primary and is gone for a few ms during a graceful handoff; retry |
+| `herdr-live: not running` from `rollback` or `test-on-save` | the API socket moves with the primary and is gone for a few ms during a graceful handoff; retry |
 
 `live/bin/herdr-live status` prints the broker state (`primary_gen`, `primary_pid`,
 `standby_ready`, `phase`, `handoffs`, `last_handoff_kind`).

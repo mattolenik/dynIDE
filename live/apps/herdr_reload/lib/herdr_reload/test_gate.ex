@@ -5,7 +5,7 @@ defmodule HerdrReload.TestGate do
 
   With `:gate`, a save first runs the changed module's ExUnit file (`apps/<app>/lib/x.ex`
   maps to `apps/<app>/test/x_test.exs` when it exists; a saved test file maps to itself)
-  in a separate `mix test` OS process (`MIX_ENV=test`, the live VM's broker/control env
+  in a separate `mix test` OS process (`MIX_ENV=test`, the live VM's broker/api env
   removed), and only a pass reloads. It adds seconds of latency, which is why it is off
   by default. No mapped tests and nothing blocked: reload as usual (telemetry
   `tests result=none`).
@@ -43,7 +43,7 @@ defmodule HerdrReload.TestGate do
 
   @timeout_ms 120_000
 
-  @unset ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN HERDR_LIVE_CONTROL HERDR_LIVE_LOG
+  @unset ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN HERDR_LIVE_API HERDR_LIVE_LOG
             HERDR_LIVE_RUNTIME_DIR HERDR_LIVE_HEADLESS)
 
   @type result :: :passed | :failed | :error

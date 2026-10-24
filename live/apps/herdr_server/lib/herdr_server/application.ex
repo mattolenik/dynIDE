@@ -39,7 +39,7 @@ defmodule HerdrServer.Application do
           HerdrServer.Client.Endpoint,
           HerdrServer.ReloadNotices
         ] ++
-        control() ++
+        api() ++
         [
           # last: it stops first, writing a final snapshot while Store and Keeper still run;
           # ignores itself unless persistence is enabled
@@ -87,10 +87,10 @@ defmodule HerdrServer.Application do
 
   defp gen, do: System.get_env("HERDR_LIVE_GEN") || "0"
 
-  # the rollback socket only makes sense with the reload pipeline running
-  defp control do
-    if Application.get_env(:herdr_reload, HerdrReload, [])[:enabled],
-      do: [{HerdrServer.Control, []}],
+  # off in test: tests start their own listener on a tmp path
+  defp api do
+    if Application.get_env(:herdr_server, :api, [])[:enabled],
+      do: [{HerdrServer.Api.Listener, []}],
       else: []
   end
 

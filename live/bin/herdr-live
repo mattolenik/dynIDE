@@ -18,7 +18,7 @@
 # one session file.
 #
 # herdr-live rollback [n]: roll back the newest n live reload batches (default 1)
-# through the control socket of the running instance (HerdrServer.Control, served
+# through the API socket of the running instance (HerdrServer.Api.Listener, served
 # by the current primary VM; a promoted VM takes the socket over).
 # A rolled-back source is reloaded again only when its content changes: re-saving
 # or touching the same bytes does nothing (edit it, or revert it, to reload).
@@ -27,25 +27,39 @@
 # argument prints the current mode (ok gate | ok off). Off by default; it adds seconds
 # per save. HERDR_LIVE_TEST_ON_SAVE=1 starts it on. The runtime setting does not survive
 # a VM handoff (the new VM falls back to HERDR_LIVE_TEST_ON_SAVE / config).
-control() { # control <command line>
-  sock=${HERDR_LIVE_CONTROL:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/control.sock}
+api() { # api <method> <params json>; prints ok <batch ids> | ok none | ok <mode> | error <msg>
+  sock=${HERDR_LIVE_API:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/api.sock}
   [ -S "$sock" ] || { echo "herdr-live is not running" >&2; exit 1; }
   exec elixir -e '
-    [sock, line] = System.argv()
-    with {:ok, s} <- :gen_tcp.connect({:local, sock}, 0, [:binary, packet: :line, active: false], 2000),
-         :ok <- :gen_tcp.send(s, line <> "\n"),
-         {:ok, reply} <- :gen_tcp.recv(s, 0, 60_000) do
-      IO.write(reply)
-      System.halt(if String.starts_with?(reply, "ok"), do: 0, else: 1)
+    [sock, method, params] = System.argv()
+    req = JSON.encode!(%{id: "cli", method: method, params: JSON.decode!(params)})
+    with {:ok, s} <- :gen_tcp.connect({:local, sock}, 0, [:binary, packet: :line, buffer: 1_048_576, active: false], 2000),
+         :ok <- :gen_tcp.send(s, req <> "\n"),
+         {:ok, line} <- :gen_tcp.recv(s, 0, 60_000) do
+      out =
+        case JSON.decode!(line) do
+          %{"result" => %{"batches" => []}} -> "ok none"
+          %{"result" => %{"batches" => ids}} -> "ok " <> Enum.join(ids, " ")
+          %{"result" => %{"mode" => mode}} -> "ok " <> mode
+          %{"error" => %{"message" => msg}} -> "error " <> msg
+        end
+      IO.puts(out)
+      System.halt(if String.starts_with?(out, "ok"), do: 0, else: 1)
     else
       _ -> IO.puts(:stderr, "herdr-live is not running"); System.halt(1)
-    end' "$sock" "$1"
+    end' "$sock" "$1" "$2"
 }
 case ${1:-} in
-  rollback) control "rollback ${2:-1}" ;;
+  rollback)
+    case ${2:-1} in
+      *[!0-9]* | '' | 0) echo "usage: herdr-live rollback [n]" >&2; exit 2 ;;
+    esac
+    api reload.rollback "{\"n\":${2:-1}}"
+    ;;
   test-on-save)
     case ${2:-status} in
-      on | off | status) control "test-on-save ${2:-status}" ;;
+      on | off) api reload.test_on_save "{\"mode\":\"$2\"}" ;;
+      status) api reload.test_on_save "{}" ;;
       *) echo "usage: herdr-live test-on-save [on|off]" >&2; exit 2 ;;
     esac
     ;;
@@ -58,7 +72,7 @@ case ${HERDR_LIVE_STATE_DIR:-} in /* | '') ;; *) export HERDR_LIVE_STATE_DIR="$P
 if [ -n "${HERDR_LIVE_RUNTIME_DIR:-}" ] && [ -z "${HERDR_LIVE_STATE_DIR:-}" ]; then
   export HERDR_LIVE_STATE_DIR="$HERDR_LIVE_RUNTIME_DIR/state"
 fi
-# 0700 when created here: the control socket (HerdrServer.Control) lives beside the log
+# 0700 when created here: the API socket (HerdrServer.Api.Listener) lives beside the log
 (umask 077 && mkdir -p "$(dirname "$log")") || exit 1
 # resolve symlinks (portable: no readlink -f on macOS)
 self=$0

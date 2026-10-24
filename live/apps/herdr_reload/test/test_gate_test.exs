@@ -130,7 +130,7 @@ defmodule HerdrReload.TestGateTest do
     TestGate.run(%{"/d" => ["test/x_test.exs"]}, runner: runner)
     assert_received {:env, env}
     assert {"MIX_ENV", "test"} in env
-    for v <- ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN HERDR_LIVE_CONTROL HERDR_LIVE_LOG
+    for v <- ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN HERDR_LIVE_API HERDR_LIVE_LOG
                 HERDR_LIVE_RUNTIME_DIR HERDR_LIVE_HEADLESS),
         do: assert({v, nil} in env)
   end

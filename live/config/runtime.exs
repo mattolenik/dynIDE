@@ -1,10 +1,10 @@
 import Config
 
-# mix test inside a herdr-live pane inherits the live VM's broker/control env (portable-pty
+# mix test inside a herdr-live pane inherits the live VM's broker/api env (portable-pty
 # passes the base env), which would make the test VM talk to the live broker and halt.
 # Test VMs never belong to an instance: drop the vars before the apps start.
 if config_env() == :test do
-  for v <- ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN HERDR_LIVE_CONTROL HERDR_LIVE_RUNTIME_DIR
+  for v <- ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN HERDR_LIVE_API HERDR_LIVE_RUNTIME_DIR
               HERDR_LIVE_TEST_ON_SAVE),
       do: System.delete_env(v)
 end

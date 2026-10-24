@@ -26,6 +26,9 @@ config :herdr_reload, HerdrReload,
   scan_local_funs: config_env() != :prod,
   test_on_save: :off
 
+# The JSON socket API (M12). Off in test: tests start their own listener on a tmp path.
+config :herdr_server, :api, enabled: config_env() != :test
+
 # Handoff (M5): with a broker, changed panes are snapshotted to it this often.
 config :herdr_server, HerdrServer.Handoff, snapshot_ms: 1000
 
