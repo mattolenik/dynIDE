@@ -1,5 +1,6 @@
 pub mod cell;
 pub mod input;
+pub mod splitter;
 pub mod vt;
 
 use rustler::Error;
