@@ -23,7 +23,9 @@ defmodule HerdrScene.Protocol do
       the client's own detach binding or `{:detach}`); the session is gone after it
     * `{:input_mode, :terminal | :prefix | :resize}`: this client's own input mode
       changed (input modes are per client). Sent to the `from_pid` of the `{:input, ...}`
-      that caused it, before that input's `{:ack, seq}`; a session starts in `:terminal`.
+      that caused it, before that input's `{:ack, seq}`; a session starts in `:terminal`,
+      except a re-attach that restores a mirrored mode, which sends it to the attach's
+      `client` pid right after attaching.
       A client may take the fast path only while its own mode is `:terminal`
 
   Generations: `{:ref, id, layout_gen}` in a scene is the pane's layout generation;

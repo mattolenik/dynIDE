@@ -150,6 +150,13 @@ defmodule HerdrTerm.Client.Term.Render do
     {:noreply, state}
   end
 
+  # a re-attached session's mirrored mode; Input reset its own on {:session, _} first
+  def handle_info({:input_mode, _} = msg, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    send_input(state, msg)
+    {:noreply, state}
+  end
+
   def handle_info(:frame, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:noreply, render(%{state | timer: nil})}

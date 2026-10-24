@@ -1,16 +1,11 @@
 defmodule HerdrServer.App.ReconcileTest do
   use ExUnit.Case, async: true
-  alias HerdrScene.Event
   alias HerdrServer.App.{Actions, Reconcile}
   alias HerdrServer.Layout
 
   defp fresh, do: elem(Actions.init(%{cols: 100, rows: 25}), 0)
 
-  defp pfx(app, key) do
-    {app, _} = Actions.apply(app, Event.key("b", [:ctrl]))
-    {app, _} = Actions.apply(app, Event.key(key))
-    app
-  end
+  defp pfx(app, key), do: HerdrServer.ViewHelpers.pfx(app, key)
 
   defp ws(app), do: hd(app.session.workspaces)
   defp tab(app, name), do: Enum.find(ws(app).tabs, &(&1.name == name))

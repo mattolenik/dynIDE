@@ -416,6 +416,7 @@ defmodule HerdrServer.ServerTest do
     split(c, s)
     fake_reload({:ok, 7, at_load})
     boom_on_z()
+    gens = Map.new(Store.snapshot().session.panes, fn {id, m} -> {id, m.layout_gen} end)
 
     input(s, c, 3, Event.key("b", [:ctrl]))
     input(s, c, 4, Event.key("z"))
@@ -435,6 +436,10 @@ defmodule HerdrServer.ServerTest do
     assert tab_ids(app, "scratch") == [2]
     assert app.focus.pane == 1
     consistent!(app)
+    # a ref client never sees a layout_gen go back (it would skip a re-fetch)
+    # (pane 1 is back to its full rect, so it needs a gen it never had)
+    assert app.session.panes[1].layout_gen > gens[1]
+    assert app.session.panes[2].layout_gen >= gens[2]
 
     # the restored app takes input
     input(s, c, 5, Event.key("b", [:ctrl]))
@@ -580,6 +585,35 @@ defmodule HerdrServer.ServerTest do
     send(pid, :go)
     assert_receive {:DOWN, ^ref, :process, _, _}, 500
     assert HerdrServer.Mirror.client(pid) == nil
+  end
+
+  test "per-client input mode is mirrored and re-seeded on re-attach, and the client told" do
+    {c, s} = client()
+    scene(c)
+    input(s, c, 1, Event.key("b", [:ctrl]))
+    assert_receive {^c, {:input_mode, :prefix}}
+    assert_receive {^c, {:ack, 1}}
+    assert HerdrServer.Mirror.client(c).mode == :prefix
+
+    parent = self()
+    HerdrServer.Mirror.put({:client, parent}, %{HerdrServer.Mirror.client(c) | hover: nil})
+
+    info = %{
+      kind: :term,
+      transport: :ref,
+      size: %{cols: 80, rows: 24},
+      cell_px: nil,
+      caps: %{},
+      client: parent
+    }
+
+    {:ok, session, _} = GenServer.call(Protocol.endpoint(), {:attach, info})
+    assert :sys.get_state(session).mode == :prefix
+    assert_receive {:input_mode, :prefix}
+    # the re-seeded prefix applies: "v" splits
+    send(session, {:input, parent, 1, Event.key("v")})
+    assert_receive {:input_mode, :terminal}
+    assert eventually(fn -> map_size(Store.snapshot().session.panes) == 2 end)
   end
 
   test "when the driving client leaves, the pty size goes back to the remaining client" do

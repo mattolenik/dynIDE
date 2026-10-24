@@ -53,7 +53,7 @@ if Mix.env() == :test do
     @node "apps/herdr_scene/lib/herdr_scene/scene/node.ex"
     @actions "apps/herdr_server/lib/herdr_server/app/actions.ex"
 
-    @view_left "left = [mode(app), tabs(ws)]"
+    @view_left "left = [mode(mode), tabs(ws)]"
 
     @impl Mix.Task
     def run(args) do
@@ -488,15 +488,16 @@ if Mix.env() == :test do
 
     # -- pane_in_window -------------------------------------------------------
 
-    # Batch K's App.Actions sets focus.swallow to :corrupt on a "bench-corrupt" paste (only
-    # Actions reads swallow, so the Store, View and fast path keep working). The next
-    # Store-routed key (the prefix, ctrl-b) raises in MapSet.put on the new code, the
-    # Guard rolls K back, and the old code raises on the same state too: a repeat failure.
+    # Batch K's App.Actions sets session.next_id to :corrupt on a "bench-corrupt" paste
+    # (only Actions reads next_id, so the Store, View and fast path keep working). The
+    # next split (prefix v, a Store.run of Actions.split) raises in `+` on the new code,
+    # the Guard rolls K back, and the old code raises on the same state too: a repeat
+    # failure.
     # The Store restores K's state_at_load (from before the split) and reconciles with the
     # keeper: the pane split off after K's load must be adopted into a "scratch" tab.
     defp pane_in_window(client, cfg) do
       clause = fn i ->
-        "  def apply(app, {:paste, \"bench-corrupt\"}),\n    do: {put_in(app.focus.swallow, {:corrupt, #{i}}), []}\n\n"
+        "  def apply(app, {:paste, \"bench-corrupt\"}),\n    do: {put_in(app.session.next_id, {:corrupt, #{i}}), []}\n\n"
       end
 
       samples =
@@ -524,13 +525,13 @@ if Mix.env() == :test do
           Driver.type(client, "\e[200~bench-corrupt\e[201~")
 
           until(
-            fn -> match?({:corrupt, _}, Store.snapshot().focus.swallow) end,
+            fn -> match?({:corrupt, _}, Store.snapshot().session.next_id) end,
             2000,
             "no corrupt state"
           )
 
           t0 = now()
-          Driver.type(client, "\x02")
+          Driver.type(client, "\x02v")
 
           until_frame(
             client,
@@ -906,7 +907,7 @@ if Mix.env() == :test do
       evs = events() |> Enum.take(-4) |> inspect(limit: 6, printable_limit: 120)
 
       "scene tabs #{inspect(tab_names(Driver.scene(client)))}, store tabs #{inspect(tabs)}, " <>
-        "swallow #{inspect(app.focus.swallow)}, kernel ids #{inspect(Rows.kernel_ids())}, " <>
+        "next_id #{inspect(app.session.next_id)}, kernel ids #{inspect(Rows.kernel_ids())}, " <>
         "last events #{String.slice(evs, 0, 800)}"
     end
 

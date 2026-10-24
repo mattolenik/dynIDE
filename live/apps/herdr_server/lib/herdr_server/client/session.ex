@@ -41,7 +41,7 @@ defmodule HerdrServer.Client.Session do
   alias HerdrServer.Pane.Rows
   alias HerdrServer.View
 
-  @presentation [:viewports, :hover]
+  @presentation [:viewports, :hover, :mode, :swallow]
   @store_wait_ms 10
   @store_tries 100
 
@@ -75,6 +75,8 @@ defmodule HerdrServer.Client.Session do
   @impl true
   def handle_continue(:attach, state) do
     state = Map.merge(%State{}, state)
+    # a mirrored mode: the client reset its own to :terminal for this new session
+    if state.mode != :terminal, do: send(state.client, {:input_mode, state.mode})
     {:noreply, resized(state)}
   end
 
@@ -234,9 +236,8 @@ defmodule HerdrServer.Client.Session do
 
       # a broken resolver (failure or bad shape) still lets the client type
       other ->
-        send(state.client, {:notice, %{level: :error, text: "keys failed: #{inspect(other)}"}})
         Store.event(ev, driving_size(state))
-        state
+        notice(state, %{level: :error, text: "keys failed: #{inspect(other)}"})
     end
   end
 
@@ -325,7 +326,13 @@ defmodule HerdrServer.Client.Session do
   defp push(state, nil), do: state
 
   defp push(state, app) do
-    state = %{state | keybinds: app.ui.keybinds}
+    # outside the guard: an app without keybinds (a broken Store) must not crash us
+    state =
+      case app do
+        %{ui: %{keybinds: kb}} -> %{state | keybinds: kb}
+        _ -> state
+      end
+
     # the budget copies args into a worker: pass only what View reads, never last_scene
     view_state = %State{
       size: state.size,

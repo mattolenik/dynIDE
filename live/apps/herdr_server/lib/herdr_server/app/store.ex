@@ -19,19 +19,22 @@ defmodule HerdrServer.App.Store do
       notice and closes the pane again, as `{:pane_exited, id}`.
     * `app.session`, `app.focus`, `app.ui` and the bookkeeping below (`@book`) are
       mirrored to `HerdrServer.Mirror`, debounced (one 20 ms timer; only changed entries
-      are written; flushed on `terminate/2`). A restarted Store reconciles the mirrored
+      are written). `terminate/2` flushes, but it only runs when a callback raises: the
+      Store does not trap exits, so a kill or a supervisor shutdown loses the window
+      (Reconcile adopts its panes). A restarted Store reconciles the mirrored
       app with the keeper (`App.Reconcile`: panes whose kernel is gone are dropped, live
       mapped panes the mirror lost, e.g. spawned within the debounce window, are adopted
       into a "scratch" tab; missing `Pane.Server`s restarted), re-monitors the mirrored
       sessions and republishes the fast path; sessions re-subscribe and push full scenes.
       Only an empty mirror (or a failing reconcile) starts fresh, closing whatever the
-      keeper still holds. Other app writes inside the window (focus, titles, modes) are
-      lost.
+      keeper still holds. Other app writes inside the window (focus, titles) are lost.
     * A repeat failure of `Actions.apply` (the guard rolled back batch K and the old code
       failed on the same event too) restores the `state_at_load` of the reload server's
       `last_rolled_back/1` batch when it is K or older, reconciled with the keeper as
-      above (keeping the current pane area), and warns every subscriber. Without such a
-      state, or on an unattributed failure, the event is discarded with an error notice.
+      above (keeping the current pane area, and each pane's `layout_gen` at least its
+      current one, so a ref client never sees a gen twice), and warns every subscriber.
+      Without such a state, or on an unattributed failure, the event is discarded with an
+      error notice.
       The reload server is `config :herdr_server, :reload_server` (default
       `HerdrReload.Server`).
   """
@@ -294,6 +297,7 @@ defmodule HerdrServer.App.Store do
     with {:ok, id, at_load} when id <= k and at_load != nil <- last_rolled_back(),
          at_load = put_in(at_load.session.area, app.session.area),
          {:ok, state} <- reconcile(state, at_load) do
+      state = %{state | app: keep_gens(state.app, app)}
       n = %{level: :warning, text: "state restored to batch #{id}; actions since were lost"}
 
       if state.subs == %{},
@@ -307,6 +311,16 @@ defmodule HerdrServer.App.Store do
   end
 
   defp restore(_state, _k), do: :none
+
+  # A ref client re-fetches a pane only when its layout_gen changes: a restored older gen
+  # (or an adopted pane's 0) would repeat one it has seen, with another size.
+  defp keep_gens(restored, app) do
+    gens = for {id, %{layout_gen: g}} <- app.session.panes, into: %{}, do: {id, g}
+
+    update_in(restored.session.panes, fn panes ->
+      Map.new(panes, fn {id, m} -> {id, %{m | layout_gen: max(m.layout_gen, gens[id] || 0)}} end)
+    end)
+  end
 
   # ponytail: a reload server dying between whereis and the call crashes the Store,
   # which then restarts from the mirror

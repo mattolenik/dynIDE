@@ -90,6 +90,21 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     assert_receive {:frame, _, %{repaint: true}}
   end
 
+  # a re-attached session re-seeds a mirrored mode and tells the client pid (Render)
+  test "a session's {:input_mode, mode} reaches Input after the attach reset", %{render: r} do
+    send(r, {:input_mode, :prefix})
+    input = Client.whereis(:sys.get_state(r).id, :input)
+    assert eventually(fn -> :sys.get_state(input).mode == :prefix end)
+  end
+
+  defp eventually(f, n \\ 50) do
+    cond do
+      f.() -> true
+      n == 0 -> false
+      true -> Process.sleep(10) && eventually(f, n - 1)
+    end
+  end
+
   test "a scene re-fetches only new panes and panes whose layout_gen changed", %{
     render: render,
     rows: rows
