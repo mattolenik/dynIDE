@@ -4,7 +4,9 @@ defmodule HerdrServer.Api.Handlers.Topology do
   `App.Store.snapshot/0` (initialising a nil app through `Commands.noop/1`); changes go
   through `App.Store.request/1` on `App.Commands` and answer from the `{before, after}`
   pair: the new object is the id present in `after` and not in `before`; a target absent
-  from `before` is `not_found`; a warning notice received during the request is `failed`.
+  from `before` is `not_found`; a warning notice received during the request is `failed`;
+  an error notice (the command crashed and the Store discarded or restored the batch) is
+  `internal`.
   """
 
   alias HerdrServer.Api.{Ids, View}
@@ -40,11 +42,12 @@ defmodule HerdrServer.Api.Handlers.Topology do
   def handle("workspace.create", p) do
     mfa = {Commands, :create_workspace, [p[:label], Map.get(p, :focus, false)]}
 
-    {:ok, before, aft, notes} = run(mfa)
-
-    case Enum.reject(aft.session.workspaces, &View.find_workspace(before, &1.id)) do
-      [ws | _] -> created_workspace(aft, ws)
-      [] -> unchanged(notes)
+    with {:ok, before, aft, _notes} <- run(mfa) do
+      case Enum.reject(aft.session.workspaces, &View.find_workspace(before, &1.id)) do
+        [ws | _] -> created_workspace(aft, ws)
+        # the command always adds one; only a crash (answered above) adds none
+        [] -> {:error, :internal, "no workspace was created"}
+      end
     end
   end
 
@@ -164,10 +167,11 @@ defmodule HerdrServer.Api.Handlers.Topology do
   def handle("pane.process_info", %{pane_id: id}) do
     app = app!()
 
-    if Commands.locate(app, id) do
-      {:ok, Map.put(process_facts(id), :type, "process_info") |> Map.put(:pane_id, Ids.pane(id))}
+    with {_, _} <- Commands.locate(app, id),
+         {:ok, facts} <- process_facts(id) do
+      {:ok, facts |> Map.put(:type, "process_info") |> Map.put(:pane_id, Ids.pane(id))}
     else
-      not_found(Ids.pane(id))
+      _ -> not_found(Ids.pane(id))
     end
   end
 
@@ -218,16 +222,19 @@ defmodule HerdrServer.Api.Handlers.Topology do
   end
 
   defp created_tab(aft, w, new, focus?) do
-    with {:ok, aft} <- focus_new_tab(aft, w, new, focus?),
-         {ws, tab} <- View.find_tab(aft, w, new) do
-      {:ok,
-       %{
-         type: "tab_created",
-         tab: View.tab(aft, ws, tab),
-         root_pane: View.pane(aft, tab.layout.focus)
-       }}
-    else
-      _ -> unchanged([])
+    with {:ok, aft} <- focus_new_tab(aft, w, new, focus?) do
+      case View.find_tab(aft, w, new) do
+        {ws, tab} ->
+          {:ok,
+           %{
+             type: "tab_created",
+             tab: View.tab(aft, ws, tab),
+             root_pane: View.pane(aft, tab.layout.focus)
+           }}
+
+        nil ->
+          unchanged([])
+      end
     end
   end
 
@@ -235,8 +242,7 @@ defmodule HerdrServer.Api.Handlers.Topology do
   defp focus_new_tab(aft, _w, _new, false), do: {:ok, aft}
 
   defp focus_new_tab(_aft, w, new, true) do
-    {:ok, _before, aft, _notes} = run({Commands, :focus_tab, [w, new]})
-    {:ok, aft}
+    with {:ok, _before, aft, _notes} <- run({Commands, :focus_tab, [w, new]}), do: {:ok, aft}
   end
 
   defp tab_ids(app, w) do
@@ -300,9 +306,10 @@ defmodule HerdrServer.Api.Handlers.Topology do
     with kid when kid != nil <- Rows.kernel_id(id),
          {:ok, %{pty: pty}} <- Kernel.keeper().lookup(kid) do
       info = Kernel.pty().info(pty)
-      %{os_pid: info.os_pid, cwd: info.pwd, exited: info.exited != nil}
+      {:ok, %{os_pid: info.os_pid, cwd: info.pwd, exited: info.exited != nil}}
     else
-      _ -> %{os_pid: 0, cwd: nil, exited: true}
+      # the pane's kernel is gone (closing, or never started): not a process to describe
+      _ -> :error
     end
   end
 
@@ -321,10 +328,17 @@ defmodule HerdrServer.Api.Handlers.Topology do
   end
 
   # {:ok, before, after, warning_texts}. `before` is never nil: the app is initialised first.
+  # An error notice means the command crashed (the Store discarded or restored the
+  # batch): `internal`, whatever the app shows.
   defp run(mfa) do
     _ = app!()
     {:ok, before, aft} = Store.request(mfa)
-    {:ok, before, aft, warnings(drain())}
+    notices = drain()
+
+    case for(%{level: :error, text: t} <- notices, do: t) do
+      [text | _] -> {:error, :internal, text}
+      [] -> {:ok, before, aft, warnings(notices)}
+    end
   end
 
   defp run_on_ws(w, mfa), do: run_target(mfa, &View.find_workspace(&1, w), Ids.workspace(w))
@@ -336,8 +350,9 @@ defmodule HerdrServer.Api.Handlers.Topology do
 
   # A target absent from `before` is not_found, whatever the command did.
   defp run_target(mfa, present, name) do
-    {:ok, before, aft, notes} = run(mfa)
-    if present.(before), do: {:ok, before, aft, notes}, else: not_found(name)
+    with {:ok, before, aft, notes} <- run(mfa) do
+      if present.(before), do: {:ok, before, aft, notes}, else: not_found(name)
+    end
   end
 
   defp drain do

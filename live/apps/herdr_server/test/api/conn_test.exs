@@ -34,6 +34,14 @@ defmodule HerdrServer.Api.ConnTest do
 
   defp code(%{"error" => %{"code" => c}}), do: c
 
+  # an error of a known method must be one it declares (or the implicit internal)
+  defp code(method, reply) do
+    c = code(reply)
+    {:ok, m} = Spec.fetch(method)
+    assert String.to_existing_atom(c) in (m.errors ++ [:internal]), "#{method}: #{c}"
+    c
+  end
+
   test "ping echoes the id and answers pong", %{path: p} do
     s = start(p)
     reply = ApiClient.call(s, "ping", nil, "abc")
@@ -54,8 +62,11 @@ defmodule HerdrServer.Api.ConnTest do
     :ok = ApiClient.send_line(s, ~s([1]))
     assert %{"id" => "", "error" => %{"code" => "invalid_request"}} = ApiClient.recv_line(s)
     assert code(ApiClient.call(s, "no.such")) == "unknown_method"
-    assert code(ApiClient.call(s, "ping", %{"x" => 1})) == "invalid_params"
-    assert code(ApiClient.call(s, "reload.rollback", %{"n" => "two"})) == "invalid_params"
+    assert code("ping", ApiClient.call(s, "ping", %{"x" => 1})) == "invalid_params"
+
+    assert code("reload.rollback", ApiClient.call(s, "reload.rollback", %{"n" => "two"})) ==
+             "invalid_params"
+
     # the connection is still usable
     assert ok!(ApiClient.call(s, "ping"), "ping")["type"] == "pong"
   end
@@ -96,8 +107,13 @@ defmodule HerdrServer.Api.ConnTest do
   test "reload verbs answer not_available when reload is disabled", %{path: p} do
     refute Application.get_env(:herdr_reload, HerdrReload, [])[:enabled]
     s = start(p)
-    assert code(ApiClient.call(s, "reload.rollback", %{"n" => 1})) == "not_available"
-    assert code(ApiClient.call(s, "reload.test_on_save")) == "not_available"
+
+    assert code("reload.rollback", ApiClient.call(s, "reload.rollback", %{"n" => 1})) ==
+             "not_available"
+
+    assert code("reload.test_on_save", ApiClient.call(s, "reload.test_on_save")) ==
+             "not_available"
+
     status = ok!(ApiClient.call(s, "server.status"), "server.status")
     assert status["reload_enabled"] == false
     assert status["test_on_save"] == nil
@@ -118,7 +134,7 @@ defmodule HerdrServer.Api.ConnTest do
         s = start(p, router: Boom)
         assert code(ApiClient.call(s, "no.such")) == "unknown_method"
         assert code(ApiClient.call(s, String.duplicate("x", 300))) == "unknown_method"
-        assert code(ApiClient.call(s, "ping")) == "internal"
+        assert code("ping", ApiClient.call(s, "ping")) == "internal"
       end)
 
     assert log =~ ~r/herdr-event api_connect ts=\d+ conns=1/

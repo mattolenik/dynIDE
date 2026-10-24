@@ -3,7 +3,8 @@ defmodule HerdrServer.Api.Router do
   Dispatches a validated API request to its handler. `HerdrServer.Api.Conn` calls
   `handle/3` through `HerdrReload.Guard`, only for methods `Api.Spec` knows, with params
   already validated (atom keys). `ctx` is `%{conn: pid, socket: socket, reload_server: server,
-  rollback_timeout_ms: n}`. `events.subscribe` answers `{:subscribe, filters}`.
+  rollback_timeout_ms: n}`. `events.subscribe` answers `{:subscribe, filters}`; a wait that has not finished answers
+  `{:continue, {m, f, a}}` (`Api.Conn` polls it).
   """
 
   alias HerdrServer.Api.{Events, Handlers}
@@ -14,6 +15,7 @@ defmodule HerdrServer.Api.Router do
           | {:error, atom(), String.t()}
           | {:error, atom(), String.t(), map()}
           | {:subscribe, [sub()]}
+          | {:continue, {module(), atom(), list()}}
 
   @spec handle(String.t(), map(), map()) :: reply()
   def handle("ping", _params, _ctx), do: Handlers.Server.ping()

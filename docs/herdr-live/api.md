@@ -21,6 +21,10 @@ Generated from `HerdrServer.Api.Spec` by `mix herdr.api.docs`. Do not edit by ha
 
 Numbers are positive integers without leading zeros. Only this form is accepted.
 
+Workspace and tab ids are reused: a new workspace takes the highest workspace id in
+use plus one, a new tab the highest tab id of its workspace plus one, so after a close
+the next create can take the closed id again. Pane ids are never reused.
+
 ## Errors
 
 | code | meaning |
@@ -37,6 +41,10 @@ Numbers are positive integers without leading zeros. Only this form is accepted.
 | `events_lost` | The event stream could not keep up and was closed. |
 | `internal` | A handler crashed; the server is still running. |
 
+Each method lists the codes it answers. `internal` is implicit: any method answers it
+when its handler crashes. `parse_error`, `invalid_request` and `unknown_method` are
+answered before a method is known.
+
 ## Methods: server
 
 ### `ping`
@@ -49,7 +57,7 @@ Params: none.
 
 Result: `pong` with `version` (string), `gen` (integer).
 
-Errors: none.
+Errors: `invalid_params`
 
 ### `api.schema`
 
@@ -61,7 +69,7 @@ Params: none.
 
 Result: `api_schema` with `methods` (list of object).
 
-Errors: none.
+Errors: `invalid_params`
 
 ### `server.status`
 
@@ -73,7 +81,7 @@ Params: none.
 
 Result: `server_status` with `gen` (integer), `os_pid` (integer), `reload_enabled` (boolean), `test_on_save` (string or null), `handoff` (string or null), `workspaces` (integer), `panes` (integer), `api_conns` (integer).
 
-Errors: none.
+Errors: `invalid_params`
 
 ## Methods: reload
 
@@ -99,9 +107,9 @@ CLI: `herdr-live test-on-save [on|off]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
-| `mode` | `on` | `off` | no | Set the gate; omit to read it. |
+| `mode` | `on` or `off` | no | Set the gate; omit to read it. |
 
-Result: `test_on_save` with `mode` (`gate` | `off`).
+Result: `test_on_save` with `mode` (`gate` or `off`).
 
 Errors: `invalid_params`, `not_available`
 
@@ -117,7 +125,7 @@ Params: none.
 
 Result: `workspace_list` with `workspaces` (list of `workspace` object).
 
-Errors: none.
+Errors: `invalid_params`
 
 ### `workspace.get`
 
@@ -146,7 +154,7 @@ CLI: `herdr-live workspace create [--label L] [--focus]`
 
 Result: `workspace_created` with `workspace` (`workspace` object), `tab` (`tab` object), `root_pane` (`pane` object).
 
-Errors: `invalid_params`, `failed`
+Errors: `invalid_params`
 
 ### `workspace.focus`
 
@@ -235,7 +243,7 @@ CLI: `herdr-live tab create [--workspace <workspace_id>] [--label L] [--focus]`
 
 Result: `tab_created` with `tab` (`tab` object), `root_pane` (`pane` object).
 
-Errors: `invalid_params`, `not_found`, `failed`
+Errors: `invalid_params`, `not_found`
 
 ### `tab.focus`
 
@@ -334,7 +342,7 @@ CLI: `herdr-live pane split [<pane_id>] --direction right|down [--ratio R] [--fo
 | param | type | required | description |
 | --- | --- | --- | --- |
 | `pane_id` | pane id | no | Pane to split; default the focused pane. |
-| `direction` | `right` | `down` | yes | Where the new pane goes. |
+| `direction` | `right` or `down` | yes | Where the new pane goes. |
 | `ratio` | number 0.1..0.9 | no | Share of the space kept by the first pane. |
 | `focus` | boolean | no | Focus the new pane. |
 
@@ -411,7 +419,9 @@ CLI: `herdr-live pane send-text <pane_id> <text>`
 
 Result: `ok` (no fields).
 
-Errors: `invalid_params`, `not_found`, `backpressure`
+Errors: `invalid_params`, `not_found`, `backpressure`, `failed`
+
+Text is written in 64 KiB chunks. On `backpressure` or `failed` the error's `data.written` is the number of bytes already written: resend only the text from that byte offset, or the pane gets the start twice.
 
 ### `pane.send_keys`
 
@@ -426,7 +436,7 @@ CLI: `herdr-live pane send-keys <pane_id> <key>...`
 
 Result: `ok` (no fields).
 
-Errors: `invalid_params`, `not_found`, `backpressure`
+Errors: `invalid_params`, `not_found`, `backpressure`, `failed`
 
 ### `pane.run`
 
@@ -441,7 +451,7 @@ CLI: `herdr-live pane run <pane_id> <command>`
 
 Result: `ok` (no fields).
 
-Errors: `invalid_params`, `not_found`, `backpressure`
+Errors: `invalid_params`, `not_found`, `backpressure`, `failed`
 
 ### `pane.read`
 
@@ -452,12 +462,12 @@ CLI: `herdr-live pane read [<pane_id>] [--source visible|recent] [--lines N]`
 | param | type | required | description |
 | --- | --- | --- | --- |
 | `pane_id` | pane id | yes | Target pane. |
-| `source` | `visible` | `recent` | no | Text source; default `visible`. |
+| `source` | `visible` or `recent` | no | Text source; default `visible`. |
 | `lines` | integer 1..10000 | no | Maximum number of lines. |
 
-Result: `pane_read` with `pane_id` (pane id), `source` (`visible` | `recent`), `text` (string).
+Result: `pane_read` with `pane_id` (pane id), `source` (`visible` or `recent`), `text` (string).
 
-Errors: `invalid_params`, `not_found`, `backpressure`
+Errors: `invalid_params`, `not_found`
 
 ### `pane.wait_for_output`
 
@@ -470,7 +480,7 @@ CLI: `herdr-live pane wait-output [<pane_id>] (--match S | --regex R) [--source 
 | `pane_id` | pane id | yes | Target pane. |
 | `match` | string | no | Substring to wait for (use this or `regex`). |
 | `regex` | string | no | Regular expression to wait for (use this or `match`). |
-| `source` | `visible` | `recent` | no | Text source; default `visible`. |
+| `source` | `visible` or `recent` | no | Text source; default `visible`. |
 | `lines` | integer 1..10000 | no | Maximum number of lines. |
 | `timeout_ms` | integer 1..3600000 | no | Give up after this many milliseconds. |
 
@@ -488,7 +498,7 @@ CLI: `herdr-live events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] 
 
 | param | type | required | description |
 | --- | --- | --- | --- |
-| `subscriptions` | list of object {type: `workspace.created` | `workspace.closed` | `workspace.focused` | `workspace.renamed` | `tab.created` | `tab.closed` | `tab.focused` | `tab.renamed` | `pane.created` | `pane.closed` | `pane.focused` | `pane.updated` | `layout.updated`, pane_id?: pane id, tab_id?: tab id, workspace_id?: workspace id} (at least 1) | yes | Subscriptions. |
+| `subscriptions` | list of object {type: `workspace.created`, `workspace.closed`, `workspace.focused`, `workspace.renamed`, `tab.created`, `tab.closed`, `tab.focused`, `tab.renamed`, `pane.created`, `pane.closed`, `pane.focused`, `pane.updated` or `layout.updated`, pane_id?: pane id, tab_id?: tab id, workspace_id?: workspace id} (at least 1) | yes | Subscriptions. |
 
 Result: `subscription_started` with `subscriptions` (integer).
 
@@ -506,7 +516,7 @@ Params: none.
 
 Result: `agent_list` with `agents` (list of object).
 
-Errors: `not_available`
+Errors: `invalid_params`, `not_available`
 
 ### `agent.get`
 
@@ -531,7 +541,7 @@ CLI: `herdr-live agent read <target> [--source visible|recent] [--lines N]`
 | param | type | required | description |
 | --- | --- | --- | --- |
 | `target` | string | yes | Agent target (pane id or agent name). |
-| `source` | `visible` | `recent` | no | Text source; default `visible`. |
+| `source` | `visible` or `recent` | no | Text source; default `visible`. |
 | `lines` | integer 1..10000 | no | Maximum number of lines. |
 
 Result: `agent_read` with `target` (string), `text` (string).
@@ -561,7 +571,7 @@ CLI: `herdr-live agent wait <target> [--until S]... [--timeout MS]`
 | param | type | required | description |
 | --- | --- | --- | --- |
 | `target` | string | yes | Agent target (pane id or agent name). |
-| `until` | list of `idle` | `working` | `blocked` | `done` | `unknown` | no | Agent states to wait for; default `idle`. |
+| `until` | list of `idle`, `working`, `blocked`, `done` or `unknown` | no | Agent states to wait for; default `idle`. |
 | `timeout_ms` | integer 1..3600000 | no | Give up after this many milliseconds. |
 
 Result: `agent_wait` with `agent` (object).
@@ -646,18 +656,137 @@ A layout `root` is `{"type": "pane", "pane_id": ...}` or
 `{"type": "split", "direction": "right" | "down", "ratio": number, "first": node, "second": node}`.
 
 
-## Event types
+## Events
 
-- `workspace.created`
-- `workspace.closed`
-- `workspace.focused`
-- `workspace.renamed`
-- `tab.created`
-- `tab.closed`
-- `tab.focused`
-- `tab.renamed`
-- `pane.created`
-- `pane.closed`
-- `pane.focused`
-- `pane.updated`
-- `layout.updated`
+After `events.subscribe` answers `subscription_started`, each event is one line
+`{"event": type, "data": {...}}`; `data` holds exactly the fields below. The ids in
+`data` are what subscription filters match. A stream that falls behind, or whose
+server-side hub stops, ends with an `events_lost` error line (the subscribe request's
+`id`) and is closed.
+
+### `workspace.created`
+
+A workspace was created.
+
+| data field | type |
+| --- | --- |
+| `workspace_id` | workspace id |
+| `workspace` | `workspace` object |
+
+### `workspace.closed`
+
+A workspace was closed.
+
+| data field | type |
+| --- | --- |
+| `workspace_id` | workspace id |
+
+### `workspace.focused`
+
+The focused workspace changed.
+
+| data field | type |
+| --- | --- |
+| `workspace_id` | workspace id |
+| `workspace` | `workspace` object |
+
+### `workspace.renamed`
+
+A workspace's label changed.
+
+| data field | type |
+| --- | --- |
+| `workspace_id` | workspace id |
+| `workspace` | `workspace` object |
+
+### `tab.created`
+
+A tab was created.
+
+| data field | type |
+| --- | --- |
+| `tab_id` | tab id |
+| `workspace_id` | workspace id |
+| `tab` | `tab` object |
+
+### `tab.closed`
+
+A tab was closed.
+
+| data field | type |
+| --- | --- |
+| `tab_id` | tab id |
+| `workspace_id` | workspace id |
+
+### `tab.focused`
+
+The focused tab changed.
+
+| data field | type |
+| --- | --- |
+| `tab_id` | tab id |
+| `workspace_id` | workspace id |
+| `tab` | `tab` object |
+
+### `tab.renamed`
+
+A tab's label changed.
+
+| data field | type |
+| --- | --- |
+| `tab_id` | tab id |
+| `workspace_id` | workspace id |
+| `tab` | `tab` object |
+
+### `pane.created`
+
+A pane was created.
+
+| data field | type |
+| --- | --- |
+| `pane_id` | pane id |
+| `tab_id` | tab id |
+| `workspace_id` | workspace id |
+| `pane` | `pane` object |
+
+### `pane.closed`
+
+A pane was closed.
+
+| data field | type |
+| --- | --- |
+| `pane_id` | pane id |
+| `tab_id` | tab id |
+| `workspace_id` | workspace id |
+
+### `pane.focused`
+
+The focused pane changed.
+
+| data field | type |
+| --- | --- |
+| `pane_id` | pane id |
+| `tab_id` | tab id |
+| `workspace_id` | workspace id |
+| `pane` | `pane` object |
+
+### `pane.updated`
+
+A pane's title or size changed.
+
+| data field | type |
+| --- | --- |
+| `pane_id` | pane id |
+| `tab_id` | tab id |
+| `workspace_id` | workspace id |
+| `pane` | `pane` object |
+
+### `layout.updated`
+
+A tab's split tree changed.
+
+| data field | type |
+| --- | --- |
+| `tab_id` | tab id |
+| `workspace_id` | workspace id |
+| `layout` | `layout` object |

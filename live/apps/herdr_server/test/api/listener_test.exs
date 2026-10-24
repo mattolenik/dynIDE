@@ -31,6 +31,18 @@ defmodule HerdrServer.Api.ListenerTest do
     on_exit(fn -> Application.put_env(:herdr_reload, HerdrReload, old) end)
   end
 
+  # ApiClient.once/3, and an error must be one the method declares (or internal)
+  defp once(path, method, params \\ nil) do
+    reply = ApiClient.once(path, method, params)
+
+    with %{"error" => %{"code" => code}} <- reply do
+      {:ok, m} = Spec.fetch(method)
+      assert String.to_existing_atom(code) in (m.errors ++ [:internal]), "#{method}: #{code}"
+    end
+
+    reply
+  end
+
   defp result(%{"result" => r}, method) do
     assert Spec.validate_result(method, r) == :ok
     r
@@ -40,7 +52,7 @@ defmodule HerdrServer.Api.ListenerTest do
     reload_enabled(true)
     p = path()
     start_supervised!({Listener, path: p, reload_server: fake_server([3, 2])})
-    r = ApiClient.once(p, "reload.rollback", %{"n" => 2})
+    r = once(p, "reload.rollback", %{"n" => 2})
     assert %{"id" => "t", "result" => %{"type" => "reload_rollback", "batches" => [3, 2]}} = r
     result(r, "reload.rollback")
     stop_supervised!(Listener)
@@ -48,7 +60,7 @@ defmodule HerdrServer.Api.ListenerTest do
 
     start_supervised!({Listener, path: p, reload_server: fake_server([])})
     # n defaults to 1; nothing rolled back is an empty list
-    r = ApiClient.once(p, "reload.rollback")
+    r = once(p, "reload.rollback")
     assert result(r, "reload.rollback")["batches"] == []
   end
 
@@ -58,14 +70,14 @@ defmodule HerdrServer.Api.ListenerTest do
     on_exit(fn -> HerdrReload.TestGate.set_mode(old) end)
     p = path()
     start_supervised!({Listener, path: p, reload_server: :no_such_server})
-    r = ApiClient.once(p, "reload.test_on_save", %{"mode" => "on"})
+    r = once(p, "reload.test_on_save", %{"mode" => "on"})
     assert result(r, "reload.test_on_save")["mode"] == "gate"
     assert HerdrReload.TestGate.mode() == :gate
-    assert ApiClient.once(p, "reload.test_on_save")["result"]["mode"] == "gate"
-    assert ApiClient.once(p, "reload.test_on_save", %{"mode" => "off"})["result"]["mode"] == "off"
+    assert once(p, "reload.test_on_save")["result"]["mode"] == "gate"
+    assert once(p, "reload.test_on_save", %{"mode" => "off"})["result"]["mode"] == "off"
     assert HerdrReload.TestGate.mode() == :off
 
-    assert ApiClient.once(p, "reload.test_on_save", %{"mode" => "maybe"})["error"]["code"] ==
+    assert once(p, "reload.test_on_save", %{"mode" => "maybe"})["error"]["code"] ==
              "invalid_params"
   end
 
@@ -73,12 +85,12 @@ defmodule HerdrServer.Api.ListenerTest do
     reload_enabled(true)
     p = path()
     start_supervised!({Listener, path: p, reload_server: :no_such_server})
-    assert %{"error" => %{"code" => "failed"}} = ApiClient.once(p, "reload.rollback", %{"n" => 1})
+    assert %{"error" => %{"code" => "failed"}} = once(p, "reload.rollback", %{"n" => 1})
 
     assert %{"error" => %{"code" => "invalid_params"}} =
-             ApiClient.once(p, "reload.rollback", %{"n" => 0})
+             once(p, "reload.rollback", %{"n" => 0})
 
-    assert ApiClient.once(p, "ping")["result"]["type"] == "pong"
+    assert once(p, "ping")["result"]["type"] == "pong"
   end
 
   test "a hung reload server times out with an error reply" do
@@ -88,7 +100,7 @@ defmodule HerdrServer.Api.ListenerTest do
     start_supervised!({Listener, path: p, reload_server: hung, rollback_timeout_ms: 50})
 
     assert %{"error" => %{"code" => "timeout"}} =
-             ApiClient.once(p, "reload.rollback", %{"n" => 1})
+             once(p, "reload.rollback", %{"n" => 1})
   end
 
   test "a reload server exiting mid-call is a failed reply, and the rollback runs once" do
@@ -108,7 +120,7 @@ defmodule HerdrServer.Api.ListenerTest do
     start_supervised!({Listener, path: p, reload_server: dying})
 
     assert %{"error" => %{"code" => "failed", "message" => "rollback failed: " <> _}} =
-             ApiClient.once(p, "reload.rollback", %{"n" => 1})
+             once(p, "reload.rollback", %{"n" => 1})
 
     assert_received :rollback_called
     refute_received :rollback_called
@@ -136,7 +148,7 @@ defmodule HerdrServer.Api.ListenerTest do
     assert :code.soft_purge(HerdrServer.Api.Conn)
     # both still serve
     assert ApiClient.call(s, "ping")["result"]["type"] == "pong"
-    assert ApiClient.once(p, "ping")["result"]["type"] == "pong"
+    assert once(p, "ping")["result"]["type"] == "pong"
   end
 
   test "a stale socket is replaced; a live one, a regular file or a dir is left alone" do
@@ -146,7 +158,7 @@ defmodule HerdrServer.Api.ListenerTest do
     :gen_tcp.close(l)
     assert File.exists?(p)
     start_supervised!({Listener, path: p})
-    assert ApiClient.once(p, "ping")["result"]["type"] == "pong"
+    assert once(p, "ping")["result"]["type"] == "pong"
     assert :ignore = Listener.init(path: p)
     long = Path.join(Path.dirname(p), String.duplicate("x", 120))
     assert :ignore = Listener.init(path: long)
@@ -202,7 +214,7 @@ defmodule HerdrServer.Api.ListenerTest do
     start_supervised!(Listener)
     dir = Path.join(base, "herdr-live")
     assert File.stat!(dir).mode |> Bitwise.band(0o777) == 0o700
-    assert ApiClient.once(Path.join(dir, "api.sock"), "ping")["result"]["type"] == "pong"
+    assert once(Path.join(dir, "api.sock"), "ping")["result"]["type"] == "pong"
     stop_supervised!(Listener)
 
     # an old launcher made it 0755; macOS ignores the socket's own 0600
@@ -248,7 +260,7 @@ defmodule HerdrServer.Api.ListenerTest do
     # open connections close with the listener
     assert {:error, :closed} = ApiClient.recv_line(s, 5000)
     assert {:ok, _} = Supervisor.restart_child(sup, Listener)
-    assert ApiClient.once(p, "ping")["result"]["type"] == "pong"
+    assert once(p, "ping")["result"]["type"] == "pong"
   end
 
   test "conns counts open connections; a closed one is forgotten" do
@@ -262,6 +274,42 @@ defmodule HerdrServer.Api.ListenerTest do
     assert result(ApiClient.call(a, "server.status"), "server.status")["api_conns"] == 2
     :gen_tcp.close(b)
     wait_until(fn -> Listener.conns() == 1 end)
+  end
+
+  test "conns/0 is 0 when the listener is gone or stops mid-call" do
+    assert Listener.conns() == 0
+
+    # a listener exiting as the call arrives (a handoff stopping it)
+    dying =
+      spawn(fn ->
+        receive do
+          {:"$gen_call", _from, :conns} -> exit(:normal)
+        end
+      end)
+
+    Process.register(dying, Listener)
+    assert Listener.conns() == 0
+  end
+
+  test "an accept error other than timeout or closed is logged once and the acceptor goes on" do
+    p = path()
+    # accept on a connected (not listening) socket fails with einval, every time
+    {:ok, l} = :gen_tcp.listen(0, [:binary, ifaddr: {:local, p}, active: false])
+    {:ok, c} = :gen_tcp.connect({:local, p}, 0, [:binary, active: false])
+    {:ok, a} = :gen_tcp.accept(l, 1000)
+    assert {:error, reason} = :gen_tcp.accept(a, 0)
+    refute reason in [:timeout, :closed]
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        acceptor = spawn(Listener, :accept, [a, self()])
+        Process.sleep(500)
+        assert Process.alive?(acceptor)
+        Process.exit(acceptor, :kill)
+      end)
+
+    assert length(String.split(log, "api accept failed")) == 2
+    Enum.each([c, a, l], &:gen_tcp.close/1)
   end
 
   defp wait_until(f, n \\ 200) do

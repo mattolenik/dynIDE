@@ -31,7 +31,36 @@ defmodule HerdrServer.Api.PaneIoTest do
 
   defp err(s, method, params) do
     assert %{"error" => e} = ApiClient.call(s, method, params)
+    {:ok, m} = Spec.fetch(method)
+
+    assert String.to_existing_atom(e["code"]) in (m.errors ++ [:internal]),
+           "#{method}: #{inspect(e)}"
+
     {e["code"], e}
+  end
+
+  defp conn_of(path, fun) do
+    before = :sys.get_state(Listener).conns
+    c = ApiClient.connect(path)
+    ApiClient.call(c, "ping")
+    [conn] = MapSet.to_list(MapSet.difference(:sys.get_state(Listener).conns, before))
+    fun.(c, conn)
+  end
+
+  defp wait_req(id, match),
+    do:
+      JSON.encode!(%{
+        "id" => id,
+        "method" => "pane.wait_for_output",
+        "params" => %{"pane_id" => "p1", "match" => match}
+      })
+
+  defp wait_until(f, n) do
+    cond do
+      f.() -> :ok
+      n == 0 -> flunk("condition never held")
+      true -> Process.sleep(25) && wait_until(f, n - 1)
+    end
   end
 
   defp writes(pty), do: pty |> Fake.Pty.writes() |> IO.iodata_to_binary()
@@ -46,6 +75,29 @@ defmodule HerdrServer.Api.PaneIoTest do
     text = String.duplicate("x", 150_000)
     ok!(s, "pane.send_text", Map.put(@p, "text", text))
     assert writes(pty) == text
+  end
+
+  test "send_text after backpressure says how much was written", %{s: s, pty: pty} do
+    text = String.duplicate("a", 65_536) <> String.duplicate("b", 10)
+    Fake.Pty.backpressure_once_after(pty, 1)
+    {code, e} = err(s, "pane.send_text", Map.put(@p, "text", text))
+    assert code == "backpressure"
+    assert e["data"] == %{"written" => 65_536}
+    # resending from `written` gives the pane the text exactly once
+    rest = binary_part(text, 65_536, 10)
+    ok!(s, "pane.send_text", Map.put(@p, "text", rest))
+    assert writes(pty) == text
+  end
+
+  test "a write the kernel refuses otherwise is failed", %{s: s, pty: pty} do
+    Fake.Pty.fail_once_after(pty, 0, :too_large)
+    assert {"failed", e} = err(s, "pane.send_text", Map.put(@p, "text", "x"))
+    assert e["data"] == %{"written" => 0}
+    Fake.Pty.fail_once_after(pty, 0, :too_large)
+    assert {"failed", _} = err(s, "pane.send_keys", Map.put(@p, "keys", ["a"]))
+    # the command goes out, the Enter after it does not
+    Fake.Pty.fail_once_after(pty, 1, :too_large)
+    assert {"failed", _} = err(s, "pane.run", Map.put(@p, "command", "cmd"))
   end
 
   test "send_keys writes nothing when any key is bad", %{s: s, pty: pty} do
@@ -154,6 +206,56 @@ three"
     Process.sleep(300)
     ok!(s, "pane.close", p2)
     assert %{"error" => %{"code" => "not_found"}} = Task.await(task, 10_000)
+  end
+
+  test "a running wait moves off old PaneIo and Conn code and still answers", %{
+    path: path,
+    pty: pty
+  } do
+    conn_of(path, fn c, conn ->
+      :ok = ApiClient.send_line(c, wait_req("w", "reloaded"))
+      Process.sleep(300)
+
+      for mod <- [HerdrServer.Api.Handlers.PaneIo, HerdrServer.Api.Conn] do
+        {^mod, bin, file} = :code.get_object_code(mod)
+        {:module, ^mod} = :code.load_binary(mod, file, bin)
+      end
+
+      # every conn (this wait, the idle setup one) leaves the old code within ~2 s
+      wait_until(
+        fn ->
+          :code.soft_purge(HerdrServer.Api.Handlers.PaneIo) and
+            :code.soft_purge(HerdrServer.Api.Conn)
+        end,
+        120
+      )
+
+      refute :erlang.check_process_code(conn, HerdrServer.Api.Conn)
+      Fake.Pty.output(pty, "reloaded\r\n")
+
+      assert %{"id" => "w", "result" => %{"type" => "output_matched", "line" => "reloaded"}} =
+               ApiClient.recv_line(c)
+    end)
+  end
+
+  test "a line pipelined behind a wait is answered after it", %{path: path, pty: pty} do
+    conn_of(path, fn c, _conn ->
+      :ok = ApiClient.send_line(c, [wait_req("w", "go"), "\n", ~s({"id":"p","method":"ping"})])
+      Process.sleep(300)
+      Fake.Pty.output(pty, "go\r\n")
+      assert %{"id" => "w", "result" => %{"line" => "go"}} = ApiClient.recv_line(c)
+      assert %{"id" => "p", "result" => %{"type" => "pong"}} = ApiClient.recv_line(c)
+    end)
+  end
+
+  test "a close behind a pipelined line still stops an untimed wait", %{path: path} do
+    conn_of(path, fn c, conn ->
+      ref = Process.monitor(conn)
+      :ok = ApiClient.send_line(c, [wait_req("w", "never"), "\n", ~s({"id":"p","method":"ping"})])
+      Process.sleep(300)
+      :gen_tcp.close(c)
+      assert_receive {:DOWN, ^ref, :process, ^conn, _}, 5000
+    end)
   end
 
   test "an untimed wait stops when its client disconnects", %{path: path} do

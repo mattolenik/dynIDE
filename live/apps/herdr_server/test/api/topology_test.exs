@@ -28,6 +28,8 @@ defmodule HerdrServer.Api.TopologyTest do
 
   defp err(s, method, params) do
     assert %{"error" => %{"code" => code, "message" => msg}} = ApiClient.call(s, method, params)
+    {:ok, m} = Spec.fetch(method)
+    assert String.to_existing_atom(code) in (m.errors ++ [:internal]), "#{method}: #{code}"
     {code, msg}
   end
 
@@ -169,6 +171,25 @@ defmodule HerdrServer.Api.TopologyTest do
     # mark it exited without the exit event, which would close the pane
     :sys.replace_state(pty, &%{&1 | closed: true})
     assert ok!(s, "pane.process_info", %{"pane_id" => "p1"})["exited"]
+  end
+
+  test "process_info of a pane whose kernel is gone is not_found", %{s: s} do
+    ok!(s, "workspace.list")
+    kid = Rows.kernel_id(1)
+    on_exit(fn -> Rows.put_kernel_id(1, kid) end)
+    :ok = Rows.put_kernel_id(1, 987_654)
+    assert {"not_found", _} = err(s, "pane.process_info", %{"pane_id" => "p1"})
+  end
+
+  test "a crash inside a command answers internal, not not_found", %{s: s} do
+    ok!(s, "workspace.list")
+    # a next id no command can count on: the command raises inside the Store's guard
+    :sys.replace_state(Store, fn st -> put_in(st.app.session.next_id, :bogus) end)
+
+    assert {"internal", msg} = err(s, "pane.split", %{"pane_id" => "p1", "direction" => "right"})
+    assert msg =~ "action failed"
+    assert {"internal", _} = err(s, "workspace.create", %{})
+    assert {"internal", _} = err(s, "tab.create", %{})
   end
 
   test "unknown ids are not_found for every method taking one", %{s: s} do

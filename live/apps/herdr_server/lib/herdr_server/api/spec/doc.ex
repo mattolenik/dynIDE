@@ -62,11 +62,19 @@ defmodule HerdrServer.Api.Spec.Doc do
 
     Numbers are positive integers without leading zeros. Only this form is accepted.
 
+    Workspace and tab ids are reused: a new workspace takes the highest workspace id in
+    use plus one, a new tab the highest tab id of its workspace plus one, so after a close
+    the next create can take the closed id again. Pane ids are never reused.
+
     ## Errors
 
     | code | meaning |
     | --- | --- |
     #{codes}
+
+    Each method lists the codes it answers. `internal` is implicit: any method answers it
+    when its handler crashes. `parse_error`, `invalid_request` and `unknown_method` are
+    answered before a method is known.
     """
   end
 
@@ -88,8 +96,11 @@ defmodule HerdrServer.Api.Spec.Doc do
     Result: #{result(m.result)}
 
     Errors: #{errors(m.errors)}
-    """
+    """ <> notes(m)
   end
+
+  defp notes(%{notes: text}), do: "\n#{text}\n"
+  defp notes(_m), do: ""
 
   defp cli(%{cli: nil}), do: ""
   defp cli(%{cli: cli}), do: "CLI: `#{cli}`\n\n"
@@ -139,8 +150,23 @@ defmodule HerdrServer.Api.Spec.Doc do
   end
 
   defp events_section do
-    list = Enum.map_join(Spec.event_types(), "\n", &"- `#{&1}`")
-    "\n## Event types\n\n#{list}\n"
+    body =
+      Enum.map_join(Spec.events(), "\n", fn e ->
+        rows = Enum.map_join(e.fields, "\n", &"| `#{&1.name}` | #{type(&1.type)} |")
+        "### `#{e.type}`\n\n#{e.summary}\n\n| data field | type |\n| --- | --- |\n#{rows}\n"
+      end)
+
+    """
+
+    ## Events
+
+    After `events.subscribe` answers `subscription_started`, each event is one line
+    `{"event": type, "data": {...}}`; `data` holds exactly the fields below. The ids in
+    `data` are what subscription filters match. A stream that falls behind, or whose
+    server-side hub stops, ends with an `events_lost` error line (the subscribe request's
+    `id`) and is closed.
+
+    """ <> body
   end
 
   defp type(:string), do: "string"
@@ -153,11 +179,15 @@ defmodule HerdrServer.Api.Spec.Doc do
   defp type(:workspace_id), do: "workspace id"
   defp type({:integer, a, b}), do: "integer #{a}..#{b}"
   defp type({:number, a, b}), do: "number #{a}..#{b}"
-  defp type({:enum, vs}), do: Enum.map_join(vs, " | ", &"`#{&1}`")
+  # no "|": the type sits in a markdown table cell
+  defp type({:enum, vs}), do: vs |> Enum.map(&"`#{&1}`") |> or_list()
   defp type({:list, t}), do: "list of " <> type(t)
   defp type({:map, :string}), do: "object of strings"
   defp type({:ref, name}), do: "`#{name}` object"
   defp type({:object, ps}), do: "object {" <> Enum.map_join(ps, ", ", &obj_param/1) <> "}"
+
+  defp or_list([one]), do: one
+  defp or_list(vs), do: Enum.join(Enum.drop(vs, -1), ", ") <> " or " <> List.last(vs)
 
   defp obj_param(p), do: "#{p.name}#{if p.required, do: "", else: "?"}: #{type(p.type)}"
 end

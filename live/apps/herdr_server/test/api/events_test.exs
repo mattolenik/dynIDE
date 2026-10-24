@@ -26,6 +26,29 @@ defmodule HerdrServer.Api.EventsTest do
     {s, reply}
   end
 
+  # the next event line, checked against the Spec's event schema
+  defp event!(s, timeout \\ 10_000) do
+    line = ApiClient.recv_line(s, timeout)
+    assert Spec.validate_event(line) == :ok, inspect(line)
+    line
+  end
+
+  defp declared!(%{"error" => %{"code" => code}} = reply) do
+    {:ok, m} = Spec.fetch("events.subscribe")
+    assert String.to_existing_atom(code) in (m.errors ++ [:internal]), inspect(reply)
+    reply
+  end
+
+  defp store_subscriber?(pid), do: Map.has_key?(:sys.get_state(Store).subs, pid)
+
+  defp wait_until(f, n \\ 400) do
+    cond do
+      f.() -> :ok
+      n == 0 -> flunk("condition never held")
+      true -> Process.sleep(25) && wait_until(f, n - 1)
+    end
+  end
+
   defp subscribe!(path, subs) do
     {s, reply} = subscribe(path, subs)
     assert %{"id" => "sub", "result" => r} = reply, inspect(reply)
@@ -40,7 +63,7 @@ defmodule HerdrServer.Api.EventsTest do
     assert %{"result" => _} =
              ApiClient.call(ctl, "pane.split", %{"pane_id" => "p1", "direction" => "right"})
 
-    assert %{"event" => "pane.created", "data" => data} = ApiClient.recv_line(s)
+    assert %{"event" => "pane.created", "data" => data} = event!(s)
     assert data["pane"]["pane_id"] == "p2"
     assert data["pane_id"] == "p2"
     assert ApiClient.recv_line(s, 300) == {:error, :timeout}
@@ -57,26 +80,25 @@ defmodule HerdrServer.Api.EventsTest do
 
     ApiClient.call(ctl, "pane.focus", %{"pane_id" => "p1"})
 
-    assert %{"event" => "pane.focused", "data" => %{"pane_id" => "p1"}} =
-             ApiClient.recv_line(s)
+    assert %{"event" => "pane.focused", "data" => %{"pane_id" => "p1"}} = event!(s)
   end
 
   test "request lines on a subscription are ignored", %{path: path, ctl: ctl} do
     s = subscribe!(path, [%{"type" => "tab.created"}])
     ApiClient.send_line(s, ~s({"id":"x","method":"ping"}))
     ApiClient.call(ctl, "tab.create", %{})
-    assert %{"event" => "tab.created"} = ApiClient.recv_line(s)
+    assert %{"event" => "tab.created"} = event!(s)
   end
 
   test "an unknown id answers not_found and closes", %{path: path} do
     {s, reply} =
       subscribe(path, [%{"type" => "pane.created"}, %{"type" => "pane.closed", "pane_id" => "p9"}])
 
-    assert %{"id" => "sub", "error" => %{"code" => "not_found"}} = reply
+    assert %{"id" => "sub", "error" => %{"code" => "not_found"}} = declared!(reply)
     assert ApiClient.recv_line(s, 5000) == {:error, :closed}
 
     {s, reply} = subscribe(path, [%{"type" => "tab.closed", "tab_id" => "w1:t7"}])
-    assert %{"error" => %{"code" => "not_found"}} = reply
+    assert %{"error" => %{"code" => "not_found"}} = declared!(reply)
     assert ApiClient.recv_line(s, 5000) == {:error, :closed}
   end
 
@@ -90,8 +112,54 @@ defmodule HerdrServer.Api.EventsTest do
     _ = :sys.get_state(Events)
 
     lines = read_until_error(s, [])
-    assert %{"id" => "sub", "error" => %{"code" => "events_lost"}} = hd(lines)
+    assert %{"id" => "sub", "error" => %{"code" => "events_lost"}} = declared!(hd(lines))
     assert length(lines) < 1500
+    assert ApiClient.recv_line(s, 5000) == {:error, :closed}
+  end
+
+  test "after a Store restart the hub subscribes again and events still flow", %{
+    path: path,
+    ctl: ctl
+  } do
+    s = subscribe!(path, [%{"type" => "pane.created"}])
+    hub = Process.whereis(Events)
+    assert store_subscriber?(hub)
+    # let the mirror catch up, then a supervised stop and restart (no restart intensity)
+    Process.sleep(100)
+    :ok = Supervisor.terminate_child(HerdrServer.Supervisor, Store)
+    {:ok, _} = Supervisor.restart_child(HerdrServer.Supervisor, Store)
+    wait_until(fn -> store_subscriber?(hub) end)
+
+    assert %{"result" => _} =
+             ApiClient.call(ctl, "pane.split", %{"pane_id" => "p1", "direction" => "right"})
+
+    assert %{"event" => "pane.created", "data" => %{"pane_id" => "p2"}} = event!(s)
+  end
+
+  test "a hub that stops ends each stream with events_lost", %{path: path} do
+    s = subscribe!(path, [%{"type" => "pane.created"}])
+    Process.exit(Process.whereis(Events), :kill)
+
+    assert %{"id" => "sub", "error" => %{"code" => "events_lost"}} =
+             declared!(ApiClient.recv_line(s))
+
+    assert ApiClient.recv_line(s, 5000) == {:error, :closed}
+  end
+
+  test "the hub is a Store subscriber only while it has subscribers", %{path: path} do
+    hub = Process.whereis(Events)
+    refute store_subscriber?(hub)
+    s = subscribe!(path, [%{"type" => "pane.created"}])
+    assert store_subscriber?(hub)
+    :gen_tcp.close(s)
+    wait_until(fn -> not store_subscriber?(hub) end)
+    assert :sys.get_state(hub).last == nil
+  end
+
+  test "with no hub, events.subscribe is not_available", %{path: path} do
+    stop_supervised!(Events)
+    {s, reply} = subscribe(path, [%{"type" => "pane.created"}])
+    assert %{"error" => %{"code" => "not_available"}} = declared!(reply)
     assert ApiClient.recv_line(s, 5000) == {:error, :closed}
   end
 

@@ -2,22 +2,21 @@ defmodule HerdrServer.Api.Handlers.PaneIo do
   @moduledoc """
   Handlers for `pane.send_text`, `send_keys`, `run`, `read` and `wait_for_output`. They
   run in the connection process, so a long `wait_for_output` blocks only its own
-  connection; it polls the pane text every #{100} ms.
+  connection; `Api.Conn` polls it every 100 ms.
   """
 
-  alias HerdrServer.Api.{Conn, Ids, Keys}
+  alias HerdrServer.Api.{Ids, Keys}
   alias HerdrServer.App.Store
   alias HerdrServer.Kernel
   alias HerdrServer.Pane.{Input, Rows}
 
   @chunk 65_536
-  @poll_ms 100
   @recent_default 80
 
   @spec handle(String.t(), map()) ::
-          {:ok, map()} | {:error, atom(), String.t()}
+          {:ok, map()} | {:error, atom(), String.t()} | {:error, atom(), String.t(), map()}
   def handle("pane.send_text", %{pane_id: id, text: text}) do
-    with {:ok, %{pty: pty}} <- lookup(id), do: write_chunks(pty, text) |> ok()
+    with {:ok, %{pty: pty}} <- lookup(id), do: write_chunks(pty, text, 0)
   end
 
   def handle("pane.send_keys", %{pane_id: id, keys: keys}) do
@@ -46,42 +45,38 @@ defmodule HerdrServer.Api.Handlers.PaneIo do
   end
 
   @doc """
-  `pane.wait_for_output`. `ctx` is the connection's: the wait stops (`failed`) once its
-  client has closed (`Api.Conn.peer_closed?/1`), checked every poll.
+  `pane.wait_for_output`: answers at once when a line matches, else
+  `{:continue, {__MODULE__, :poll_output, [params, deadline]}}`, which `Api.Conn` runs
+  every 100 ms until it answers (it ends the wait itself when the client closes). The
+  continuation holds only data, never a fun, so a reload moves a running wait onto new
+  code at its next poll.
   """
-  @spec wait_for_output(map(), map()) :: {:ok, map()} | {:error, atom(), String.t()}
-  def wait_for_output(%{pane_id: id} = p, ctx) do
-    with {:ok, matcher} <- matcher(p), {:ok, _} <- lookup(id) do
+  @spec wait_for_output(map(), map()) ::
+          {:ok, map()} | {:error, atom(), String.t()} | {:continue, {module(), atom(), list()}}
+  def wait_for_output(%{pane_id: id} = p, _ctx) do
+    with {:ok, _} <- matcher(p), {:ok, _} <- lookup(id) do
       deadline = p[:timeout_ms] && System.monotonic_time(:millisecond) + p.timeout_ms
-      wait(id, p, matcher, {deadline, ctx})
+      poll_output(p, deadline, nil)
     end
   end
 
-  # --- wait ---
-
-  defp wait(id, p, matcher, until) do
-    with {:ok, vt} <- vt(id) do
-      src = source(p)
-
-      case vt |> text(src, p[:lines]) |> String.split("\n") |> Enum.find(matcher) do
-        nil -> sleep_or_timeout(id, p, matcher, until)
+  @doc false
+  # One poll of a running wait (see `wait_for_output/2`).
+  @spec poll_output(map(), integer() | nil, map() | nil) ::
+          {:ok, map()} | {:error, atom(), String.t()} | {:continue, {module(), atom(), list()}}
+  def poll_output(%{pane_id: id} = p, deadline, _ctx) do
+    with {:ok, matcher} <- matcher(p), {:ok, vt} <- vt(id) do
+      case vt |> text(source(p), p[:lines]) |> String.split("\n") |> Enum.find(matcher) do
+        nil -> not_yet(p, deadline)
         line -> {:ok, %{type: "output_matched", pane_id: Ids.pane(id), line: line}}
       end
     end
   end
 
-  defp sleep_or_timeout(id, p, matcher, {deadline, ctx} = until) do
-    cond do
-      deadline && System.monotonic_time(:millisecond) >= deadline ->
-        {:error, :timeout, "no output matched within #{p.timeout_ms} ms"}
-
-      Conn.peer_closed?(ctx) ->
-        {:error, :failed, "the connection closed"}
-
-      true ->
-        Process.sleep(@poll_ms)
-        wait(id, p, matcher, until)
-    end
+  defp not_yet(p, deadline) do
+    if deadline && System.monotonic_time(:millisecond) >= deadline,
+      do: {:error, :timeout, "no output matched within #{p.timeout_ms} ms"},
+      else: {:continue, {__MODULE__, :poll_output, [p, deadline]}}
   end
 
   defp matcher(%{match: m, regex: r}) when is_binary(m) and is_binary(r),
@@ -140,11 +135,19 @@ defmodule HerdrServer.Api.Handlers.PaneIo do
     end
   end
 
-  defp write_chunks(pty, <<c::binary-size(@chunk), rest::binary>>),
-    do: send_err(Kernel.pty().write(pty, c)) || write_chunks(pty, rest)
+  # A failed chunk answers its error with `data.written` (bytes already written), so a
+  # client retrying after `backpressure` resends only the rest.
+  defp write_chunks(_pty, <<>>, _written), do: ok(nil)
 
-  defp write_chunks(_pty, <<>>), do: nil
-  defp write_chunks(pty, bin), do: send_err(Kernel.pty().write(pty, bin))
+  defp write_chunks(pty, bin, written) do
+    {c, rest} =
+      if byte_size(bin) > @chunk, do: :erlang.split_binary(bin, @chunk), else: {bin, <<>>}
+
+    case send_err(Kernel.pty().write(pty, c)) do
+      nil -> write_chunks(pty, rest, written + byte_size(c))
+      {:error, code, msg} -> {:error, code, msg, %{written: written}}
+    end
+  end
 
   # :ok stays :ok; an error becomes the {:error, code, msg} the router returns
   defp send_err(:ok), do: nil

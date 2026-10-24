@@ -37,7 +37,11 @@ defmodule HerdrServer.Api.Listener do
   @doc "Open connections (0 when no listener runs)."
   @spec conns() :: non_neg_integer()
   def conns do
-    if GenServer.whereis(__MODULE__), do: GenServer.call(__MODULE__, :conns), else: 0
+    GenServer.call(__MODULE__, :conns)
+  catch
+    # no listener, or one stopping (a handoff): nothing is open here
+    :exit, {reason, {GenServer, :call, _}} when reason in [:noproc, :normal, :shutdown, :timeout] ->
+      0
   end
 
   @impl true
@@ -142,6 +146,27 @@ defmodule HerdrServer.Api.Listener do
 
       {:error, :closed} ->
         :ok
+
+      # e.g. emfile: the listen socket is fine, the system is out of something
+      {:error, reason} ->
+        __MODULE__.accept_failed(reason)
+        Process.sleep(100)
+        __MODULE__.accept(listen, owner)
     end
+  end
+
+  @doc false
+  # At most one warning per reason a minute: a lasting emfile would flood the log.
+  @spec accept_failed(term()) :: :ok
+  def accept_failed(reason) do
+    now = System.monotonic_time(:second)
+    key = {__MODULE__, :accept_failed, reason}
+
+    if now - Process.get(key, now - 60) >= 60 do
+      Process.put(key, now)
+      Logger.warning("api accept failed: #{inspect(reason)}")
+    end
+
+    :ok
   end
 end

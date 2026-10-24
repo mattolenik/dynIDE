@@ -3,8 +3,9 @@ defmodule HerdrServer.Api.Conn do
   One API connection: reads JSON lines, answers each in order, until the peer closes.
   Started by `HerdrServer.Api.Listener` per accepted socket (linked to it), which hands
   the socket over with `{:socket, s}`. The socket is `{active, once}`, re-armed before
-  each handler runs, so a long handler can see a peer close (`peer_closed?/1`); `ctx`
-  carries `conn` (this pid) and `socket`.
+  each handler runs; `ctx` carries `conn` (this pid) and `socket`. A handler that must
+  wait answers `{:continue, {m, f, a}}` and is polled from here (`continue/5`), so a
+  long wait holds no handler frames and still sees a peer close.
 
   `events.subscribe` (the router answers `{:subscribe, filters}` once `Api.Events` holds
   them) turns the connection into an event stream: `subscription_started`, then one
@@ -23,9 +24,11 @@ defmodule HerdrServer.Api.Conn do
   """
 
   alias HerdrReload.{Guard, Telemetry}
-  alias HerdrServer.Api.Spec
+  alias HerdrServer.Api.{Events, Spec}
 
   @max_line 1_048_576
+  @poll_ms 100
+  @max_pending 16
   @max_queue 1000
   @send_timeout_ms 5000
   @denied ~w(parse_error invalid_request unknown_method invalid_params not_available)a
@@ -49,7 +52,10 @@ defmodule HerdrServer.Api.Conn do
   @doc false
   # A remote call per line and per idle second, so a reload of this module moves an idle
   # connection onto the new code within a second (a soft purge is never blocked).
+  # Lines that arrived during a wait (`ctx.pending`) are answered first, in order.
   @spec loop(:gen_tcp.socket(), map()) :: :ok
+  def loop(s, %{pending: [line | rest]} = ctx), do: line(s, line, %{ctx | pending: rest})
+
   def loop(s, ctx) do
     receive do
       {:tcp, ^s, line} -> line(s, line, ctx)
@@ -60,26 +66,30 @@ defmodule HerdrServer.Api.Conn do
     end
   end
 
-  @doc """
-  Whether the peer of `ctx.socket` has closed, without consuming request lines. For a
-  handler that runs long in the conn process (an untimed `pane.wait_for_output`); the
-  close message is put back so the loop still sees it.
-  """
-  @spec peer_closed?(map()) :: boolean()
-  def peer_closed?(%{socket: s}) do
+  @doc false
+  # A handler's `{:continue, {m, f, a}}` (a `pane.wait_for_output` that has not matched
+  # yet): `m.f(a...)` runs again through the guard every #{@poll_ms} ms until it answers.
+  # Each poll is a remote call, so a wait pins no old code of this module or the
+  # handler's. A peer close ends the wait without an answer; a pipelined request line
+  # is kept in `ctx.pending` (up to #{@max_pending}) and the socket re-armed, so a close
+  # behind it is still seen.
+  @spec continue(:gen_tcp.socket(), String.t(), String.t(), {module(), atom(), list()}, map()) ::
+          :ok
+  def continue(s, id, method, {m, f, a} = mfa, ctx) do
     receive do
-      {:tcp_closed, ^s} = m -> put_back(m)
-      {:tcp_error, ^s, _} = m -> put_back(m)
+      {:tcp, ^s, line} ->
+        ctx = Map.update(ctx, :pending, [line], &(&1 ++ [line]))
+        if length(ctx.pending) < @max_pending, do: _ = :inet.setopts(s, active: :once)
+        __MODULE__.continue(s, id, method, mfa, ctx)
+
+      {:tcp_closed, ^s} ->
+        :gen_tcp.close(s)
+
+      {:tcp_error, ^s, _} ->
+        :gen_tcp.close(s)
     after
-      0 -> false
+      @poll_ms -> answered(s, id, method, outcome(method, guarded(m, f, a, ctx)), ctx)
     end
-  end
-
-  def peer_closed?(_ctx), do: false
-
-  defp put_back(m) do
-    send(self(), m)
-    true
   end
 
   defp line(s, line, _ctx)
@@ -91,19 +101,22 @@ defmodule HerdrServer.Api.Conn do
   defp line(s, line, ctx) do
     # re-armed before the handler runs, so a close during a long handler is a message
     _ = :inet.setopts(s, active: :once)
+    {id, method, outcome} = answer(line, ctx)
+    answered(s, id, method, outcome, ctx)
+  end
 
-    case answer(line, ctx) do
-      {id, _method, {:subscribe, filters}} ->
-        start_stream(s, id, filters, ctx)
+  defp answered(s, id, _method, {:subscribe, filters}, ctx), do: start_stream(s, id, filters, ctx)
 
-      {id, method, outcome} ->
-        sent = :gen_tcp.send(s, reply(id, method, outcome))
+  defp answered(s, id, method, {:continue, mfa}, ctx),
+    do: __MODULE__.continue(s, id, method, mfa, ctx)
 
-        # a refused subscription closes, like herdr's
-        if sent == :ok and not (method == "events.subscribe" and elem(outcome, 0) == :error),
-          do: __MODULE__.loop(s, ctx),
-          else: :gen_tcp.close(s)
-    end
+  defp answered(s, id, method, outcome, ctx) do
+    sent = :gen_tcp.send(s, reply(id, method, outcome))
+
+    # a refused subscription closes, like herdr's
+    if sent == :ok and not (method == "events.subscribe" and elem(outcome, 0) == :error),
+      do: __MODULE__.loop(s, ctx),
+      else: :gen_tcp.close(s)
   end
 
   # --- subscription mode ---
@@ -111,27 +124,36 @@ defmodule HerdrServer.Api.Conn do
   defp start_stream(s, id, filters, ctx) do
     result = %{type: "subscription_started", subscriptions: length(filters)}
     _ = :inet.setopts(s, send_timeout: @send_timeout_ms, send_timeout_close: true)
+    # the hub going away loses this subscription: events_lost (a DOWN at once if gone)
+    hub = Process.monitor(Events)
 
     case :gen_tcp.send(s, reply(id, "events.subscribe", {:ok, result})) do
-      :ok -> __MODULE__.stream(s, Map.put(ctx, :sub_id, id))
+      :ok -> __MODULE__.stream(s, ctx |> Map.put(:sub_id, id) |> Map.put(:hub, hub))
       {:error, _} -> :gen_tcp.close(s)
     end
   end
 
   @doc false
   # Writes each `{:api_event, event}` as one line; ignores request lines. More than
-  # #{@max_queue} queued messages, or a write blocked #{@send_timeout_ms} ms, is
-  # `events_lost` and closes. A remote call per event and idle second, like `loop/2`.
+  # #{@max_queue} queued messages, a write blocked #{@send_timeout_ms} ms, or the
+  # `Api.Events` hub exiting is `events_lost` and closes. A remote call per event and
+  # idle second, like `loop/2`.
   @spec stream(:gen_tcp.socket(), map()) :: :ok
-  def stream(s, ctx) do
+  def stream(s, %{hub: hub} = ctx) do
     receive do
       {:api_event, event} -> event(s, event, ctx)
+      {:DOWN, ^hub, :process, _, _} -> lost(s, ctx, "the event hub stopped")
       {:tcp, ^s, _line} -> rearm(s, ctx)
       {:tcp_closed, ^s} -> :gen_tcp.close(s)
       {:tcp_error, ^s, _} -> :gen_tcp.close(s)
     after
       1000 -> __MODULE__.stream(s, ctx)
     end
+  end
+
+  defp lost(s, ctx, msg) do
+    _ = :gen_tcp.send(s, reply(ctx.sub_id, "events.subscribe", {:error, :events_lost, msg}))
+    :gen_tcp.close(s)
   end
 
   defp rearm(s, ctx) do
@@ -145,9 +167,7 @@ defmodule HerdrServer.Api.Conn do
     {:message_queue_len, queued} = Process.info(self(), :message_queue_len)
 
     if queued > @max_queue do
-      msg = "subscriber fell #{queued} messages behind"
-      _ = :gen_tcp.send(s, reply(ctx.sub_id, "events.subscribe", {:error, :events_lost, msg}))
-      :gen_tcp.close(s)
+      lost(s, ctx, "subscriber fell #{queued} messages behind")
     else
       {type, data} = Map.pop(event, "event")
 
@@ -198,29 +218,34 @@ defmodule HerdrServer.Api.Conn do
   defp request(_req, _ctx),
     do: {"", "", {:error, :invalid_request, "a request is an object with a string id"}}
 
-  defp run(method, params, ctx) do
-    args = [method, params, Map.delete(ctx, :router)]
+  defp run(method, params, ctx),
+    do: outcome(method, guarded(ctx.router, :handle, [method, params], ctx))
 
-    case Guard.run_twice(ctx.router, :handle, args, server: ctx.reload_server, scan: false) do
-      {:ok, {:ok, result}} when is_map(result) ->
-        {:ok, result}
-
-      {:ok, {:subscribe, filters}} when is_list(filters) and method == "events.subscribe" ->
-        {:subscribe, filters}
-
-      {:ok, {:error, code, msg}} when code in @codes ->
-        {:error, code, msg}
-
-      {:ok, {:error, code, msg, data}} when code in @codes and is_map(data) ->
-        {:error, code, msg, data}
-
-      {:ok, other} ->
-        {:error, :internal, "bad handler reply: #{inspect(other, limit: 5)}"}
-
-      {:failed, failure} ->
-        {:error, :internal, Guard.message(failure)}
-    end
+  # the handler's ctx: without the router and the lines kept for later
+  defp guarded(m, f, a, ctx) do
+    ctx = Map.drop(ctx, [:router, :pending])
+    Guard.run_twice(m, f, a ++ [ctx], server: ctx.reload_server, scan: false)
   end
+
+  defp outcome(method, {:ok, reply}), do: handler_reply(method, reply)
+  defp outcome(_method, {:failed, failure}), do: {:error, :internal, Guard.message(failure)}
+
+  defp handler_reply(_method, {:ok, result}) when is_map(result), do: {:ok, result}
+
+  defp handler_reply("events.subscribe", {:subscribe, filters}) when is_list(filters),
+    do: {:subscribe, filters}
+
+  defp handler_reply(_method, {:continue, {m, f, a}})
+       when is_atom(m) and is_atom(f) and is_list(a),
+       do: {:continue, {m, f, a}}
+
+  defp handler_reply(_method, {:error, code, msg}) when code in @codes, do: {:error, code, msg}
+
+  defp handler_reply(_method, {:error, code, msg, data}) when code in @codes and is_map(data),
+    do: {:error, code, msg, data}
+
+  defp handler_reply(_method, other),
+    do: {:error, :internal, "bad handler reply: #{inspect(other, limit: 5)}"}
 
   defp reply(id, _method, {:ok, result}), do: [JSON.encode!(%{id: id, result: result}), "\n"]
 

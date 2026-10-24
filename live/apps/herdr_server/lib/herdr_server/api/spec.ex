@@ -17,10 +17,6 @@ defmodule HerdrServer.Api.Spec do
   @error_codes ~w(parse_error invalid_request unknown_method invalid_params not_found
                   not_available failed timeout backpressure events_lost internal)a
 
-  @event_types ~w(workspace.created workspace.closed workspace.focused workspace.renamed
-                  tab.created tab.closed tab.focused tab.renamed
-                  pane.created pane.closed pane.focused pane.updated layout.updated)
-
   @sources ~w(visible recent)
   @agent_states ~w(idle working blocked done unknown)
 
@@ -28,7 +24,7 @@ defmodule HerdrServer.Api.Spec do
   def error_codes, do: @error_codes
 
   @spec event_types() :: [String.t()]
-  def event_types, do: @event_types
+  def event_types, do: Enum.map(events(), & &1.type)
 
   # --- param builders --------------------------------------------------------
 
@@ -47,8 +43,10 @@ defmodule HerdrServer.Api.Spec do
   defp timeout_ms,
     do: opt("timeout_ms", {:integer, 1, 3_600_000}, "Give up after this many milliseconds.")
 
+  # every method rejects unknown params, so every method can answer invalid_params;
+  # `internal` (a handler crashed) is implicit and never listed
   defp method(name, group, summary, params, result, errors, cli) do
-    errors = if params == [], do: errors, else: [:invalid_params | errors]
+    errors = [:invalid_params | errors]
 
     %{
       name: name,
@@ -68,7 +66,7 @@ defmodule HerdrServer.Api.Spec do
 
   @spec methods() :: [map()]
   def methods do
-    server() ++ reload() ++ workspace() ++ tab() ++ pane() ++ events() ++ agents()
+    server() ++ reload() ++ workspace() ++ tab() ++ pane() ++ event_methods() ++ agents()
   end
 
   defp server do
@@ -149,7 +147,7 @@ defmodule HerdrServer.Api.Spec do
           focus("Focus the new workspace; default false.")
         ],
         "workspace_created",
-        [:failed],
+        [],
         "herdr-live workspace create [--label L] [--focus]"
       ),
       method(
@@ -214,7 +212,7 @@ defmodule HerdrServer.Api.Spec do
           focus("Focus the new tab.")
         ],
         "tab_created",
-        [:not_found, :failed],
+        [:not_found],
         "herdr-live tab create [--workspace <workspace_id>] [--label L] [--focus]"
       ),
       method(
@@ -250,7 +248,7 @@ defmodule HerdrServer.Api.Spec do
   defp pane do
     g = "pane"
     pid = req("pane_id", :pane_id, "Target pane.")
-    send_errors = [:not_found, :backpressure]
+    send_errors = [:not_found, :backpressure, :failed]
 
     [
       method(
@@ -341,6 +339,12 @@ defmodule HerdrServer.Api.Spec do
         "ok",
         send_errors,
         "herdr-live pane send-text <pane_id> <text>"
+      )
+      |> Map.put(
+        :notes,
+        "Text is written in 64 KiB chunks. On `backpressure` or `failed` the error's " <>
+          "`data.written` is the number of bytes already written: resend only the text " <>
+          "from that byte offset, or the pane gets the start twice."
       ),
       method(
         "pane.send_keys",
@@ -366,7 +370,7 @@ defmodule HerdrServer.Api.Spec do
         "Read terminal text.",
         [pid, source(), lines()],
         "pane_read",
-        send_errors,
+        [:not_found],
         "herdr-live pane read [<pane_id>] [--source visible|recent] [--lines N]"
       ),
       method(
@@ -388,9 +392,9 @@ defmodule HerdrServer.Api.Spec do
     ]
   end
 
-  defp events do
+  defp event_methods do
     sub = [
-      req("type", {:enum, @event_types}, "Event type."),
+      req("type", {:enum, event_types()}, "Event type."),
       opt("pane_id", :pane_id, "Only events of this pane."),
       opt("tab_id", :tab_id, "Only events of this tab."),
       opt("workspace_id", :workspace_id, "Only events of this workspace.")
@@ -513,6 +517,50 @@ defmodule HerdrServer.Api.Spec do
       ]
     }
   end
+
+  @doc """
+  The event stream's line types, in order. Each line is `{"event": type, "data": data}`;
+  `data` holds exactly `fields` (`Api.EventDiff` builds them).
+  """
+  @spec events() :: [%{type: String.t(), summary: String.t(), fields: [map()]}]
+  def events do
+    ws = [f("workspace_id", :workspace_id)]
+    tab = [f("tab_id", :tab_id) | ws]
+    pane = [f("pane_id", :pane_id) | tab]
+    ws_obj = ws ++ [f("workspace", {:ref, "workspace"})]
+    tab_obj = tab ++ [f("tab", {:ref, "tab"})]
+    pane_obj = pane ++ [f("pane", {:ref, "pane"})]
+
+    [
+      ev("workspace.created", "A workspace was created.", ws_obj),
+      ev("workspace.closed", "A workspace was closed.", ws),
+      ev("workspace.focused", "The focused workspace changed.", ws_obj),
+      ev("workspace.renamed", "A workspace's label changed.", ws_obj),
+      ev("tab.created", "A tab was created.", tab_obj),
+      ev("tab.closed", "A tab was closed.", tab),
+      ev("tab.focused", "The focused tab changed.", tab_obj),
+      ev("tab.renamed", "A tab's label changed.", tab_obj),
+      ev("pane.created", "A pane was created.", pane_obj),
+      ev("pane.closed", "A pane was closed.", pane),
+      ev("pane.focused", "The focused pane changed.", pane_obj),
+      ev("pane.updated", "A pane's title or size changed.", pane_obj),
+      ev("layout.updated", "A tab's split tree changed.", tab ++ [f("layout", {:ref, "layout"})])
+    ]
+  end
+
+  defp ev(type, summary, fields), do: %{type: type, summary: summary, fields: fields}
+
+  @doc "Checks one decoded event line against `events/0` (tests)."
+  @spec validate_event(map()) :: :ok | {:error, String.t()}
+  def validate_event(%{"event" => type, "data" => data} = line)
+      when map_size(line) == 2 and is_map(data) do
+    case Enum.find(events(), &(&1.type == type)) do
+      nil -> {:error, "unknown event #{inspect(type)}"}
+      e -> check_fields_result(e.fields, data, "data.", [])
+    end
+  end
+
+  def validate_event(line), do: {:error, "an event line is {event, data}: #{inspect(line)}"}
 
   @spec results() :: %{String.t() => [map()]}
   def results do
@@ -691,7 +739,7 @@ defmodule HerdrServer.Api.Spec do
     with {:ok, m} <- fetch(name),
          {:ok, fields} <- Map.fetch(results(), m.result) |> or_error("no result type #{m.result}"),
          :ok <- check_type_name(m.result, result) do
-      check_fields_result(fields, result, "")
+      check_fields_result(fields, result, "", ["type"])
     else
       :error -> {:error, "unknown method #{inspect(name)}"}
       {:error, _} = e -> e
@@ -706,7 +754,17 @@ defmodule HerdrServer.Api.Spec do
   defp check_type_name(expected, other),
     do: {:error, "type must be #{expected}, got #{inspect(Map.get(other, "type"))}"}
 
-  defp check_fields_result(fields, map, prefix) do
+  # every declared field checked, and no field the spec does not declare
+  defp check_fields_result(fields, map, prefix, extra) do
+    declared = extra ++ Enum.map(fields, & &1.name)
+
+    case Enum.find(Map.keys(map), &(&1 not in declared)) do
+      nil -> check_declared(fields, map, prefix)
+      key -> {:error, "undeclared field #{prefix}#{key}"}
+    end
+  end
+
+  defp check_declared(fields, map, prefix) do
     Enum.reduce_while(fields, :ok, fn fl, :ok ->
       case check_field(fl, Map.fetch(map, fl.name), prefix <> fl.name) do
         :ok -> {:cont, :ok}
@@ -733,7 +791,7 @@ defmodule HerdrServer.Api.Spec do
   defp rtype(:workspace_id, v, full), do: rid(Ids.parse_workspace(v), full)
 
   defp rtype({:ref, obj}, v, full) when is_map(v),
-    do: check_fields_result(Map.fetch!(objects(), obj), v, full <> ".")
+    do: check_fields_result(Map.fetch!(objects(), obj), v, full <> ".", [])
 
   defp rtype({:list, t}, v, full) when is_list(v) do
     v

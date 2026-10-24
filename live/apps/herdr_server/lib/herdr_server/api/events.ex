@@ -6,6 +6,10 @@ defmodule HerdrServer.Api.Events do
   subscription subscribes the hub itself to the Store. On each `{:app_changed, app}` the
   hub diffs against the last app (`Api.EventDiff`, guarded) and sends
   `{:api_event, event}` to each subscriber with a matching filter, at most once per event.
+  The hub monitors the Store: after a Store restart it subscribes again (retrying every
+  100 ms until the Store is registered) and diffs from the new Store's snapshot, so
+  changes during the restart give no events. When the last subscriber goes, the hub
+  unsubscribes from the Store and drops its copy of the app.
   A filter is `%{"type" => type}` plus any of `"workspace_id"`, `"tab_id"`, `"pane_id"`
   (public ids), each of which must equal the event's.
 
@@ -19,7 +23,9 @@ defmodule HerdrServer.Api.Events do
 
   @ids ~w(workspace_id tab_id pane_id)
 
-  defstruct subs: %{}, last: nil, store?: false
+  @retry_ms 100
+
+  defstruct subs: %{}, last: nil, store?: false, retry?: false
 
   @type filter :: %{required(String.t()) => String.t()}
 
@@ -90,7 +96,7 @@ defmodule HerdrServer.Api.Events do
 
   @impl true
   def handle_call({:subscribe, pid, filters}, _from, state) do
-    state = Map.merge(%__MODULE__{}, state) |> watch_store()
+    state = Map.merge(%__MODULE__{}, state)
 
     subs =
       case state.subs do
@@ -98,7 +104,7 @@ defmodule HerdrServer.Api.Events do
         subs -> Map.put(subs, pid, {Process.monitor(pid), filters})
       end
 
-    {:reply, :ok, %{state | subs: subs}}
+    {:reply, :ok, watch_store(%{state | subs: subs})}
   end
 
   @impl true
@@ -106,6 +112,12 @@ defmodule HerdrServer.Api.Events do
     state = Map.merge(%__MODULE__{}, state)
     if state.subs != %{}, do: fan_out(state.last, app, state.subs)
     {:noreply, %{state | last: app}}
+  end
+
+  # the Store restarted: it forgot this subscription; subscribe again once it is back
+  def handle_info({:DOWN, ref, :process, _, _}, %{store?: ref} = state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, watch_store(%{state | store?: false, last: nil})}
   end
 
   def handle_info({:DOWN, ref, :process, pid, _}, state) do
@@ -117,7 +129,12 @@ defmodule HerdrServer.Api.Events do
         subs -> subs
       end
 
-    {:noreply, %{state | subs: subs}}
+    {:noreply, unwatch_store(%{state | subs: subs})}
+  end
+
+  def handle_info(:watch_store, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, watch_store(%{state | retry?: false})}
   end
 
   def handle_info(_msg, state), do: {:noreply, Map.merge(%__MODULE__{}, state)}
@@ -125,12 +142,53 @@ defmodule HerdrServer.Api.Events do
   @impl true
   def code_change(_old, state, _extra), do: {:ok, Map.merge(%__MODULE__{}, state)}
 
-  # Store subscription is lazy; the snapshot is the base the first change diffs against.
-  defp watch_store(%{store?: true} = state), do: state
+  # The Store subscription is held only while someone subscribes. `store?` is the
+  # Store's monitor ref; the snapshot is the base the first change diffs against.
+  defp watch_store(%{subs: subs} = state) when subs == %{}, do: state
+  defp watch_store(%{store?: ref} = state) when is_reference(ref), do: state
 
   defp watch_store(state) do
+    # a Store that dies after answering is a DOWN (noproc at worst): subscribe again
+    with pid when is_pid(pid) <- GenServer.whereis(Store),
+         {:ok, app} <- store_subscribe() do
+      %{state | store?: Process.monitor(pid), last: app}
+    else
+      _ -> retry_watch(state)
+    end
+  end
+
+  # a Store between its exit and its restart answers nothing: try again shortly
+  defp retry_watch(%{retry?: true} = state), do: state
+
+  defp retry_watch(state) do
+    Process.send_after(self(), :watch_store, @retry_ms)
+    %{state | retry?: true}
+  end
+
+  # The Store going away mid-call is the one exit expected here; its DOWN follows.
+  defp store_subscribe do
     :ok = Store.subscribe(self())
-    %{state | store?: true, last: Store.snapshot()}
+    {:ok, Store.snapshot()}
+  catch
+    :exit, {reason, {GenServer, :call, _}}
+    when reason in [:noproc, :normal, :shutdown, :killed] ->
+      :error
+  end
+
+  defp unwatch_store(%{subs: subs, store?: ref} = state) when subs == %{} and is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+    _ = store_unsubscribe()
+    %{state | store?: false, last: nil}
+  end
+
+  defp unwatch_store(state), do: state
+
+  defp store_unsubscribe do
+    Store.unsubscribe(self())
+  catch
+    :exit, {reason, {GenServer, :call, _}}
+    when reason in [:noproc, :normal, :shutdown, :killed] ->
+      :error
   end
 
   defp fan_out(old, new, subs) do
