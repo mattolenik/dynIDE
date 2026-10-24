@@ -16,6 +16,11 @@ defmodule HerdrServer.Handoff.Link do
   client (`Protocol.local_client_name/0`) to stop, so its tty restore is done before the
   next VM's client can open the tty, and flushes `App.Store`'s pending HOLD.
 
+  ctl REQUESTs are queued until `restored/0` has run (Application.start calls it once the
+  supervisor is up, after FRESH as after an adoption), then run in order: a request the
+  broker forwards right after FRESH must not reach a Keeper whose `App.Store.init` is
+  still to close every pane.
+
   A closed link while primary halts the VM: the broker already treats it as dead and
   adopts its panes elsewhere.
   """
@@ -40,6 +45,7 @@ defmodule HerdrServer.Handoff.Link do
             rejected: [],
             released: false,
             ctl: :queue.new(),
+            ready: false,
             worker: nil
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -116,6 +122,8 @@ defmodule HerdrServer.Handoff.Link do
     if link(), do: halt("handoff link restarted")
     gen = "HERDR_LIVE_GEN" |> System.get_env("0") |> String.to_integer()
     os_pid = String.to_integer(System.pid())
+    {us, n} = :timer.tc(&preload/0)
+    Logger.info("handoff link gen=#{gen} preloaded #{n} modules in #{div(us, 1000)} ms")
 
     with {:ok, l} <- NLink.connect(path, self()),
          :ok <- NLink.send(l, NLink.kind(:hello), <<gen::64, os_pid::32>>, []) do
@@ -126,6 +134,22 @@ defmodule HerdrServer.Handoff.Link do
     else
       {:error, reason} -> {:stop, {:broker_link, reason}}
     end
+  end
+
+  @doc false
+  # Adopted blobs decode with `[:safe]`, which rejects atoms the VM has not seen yet
+  # (struct fields of a module not loaded so far): load every umbrella module before
+  # HELLO, which also warms a standby before it is promoted. Returns the module count.
+  @spec preload() :: non_neg_integer
+  def preload do
+    mods =
+      for app <- [:herdr_scene, :herdr_server, :herdr_term],
+          _ = Application.load(app),
+          m <- Application.spec(app, :modules) || [],
+          do: m
+
+    Enum.each(mods, &Code.ensure_loaded/1)
+    length(mods)
   end
 
   @fresh NLink.kind(:fresh)
@@ -175,7 +199,7 @@ defmodule HerdrServer.Handoff.Link do
     :persistent_term.erase(Protocol.handoff_key())
 
     if state.reason == nil do
-      {:reply, :ok, state}
+      {:reply, :ok, run_queued(state)}
     else
       # staged by the broker with the Keeper's UPDATEs, applied at RESTORED
       for {k, _, _} <- state.adopted, do: drop(k)
@@ -184,7 +208,7 @@ defmodule HerdrServer.Handoff.Link do
       # after RESTORED (at most once) and before any queued ctl request runs
       :ok = Keeper.write_carried()
       notice(:adopted, state)
-      {:reply, :ok, %{state | adopted: [], rejected: []}}
+      {:reply, :ok, run_queued(%{state | adopted: [], rejected: []})}
     end
   end
 
@@ -196,9 +220,15 @@ defmodule HerdrServer.Handoff.Link do
   @impl true
   def handle_info({:herdr_link, _, @request, <<ref::64, payload::binary>>, _}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    state = ensure_worker(state)
-    send(elem(state.worker, 0), {:req, ref, payload})
-    {:noreply, %{state | ctl: :queue.in({ref, payload}, state.ctl)}}
+    state = %{state | ctl: :queue.in({ref, payload}, state.ctl)}
+
+    if state.ready do
+      state = ensure_worker(state)
+      send(elem(state.worker, 0), {:req, ref, payload})
+      {:noreply, state}
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_info({:ctl_done, ref}, state) do
@@ -276,6 +306,18 @@ defmodule HerdrServer.Handoff.Link do
     state = ensure_worker(%{state | worker: nil, ctl: ctl})
 
     for {ref, payload} <- :queue.to_list(ctl),
+        do: send(elem(state.worker, 0), {:req, ref, payload})
+
+    state
+  end
+
+  # restored/0 ran: from now on requests go straight to the worker
+  defp run_queued(%{ready: true} = state), do: state
+
+  defp run_queued(state) do
+    state = ensure_worker(%{state | ready: true})
+
+    for {ref, payload} <- :queue.to_list(state.ctl),
         do: send(elem(state.worker, 0), {:req, ref, payload})
 
     state

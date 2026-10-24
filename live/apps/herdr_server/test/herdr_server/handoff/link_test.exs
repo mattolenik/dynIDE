@@ -124,6 +124,39 @@ defmodule HerdrServer.Handoff.LinkTest do
     stop(pid)
   end
 
+  test "a request between FRESH and restored/0 runs only after restored/0" do
+    {pid, peer} = start_link_with(<<2::32, 0x41, 0>>)
+    request(peer, 1, :ping)
+    request(peer, 2, :panes)
+    # nothing runs before the app is up
+    assert {:error, :timeout} = :gen_tcp.recv(peer, 1, 300)
+    assert Link.restored() == :ok
+    assert {1, :pong} = reply(peer)
+    assert {2, panes} = reply(peer)
+    assert is_list(panes)
+    request(peer, 3, :ping)
+    assert reply(peer) == {3, :pong}
+    stop(pid)
+  end
+
+  test "preload makes a blob with not-yet-loaded struct atoms decode with :safe" do
+    blob = Base.encode64(:erlang.term_to_binary(%HerdrServer.App.Session{}))
+    ebins = Path.wildcard(Path.join(Mix.Project.build_path(), "lib/*/ebin"))
+
+    # a fresh VM: only the code path, nothing of the umbrella loaded yet
+    script = """
+    blob = Base.decode64!(#{inspect(blob)})
+    try_decode = fn -> try do :erlang.binary_to_term(blob, [:safe]) && :ok rescue _ -> :fail end end
+    before = try_decode.()
+    HerdrServer.Handoff.Link.preload()
+    IO.puts("\#{before} \#{try_decode.()}")
+    """
+
+    args = Enum.flat_map(ebins, &["-pa", &1]) ++ ["-e", script]
+    {out, 0} = System.cmd(System.find_executable("elixir"), args)
+    assert String.trim(out) == "fail ok"
+  end
+
   test "prepare waits for the local client to stop and publishes the phase" do
     {pid, peer} = start_link_with(<<2::32, 0x41, 0>>)
     on_exit(fn -> :persistent_term.erase(HerdrScene.Protocol.handoff_key()) end)
@@ -172,6 +205,7 @@ defmodule HerdrServer.Handoff.LinkTest do
     Application.put_env(:herdr_server, HerdrServer.Handoff, snapshot_ms: 1000, ctl: BoomCtl)
     on_exit(fn -> Application.put_env(:herdr_server, HerdrServer.Handoff, snapshot_ms: 1000) end)
     {pid, peer} = start_link_with(<<2::32, 0x41, 0>>)
+    assert Link.restored() == :ok
 
     request(peer, 1, :ping)
     request(peer, 2, :boom)
