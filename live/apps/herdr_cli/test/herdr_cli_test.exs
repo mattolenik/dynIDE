@@ -23,17 +23,74 @@ defmodule HerdrCliTest do
   test "a crash prints nothing on stdout and exits 1" do
     elixir = Path.join(:code.lib_dir(:elixir), "ebin")
     cli = Path.join(:code.lib_dir(:herdr_cli), "ebin")
+    dir = Path.join(System.tmp_dir!(), "hcli-crash-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf(dir) end)
+    stderr = Path.join(dir, "stderr")
 
-    # an argv that is not a list makes run/2 raise inside main/1's worker process
+    # an argv that is not a list makes run/2 raise inside main/1's worker process;
+    # stderr (the crash report) goes to a file, not into this test run's output
     {out, code} =
       System.cmd(
-        "erl",
-        ~w(-noinput -boot no_dot_erlang -pa #{elixir} -pa #{cli} -eval) ++
-          ["'Elixir.HerdrCli':main(not_a_list)."],
+        "sh",
+        [
+          "-c",
+          ~s(exec erl -noinput -boot no_dot_erlang -pa "$1" -pa "$2" -eval "$3" 2>"$4"),
+          "sh",
+          elixir,
+          cli,
+          "'Elixir.HerdrCli':main(not_a_list).",
+          stderr
+        ],
         env: [{"ERL_CRASH_DUMP_SECONDS", "0"}]
       )
 
     assert code == 1
     assert out == ""
+    assert File.read!(stderr) =~ "herdr-live: internal error"
+  end
+
+  test "help and --help print usage on stdout and exit 0" do
+    for arg <- ["help", "--help"] do
+      out =
+        ExUnit.CaptureIO.capture_io(fn ->
+          assert ExUnit.CaptureIO.capture_io(:stderr, fn ->
+                   assert HerdrCli.run([arg], %{}) == 0
+                 end) == ""
+        end)
+
+      assert out =~ "usage: herdr-live <verb>"
+    end
+  end
+
+  test "an event stream the server closes exits 1 with a message on stderr" do
+    dir = Path.join(System.tmp_dir!(), "hcli-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf(dir) end)
+    path = Path.join(dir, "api.sock")
+    {:ok, l} = :gen_tcp.listen(0, [:binary, ifaddr: {:local, path}, active: false])
+
+    spawn_link(fn ->
+      {:ok, s} = :gen_tcp.accept(l, 10_000)
+      :ok = :inet.setopts(s, packet: :line)
+      {:ok, _line} = :gen_tcp.recv(s, 0, 10_000)
+      ack = ~s({"id":"cli","result":{"type":"subscription_started","subscriptions":1}}\n)
+      ev = ~s({"event":"tab.closed","data":{"tab_id":"w1:t2","workspace_id":"w1"}}\n)
+      :ok = :gen_tcp.send(s, [ack, ev])
+      :gen_tcp.close(s)
+    end)
+
+    err =
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        out =
+          ExUnit.CaptureIO.capture_io(fn ->
+            assert HerdrCli.run(["events", "subscribe", "tab.closed"], %{"HERDR_LIVE_API" => path}) ==
+                     1
+          end)
+
+        assert out =~ "tab.closed"
+      end)
+
+    assert err == "herdr-live: stream closed by server\n"
   end
 end

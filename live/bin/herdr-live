@@ -24,7 +24,8 @@
 # ~150 ms p50 vs ~270 ms for `elixir -e` or an escript (M12 task 7). It never reads stdin.
 # Elixir's ebin dir is asked from `elixir` once and cached in _build/dev (version
 # managers' shims defeat symlink resolution); the cache is redone when the dir is gone.
-# Exit codes: 0 ok, 1 API error (JSON on stderr) or not running, 2 usage.
+# Exit codes: 0 ok (help and --help print usage to stdout), 1 API error (JSON on
+# stderr), not running, or an event stream the server closed, 2 usage.
 # `status` prints the broker's status, then the server's (key=value) when it answers.
 #
 # herdr-live rollback [n]: roll back the newest n live reload batches (default 1)

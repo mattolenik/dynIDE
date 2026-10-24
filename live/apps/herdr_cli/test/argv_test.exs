@@ -253,10 +253,13 @@ defmodule HerdrCli.ArgvTest do
     end
   end
 
-  test "no verb, help and unknown verbs are usage" do
+  test "no verb and unknown verbs are usage; help is help" do
     assert {:usage, text} = p("")
     assert text =~ "usage: herdr-live"
-    assert {:usage, _} = p("help")
+    assert {:help, text} = p("help")
+    assert text =~ "usage: herdr-live"
+    assert {:help, ^text} = p("--help")
+    assert {:help, ^text} = p("-h")
     assert {:usage, "herdr-live: empty command\n" <> _} = Argv.parse([""], %{})
     assert {:usage, _} = p("frobnicate")
   end

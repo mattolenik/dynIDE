@@ -16,7 +16,10 @@ defmodule HerdrCli.Argv do
 
   @type out :: :json | :text | :lines | :rollback | :gate
   @type result ::
-          {:call, String.t(), map(), out()} | {:subscribe, map()} | {:usage, String.t()}
+          {:call, String.t(), map(), out()}
+          | {:subscribe, map()}
+          | {:usage, String.t()}
+          | {:help, String.t()}
 
   @sources ~w(visible recent)
   @agent_states ~w(idle working blocked done unknown)
@@ -305,6 +308,8 @@ defmodule HerdrCli.Argv do
 
   @doc "Parses argv (without the program name) against `env` into a request."
   @spec parse([String.t()], %{optional(String.t()) => String.t()}) :: result()
+  def parse([help | _], _env) when help in ["help", "--help", "-h"], do: {:help, usage()}
+
   def parse(argv, env) do
     case find(argv) do
       {%{method: :raw} = c, rest} -> raw(c, rest)
@@ -314,7 +319,6 @@ defmodule HerdrCli.Argv do
   end
 
   defp unknown([]), do: ""
-  defp unknown(["help" | _]), do: ""
   defp unknown(["" | _]), do: "herdr-live: empty command\n"
   defp unknown(argv), do: "herdr-live: unknown command #{Enum.join(Enum.take(argv, 2), " ")}\n"
 

@@ -3,8 +3,9 @@ defmodule HerdrCli do
   `herdr-live <verb>`: parse argv (`HerdrCli.Argv`), send one request over the API
   socket (`HerdrCli.Client`), print the reply (`HerdrCli.Output`).
 
-  Exit codes: 0 success, 1 an API error (the `error` object as JSON on stderr) or
-  `herdr-live is not running`, 2 a usage error.
+  Exit codes: 0 success (and `help`, `--help`: usage on stdout), 1 an API error (the
+  `error` object as JSON on stderr), `herdr-live is not running`, or an event stream the
+  server closed, 2 a usage error.
 
   `bin/herdr-live` starts this as `erl -noinput -run Elixir.HerdrCli main_erl -extra
   <args>` (no Elixir boot, no stdin reads, so it is safe in `while read` loops).
@@ -63,6 +64,10 @@ defmodule HerdrCli do
         err(text)
         2
 
+      {:help, text} ->
+        out(text)
+        0
+
       {:call, method, params, out} ->
         with_socket(env, fn s -> call(s, method, params, out) end)
 
@@ -118,7 +123,8 @@ defmodule HerdrCli do
       {:ok, %{"error" => _} = reply} -> emit(Output.render(:json, reply))
       # a reader that went away (`| head`) ends the stream
       {:ok, event} -> if out(Output.event(event)) == :ok, do: stream(s), else: 0
-      :eof -> 0
+      # the server ended the stream without saying why (it stopped, or a handoff)
+      :eof -> lost(:stream_closed)
       {:error, r} -> lost(r)
     end
   end
@@ -130,6 +136,7 @@ defmodule HerdrCli do
 
   defp lost_msg(:closed), do: "connection closed before a reply"
   defp lost_msg(:timeout), do: "no reply in time"
+  defp lost_msg(:stream_closed), do: "stream closed by server"
   defp lost_msg(r), do: inspect(r, limit: 20)
 
   defp emit({0, text}) do
