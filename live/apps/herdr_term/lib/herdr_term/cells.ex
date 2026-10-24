@@ -121,6 +121,23 @@ defmodule HerdrTerm.Cells do
   defdelegate concat(rows), to: Cell
 
   @doc """
+  `restyle(row, 0, cols, add_attrs: [:faint])` without decoding: sets the faint bit
+  (attrs bit 2, record bytes 24..25) of every record in place; the trailer is kept.
+  """
+  @spec faint(Cell.row()) :: Cell.row()
+  def faint(row) do
+    recs = Cell.records(row)
+    n = byte_size(recs)
+
+    out =
+      for <<head::binary-size(24), attrs::16-little, tail::binary-size(6) <- recs>>,
+        into: <<>>,
+        do: <<head::binary, Bitwise.bor(attrs, 4)::16-little, tail::binary>>
+
+    out <> binary_part(row, n, byte_size(row) - n)
+  end
+
+  @doc """
   Changes columns `x..x+w-1`: `add_attrs: [flag]`, `fg:`, `bg:`, `underline:`.
   """
   @spec restyle(Cell.row(), non_neg_integer, non_neg_integer, keyword) :: Cell.row()

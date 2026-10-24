@@ -53,8 +53,11 @@ defmodule HerdrIntegration.SecondClientTest do
     assert mode(b) == "TERMINAL"
     assert mode(a) == "PREFIX"
 
+    # x on the only pane asks first (the workspace would go); Enter confirms
     Driver.type(a, "x")
-    assert wait(fn -> mode(a) == "TERMINAL" and Driver.scene(a).panes != [] end)
+    assert wait(fn -> mode(a) == "TERMINAL" and Store.snapshot().focus.modal != [] end)
+    Driver.type(a, "\r")
+    assert wait(fn -> Driver.scene(a).panes != [] end)
     assert wait(fn -> Enum.map(Driver.scene(a).panes, & &1.id) == [pane + 1] end)
     assert :sys.get_state(input_a).mode == :terminal
     assert Map.keys(Store.snapshot().session.panes) == [pane + 1]

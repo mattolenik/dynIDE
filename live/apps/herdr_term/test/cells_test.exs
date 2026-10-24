@@ -78,4 +78,13 @@ defmodule HerdrTerm.CellsTest do
     assert Cells.to_text(r) == Cells.to_text(row)
     refute Cell.plain?(r)
   end
+
+  test "faint equals restyle add_attrs faint, overflow trailer and wide cells included" do
+    long = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}"
+    style = Cells.style(fg: {:palette, 2}, attrs: [:bold])
+    row = Cells.concat([Cells.text("ab漢", style), Cells.text(long, style), Cell.blank_row(3)])
+    refute Cell.plain?(row)
+    assert Cells.faint(row) == Cells.restyle(row, 0, Cell.cols(row), add_attrs: [:faint])
+    assert Cells.faint(Cell.blank_row(0)) == Cell.blank_row(0)
+  end
 end

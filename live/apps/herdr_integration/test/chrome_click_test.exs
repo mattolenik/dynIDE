@@ -17,7 +17,8 @@ defmodule HerdrIntegration.ChromeClickTest do
 
   test "a click on tab 1's cell switches the active tab" do
     c = Driver.start_client({120, 40})
-    Driver.type(c, "\x02c")
+    # c asks for the tab's name; Enter keeps the suggested one
+    Driver.type(c, "\x02c\r")
     assert wait(fn -> active_tab(c) == {:tab, 2} end)
 
     r = hit_rect(c, [:tabs, {:tab, 1}])

@@ -11,7 +11,8 @@ if Mix.env() == :test do
 
       1. keystroke -> glass, idle, fast path and forced slow path
       2. second client: a key typed in client A, timed until client B (80x24) shows it
-      3. frame cost (`Compose.frame/4` + `Fake.Blit.frame/3`) at `--size`, 1 vs 15 full panes
+      3. frame cost (`Compose.frame/4` + `Fake.Blit.frame/3`) at `--size`, 1 vs 15 full panes,
+         and 15 panes under an open dimming modal (the rename prompt)
       4. scheduler stall and typing latency while 15 panes each get 100MiB of output
 
     Prints a markdown table and writes `_build/bench/m3.json` (`m3-real.json` with
@@ -32,6 +33,8 @@ if Mix.env() == :test do
 
     alias HerdrIntegration.Driver
     alias HerdrScene.{Cell, Protocol}
+    alias HerdrServer.App.{Modal, Store}
+    alias HerdrServer.App.Modal.Prompt
     alias HerdrServer.Kernel
     alias HerdrServer.Kernel.Fake.{Keeper, Pty}
     alias HerdrServer.Pane.Rows
@@ -172,7 +175,9 @@ if Mix.env() == :test do
       paced = type_loop(client, pane, &(&1 >= cfg.keys), :paced)
       second = second_client(client, pane, cfg)
       frame_1 = frame_cost(Driver.scene(client), cfg)
-      frame_15 = frame_cost(Driver.grow(client, 15), cfg)
+      scene_15 = Driver.grow(client, 15)
+      frame_15 = frame_cost(scene_15, cfg)
+      frame_15_dim = frame_cost(with_prompt(scene_15), cfg)
 
       %{
         fast: fast,
@@ -181,6 +186,7 @@ if Mix.env() == :test do
         second: second,
         frame_1: frame_1,
         frame_15: frame_15,
+        frame_15_dim: frame_15_dim,
         stall: stall(client, cfg)
       }
     end
@@ -395,6 +401,13 @@ if Mix.env() == :test do
       %{panes: length(scene.panes), repaint: repaint, dirty: dirty}
     end
 
+    # the scene with the rename prompt on top (pure: the Store's app is not changed)
+    defp with_prompt(scene) do
+      {app, []} = Prompt.rename_tab(Store.snapshot())
+      modal = Modal.view(app, scene.size)
+      %{scene | chrome: %{scene.chrome | children: scene.chrome.children ++ [modal]}}
+    end
+
     # the chrome layout is computed once per chrome change in Render, so once here
     defp compose("raw", scene, rows, {theme, chrome}),
       do: Compose.frame(scene, rows, theme, chrome)
@@ -598,6 +611,7 @@ if Mix.env() == :test do
         keystroke_slow_p95_us: r.slow.p95,
         frame_1_mean_us: f1.repaint.mean,
         frame_15_mean_us: f15.repaint.mean,
+        frame_15_dim_mean_us: r.frame_15_dim.repaint.mean,
         frame_ratio: ratio,
         stall_probe_max_ms: st.probe_max_ms,
         long_schedule_count: st.monitor.long_schedule.count,
@@ -610,6 +624,7 @@ if Mix.env() == :test do
         second_client: r.second,
         frame_1: f1,
         frame_15: f15,
+        frame_15_dim: r.frame_15_dim,
         stall: st,
         environment: environment()
       }
@@ -648,6 +663,7 @@ if Mix.env() == :test do
       | frame cost #{geo}, #{f15.panes} full panes (repaint) | #{frame(f15.repaint)} | |
       | frame cost ratio #{f15.panes}/1 (mean) | #{fmt(ratio)}x | within 2x herdr's ratio |
       | frame cost #{geo}, #{f15.panes} panes, 1 pane dirty (full compose, no repaint) | #{frame(f15.dirty)} | reference |
+      | frame cost #{geo}, #{f15.panes} full panes under a dimming modal (repaint) | #{frame(r.frame_15_dim.repaint)} | reference |
       | flood: #{st.panes} panes x #{div(st.bytes_per_pane, 1024 * 1024)}MiB, wall time | #{st.wall_ms} ms | |
       | flood: Process.sleep(1) probe max overshoot | #{fmt(st.probe_max_ms)} ms | no stall > 10ms |
       | flood: long_schedule >= 5ms events (max) | #{st.monitor.long_schedule.count} (#{st.monitor.long_schedule.max_ms} ms, #{st.monitor.long_schedule.max_who}, in #{st.monitor.long_schedule.max_in}, out #{st.monitor.long_schedule.max_out}) | |

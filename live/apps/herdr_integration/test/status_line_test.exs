@@ -3,21 +3,15 @@ defmodule HerdrIntegration.StatusLineTest do
   # Compose unchanged (role :text), next to a long notice; tabs have their own row.
   use ExUnit.Case, async: true
 
-  alias HerdrScene.Event
   alias HerdrServer.App.Actions
-  alias HerdrServer.Client.{Keys, State}
+  alias HerdrServer.Client.State
   alias HerdrServer.{RuntimeStatus, View}
   alias HerdrTerm.Cells
   alias HerdrTerm.Client.Term.Render.Compose
   alias HerdrTerm.Client.Term.Theme
 
-  # prefix + c, as a client would
-  defp new_tab(app) do
-    {_, {:run, {m, f, a}}} =
-      Keys.resolve(%{mode: :prefix, swallow: MapSet.new()}, app.ui.keybinds, Event.key("c"))
-
-    elem(Kernel.apply(m, f, [app | a]), 0)
-  end
+  # the bare action: the c binding asks for the tab's name first
+  defp new_tab(app), do: elem(Actions.new_tab(app), 0)
 
   defp status_row(app, client), do: app |> screen(client) |> List.last()
 

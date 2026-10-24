@@ -63,12 +63,12 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
     end
   end
 
-  # top layer: dim the assembled row (ponytail: decodes the row; only while a dimming
-  # modal is open), then splice each top segment over it, later segments win
+  # top layer: dim the assembled row (bit-patched, no decode; only while a dimming modal
+  # is open), then splice each top segment over it, later segments win
   defp top(row, %{dim: false, top: top}, _y, _cols) when map_size(top) == 0, do: row
 
   defp top(row, %{dim: dim, top: top}, y, cols) do
-    row = if dim, do: Cells.restyle(row, 0, cols, add_attrs: [:faint]), else: row
+    row = if dim, do: Cells.faint(row), else: row
 
     Enum.reduce(Map.get(top, y, []), row, fn {x, w, piece}, row ->
       Cell.concat([Cells.fit(row, 0, x), piece, Cells.fit(row, x + w, cols - x - w)])
