@@ -26,3 +26,7 @@ live-run:
 # Placeholder until slice-1 metrics
 live-bench:
     @echo 'live-bench: no benchmarks yet (M0 placeholder; slice-1 metrics land in M6)'
+
+# Reload latency and guard overhead benchmarks (M4)
+live-bench-reload:
+    cd '{{live_dir}}' && mix run bench/reload/reload_bench.exs && mix run bench/reload/guard_bench.exs

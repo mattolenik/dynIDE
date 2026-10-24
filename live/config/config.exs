@@ -18,3 +18,6 @@ import Config
 #       format: "$date $time [$level] $metadata$message\n",
 #       metadata: [:user_id]
 #
+config :herdr_server, HerdrServer.Reload,
+  enabled: config_env() == :dev,
+  scan_local_funs: config_env() != :prod
