@@ -41,7 +41,17 @@ defmodule HerdrServer.Handoff.StoreAdoptTest do
     assert Enum.sort(Fake.Keeper.ids()) == Enum.sort([kid, other])
     assert Link.take_adopted("app/") == []
 
-    # a crash-restart in the adopted VM closes no keeper pane
+    # the adopted app is mirrored at once: a restart in this VM restarts from the
+    # mirror (M4), keeps the pane server and closes no keeper pane, not even the unmapped one
+    restart_store()
+    # settle resizes the adopted pane to its rect then (a layout_gen bump)
+    assert Store.snapshot().session.workspaces == app.session.workspaces
+    assert Rows.kernel_ids() == [{1, kid}]
+    assert [{^pane, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
+    assert Enum.sort(Fake.Keeper.ids()) == Enum.sort([kid, other])
+
+    # without a mirror, a restart in the adopted VM still closes no keeper pane
+    for k <- [:session, :focus, :ui], do: HerdrServer.Mirror.delete({:app, k})
     restart_store()
     assert Enum.sort(Fake.Keeper.ids()) == Enum.sort([kid, other])
     # its pane servers stop (Registry unregisters asynchronously, so check the pid)
