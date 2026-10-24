@@ -89,9 +89,24 @@ pub fn set_thread_bulk(bulk: bool) {
     let _ = unsafe { libc::pthread_set_qos_class_self_np(class, 0) };
 }
 
-// ponytail: no demotion off macOS. Linux would need setpriority(+N) on the thread, and an
-// unprivileged thread cannot lower its nice again; measure there before adding it.
-#[cfg(not(target_os = "macos"))]
+/// Nice value of a bulk reader thread on Linux.
+#[cfg(target_os = "linux")]
+pub const BULK_NICE: libc::c_int = 10;
+
+/// Moves the calling thread to nice `BULK_NICE` (bulk) or back to 0 (interactive).
+/// Without CAP_SYS_NICE (RLIMIT_NICE 0, the usual default) the way back fails with EACCES
+/// and the thread stays at `BULK_NICE`: a reader that flooded once keeps the lower weight,
+/// which costs nothing on an idle CPU. SCHED_BATCH, the reversible option, does not help
+/// (task 4c control: probe 300-600 ms, as at nice 0).
+#[cfg(target_os = "linux")]
+pub fn set_thread_bulk(bulk: bool) {
+    let nice = if bulk { BULK_NICE } else { 0 };
+    // SAFETY: plain syscalls on the calling thread (a tid is a valid PRIO_PROCESS target).
+    // Failure leaves the thread's nice unchanged, which is the documented fallback.
+    let _ = unsafe { libc::setpriority(libc::PRIO_PROCESS, libc::gettid() as libc::id_t, nice) };
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn set_thread_bulk(_bulk: bool) {}
 
 /// The calling thread's QoS class (for tests).
@@ -176,6 +191,24 @@ mod tests {
         assert_eq!(p.observe(1024, t0 + MS * 2110), None);
         assert_eq!(p.observe(1024, t0 + MS * 2160), None);
         assert_eq!(p.observe(1024, t0 + MS * 2215), Some(false));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn set_thread_bulk_raises_nice() {
+        std::thread::spawn(|| {
+            // SAFETY: plain syscalls on the calling thread.
+            let nice =
+                || unsafe { libc::getpriority(libc::PRIO_PROCESS, libc::gettid() as libc::id_t) };
+            let before = nice();
+            set_thread_bulk(true);
+            assert_eq!(nice(), BULK_NICE.max(before));
+            set_thread_bulk(false);
+            // back to 0 with CAP_SYS_NICE, else kept at BULK_NICE
+            assert!(nice() == 0 || nice() == BULK_NICE.max(before));
+        })
+        .join()
+        .expect("thread");
     }
 
     #[cfg(target_os = "macos")]
