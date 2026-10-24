@@ -96,6 +96,13 @@ pub struct PtyInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NotFrozen;
 
+#[derive(Debug)]
+pub enum ThawError {
+    /// Handed off: the pane stays released and frozen.
+    Released,
+    Io(io::Error),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteError {
     Backpressure,
@@ -388,9 +395,11 @@ impl Inner {
         let _ = write_fd(self.wake_w.as_raw_fd(), &[1]);
     }
 
+    /// A released pane's child belongs to the next VM: it is never signalled (not by
+    /// `kill`, `Drop`'s SIGHUP, or `fail`'s SIGKILL).
     fn signal(&self, signo: i32) -> io::Result<()> {
         let reaped = lock(&self.reaped);
-        if reaped.is_some() {
+        if reaped.is_some() || self.released.load(Ordering::Acquire) {
             return Ok(());
         }
         let r = match &self.watch {
@@ -872,9 +881,12 @@ impl Pty {
     }
 
     /// Restarts the reader and writer on the same pane, reopening a taken queue. No-op
-    /// when not frozen.
-    pub fn thaw(&self) -> io::Result<()> {
+    /// when not frozen; refused once released.
+    pub fn thaw(&self) -> Result<(), ThawError> {
         let mut threads = lock(&self.inner.threads);
+        if self.inner.released.load(Ordering::Acquire) {
+            return Err(ThawError::Released);
+        }
         if !self.inner.frozen.swap(false, Ordering::AcqRel) {
             return Ok(());
         }
@@ -883,7 +895,7 @@ impl Pty {
         if self.inner.exit_sent.load(Ordering::Acquire) {
             return Ok(());
         }
-        start_io(&self.inner, &mut threads)
+        start_io(&self.inner, &mut threads).map_err(ThawError::Io)
     }
 
     /// Hands the pane off for good: no SIGHUP on drop and no exit event, ever.
@@ -965,9 +977,7 @@ impl Pty {
 
 impl Drop for Pty {
     fn drop(&mut self) {
-        if !self.inner.released.load(Ordering::Acquire) {
-            let _ = self.inner.signal(libc::SIGHUP);
-        }
+        let _ = self.inner.signal(libc::SIGHUP);
     }
 }
 
@@ -1053,9 +1063,12 @@ mod tests {
     #[test]
     fn echo_hi_damage_and_rows() {
         let (vt, pty, rx) = spawn("/bin/sh", &[]);
-        pty.write(b"echo hi\n").expect("write");
+        // `h''i` keeps the echoed command line from matching. Typeahead can put the output
+        // after the prompt (dash on Linux, when the write beats the first prompt).
+        pty.write(b"echo h''i\n").expect("write");
         until(&rx, T, |ev| {
-            matches!(ev, Event::Damage(_)) && lines(&vt).iter().any(|l| l.starts_with("hi"))
+            matches!(ev, Event::Damage(_))
+                && lines(&vt).iter().any(|l| l == "hi" || l.ends_with("$ hi"))
         });
     }
 
@@ -1450,6 +1463,22 @@ mod tests {
         assert!(alive(pid));
         sigkill(pid);
         drop(fd);
+    }
+
+    #[test]
+    fn released_is_never_signalled() {
+        let (_vt, pty, _rx) = spawn("/bin/sleep", &["30"]);
+        let pid = pty.os_pid();
+        pty.freeze();
+        pty.release().expect("release");
+        assert!(matches!(pty.thaw(), Err(ThawError::Released)));
+        // A late panic (e.g. in the waiter) must not kill the handed-off child.
+        pty.inner.fail("late".into());
+        pty.kill(libc::SIGKILL).expect("kill is a no-op");
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(alive(pid));
+        assert!(matches!(pty.thaw(), Err(ThawError::Released)));
+        sigkill(pid);
     }
 
     #[test]

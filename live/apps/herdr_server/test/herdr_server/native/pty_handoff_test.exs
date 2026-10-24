@@ -37,6 +37,7 @@ defmodule HerdrServer.Native.PtyHandoffTest do
     {:ok, fd} = Pty.dup_fd(pty)
     assert Pty.freeze(pty) == ""
     assert Pty.release(pty) == :ok
+    assert Pty.thaw(pty) == {:error, :released}
 
     {:ok, vt2} = Vt.new(80, 24, 1000)
     assert {:ok, pty2} = Pty.adopt(vt2, 99, fd, os_pid, false, nil, nil)

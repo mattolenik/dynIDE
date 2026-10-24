@@ -109,7 +109,7 @@ defmodule HerdrServer.Native do
   @spec pty_take_pending(term) :: binary
   def pty_take_pending(_pty), do: err()
   @doc false
-  @spec pty_thaw(term) :: :ok | {:error, atom | {atom, term}}
+  @spec pty_thaw(term) :: :ok | {:error, :released | atom | {atom, term}}
   def pty_thaw(_pty), do: err()
   @doc false
   @spec pty_release(term) :: :ok | {:error, :not_frozen}

@@ -16,7 +16,9 @@ use rustler::{
 };
 
 use crate::input::{Key, KeyAction, KeyInput, Mods, MouseButton, MouseInput, MouseKind, NamedKey};
-use crate::pty::{AdoptOptions, Event, EventSink, ExitStatus, Pty, SpawnOptions, WriteError};
+use crate::pty::{
+    AdoptOptions, Event, EventSink, ExitStatus, Pty, SpawnOptions, ThawError, WriteError,
+};
 use crate::vt::{lock, LinkKind, Mode, RowBatch, TextRange, Vt};
 
 mod atoms {
@@ -25,7 +27,7 @@ mod atoms {
         truncated, backpressure, closed, too_large, enoent, eacces, enotdir, enoexec, e2big,
         os, spawn, hyperlink, text, viewport, screen, rows,
         block, bar, underline, block_hollow, hup, term, kill, int,
-        key, mods, event, kind, button, x, y, px, disabled, consumed, not_frozen,
+        key, mods, event, kind, button, x, y, px, disabled, consumed, not_frozen, released,
         os_pid, adopted, hidden, exited,
     }
 }
@@ -572,7 +574,8 @@ fn pty_freeze(env: Env, pty: ResourceArc<PtyRes>) -> Term {
     bin(env, &pty.pty.freeze())
 }
 
-#[rustler::nif]
+/// DirtyIo: waits on the lock `pty_freeze` holds while joining.
+#[rustler::nif(schedule = "DirtyIo")]
 fn pty_take_pending(env: Env, pty: ResourceArc<PtyRes>) -> Term {
     bin(env, &pty.pty.take_pending())
 }
@@ -581,11 +584,13 @@ fn pty_take_pending(env: Env, pty: ResourceArc<PtyRes>) -> Term {
 fn pty_thaw(env: Env, pty: ResourceArc<PtyRes>) -> Term {
     match pty.pty.thaw() {
         Ok(()) => atoms::ok().encode(env),
-        Err(e) => (atoms::error(), spawn_error(env, &e)).encode(env),
+        Err(ThawError::Released) => (atoms::error(), atoms::released()).encode(env),
+        Err(ThawError::Io(e)) => (atoms::error(), spawn_error(env, &e)).encode(env),
     }
 }
 
-#[rustler::nif]
+/// DirtyIo: waits on the lock `pty_freeze` holds while joining.
+#[rustler::nif(schedule = "DirtyIo")]
 fn pty_release(env: Env, pty: ResourceArc<PtyRes>) -> Term {
     match pty.pty.release() {
         Ok(()) => atoms::ok().encode(env),

@@ -117,11 +117,17 @@ defmodule HerdrServer.Native.Pty do
   @spec take_pending(pty) :: binary
   def take_pending(pty), do: Native.pty_take_pending(pty)
 
-  @doc "Restarts a frozen pane, reopening a taken queue. No-op when not frozen."
-  @spec thaw(pty) :: :ok | {:error, spawn_error}
+  @doc """
+  Restarts a frozen pane, reopening a taken queue. No-op when not frozen;
+  `{:error, :released}` once released (the pane stays released).
+  """
+  @spec thaw(pty) :: :ok | {:error, :released | spawn_error}
   def thaw(pty), do: Native.pty_thaw(pty)
 
-  @doc "Marks a frozen pane handed off: no SIGHUP when dropped and no exit event."
+  @doc """
+  Marks a frozen pane handed off: its child is never signalled again (no SIGHUP when
+  dropped, `kill/2` is a no-op) and no exit event is sent.
+  """
   @spec release(pty) :: :ok | {:error, :not_frozen}
   def release(pty), do: Native.pty_release(pty)
 
