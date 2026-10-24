@@ -2,11 +2,11 @@ defmodule HerdrServer.Api.Router do
   @moduledoc """
   Dispatches a validated API request to its handler. `HerdrServer.Api.Conn` calls
   `handle/3` through `HerdrReload.Guard`, only for methods `Api.Spec` knows, with params
-  already validated (atom keys). `ctx` is `%{conn: pid, reload_server: server,
-  rollback_timeout_ms: n}`.
+  already validated (atom keys). `ctx` is `%{conn: pid, socket: socket, reload_server: server,
+  rollback_timeout_ms: n}`. `events.subscribe` answers `{:subscribe, filters}`.
   """
 
-  alias HerdrServer.Api.Handlers
+  alias HerdrServer.Api.{Events, Handlers}
 
   @type sub :: map()
   @type reply ::
@@ -32,9 +32,14 @@ defmodule HerdrServer.Api.Router do
                         pane.layout pane.process_info),
       do: Handlers.Topology.handle(method, params)
 
+  def handle("pane.wait_for_output", params, ctx),
+    do: Handlers.PaneIo.wait_for_output(params, ctx)
+
   def handle(method, params, _ctx)
-      when method in ~w(pane.send_text pane.send_keys pane.run pane.read pane.wait_for_output),
+      when method in ~w(pane.send_text pane.send_keys pane.run pane.read),
       do: Handlers.PaneIo.handle(method, params)
+
+  def handle("events.subscribe", params, ctx), do: Events.request(params, ctx.conn)
 
   def handle("agent." <> _ = method, params, _ctx), do: Handlers.Agents.handle(method, params)
 

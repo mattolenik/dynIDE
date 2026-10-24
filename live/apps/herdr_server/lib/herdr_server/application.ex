@@ -87,10 +87,10 @@ defmodule HerdrServer.Application do
 
   defp gen, do: System.get_env("HERDR_LIVE_GEN") || "0"
 
-  # off in test: tests start their own listener on a tmp path
+  # off in test: tests start their own listener on a tmp path (and event hub)
   defp api do
     if Application.get_env(:herdr_server, :api, [])[:enabled],
-      do: [{HerdrServer.Api.Listener, []}],
+      do: [HerdrServer.Api.Events, {HerdrServer.Api.Listener, []}],
       else: []
   end
 

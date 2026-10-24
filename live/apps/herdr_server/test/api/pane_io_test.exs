@@ -64,7 +64,6 @@ defmodule HerdrServer.Api.PaneIoTest do
 
   test "run brackets the command when the pane enabled bracketed paste", %{
     s: s,
-    path: path,
     pty: pty,
     vt: vt
   } do
@@ -155,6 +154,25 @@ three"
     Process.sleep(300)
     ok!(s, "pane.close", p2)
     assert %{"error" => %{"code" => "not_found"}} = Task.await(task, 10_000)
+  end
+
+  test "an untimed wait stops when its client disconnects", %{path: path} do
+    before = :sys.get_state(Listener).conns
+    c = ApiClient.connect(path)
+    ApiClient.call(c, "ping")
+    [conn] = MapSet.to_list(MapSet.difference(:sys.get_state(Listener).conns, before))
+    ref = Process.monitor(conn)
+
+    req = %{
+      "id" => "w",
+      "method" => "pane.wait_for_output",
+      "params" => Map.put(@p, "match", "never")
+    }
+
+    :ok = ApiClient.send_line(c, JSON.encode!(req))
+    Process.sleep(300)
+    :gen_tcp.close(c)
+    assert_receive {:DOWN, ^ref, :process, ^conn, _}, 2000
   end
 
   test "unknown pane is not_found", %{s: s} do

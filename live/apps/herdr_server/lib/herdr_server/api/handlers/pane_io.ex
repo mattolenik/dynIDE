@@ -5,7 +5,7 @@ defmodule HerdrServer.Api.Handlers.PaneIo do
   connection; it polls the pane text every #{100} ms.
   """
 
-  alias HerdrServer.Api.{Ids, Keys}
+  alias HerdrServer.Api.{Conn, Ids, Keys}
   alias HerdrServer.App.Store
   alias HerdrServer.Kernel
   alias HerdrServer.Pane.{Input, Rows}
@@ -45,32 +45,42 @@ defmodule HerdrServer.Api.Handlers.PaneIo do
     end
   end
 
-  def handle("pane.wait_for_output", %{pane_id: id} = p) do
+  @doc """
+  `pane.wait_for_output`. `ctx` is the connection's: the wait stops (`failed`) once its
+  client has closed (`Api.Conn.peer_closed?/1`), checked every poll.
+  """
+  @spec wait_for_output(map(), map()) :: {:ok, map()} | {:error, atom(), String.t()}
+  def wait_for_output(%{pane_id: id} = p, ctx) do
     with {:ok, matcher} <- matcher(p), {:ok, _} <- lookup(id) do
       deadline = p[:timeout_ms] && System.monotonic_time(:millisecond) + p.timeout_ms
-      wait(id, p, matcher, deadline)
+      wait(id, p, matcher, {deadline, ctx})
     end
   end
 
   # --- wait ---
 
-  defp wait(id, p, matcher, deadline) do
+  defp wait(id, p, matcher, until) do
     with {:ok, vt} <- vt(id) do
       src = source(p)
 
       case vt |> text(src, p[:lines]) |> String.split("\n") |> Enum.find(matcher) do
-        nil -> sleep_or_timeout(id, p, matcher, deadline)
+        nil -> sleep_or_timeout(id, p, matcher, until)
         line -> {:ok, %{type: "output_matched", pane_id: Ids.pane(id), line: line}}
       end
     end
   end
 
-  defp sleep_or_timeout(id, p, matcher, deadline) do
-    if deadline && System.monotonic_time(:millisecond) >= deadline do
-      {:error, :timeout, "no output matched within #{p.timeout_ms} ms"}
-    else
-      Process.sleep(@poll_ms)
-      wait(id, p, matcher, deadline)
+  defp sleep_or_timeout(id, p, matcher, {deadline, ctx} = until) do
+    cond do
+      deadline && System.monotonic_time(:millisecond) >= deadline ->
+        {:error, :timeout, "no output matched within #{p.timeout_ms} ms"}
+
+      Conn.peer_closed?(ctx) ->
+        {:error, :failed, "the connection closed"}
+
+      true ->
+        Process.sleep(@poll_ms)
+        wait(id, p, matcher, until)
     end
   end
 
