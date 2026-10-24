@@ -7,11 +7,12 @@ defmodule HerdrServer.App.Modal.Confirm do
   `:cancel` button or a backdrop click close without acting. Panel 64x6, title and
   detail lines, buttons `confirm` (Enter, primary) and `cancel` (Esc).
 
-  `close_tab/1,2`, `close_pane/1,2` and `close_workspace/1,2` (the `X`, `x` and `D`
-  bindings and the context menus) ask `"Close workspace?"` with detail `"<name> — 1
-  pane"` / `"<name> — N panes"` only when `ui.confirm_close` is set and the action would
-  remove the whole workspace (its last pane or last tab, or the workspace itself);
-  confirming closes the workspace. Otherwise they act directly.
+  `close_tab/1,3`, `close_pane/1,2` and `close_workspace/1,2` (the `X`, `x` and `D`
+  bindings and the context menus) act in the target's own workspace. An action that
+  removes the whole workspace (its last pane or last tab, or the workspace itself)
+  closes that workspace (the last one is replaced by a fresh one); `ui.confirm_close`
+  only decides whether `"Close workspace?"` (detail `"<name> — 1 pane"` / `"<name> — N
+  panes"`) asks first. Other closes act directly.
   """
 
   @behaviour HerdrServer.App.Modal.Kind
@@ -27,37 +28,41 @@ defmodule HerdrServer.App.Modal.Confirm do
   # --- close actions ---
 
   @spec close_tab(map) :: {map, [tuple]}
-  def close_tab(app), do: close_tab(app, ws(app).active_tab)
+  def close_tab(app), do: close_tab(app, app.session.active_workspace, ws(app).active_tab)
 
-  @spec close_tab(map, term) :: {map, [tuple]}
-  def close_tab(app, tab_id) do
-    w = ws(app)
+  @doc "Closes tab `tab_id` of workspace `ws_id` (tab ids are per workspace)."
+  @spec close_tab(map, term, term) :: {map, [tuple]}
+  def close_tab(app, ws_id, tab_id) do
+    w = Enum.find(app.session.workspaces, &(&1.id == ws_id))
 
     cond do
-      not Enum.any?(w.tabs, &(&1.id == tab_id)) -> {app, []}
-      length(w.tabs) == 1 -> ask(app, w, {Actions, :close_tab, [tab_id]})
-      true -> Actions.close_tab(app, tab_id)
+      w == nil or not Enum.any?(w.tabs, &(&1.id == tab_id)) -> {app, []}
+      length(w.tabs) == 1 -> whole(app, w)
+      true -> within(app, ws_id, &Actions.close_tab(&1, tab_id))
     end
   end
 
   @spec close_pane(map) :: {map, [tuple]}
   def close_pane(app), do: close_pane(app, app.focus.pane)
 
+  @doc "Closes pane `id` in whichever workspace holds it; unknown ids are a no-op."
   @spec close_pane(map, term) :: {map, [tuple]}
   def close_pane(app, id) do
-    w = ws(app)
+    found =
+      for w <- app.session.workspaces, t <- w.tabs, id in Layout.pane_ids(t.layout), do: {w, t}
 
-    case Enum.find(w.tabs, &(id in Layout.pane_ids(&1.layout))) do
-      nil -> {app, []}
-      t when length(w.tabs) == 1 -> if_last(app, w, t, id)
-      _t -> Actions.close_pane(app, id)
+    case found do
+      [{w, t} | _] when length(w.tabs) == 1 ->
+        if Layout.count(t.layout) == 1,
+          do: whole(app, w),
+          else: within(app, w.id, &Actions.close_pane(&1, id))
+
+      [{w, _t} | _] ->
+        within(app, w.id, &Actions.close_pane(&1, id))
+
+      [] ->
+        {app, []}
     end
-  end
-
-  defp if_last(app, w, t, id) do
-    if Layout.count(t.layout) == 1,
-      do: ask(app, w, {Actions, :close_pane, [id]}),
-      else: Actions.close_pane(app, id)
   end
 
   @spec close_workspace(map) :: {map, [tuple]}
@@ -67,31 +72,44 @@ defmodule HerdrServer.App.Modal.Confirm do
   def close_workspace(app, ws_id) do
     case Enum.find(app.session.workspaces, &(&1.id == ws_id)) do
       nil -> {app, []}
-      w -> ask(app, w, nil)
+      w -> whole(app, w)
     end
   end
 
-  @doc "Closes workspace `ws_id` (the confirmed action); gone already is a no-op."
+  @doc """
+  Closes workspace `ws_id` (the confirmed action, or the direct one with
+  `confirm_close` off); the active workspace stays active unless it is the one closed.
+  Gone already is a no-op.
+  """
   @spec close_workspace_now(map, term) :: {map, [tuple]}
   def close_workspace_now(app, ws_id) do
-    if Enum.any?(app.session.workspaces, &(&1.id == ws_id)) do
-      {app, []} = Workspaces.switch_workspace_id(app, ws_id)
-      Workspaces.close_workspace(app)
-    else
-      {app, []}
-    end
+    if Enum.any?(app.session.workspaces, &(&1.id == ws_id)),
+      do: within(app, ws_id, &Workspaces.close_workspace/1),
+      else: {app, []}
   end
 
-  # confirm_close off: `direct` (or the workspace close itself)
-  defp ask(app, w, direct) do
+  # the action removes workspace `w`: ask when confirm_close, else close it; the same
+  # close either way
+  defp whole(app, w) do
     if app.ui.confirm_close do
       n = Enum.sum(Enum.map(w.tabs, &Layout.count(&1.layout)))
       detail = "#{w.name} — #{n} #{if n == 1, do: "pane", else: "panes"}"
       modal = new("Close workspace?", detail, :danger, {__MODULE__, :close_workspace_now, [w.id]})
       {Modal.push(app, modal), []}
     else
-      {m, f, a} = direct || {__MODULE__, :close_workspace_now, [w.id]}
-      apply(m, f, [app | a])
+      close_workspace_now(app, w.id)
+    end
+  end
+
+  # runs `fun` with workspace `ws_id` active, then re-activates the one that was active
+  # (when it still exists)
+  defp within(app, ws_id, fun) do
+    back = app.session.active_workspace
+    {app, []} = Workspaces.switch_workspace_id(app, ws_id)
+    {app, effects} = fun.(app)
+
+    case Workspaces.switch_workspace_id(app, back) do
+      {app, []} -> {app, effects}
     end
   end
 

@@ -34,7 +34,9 @@ defmodule HerdrServer.App.ModalTest do
   defp fresh, do: elem(Actions.init(%{cols: 100, rows: 25}), 0)
   defp press(app, key, mods \\ []), do: Actions.apply(app, Event.key(key, mods))
   defp stub(app), do: Modal.push(app, %{kind: Stubborn})
-  defp prompt(app), do: Modal.push(app, Prompt.new("rename tab", "", {Actions, :rename_tab, [1]}))
+
+  defp prompt(app),
+    do: Modal.push(app, Prompt.new("rename tab", "", {Actions, :rename_tab, [1, 1]}))
 
   test "push, top and pop keep the stack top first with fresh ids" do
     app = fresh()
@@ -85,6 +87,33 @@ defmodule HerdrServer.App.ModalTest do
     assert {^app, []} = Actions.apply(app, {:chrome, [{:modal, 0}], click})
     {app, []} = Actions.apply(app, {:chrome, [{:modal, 0}, :backdrop], click})
     assert app.focus.modal == []
+  end
+
+  test "bindings do not run while a modal is open, except detach" do
+    app = prompt(fresh())
+
+    for mfa <- [
+          {Prompt, :new_tab, []},
+          {Actions, :close_pane, []},
+          {Actions, :split, [:horizontal]}
+        ] do
+      assert Actions.run(app, mfa) == {app, []}, inspect(mfa)
+    end
+
+    assert Actions.run(app, {Actions, :detach, []}) == {app, [{:detach}]}
+    assert {_, [{:spawn, 2, _}]} = Actions.run(fresh(), {Actions, :split, [:horizontal]})
+  end
+
+  test "chrome paths beneath an open modal do nothing" do
+    {app, _} = Actions.new_tab(fresh())
+    app = prompt(app)
+
+    for path <- [[:tabs, {:tab, 1}], [:tabs, :new_tab], [:sidebar, :toggle]] do
+      assert Actions.apply(app, {:chrome, path, {:click, %{x: 0, y: 0}}}) == {app, []}
+    end
+
+    assert {^app, []} =
+             Actions.apply(app, {:chrome, [:tabs, {:tab, 1}], {:right_click, %{x: 0, y: 0}}})
   end
 
   test "capturing? is true only when the top modal captures keys" do

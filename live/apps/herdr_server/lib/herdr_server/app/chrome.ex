@@ -21,7 +21,8 @@ defmodule HerdrServer.App.Chrome do
       `ui.sidebar.spaces_offset` / `agents_offset` by one, clamped to `0..items - 1`
       (the server does not know the client's row heights). `View.Sidebar` puts it in the
       list's `offset` prop; the client rasterizer is the one owner of skipping items.
-    * `[{:modal, _} | _]`, `[{:menu, _} | _]` go to the top modal (`App.Modal.chrome/3`).
+    * `[{:modal, _} | _]`, `[{:menu, _} | _]` go to the top modal (`App.Modal.chrome/3`);
+      while a modal is open every other path is a no-op.
     * Right clicks on a tab, a workspace or an agents item open its context menu at the
       click; the sidebar's `menu` button opens the global menu (`App.Modal.Menu`).
     * Unknown paths: no-op.
@@ -36,15 +37,18 @@ defmodule HerdrServer.App.Chrome do
 
   @spec apply(Actions.app(), [term], {atom, %{x: integer, y: integer}}) ::
           {Actions.app(), [Actions.effect()]}
+  def apply(app, [{tag, _} | _] = path, action) when tag in [:modal, :menu],
+    do: Modal.chrome(app, path, action)
+
+  # beneath an open modal (a stale scene, a client without a backdrop): nothing
+  def apply(%{focus: %{modal: [_ | _]}} = app, _path, _action), do: {app, []}
+
   def apply(app, [:tabs, {:tab, id}], {:click, _}) do
     case Enum.find_index(ws(app).tabs, &(&1.id == id)) do
       nil -> {app, []}
       i -> Actions.switch_tab(app, i + 1)
     end
   end
-
-  def apply(app, [{tag, _} | _] = path, action) when tag in [:modal, :menu],
-    do: Modal.chrome(app, path, action)
 
   def apply(app, [:tabs, {:tab, id}], {:right_click, at}), do: Menu.open(app, :tab, id, at)
 

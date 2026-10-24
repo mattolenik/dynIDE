@@ -90,11 +90,16 @@ defmodule HerdrServer.App.Workspaces do
     end
   end
 
-  @spec rename_tab(app(), term(), binary()) :: {app(), [effect()]}
-  def rename_tab(app, tab_id, name) do
+  @doc "Renames tab `tab_id` of workspace `ws_id` (tab ids are per workspace)."
+  @spec rename_tab(app(), term(), term(), binary()) :: {app(), [effect()]}
+  def rename_tab(app, ws_id, tab_id, name) do
     {update_in(app.session.workspaces, fn l ->
-       Enum.map(l, fn ws ->
-         %{ws | tabs: Enum.map(ws.tabs, &if(&1.id == tab_id, do: %{&1 | name: name}, else: &1))}
+       Enum.map(l, fn
+         %{id: ^ws_id} = ws ->
+           %{ws | tabs: Enum.map(ws.tabs, &if(&1.id == tab_id, do: %{&1 | name: name}, else: &1))}
+
+         ws ->
+           ws
        end)
      end), []}
   end

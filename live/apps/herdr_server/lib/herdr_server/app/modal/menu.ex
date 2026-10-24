@@ -41,8 +41,8 @@ defmodule HerdrServer.App.Modal.Menu do
     if Enum.any?(ws(app).tabs, &(&1.id == id)),
       do: [
         {:new_tab, "New tab", {Prompt, :new_tab, []}},
-        {:rename, "Rename", {Prompt, :rename_tab, [id]}},
-        {:close, "Close", {Confirm, :close_tab, [id]}}
+        {:rename, "Rename", {Prompt, :rename_tab, [app.session.active_workspace, id]}},
+        {:close, "Close", {Confirm, :close_tab, [app.session.active_workspace, id]}}
       ],
       else: []
   end

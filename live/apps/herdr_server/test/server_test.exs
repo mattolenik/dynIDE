@@ -994,6 +994,22 @@ defmodule HerdrServer.ServerTest do
     assert Fake.Pty.writes(pty(1)) == []
   end
 
+  test "prefix bindings do nothing while a modal is open; the modal still takes keys" do
+    {c, s} = client()
+    scene(c)
+    :ok = Store.run({HerdrServer.App.Modal.Prompt, :rename_tab, []}, %{cols: 80, rows: 24})
+    scene_until(c, &Scene.Node.find(&1.chrome, [{:modal, 0}]))
+    input(s, c, 1, Event.key("b", [:ctrl]))
+    input(s, c, 2, Event.key("v"))
+    input(s, c, 3, Event.key("q"))
+    assert_receive {^c, {:ack, 3}}
+    input(s, c, 4, Event.key("k"))
+    assert_receive {^c, {:ack, 4}}
+    app = Store.snapshot()
+    assert Map.keys(app.session.panes) == [1]
+    assert [%{kind: :prompt, field: %{text: "1qk"}}] = app.focus.modal
+  end
+
   test "a raising keybind yields an error notice and the store survives" do
     {c, s} = client()
     scene(c)

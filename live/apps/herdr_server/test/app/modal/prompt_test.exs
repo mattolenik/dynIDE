@@ -52,6 +52,26 @@ defmodule HerdrServer.App.Modal.PromptTest do
     assert app.focus.modal == [] and app.session.panes[1][:name] == nil
   end
 
+  test "renames and new-tab names stay in their workspace (tab ids are per workspace)" do
+    {app, _} = Actions.new_workspace(fresh())
+    {app, []} = Prompt.rename_tab(app)
+    assert %{on_submit: {Actions, :rename_tab, [2, 1]}} = Modal.top(app)
+    app = Enum.reduce(["z", :enter], app, &press(&2, &1))
+    assert tab_names(app) == ["1z"]
+    assert [%{name: "1"}] = hd(app.session.workspaces).tabs
+
+    # a new tab 2 in workspace 2 leaves workspace 1's tab 2 alone
+    app = elem(Actions.switch_workspace(app, 1), 0) |> Actions.new_tab() |> elem(0)
+    {app, _} = Actions.switch_workspace(app, 2)
+    {app, []} = Prompt.new_tab(app)
+    {app, _} = Actions.apply(app, Event.key(:enter))
+    assert Enum.map(hd(app.session.workspaces).tabs, & &1.name) == ["1", "2"]
+    app = Enum.reduce([:backspace], elem(Prompt.new_tab(app), 0), &press(&2, &1))
+    app = Enum.reduce(["w", :enter], app, &press(&2, &1))
+    assert Enum.map(hd(app.session.workspaces).tabs, & &1.name) == ["1", "2"]
+    assert tab_names(app) == ["1z", "2", "w"]
+  end
+
   test "rename pane stores the name" do
     {app, []} = Prompt.rename_pane(fresh())
     app = Enum.reduce(["o", "k", :enter], app, &press(&2, &1))

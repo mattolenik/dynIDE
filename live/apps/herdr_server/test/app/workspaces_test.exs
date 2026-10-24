@@ -98,11 +98,13 @@ defmodule HerdrServer.App.WorkspacesTest do
   test "renames" do
     {app, _} = Actions.new_workspace(fresh())
     {app, []} = Actions.rename_workspace(app, 2, "api")
-    {app, []} = Actions.rename_tab(app, 1, "logs")
+    {app, []} = Actions.rename_tab(app, 1, 1, "logs")
     {app, []} = Actions.rename_pane(app, 2, "build")
     assert names(app) == ["1", "api"]
     assert [%{name: "logs"}] = hd(app.session.workspaces).tabs
     assert app.session.panes[2].name == "build"
+    # tab ids are per workspace: only workspace 1's tab 1 was renamed
+    assert [%{name: "1"}] = List.last(app.session.workspaces).tabs
     assert {^app, []} = Actions.rename_pane(app, 99, "x")
   end
 end

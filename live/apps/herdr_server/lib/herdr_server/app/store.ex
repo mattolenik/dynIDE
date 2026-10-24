@@ -369,7 +369,7 @@ defmodule HerdrServer.App.Store do
     result =
       case step do
         {:init, size} -> Guard.run_twice_attributed(Actions, :init, [size], opts)
-        {:run, {m, f, a}} -> Guard.run_twice_attributed(m, f, [state.app | a], opts)
+        {:run, mfa} -> Guard.run_twice_attributed(Actions, :run, [state.app, mfa], opts)
         ev -> Guard.run_twice_attributed(Actions, :apply, [state.app, ev], opts)
       end
 

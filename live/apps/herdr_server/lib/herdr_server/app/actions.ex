@@ -102,6 +102,18 @@ defmodule HerdrServer.App.Actions do
 
   def apply(app, _other), do: {app, []}
 
+  @doc """
+  Runs a binding `{m, f, a}` as `apply(m, f, [app | a])` (the Store's `{:run, mfa}`).
+  While a modal is open only `detach/1` runs: the modal takes every key, and its
+  targets must not change beneath it.
+  """
+  @spec run(app(), Keybinds.mfa_t()) :: {app(), [effect()]}
+  def run(%{focus: %{modal: [_ | _]}} = app, {m, f, a})
+      when {m, f, a} != {__MODULE__, :detach, []},
+      do: {app, []}
+
+  def run(app, {m, f, a}), do: Kernel.apply(m, f, [app | a])
+
   @title_max 256
 
   # Titles come from programs: valid UTF-8, at most @title_max bytes, cut on a codepoint.
@@ -241,7 +253,7 @@ defmodule HerdrServer.App.Actions do
   defdelegate next_workspace(app), to: Workspaces
   defdelegate previous_workspace(app), to: Workspaces
   defdelegate focus_pane(app, id), to: Workspaces
-  defdelegate rename_tab(app, tab_id, name), to: Workspaces
+  defdelegate rename_tab(app, ws_id, tab_id, name), to: Workspaces
   defdelegate rename_workspace(app, ws_id, name), to: Workspaces
   defdelegate rename_pane(app, id, name), to: Workspaces
 

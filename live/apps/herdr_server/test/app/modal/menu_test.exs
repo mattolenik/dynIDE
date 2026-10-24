@@ -66,6 +66,21 @@ defmodule HerdrServer.App.Modal.MenuTest do
     refute app.session.panes[1][:name]
   end
 
+  test "pane menu Close pane closes a pane of another workspace" do
+    {app, _} = Actions.new_workspace(fresh())
+    app = pfx(app, "v")
+    {app, _} = Actions.switch_workspace(app, 1)
+    {app, []} = chrome(app, [:sidebar, :agents, :list, {:pane, 3}], :right_click)
+    {app, [{:close, 3}]} = chrome(app, [{:menu, 0}, {:entry, :close}], :click)
+    refute Map.has_key?(app.session.panes, 3)
+    assert app.session.active_workspace == 1
+  end
+
+  test "tab menu entries carry the workspace id with the tab id" do
+    {app, []} = chrome(fresh(), [:tabs, {:tab, 1}], :right_click)
+    [_, {:rename, _, {_, _, [1, 1]}}, {:close, _, {_, _, [1, 1]}}] = Modal.top(app).items
+  end
+
   test "pane menu split and swap act on the target pane" do
     app = pfx(fresh(), "v")
     assert Layout.pane_ids(layout(app)) == [1, 2] and app.focus.pane == 2

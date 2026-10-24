@@ -39,18 +39,21 @@ defmodule HerdrServer.App.Modal.Prompt do
   @spec create_tab(map, binary) :: {map, [tuple]}
   def create_tab(app, name) do
     {app, effects} = Actions.new_tab(app)
-    {app, []} = Actions.rename_tab(app, ws(app).active_tab, name)
+    {app, []} = Actions.rename_tab(app, app.session.active_workspace, ws(app).active_tab, name)
     {app, effects}
   end
 
   @spec rename_tab(map) :: {map, [tuple]}
-  def rename_tab(app), do: rename_tab(app, ws(app).active_tab)
+  def rename_tab(app), do: rename_tab(app, app.session.active_workspace, ws(app).active_tab)
 
-  @spec rename_tab(map, term) :: {map, [tuple]}
-  def rename_tab(app, tab_id) do
-    case Enum.find(ws(app).tabs, &(&1.id == tab_id)) do
-      nil -> {app, []}
-      t -> open(app, new("rename tab", t.name, {Actions, :rename_tab, [tab_id]}))
+  @doc "Asks for a new name of tab `tab_id` of workspace `ws_id` (both carried in the MFA)."
+  @spec rename_tab(map, term, term) :: {map, [tuple]}
+  def rename_tab(app, ws_id, tab_id) do
+    with %{tabs: tabs} <- Enum.find(app.session.workspaces, &(&1.id == ws_id)),
+         %{name: name} <- Enum.find(tabs, &(&1.id == tab_id)) do
+      open(app, new("rename tab", name, {Actions, :rename_tab, [ws_id, tab_id]}))
+    else
+      _ -> {app, []}
     end
   end
 
