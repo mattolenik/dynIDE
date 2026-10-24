@@ -7,14 +7,14 @@
     text: nil,
     token: nil,
     props: %{
+      mouse: true,
+      indicators: :dots,
       theme: %{
         name: "catppuccin",
         auto_switch: false,
         dark: "catppuccin",
         light: "catppuccin-latte"
-      },
-      indicators: :dots,
-      mouse: true
+      }
     },
     children: [
       %HerdrScene.Scene.Node{
@@ -313,27 +313,8 @@
             rect: nil,
             text: nil,
             token: nil,
-            props: %{offset: 2, rows: 15},
+            props: %{offset: 3, rows: 15},
             children: [
-              %HerdrScene.Scene.Node{
-                role: :item,
-                id: {:action, "settings"},
-                rect: nil,
-                text: "settings",
-                token: nil,
-                props: %{selected: false},
-                children: [
-                  %HerdrScene.Scene.Node{
-                    role: :keycap,
-                    id: {:key, 0},
-                    rect: nil,
-                    text: "prefix+s",
-                    token: nil,
-                    props: %{prefix: true, key: "s", mods: []},
-                    children: []
-                  }
-                ]
-              },
               %HerdrScene.Scene.Node{
                 role: :item,
                 id: {:action, "detach"},
@@ -349,6 +330,25 @@
                     text: "prefix+q",
                     token: nil,
                     props: %{prefix: true, key: "q", mods: []},
+                    children: []
+                  }
+                ]
+              },
+              %HerdrScene.Scene.Node{
+                role: :item,
+                id: {:action, "reload_config"},
+                rect: nil,
+                text: "reload config",
+                token: nil,
+                props: %{selected: false},
+                children: [
+                  %HerdrScene.Scene.Node{
+                    role: :keycap,
+                    id: {:key, 0},
+                    rect: nil,
+                    text: "prefix+shift+r",
+                    token: nil,
+                    props: %{prefix: true, key: "R", mods: []},
                     children: []
                   }
                 ]
@@ -626,5 +626,5 @@
       graphics: []
     }
   ],
-  focus: %{chrome: nil, pane: 1}
+  focus: %{pane: 1, chrome: nil}
 }

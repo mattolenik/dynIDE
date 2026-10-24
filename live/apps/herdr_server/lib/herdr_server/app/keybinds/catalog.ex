@@ -5,8 +5,7 @@ defmodule HerdrServer.App.Keybinds.Catalog do
   herdr's default specs (`Config.Keys` syntax). Groups in display order: `global`,
   `navigation`, `workspaces / tabs`, `panes`.
 
-  Left out until their targets land: `reload_config` (Task 9), `workspace_picker`,
-  `zoom`, and the indexed `switch_tab` (`prefix+1..9`, kept as defaults but not
+  Left out until their targets land: `workspace_picker`, `zoom`, and the indexed `switch_tab` (`prefix+1..9`, kept as defaults but not
   rebindable here).
   """
 
@@ -28,6 +27,7 @@ defmodule HerdrServer.App.Keybinds.Catalog do
       {"global", "help", {KeybindsModal, :open, []}, "prefix+?"},
       {"global", "settings", {Settings, :open, []}, "prefix+s"},
       {"global", "detach", a(:detach), "prefix+q"},
+      {"global", "reload_config", a(:reload_config), "prefix+shift+r"},
       {"navigation", "focus_pane_left", a(:focus_dir, [:left]), "prefix+h"},
       {"navigation", "focus_pane_down", a(:focus_dir, [:down]), "prefix+j"},
       {"navigation", "focus_pane_up", a(:focus_dir, [:up]), "prefix+k"},

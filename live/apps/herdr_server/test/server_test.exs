@@ -994,7 +994,14 @@ defmodule HerdrServer.ServerTest do
     assert Fake.Pty.writes(pty(1)) == []
   end
 
-  test "a keybind captured in the keybinds modal republishes the fast path's intercept set" do
+  @tag :tmp_dir
+  test "a keybind captured in the keybinds modal republishes the fast path's intercept set",
+       %{tmp_dir: dir} do
+    # the capture writes [keys] to the config file: not the suite's shared one
+    saved = Application.get_env(:herdr_server, :config_path)
+    File.write!(Path.join(dir, "config.toml"), "onboarding = false\n")
+    Application.put_env(:herdr_server, :config_path, Path.join(dir, "config.toml"))
+    on_exit(fn -> Application.put_env(:herdr_server, :config_path, saved) end)
     {c, s} = client()
     scene(c)
     refute MapSet.member?(fast().intercept, {"t", [:ctrl]})

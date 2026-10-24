@@ -6,7 +6,7 @@ defmodule HerdrServer.App.Keybinds do
   Mode changes are per-client: they target `{HerdrServer.Client.Keys, :enter_mode, [mode]}`
   and are applied to the client's input state by `Client.Keys`, never to the app.
 
-  `to_config/1` and `rebind/3` speak herdr's `[keys]` names (`Keybinds.Catalog`) and key
+  `to_config/1`, `bind/3` and `rebind/3` speak herdr's `[keys]` names (`Keybinds.Catalog`) and key
   syntax (`Config.Keys`).
 
   Keys are `{key, mods}`. Shift-letter normalization: a shifted printable key is stored as
@@ -56,7 +56,8 @@ defmodule HerdrServer.App.Keybinds do
         {"b", []} => a(:toggle_sidebar),
         {"N", []} => a(:new_workspace),
         {"?", []} => {KeybindsModal, :open, []},
-        {"s", []} => {Settings, :open, []}
+        {"s", []} => {Settings, :open, []},
+        {"R", []} => a(:reload_config)
       }
       |> Map.merge(Map.new(1..9, &{{Integer.to_string(&1), []}, a(:switch_tab, [&1])}))
       |> Map.merge(Map.new(nav, fn {k, d} -> {{k, []}, a(:focus_dir, [d])} end))
@@ -112,25 +113,59 @@ defmodule HerdrServer.App.Keybinds do
   end
 
   @doc """
-  Binds `action` (a `Keybinds.Catalog` name) to `key_spec` alone: its other bindings go,
-  and whatever held that key before loses it. A spec without `prefix+` is a direct bind;
-  the prefix key itself cannot be one.
+  Binds `action` (a `Keybinds.Catalog` name, or `"prefix"`) to `key_spec` alone (see
+  `bind/3`).
   """
   @spec rebind(t(), binary(), binary()) :: {:ok, t()} | {:error, binary()}
-  def rebind(kb, action, key_spec) do
-    with %{mfa: mfa} <- Catalog.find(action) || {:error, "unknown action #{inspect(action)}"},
-         {:ok, %{prefix: p, key: k, mods: m}} <- Spec.parse(key_spec),
-         :ok <- direct_ok(kb, p, {k, m}, key_spec) do
-      kb = %{kb | prefix_binds: unbind(kb.prefix_binds, mfa), direct: unbind(kb.direct, mfa)}
-      field = if p, do: :prefix_binds, else: :direct
-      {:ok, Map.update!(kb, field, &Map.put(&1, {k, m}, mfa))}
+  def rebind(kb, action, key_spec), do: bind(kb, action, [key_spec])
+
+  @doc """
+  Binds `action` to exactly `specs` (`[]` unbinds it): its other bindings go, and
+  whatever held one of those keys before loses it. A spec without `prefix+` is a direct
+  bind; the prefix key itself cannot be one. `"prefix"` sets the prefix keys (at least
+  one, none `prefix+`), dropping direct binds on them.
+  """
+  @spec bind(t(), binary(), [binary()]) :: {:ok, t()} | {:error, binary()}
+  def bind(kb, "prefix", specs) do
+    with {:ok, parsed} <- parse_all(specs) do
+      keys = for %{key: k, mods: m} <- parsed, do: {k, m}
+
+      cond do
+        keys == [] -> {:error, "the prefix needs a key"}
+        Enum.any?(parsed, & &1.prefix) -> {:error, "the prefix cannot be a prefix+ key"}
+        true -> {:ok, %{kb | prefix: keys, direct: Map.drop(kb.direct, keys)}}
+      end
     end
   end
 
-  defp direct_ok(kb, false, key, spec),
-    do: if(prefix?(kb, key), do: {:error, "#{spec} is the prefix"}, else: :ok)
+  def bind(kb, action, specs) do
+    with %{mfa: mfa} <- Catalog.find(action) || {:error, "unknown action #{inspect(action)}"},
+         {:ok, parsed} <- parse_all(specs),
+         :ok <- Enum.find_value(Enum.zip(parsed, specs), :ok, &direct_ok(kb, &1)) do
+      kb = %{kb | prefix_binds: unbind(kb.prefix_binds, mfa), direct: unbind(kb.direct, mfa)}
 
-  defp direct_ok(_kb, true, _key, _spec), do: :ok
+      {:ok,
+       Enum.reduce(parsed, kb, fn %{prefix: p, key: k, mods: m}, kb ->
+         field = if p, do: :prefix_binds, else: :direct
+         Map.update!(kb, field, &Map.put(&1, {k, m}, mfa))
+       end)}
+    end
+  end
+
+  defp parse_all(specs) do
+    Enum.reduce_while(specs, {:ok, []}, fn s, {:ok, acc} ->
+      case Spec.parse(s) do
+        {:ok, k} -> {:cont, {:ok, acc ++ [k]}}
+        err -> {:halt, err}
+      end
+    end)
+  end
+
+  # nil (no complaint) or {:error, why}, as Enum.find_value/3 wants
+  defp direct_ok(kb, {%{prefix: false, key: k, mods: m}, spec}),
+    do: if(prefix?(kb, {k, m}), do: {:error, "#{spec} is the prefix"})
+
+  defp direct_ok(_kb, _), do: nil
 
   defp unbind(table, mfa), do: Map.reject(table, fn {_, v} -> v == mfa end)
 

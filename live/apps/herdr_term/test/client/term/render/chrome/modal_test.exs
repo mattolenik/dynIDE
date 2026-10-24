@@ -162,7 +162,7 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.ModalTest do
     assert inner(t, 11) == " press / to filter by command or shortcut"
     assert inner(t, 13) == " global"
     assert inner(t, 14) == " prefix+?         keybinds"
-    assert inner(t, 23) == " prefix+shift+tab cycle pane previous"
+    assert inner(t, 23) == " prefix+tab       cycle pane next"
     assert inner(t, 28) == " search / · scroll j/k/↑↓/pgup/pgdn · rebind enter · close esc"
     # the second action is selected
     assert Enum.at(cells(sc, 15), 30).bg == Theme.style(@theme, :selected).bg

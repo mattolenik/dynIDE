@@ -12,8 +12,8 @@ defmodule HerdrServer.App.Modal.Menu do
   Items (exact labels; items whose task has not landed are omitted): tab `New tab`,
   `Rename`, `Close`; workspace `Rename`, `Close`; pane `Rename pane`, `Clear pane name`
   (when named), `Swap with focused pane` (another pane of the same tab is focused),
-  `Split right`, `Split down`, `Close pane`; global `settings`, `keybinds`, `detach`
-  (reload config lands with Task 9).
+  `Split right`, `Split down`, `Close pane`; global `settings`, `keybinds`,
+  `reload config`, `detach`.
   """
 
   @behaviour HerdrServer.App.Modal.Kind
@@ -86,6 +86,7 @@ defmodule HerdrServer.App.Modal.Menu do
     do: [
       {:settings, "settings", {Settings, :open, []}},
       {:keybinds, "keybinds", {KeybindsModal, :open, []}},
+      {:reload_config, "reload config", {Actions, :reload_config, []}},
       {:detach, "detach", {Actions, :detach, []}}
     ]
 

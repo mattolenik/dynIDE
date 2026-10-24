@@ -7,7 +7,12 @@ defmodule HerdrServer.App.Actions do
 
   Effects: `{:spawn, id, %{cols, rows}}`, `{:close, id}`, `{:key, id, event}`,
   `{:mouse, id, event}` (coordinates pane-relative), `{:paste, id, binary}`,
-  `{:focus_report, id, boolean}`, `{:notice, %{level, text}}`, `{:detach}`.
+  `{:focus_report, id, boolean}`, `{:notice, %{level, text}}`, `{:detach}`,
+  `{:reload_config}`, `{:config_diagnostics, [binary]}`.
+
+  Config (`HerdrServer.Config`): `init/2` and the server-internal `{:config_loaded, cfg}`
+  put the file over the ui (keybinds are always `Keybinds.default/0` plus the file); a
+  loaded config with `onboarding` opens onboarding when no modal is open.
 
   `{:pane_exited, id}` emits `{:close, id}`; the Store must treat closing an already-gone
   pane as idempotent. Mouse `px` is passed through unchanged (not pane-relative) in M3.
@@ -21,16 +26,17 @@ defmodule HerdrServer.App.Actions do
 
   alias HerdrServer.App.{Chrome, Commands, Focus, Keybinds, Modal, Session, Ui, Workspaces}
   alias HerdrServer.App.Modal.Onboarding
-  alias HerdrServer.Layout
+  alias HerdrServer.{Config, Layout}
   alias HerdrServer.View.Frame
 
   @type app :: %{session: Session.t(), focus: Focus.t(), ui: Ui.t()}
   @type effect :: tuple()
 
-  @spec init(%{cols: pos_integer(), rows: pos_integer()}) :: {app(), [effect()]}
-  def init(%{cols: c, rows: r}) do
+  @spec init(%{cols: pos_integer(), rows: pos_integer()}, Config.t() | nil) ::
+          {app(), [effect()]}
+  def init(%{cols: c, rows: r}, cfg \\ nil) do
     size = %{cols: c, rows: r}
-    ui = %Ui{keybinds: Keybinds.default()}
+    {ui, fx} = configure(%Ui{keybinds: Keybinds.default()}, cfg, start: true)
     area = area(size, ui)
     layout = Layout.new(1)
 
@@ -52,7 +58,14 @@ defmodule HerdrServer.App.Actions do
 
     app = Onboarding.at_start(%{session: session, focus: %Focus{pane: 1}, ui: ui})
 
-    {app, [{:spawn, 1, size_of(layout, area, 1)}]}
+    {app, [{:spawn, 1, size_of(layout, area, 1)} | fx]}
+  end
+
+  defp configure(ui, nil, _opts), do: {ui, []}
+
+  defp configure(ui, cfg, opts) do
+    {kb, ui, diags} = Config.apply(cfg, Keybinds.default(), ui, opts)
+    {%{ui | keybinds: kb}, [{:config_diagnostics, diags}]}
   end
 
   # --- events ---
@@ -99,6 +112,12 @@ defmodule HerdrServer.App.Actions do
       %{^id => meta} -> {put_in(app.session.panes[id], %{meta | title: clean_title(title)}), []}
       _ -> {app, []}
     end
+  end
+
+  def apply(app, {:config_loaded, cfg}) do
+    {ui, fx} = configure(app.ui, cfg, [])
+    app = reframe(%{app | ui: ui})
+    {if(app.focus.modal == [], do: Onboarding.at_start(app), else: app), fx}
   end
 
   def apply(app, _other), do: {app, []}
@@ -241,6 +260,10 @@ defmodule HerdrServer.App.Actions do
 
   @spec detach(app()) :: {app(), [effect()]}
   def detach(app), do: {app, [{:detach}]}
+
+  @doc "Reloads the config file (the Store loads it and applies `{:config_loaded, cfg}`)."
+  @spec reload_config(app()) :: {app(), [effect()]}
+  def reload_config(app), do: {app, [{:reload_config}]}
 
   @doc "Collapses or expands the sidebar (herdr `toggle_sidebar`); the pane area follows."
   @spec toggle_sidebar(app()) :: {app(), [effect()]}

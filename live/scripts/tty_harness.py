@@ -70,7 +70,8 @@ pane shells inherit the VM's HERDR_BROKER_SOCK. Run them outside the dogfood
 instance (another terminal or worktree).
 
 Every herdr-live launch gets its own HERDR_LIVE_LOG, HERDR_LIVE_API,
-HERDR_LIVE_RUNTIME_DIR and HERDR_LIVE_STATE_DIR under the run's temp dir, so the
+HERDR_LIVE_RUNTIME_DIR, HERDR_LIVE_STATE_DIR and HERDR_LIVE_CONFIG (a config with
+`onboarding = false`, so no welcome modal) under the run's temp dir, so the
 CLI calls address that instance only and no run reads or writes the human's
 session file.
 
@@ -565,9 +566,16 @@ class Herdr:
         # the panes' shell: plain sh with a known prompt; sockets and session files of
         # this instance only (never the human's session.default.etf)
         self.state = os.path.join(tmp, "state")
+        # the config file (M13): this run's, without the first-run welcome; a second
+        # launch in the same temp dir (persist) keeps whatever the first wrote
+        config_path = os.path.join(tmp, "config.toml")
+        if not os.path.exists(config_path):
+            with open(config_path, "w") as f:
+                f.write("onboarding = false\n")
         env.update(SHELL="/bin/sh", PS1="$ ", HISTFILE="/dev/null", TERM="xterm-256color",
                    HERDR_LIVE_LOG=self.log, HERDR_LIVE_API=os.path.join(tmp, f"api{run}.sock"),
-                   HERDR_LIVE_RUNTIME_DIR=os.path.join(tmp, f"rt{run}"), HERDR_LIVE_STATE_DIR=self.state)
+                   HERDR_LIVE_RUNTIME_DIR=os.path.join(tmp, f"rt{run}"), HERDR_LIVE_STATE_DIR=self.state,
+                   HERDR_LIVE_CONFIG=config_path)
         self.env = env
         pid = os.fork()
         if pid == 0:

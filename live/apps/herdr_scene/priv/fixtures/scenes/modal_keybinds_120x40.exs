@@ -7,14 +7,14 @@
     text: nil,
     token: nil,
     props: %{
+      mouse: true,
+      indicators: :dots,
       theme: %{
         name: "catppuccin",
         auto_switch: false,
         dark: "catppuccin",
         light: "catppuccin-latte"
-      },
-      indicators: :dots,
-      mouse: true
+      }
     },
     children: [
       %HerdrScene.Scene.Node{
@@ -382,6 +382,25 @@
                 ]
               },
               %HerdrScene.Scene.Node{
+                role: :item,
+                id: {:action, "reload_config"},
+                rect: nil,
+                text: "reload config",
+                token: nil,
+                props: %{selected: false},
+                children: [
+                  %HerdrScene.Scene.Node{
+                    role: :keycap,
+                    id: {:key, 0},
+                    rect: nil,
+                    text: "prefix+shift+r",
+                    token: nil,
+                    props: %{prefix: true, key: "R", mods: []},
+                    children: []
+                  }
+                ]
+              },
+              %HerdrScene.Scene.Node{
                 role: :text,
                 id: {:group, "navigation"},
                 rect: nil,
@@ -550,25 +569,6 @@
                     children: []
                   }
                 ]
-              },
-              %HerdrScene.Scene.Node{
-                role: :item,
-                id: {:action, "close_workspace"},
-                rect: nil,
-                text: "close workspace",
-                token: nil,
-                props: %{selected: false},
-                children: [
-                  %HerdrScene.Scene.Node{
-                    role: :keycap,
-                    id: {:key, 0},
-                    rect: nil,
-                    text: "prefix+shift+d",
-                    token: nil,
-                    props: %{prefix: true, key: "D", mods: []},
-                    children: []
-                  }
-                ]
               }
             ]
           },
@@ -616,5 +616,5 @@
       graphics: []
     }
   ],
-  focus: %{chrome: nil, pane: 1}
+  focus: %{pane: 1, chrome: nil}
 }

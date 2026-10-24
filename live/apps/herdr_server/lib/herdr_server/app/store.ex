@@ -44,6 +44,13 @@ defmodule HerdrServer.App.Store do
       Without a usable file the app stays nil and the first event initialises it.
     * In a VM that adopted panes (`Link.adopt_reason/0` not nil) no restart or restore
       closes a keeper pane nothing maps (`App.Restore`): it may be an adopted child.
+    * Config (`HerdrServer.Config`, M13): the first init loads the file into
+      `Actions.init/2`; an app adopted at start (carry, mirror, disk) gets it as
+      `{:config_loaded, cfg}` right after init (`:load_config`), as does
+      `{:reload_config}` (plus an info notice to the origin). `{:config_diagnostics, d}`
+      sends a non-empty `d` as one warning notice to every subscriber and keeps it for
+      later subscribers until a clean load. `{:config_write, table, kv}` runs
+      `Config.Write.upsert/3`; a failure warns the origin.
   """
   use GenServer
 
@@ -53,6 +60,7 @@ defmodule HerdrServer.App.Store do
   alias HerdrScene.Protocol
   alias HerdrServer.App.{Actions, Keybinds, Reconcile, Restore, Upgrade}
   alias HerdrServer.App.Store.{Carry, Mirror}
+  alias HerdrServer.Config
   alias HerdrServer.Handoff.Link
   alias HerdrServer.{Kernel, Layout}
   alias HerdrServer.Pane.{Input, Rows, Server}
@@ -72,7 +80,8 @@ defmodule HerdrServer.App.Store do
             fast: nil,
             hold_timer: nil,
             mirrored: %{},
-            flush: nil
+            flush: nil,
+            diag: nil
 
   def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
 
@@ -135,6 +144,8 @@ defmodule HerdrServer.App.Store do
 
   @impl true
   def init(:ok) do
+    send(self(), :load_config)
+
     case Link.take_adopted(Carry.key()) do
       [{_key, blob, _fds}] ->
         :persistent_term.erase(Protocol.fast_path_key())
@@ -240,7 +251,13 @@ defmodule HerdrServer.App.Store do
 
   def handle_call({:subscribe, pid}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    subs = Map.put_new_lazy(state.subs, pid, fn -> Process.monitor(pid) end)
+
+    subs =
+      Map.put_new_lazy(state.subs, pid, fn ->
+        if state.diag, do: notice(pid, state.diag)
+        Process.monitor(pid)
+      end)
+
     {:reply, :ok, %{state | subs: subs}}
   end
 
@@ -284,6 +301,18 @@ defmodule HerdrServer.App.Store do
   def handle_info(:hold, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:noreply, Carry.hold_now(state)}
+  end
+
+  # an app adopted at start gets the config file; a nil app loads it at its first init
+  def handle_info(:load_config, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    cfg = state.app && load_config()
+
+    {:noreply,
+     if(cfg,
+       do: state |> handle_event({:config_loaded, cfg}, nil, nil) |> Mirror.dirty(),
+       else: state
+     )}
   end
 
   def handle_info(_other, state) do
@@ -368,7 +397,7 @@ defmodule HerdrServer.App.Store do
 
     result =
       case step do
-        {:init, size} -> Guard.run_twice_attributed(Actions, :init, [size], opts)
+        {:init, size} -> Guard.run_twice_attributed(Actions, :init, [size, load_config()], opts)
         {:run, mfa} -> Guard.run_twice_attributed(Actions, :run, [state.app, mfa], opts)
         ev -> Guard.run_twice_attributed(Actions, :apply, [state.app, ev], opts)
       end
@@ -486,6 +515,12 @@ defmodule HerdrServer.App.Store do
     %{state | sizes: Map.delete(state.sizes, id), hidden: MapSet.delete(state.hidden, id)}
   end
 
+  defp effect(state, {:config_diagnostics, diags}, _origin) do
+    n = if diags != [], do: %{level: :warning, text: Enum.join(diags, "; ")}
+    if n, do: Enum.each(Map.keys(state.subs), &notice(&1, n))
+    %{state | diag: n}
+  end
+
   defp effect(state, other, origin) do
     io(other, origin)
     state
@@ -512,7 +547,38 @@ defmodule HerdrServer.App.Store do
   # the originating session tells its client {:detached, :requested} and stops
   defp io({:detach}, origin) when is_pid(origin), do: send(origin, {:detach})
   defp io({:detach}, _origin), do: :ok
+
+  defp io({:config_write, table, kv}, origin) do
+    case Guard.run_twice(Config.Write, :upsert, [Config.path(), table, kv],
+           server: reload_server()
+         ) do
+      {:ok, :ok} ->
+        :ok
+
+      {:ok, err} ->
+        notice(origin, %{level: :warning, text: "config write failed: #{inspect(err)}"})
+
+      {:failed, f} ->
+        notice(origin, %{level: :warning, text: "config write failed: #{Guard.message(f)}"})
+    end
+  end
+
+  defp io({:reload_config}, origin) do
+    if cfg = load_config() do
+      notice(origin, %{level: :info, text: "reloaded config"})
+      event_async({:config_loaded, cfg})
+    end
+  end
+
   defp io(other, _), do: Logger.warning("unknown effect #{inspect(other)}")
+
+  # nil when loading itself fails (the file's own problems are diagnostics)
+  defp load_config do
+    case Guard.run_twice(Config, :load, [], server: reload_server()) do
+      {:ok, cfg} -> cfg
+      {:failed, _} -> nil
+    end
+  end
 
   defp notice(origin, n) when is_pid(origin), do: send(origin, {:notice, n})
   defp notice(_origin, n), do: Logger.info("notice: #{inspect(n)}")

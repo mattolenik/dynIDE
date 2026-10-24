@@ -75,3 +75,12 @@ config :herdr_term,
 # Headless (no terminal client children) in test; HERDR_LIVE_HEADLESS=1 does
 # the same at runtime. Frames are at least min_frame_interval_ms apart.
 config :herdr_term, headless: config_env() == :test, min_frame_interval_ms: 6
+
+# Config file (M13, HerdrServer.Config): tests read a fresh per-run file with onboarding
+# off (so unrelated tests see no modal); written here because every app's tests start
+# herdr_server, and modal tests may write to it. Tests needing another file set the path.
+if config_env() == :test do
+  test_config = Path.join(System.tmp_dir!(), "herdr-live-test-config-#{System.pid()}.toml")
+  File.write!(test_config, "onboarding = false\n")
+  config :herdr_server, :config_path, test_config
+end

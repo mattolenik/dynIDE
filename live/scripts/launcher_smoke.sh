@@ -10,6 +10,7 @@ verbose=0
 [ "${1:-}" = "-v" ] && verbose=1
 root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
+printf 'onboarding = false\n' >"$tmp/config.toml"
 timeout=${SMOKE_TIMEOUT:-600}
 
 vm_pids() { sed -n 's/.*herdr-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$tmp/log/herdr-live.log" 2>/dev/null; }
@@ -40,6 +41,8 @@ stty -a >"$tmp/before"
 export HERDR_LIVE_API="$tmp/api.sock"
 # session files (M8) under the run dir, never the real session
 export HERDR_LIVE_STATE_DIR="$tmp/state"
+# the run's config file (M13): no first-run welcome modal
+export HERDR_LIVE_CONFIG="$tmp/config.toml"
 HERDR_LIVE_HEADLESS=1 HERDR_LIVE_RUNTIME_DIR="$tmp/rt" HERDR_LIVE_LOG="$tmp/log/herdr-live.log" "$root/bin/herdr-live" &
 pid=\$!
 echo "\$pid" >"$tmp/pid"

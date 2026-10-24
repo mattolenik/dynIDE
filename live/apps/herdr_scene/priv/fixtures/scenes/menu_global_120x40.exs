@@ -7,14 +7,14 @@
     text: nil,
     token: nil,
     props: %{
+      mouse: true,
+      indicators: :dots,
       theme: %{
         name: "catppuccin",
         auto_switch: false,
         dark: "catppuccin",
         light: "catppuccin-latte"
-      },
-      indicators: :dots,
-      mouse: true
+      }
     },
     children: [
       %HerdrScene.Scene.Node{
@@ -275,7 +275,7 @@
       %HerdrScene.Scene.Node{
         role: :menu,
         id: {:menu, 0},
-        rect: %{x: 20, y: 35, h: 5, w: 14},
+        rect: %{x: 20, y: 34, h: 6, w: 17},
         text: nil,
         token: nil,
         props: %{selected: 0, kind: :global},
@@ -294,6 +294,15 @@
             id: {:entry, :keybinds},
             rect: nil,
             text: "keybinds",
+            token: nil,
+            props: %{selected: false},
+            children: []
+          },
+          %HerdrScene.Scene.Node{
+            role: :item,
+            id: {:entry, :reload_config},
+            rect: nil,
+            text: "reload config",
             token: nil,
             props: %{selected: false},
             children: []
@@ -323,5 +332,5 @@
       graphics: []
     }
   ],
-  focus: %{chrome: nil, pane: 1}
+  focus: %{pane: 1, chrome: nil}
 }

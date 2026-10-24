@@ -35,7 +35,9 @@ defmodule HerdrServer.Handoff.StoreAdoptTest do
     on_exit(fn -> if pid = Process.whereis(Link), do: GenServer.stop(pid) end)
 
     restart_store()
-    assert Store.snapshot() == app
+    # the config applied right after init settles the adopted pane (a layout_gen bump)
+    snap = Store.snapshot()
+    assert %{snap | session: %{snap.session | panes: app.session.panes}} == app
     assert Rows.kernel_ids() == [{1, kid}]
     assert [{pane, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
     assert Enum.sort(Fake.Keeper.ids()) == Enum.sort([kid, other])
