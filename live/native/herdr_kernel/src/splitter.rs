@@ -68,9 +68,47 @@ impl Splitter {
     }
 
     pub fn observe(&mut self, bytes: &[u8], out: &mut Vec<Seq>) {
-        for &b in bytes {
-            self.step(b, out);
+        let mut i = 0;
+        while i < bytes.len() {
+            match self.state {
+                State::Ground => {
+                    // Plain text: jump straight to the next ESC.
+                    match bytes[i..].iter().position(|&b| b == ESC) {
+                        Some(off) => i += off,
+                        None => return,
+                    }
+                }
+                State::Body if self.in_payload || self.dropped => {
+                    let rest = &bytes[i..];
+                    let is_dcs = self.is_dcs;
+                    let stop = rest
+                        .iter()
+                        .position(|&b| b == ESC || b == CAN || b == SUB || (!is_dcs && b == BEL))
+                        .unwrap_or(rest.len());
+                    if !self.dropped {
+                        let room = self.cap - self.payload.len();
+                        let take = stop.min(room);
+                        self.payload.extend_from_slice(&rest[..take]);
+                        if take < stop {
+                            self.truncated = true;
+                        }
+                    }
+                    i += stop;
+                    if i >= bytes.len() {
+                        return;
+                    }
+                }
+                _ => {}
+            }
+            self.step(bytes[i], out);
+            i += 1;
         }
+    }
+
+    fn abort(&mut self) {
+        self.state = State::Ground;
+        // Release any large (up to 1 MiB) buffer.
+        self.payload = Vec::new();
     }
 
     fn step(&mut self, b: u8, out: &mut Vec<Seq>) {
@@ -89,7 +127,7 @@ impl Splitter {
             State::Body => match b {
                 BEL if !self.is_dcs => self.finish(out),
                 ESC => self.state = State::BodyEsc,
-                CAN | SUB => self.state = State::Ground,
+                CAN | SUB => self.abort(),
                 _ => self.push(b),
             },
             State::BodyEsc => {
@@ -97,6 +135,7 @@ impl Splitter {
                     self.finish(out);
                 } else {
                     // New ESC that is not ST aborts; reprocess this byte after it.
+                    self.abort();
                     self.state = State::Esc;
                     self.step(b, out);
                 }
@@ -272,6 +311,40 @@ mod tests {
         // New ESC that is not ST aborts, and may start a fresh sequence.
         assert_eq!(run(b"\x1b]0;abc\x1b]2;ok\x07"), vec![osc(2, b"ok")]);
         assert!(run(b"\x1bP1\x18x\x1b\\").is_empty());
+    }
+
+    #[test]
+    fn dcs_cap_truncates() {
+        let mut input = b"\x1bP".to_vec();
+        input.extend(std::iter::repeat_n(b'D', 5000));
+        input.extend_from_slice(b"\x1b\\");
+        match run(&input).as_slice() {
+            [Seq::Dcs { payload, truncated }] => {
+                assert!(*truncated);
+                assert_eq!(payload.len(), 4096);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn esc_split_across_chunks() {
+        let feed = |chunks: &[&[u8]]| {
+            let mut s = Splitter::new();
+            let mut out = Vec::new();
+            for c in chunks {
+                s.observe(c, &mut out);
+            }
+            out
+        };
+        // ST split between ESC and backslash.
+        assert_eq!(feed(&[b"\x1b]1;a\x1b", b"\\"]), vec![osc(1, b"a")]);
+        // ESC at chunk end, then ']' starts a fresh OSC (abort + new).
+        assert_eq!(feed(&[b"\x1b]1;a\x1b", b"]2;b\x07"]), vec![osc(2, b"b")]);
+        // ESC at chunk end, then plain byte aborts.
+        assert!(feed(&[b"\x1b]1;a\x1b", b"x\x07"]).is_empty());
+        // Introducer split across chunks.
+        assert_eq!(feed(&[b"\x1b", b"]3;c\x07"]), vec![osc(3, b"c")]);
     }
 
     #[test]
