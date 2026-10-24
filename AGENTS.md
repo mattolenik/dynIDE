@@ -81,6 +81,13 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   `live/scripts/launcher_smoke.sh`, `attached_smoke.sh`,
   `live/bench/handoff/smoke.exs`. A VM learns its role over the link when
   `HERDR_BROKER_SOCK` is set; without it (tests, iex) it starts standalone.
+- Persistence (M8, ADR 0002): under the broker the session saves to
+  `<state dir>/session.<name>.etf` (schema v2, atomic, 0600) and scrollback
+  (last 1000 rows as VT) to `session.<name>.scrollback/<pane id>.etf`. State dir:
+  `HERDR_LIVE_STATE_DIR`, else `$HERDR_LIVE_RUNTIME_DIR/state`, else
+  `${XDG_STATE_HOME:-~/.local/state}/herdr-live`. `HERDR_LIVE_SESSION` names it
+  (default `default`); `HERDR_LIVE_PERSIST=0` disables. Tests and standalone
+  `mix run` never persist. Restore order: broker carry > ETS mirror > disk.
 - The Rust herdr product (`src/`) was pruned in M7. It lives on as the git tag
   `herdr-reference`; `live/bench/gate/herdr_ref.sh` builds it from the tag when a
   benchmark needs the reference binary.
@@ -158,7 +165,9 @@ Full guide: `docs/herdr-live/editing-live.md`. Human checks: `docs/herdr-live/re
   ~200-500 ms. Edits to `herdr_scene` fan out to server and client, so batch
   them. NIF crates and `native/` changes need `herdr-live kernel-restart`.
 - A new field in a persisted struct needs a `code_change/3` that merges
-  defaults. No `fn` in state (rejected at the guard). Guarded call sites
+  defaults. A new session fact (`App.Session`, pane metadata) also needs a
+  `Persist.Schema` field and a migration (`@migrations`, bump `version/0`);
+  `App.Ui` fields persist generically (plain data only). No `fn` in state (rejected at the guard). Guarded call sites
   stay thin; blanket `rescue` stays in `HerdrReload.Guard`.
 - Read the status line (`r<N> <k>m`, `r! compile`, `rolled back`, `synced ..., no
   rollback`, `tests ...`, `handoff ...`); every text is in the guide.

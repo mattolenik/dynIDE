@@ -71,6 +71,38 @@ and reconciles with `Native.Keeper`: panes spawned in the window are adopted int
 "scratch" tab, panes whose kernel is gone are dropped. Terminals are untouched in every
 case.
 
+## Session persistence
+
+Under `bin/herdr-live` the session (layout, focus, ui prefs, pane cwds) is saved to
+`<state dir>/session.<name>.etf` (ETF, schema v2, atomic temp+rename, 0600) and the last
+1000 rows of each pane's scrollback to `session.<name>.scrollback/<pane id>.etf`. The state
+dir is `HERDR_LIVE_STATE_DIR`, else `$HERDR_LIVE_RUNTIME_DIR/state` when a runtime dir is set,
+else `${XDG_STATE_HOME:-~/.local/state}/herdr-live`; the name is `HERDR_LIVE_SESSION`
+(default `default`). Tests and standalone `mix run` never persist.
+
+- What survives a stop/start: workspaces, tabs, split layout, focus, ui prefs, titles, and
+  scrollback. Panes come back as new `$SHELL`s in the recorded cwd (nearest existing ancestor
+  if it is gone), with history replayed above the prompt. The recorded command is never
+  re-run. Keybinds and the modal stack are not persisted. Running processes do not survive
+  a stop (a `kernel-restart` handoff keeps them).
+- Restore precedence at `App.Store` init: broker carry (handoff) > ETS mirror (Store
+  restart) > disk (fresh start, and the broker's fallback after 3 failed adoptions, logged
+  `reason=fallback`).
+- Start fresh: run with `HERDR_LIVE_PERSIST=0`, or stop herdr-live and move the session
+  file away.
+- Bad files are moved aside as `session.<name>.etf.bad-<ms>` (newer schema:
+  `.v<N>-<ms>`) with their scrollback dir; 5 are kept. A restore that crashes the Store sets
+  the file aside instead of looping.
+- Schema rule: the persisted shape is `HerdrServer.Persist.Schema`. A new `App.Ui` field
+  persists generically (plain data only). A new session fact (in `App.Session` or pane
+  metadata) needs a schema field and a migration (`@migrations`, bump `version/0`).
+- Telemetry: `persist_write`, `persist_restore source=disk|none reason=boot|fallback panes=
+  scrollback= ms=`, `persist_error op= reason=`; `just live-log-summary` reports restores,
+  persist_writes, persist_scrollback_writes and persist_errors.
+- Warning: two instances sharing a state dir and session name clobber each other's file.
+  Give each its own `HERDR_LIVE_STATE_DIR` (smokes, harness and benches do) or session name.
+  Proof of stop/start: `python3 live/scripts/tty_harness.py persist` (part of `just live-check`).
+
 ## The guard boundary
 
 Every call from a thin GenServer into editable code goes through `HerdrReload.Guard`
