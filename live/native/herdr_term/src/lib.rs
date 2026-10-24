@@ -22,7 +22,7 @@ mod nif {
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
     mod atoms {
-        rustler::atoms! { ok, error, tty_input, exit, tty, hangup, panic, backpressure, bad_frame }
+        rustler::atoms! { ok, error, tty_input, exit, tty, hangup, panic, backpressure, bad_frame, tty_resumed }
     }
 
     impl rustler::Resource for TtyResource {}
@@ -45,6 +45,9 @@ mod nif {
         match event {
             Event::Input(bytes) => (atoms::tty_input(), binary(env, bytes)).encode(env),
             Event::Hangup => (atoms::exit(), atoms::tty(), atoms::hangup()).encode(env),
+            Event::Resumed => {
+                rustler::types::tuple::make_tuple(env, &[atoms::tty_resumed().encode(env)])
+            }
             Event::Panic(reason) => (
                 atoms::exit(),
                 atoms::tty(),
@@ -104,6 +107,15 @@ mod nif {
     fn tty_restore(tty: ResourceArc<TtyResource>) -> Atom {
         // Best effort by contract: a tty that cannot be reset has nothing left to undo.
         let _ = tty.inner.restore();
+        atoms::ok()
+    }
+
+    /// Ruling 7: stops the VM's process group and returns after SIGCONT.
+    /// Dirty IO for the restore and re-enter writes (100 ms budget each).
+    #[rustler::nif(schedule = "DirtyIo")]
+    fn tty_suspend(tty: ResourceArc<TtyResource>) -> Atom {
+        // Best effort like restore: a host we cannot reset gets re-raw on resume anyway.
+        let _ = tty.inner.suspend();
         atoms::ok()
     }
 

@@ -40,6 +40,8 @@ pub enum Event {
     Hangup,
     /// `{:exit, :tty, {:panic, binary}}`: a kernel thread panicked.
     Panic(String),
+    /// `{:tty_resumed}`: back from `suspend`; the next frame repaints.
+    Resumed,
 }
 
 /// Where events go: an Erlang pid in production, a channel in tests.
@@ -77,6 +79,8 @@ impl Subscription {
                 self.pending
                     .extend_from_slice(&bytes[..bytes.len().min(room)]);
             }
+            // Nobody to tell; the next subscriber sends a fresh frame anyway.
+            Event::Resumed => {}
             exit => self.exit = Some(exit),
         }
     }
@@ -86,7 +90,8 @@ pub struct Inner {
     file: File,
     saved: libc::termios,
     kitty: Option<u16>,
-    kitty_pushed: bool,
+    /// The `ESC[>{flags}u` push written at open, re-sent on resume.
+    kitty_push: Option<Vec<u8>>,
     restored: AtomicBool,
     shutdown: AtomicBool,
     sub: Mutex<Subscription>,
@@ -212,13 +217,7 @@ impl Inner {
         let mut saved: libc::termios = unsafe { std::mem::zeroed() };
         // SAFETY: valid fd and out-pointer.
         cvt(unsafe { libc::tcgetattr(fd, &mut saved) })?;
-        let mut raw = saved;
-        // SAFETY: raw is a valid termios.
-        unsafe { libc::cfmakeraw(&mut raw) };
-        raw.c_cc[libc::VMIN] = 1;
-        raw.c_cc[libc::VTIME] = 0;
-        // SAFETY: valid fd and termios.
-        cvt(unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) })?;
+        set_raw(fd, &saved)?;
 
         let (probe, leftover) = match Self::probe(&file) {
             Ok(found) => found,
@@ -229,11 +228,11 @@ impl Inner {
             }
         };
         let kitty = probe.flags;
-        let kitty_pushed = kitty.is_some() && kitty_flags != 0;
-        if kitty_pushed {
-            let push = format!("\x1b[>{kitty_flags}u");
+        let kitty_push = (kitty.is_some() && kitty_flags != 0)
+            .then(|| format!("\x1b[>{kitty_flags}u").into_bytes());
+        if let Some(push) = &kitty_push {
             // Best effort: a host that just answered the probe is reading.
-            let _ = write_by(&file, push.as_bytes(), Instant::now() + WRITE_BUDGET);
+            let _ = write_by(&file, push, Instant::now() + WRITE_BUDGET);
         }
 
         let mut subscription = Subscription {
@@ -247,7 +246,7 @@ impl Inner {
             file,
             saved,
             kitty,
-            kitty_pushed,
+            kitty_push,
             restored: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
             sub: Mutex::new(subscription),
@@ -322,6 +321,8 @@ impl Inner {
         let mut chunk = [0u8; READ_CHUNK];
         while !self.shutdown.load(Ordering::Acquire) {
             match poll_fd(fd, libc::POLLIN, POLL_MS) {
+                // Input that arrives after restore belongs to whoever opens the tty next.
+                Ok(true) if self.shutdown.load(Ordering::Acquire) => break,
                 Ok(true) => {}
                 Ok(false) => continue,
                 Err(_) => {
@@ -431,15 +432,43 @@ impl Inner {
             return Ok(());
         }
         self.stop();
-        self.reset_terminal()
+        let _guard = lock(&self.write_lock);
+        reset(&self.file, &self.saved, self.kitty_push.is_some(), true)
     }
 
-    /// Writes the restore sequence (best effort, `WRITE_BUDGET`) and resets
-    /// termios to the saved state. Does not claim `restored`, so suspend can
-    /// reuse it.
-    pub(crate) fn reset_terminal(&self) -> io::Result<()> {
+    /// Restores the terminal, stops the whole process group with SIGSTOP and,
+    /// once continued, re-enters raw mode and the alternate screen. Returns
+    /// after SIGCONT. Does nothing after the final `restore`.
+    pub fn suspend(self: &Arc<Self>) -> io::Result<()> {
+        self.suspend_with(|| {
+            // SAFETY: plain syscall; signals our own process group.
+            unsafe { libc::kill(0, libc::SIGSTOP) };
+        })
+    }
+
+    /// `suspend` with the stop injected, so tests can run it in-process.
+    /// The write lock is held throughout, so the output thread cannot write
+    /// while the host is cooked; it resumes behind the re-enter sequence.
+    pub(crate) fn suspend_with(self: &Arc<Self>, stop: impl FnOnce()) -> io::Result<()> {
         let _guard = lock(&self.write_lock);
-        reset(&self.file, &self.saved, self.kitty_pushed, true)
+        if self.restored.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        reset(&self.file, &self.saved, self.kitty_push.is_some(), true)?;
+        stop();
+        let raw = set_raw(self.file.as_raw_fd(), &self.saved);
+        let mut enter = ENTER.to_vec();
+        enter.extend(self.kitty_push.iter().flatten());
+        // Best effort, like open: a host that continued us is reading.
+        let _ = write_by(&self.file, &enter, Instant::now() + WRITE_BUDGET);
+        self.output.reset_frame();
+        // The caller is a dirty scheduler, where the NIF sink cannot send, so
+        // a short-lived thread delivers the event.
+        let inner = Arc::clone(self);
+        let _ = std::thread::Builder::new()
+            .name("herdr-tty-resumed".into())
+            .spawn(move || inner.run_guarded(|i| lock(&i.sub).deliver(Event::Resumed)));
+        raw
     }
 
     /// Destructor path, never waits: signals the threads (which hold their
@@ -450,9 +479,20 @@ impl Inner {
         if !self.restored.swap(true, Ordering::AcqRel) {
             // Waits for at most one non-blocking write syscall.
             let _guard = lock(&self.write_lock);
-            let _ = reset(&self.file, &self.saved, self.kitty_pushed, false);
+            let _ = reset(&self.file, &self.saved, self.kitty_push.is_some(), false);
         }
     }
+}
+
+/// Puts `fd` in raw mode derived from `saved` (`cfmakeraw`, `VMIN=1 VTIME=0`).
+fn set_raw(fd: RawFd, saved: &libc::termios) -> io::Result<()> {
+    let mut raw = *saved;
+    // SAFETY: raw is a valid termios.
+    unsafe { libc::cfmakeraw(&mut raw) };
+    raw.c_cc[libc::VMIN] = 1;
+    raw.c_cc[libc::VTIME] = 0;
+    // SAFETY: valid fd and termios.
+    cvt(unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) })
 }
 
 /// Writes the restore sequence and resets termios to `saved`. With `wait`,
@@ -911,6 +951,86 @@ mod tests {
         tty.inner.output.submit_frame(frame("late", false));
         let out = read_until(&p.master, b"", Duration::from_millis(300));
         assert!(out.is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn resume_reapplies_raw_and_resets_frame() {
+        let p = pty();
+        let master = p.master.try_clone().unwrap();
+        let replier = std::thread::spawn(move || {
+            read_until(&master, b"\x1b[c", Duration::from_secs(1));
+            (&master).write_all(b"\x1b[?0u\x1b[?62c").unwrap();
+        });
+        let (sink, rx) = channel();
+        let tty = TtyResource::new(Inner::open_path(&p.path, 1, Some(sink)).unwrap());
+        replier.join().unwrap();
+        tty.inner.output.submit_frame(frame("<A>", false));
+        read_until(&p.master, b"<A>", Duration::from_secs(2));
+        assert!(wait_for(|| tty.inner.output.stats().frames_written == 1));
+
+        let mut stopped_lflag = 0;
+        tty.inner
+            .suspend_with(|| {
+                stopped_lflag = termios(&p.slave).c_lflag;
+                // The output thread must hold this until after resume.
+                tty.inner.output.write(b"<W>".to_vec()).unwrap();
+                std::thread::sleep(Duration::from_millis(150));
+            })
+            .unwrap();
+        let cooked = libc::ICANON | libc::ECHO;
+        assert_eq!(stopped_lflag & cooked, cooked, "cooked while stopped");
+        assert_eq!(termios(&p.slave).c_lflag & cooked, 0, "raw after resume");
+
+        let out = read_until(&p.master, b"<W>", Duration::from_secs(2));
+        let at = |needle: &[u8]| out.windows(needle.len()).position(|w| w == needle);
+        let (pop, leave, enter, push, w) = (
+            at(b"\x1b[<u"),
+            at(b"\x1b[?1049l"),
+            at(b"\x1b[?1049h"),
+            at(b"\x1b[>1u"),
+            at(b"<W>"),
+        );
+        assert!(
+            pop < leave && leave < enter && enter < push && push < w && pop.is_some(),
+            "{out:?}"
+        );
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(1)).ok(),
+            Some(Event::Resumed)
+        );
+        tty.inner.output.submit_frame(frame("<A>", false));
+        let out = read_until(&p.master, b"<A>", Duration::from_secs(2));
+        assert!(contains(&out, b"\x1b[2J"), "full repaint: {out:?}");
+    }
+
+    #[test]
+    fn suspend_after_restore_does_nothing() {
+        let p = pty();
+        let tty = TtyResource::new(Inner::open_path(&p.path, 0, None).unwrap());
+        tty.inner.restore().unwrap();
+        read_until(&p.master, b"\x1b[?1049l", Duration::from_secs(1));
+        let mut called = false;
+        tty.inner.suspend_with(|| called = true).unwrap();
+        assert!(!called);
+        let out = read_until(&p.master, b"", Duration::from_millis(200));
+        assert!(out.is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn restored_reader_leaves_input_to_next_open() {
+        let p = pty();
+        let first = TtyResource::new(Inner::open_path(&p.path, 0, None).unwrap());
+        read_until(&p.master, b"\x1b[c", Duration::from_secs(1));
+        first.inner.restore().unwrap();
+        let master = p.master.try_clone().unwrap();
+        let replier = std::thread::spawn(move || {
+            read_until(&master, b"\x1b[?u\x1b[c", Duration::from_secs(1));
+            (&master).write_all(b"\x1b[?3u\x1b[?62c").unwrap();
+        });
+        // The first reader may still be polling; it must not take the reply.
+        let second = TtyResource::new(Inner::open_path(&p.path, 0, None).unwrap());
+        replier.join().unwrap();
+        assert_eq!(second.inner.kitty(), Some(3));
     }
 
     #[test]

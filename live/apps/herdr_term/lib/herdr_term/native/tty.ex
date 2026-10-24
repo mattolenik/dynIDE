@@ -9,6 +9,7 @@ defmodule HerdrTerm.Native.Tty do
     * `{:tty_input, binary}`
     * `{:exit, :tty, :hangup}` on EOF/EIO
     * `{:exit, :tty, {:panic, binary}}`
+    * `{:tty_resumed}` after `suspend/1` returns; send a frame, it repaints fully
 
   Probe replies that arrive after the 250 ms deadline are delivered as
   ordinary `{:tty_input, binary}`.
@@ -43,6 +44,16 @@ defmodule HerdrTerm.Native.Tty do
   @doc "Restores the host terminal. Idempotent."
   @spec restore(t()) :: :ok
   def restore(tty), do: Native.tty_restore(tty)
+
+  @doc """
+  Restores the host terminal, stops the whole OS process (SIGSTOP to the
+  process group, like a shell job) and returns once it is continued, back in
+  raw mode and the alternate screen with any kitty flags re-pushed. Blocks
+  the caller until SIGCONT; queued output waits and is written after resume.
+  Does nothing after `restore/1`.
+  """
+  @spec suspend(t()) :: :ok
+  def suspend(tty), do: Native.tty_suspend(tty)
 
   @doc "`{cols, rows, pixel_width, pixel_height}` of the host terminal."
   @spec size(t()) ::

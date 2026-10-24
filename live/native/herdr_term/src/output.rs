@@ -114,8 +114,6 @@ impl Output {
     }
 
     /// Clears the retained frame before the next frame is encoded.
-    // Task 4 (suspend/resume) is the first production caller.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn reset_frame(&self) {
         lock(&self.queue).reset = true;
     }

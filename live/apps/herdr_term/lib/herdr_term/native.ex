@@ -17,6 +17,10 @@ defmodule HerdrTerm.Native do
   def tty_restore(_tty), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc false
+  @spec tty_suspend(tty()) :: :ok
+  def tty_suspend(_tty), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
   @spec tty_size(tty()) ::
           {non_neg_integer(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
   def tty_size(_tty), do: :erlang.nif_error(:nif_not_loaded)
