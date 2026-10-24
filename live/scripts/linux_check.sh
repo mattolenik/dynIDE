@@ -5,6 +5,7 @@
 #   live/scripts/linux_check.sh                       # just live-check
 #   live/scripts/linux_check.sh just live-bench-handoff
 #   live/scripts/linux_check.sh 'cd live/native/herdr_kernel && cargo test --locked'
+# LINUX_CHECK_OUT=<host dir> mounts it writable at /out (bench logs).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -21,6 +22,7 @@ exec podman run --rm ${LINUX_CHECK_TTY:+-t} \
   -v "$root:/src:ro" \
   -v herdr-m6-cargo:/root/.cargo/registry \
   -v herdr-m6-hex:/root/.hex \
+  ${LINUX_CHECK_OUT:+-v "$LINUX_CHECK_OUT:/out"} \
   -e CARGO_BUILD_JOBS=4 \
   "$image" \
   bash -c 'set -e
