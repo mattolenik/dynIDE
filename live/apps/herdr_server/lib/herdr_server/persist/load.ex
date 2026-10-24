@@ -5,7 +5,7 @@ defmodule HerdrServer.Persist.Load do
   state as a plain map, as `Store.Carry` and `Store.Mirror` do.
 
   `Disk.read/1`, then the pure parts through `HerdrReload.Guard`: `Schema.restore/1`,
-  `Schema.upgrade/1` (before the app is adopted), `RestorePlan.spawns/4`. The spawns run
+  `App.Upgrade.app/1` (before the app is adopted, as for mirror and rollback restores), `RestorePlan.spawns/4`. The spawns run
   through the Store's own effect handler. Telemetry: `persist_restore source=disk
   reason=.. panes=N scrollback=K ms=T` after a restore, `persist_restore source=none
   reason=..` without a file, `persist_error op=read reason=..` when the snapshot cannot be
@@ -14,7 +14,7 @@ defmodule HerdrServer.Persist.Load do
   """
 
   alias HerdrReload.{Guard, Telemetry}
-  alias HerdrServer.App.Store
+  alias HerdrServer.App.{Store, Upgrade}
   alias HerdrServer.Persist.{Disk, RestorePlan, Schema}
 
   @doc "Restores the app on disk into `state` (`app: nil`), spawning through `effect`."
@@ -58,7 +58,7 @@ defmodule HerdrServer.Persist.Load do
     g = [server: Store.reload_server()]
 
     with {:ok, {:ok, app, facts}} <- Guard.run_twice(Schema, :restore, [snap], g),
-         {:ok, app} <- Guard.run_twice(Schema, :upgrade, [app], g),
+         {:ok, app} <- Guard.run_twice(Upgrade, :app, [app], g),
          sb = scrollback(cfg, Map.keys(facts)),
          {:ok, spawns} <-
            Guard.run_twice(RestorePlan, :spawns, [app, facts, sb, &File.dir?/1], g) do
