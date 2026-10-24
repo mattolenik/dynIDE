@@ -2,8 +2,15 @@
 # Headless herdr-live launcher (dev build). The VM never touches the terminal:
 # stdin is /dev/null and stdout/stderr go to the log, including first-compile output.
 log=${HERDR_LIVE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/herdr-live.log}
+case $log in /*) ;; *) log=$PWD/$log ;; esac
 mkdir -p "$(dirname "$log")" || exit 1
-cd "$(dirname "$0")/.." || exit 1
+# resolve symlinks (portable: no readlink -f on macOS)
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
+done
+cd "$(dirname "$self")/.." || exit 1
 export MIX_ENV="${MIX_ENV:-dev}"
 exec </dev/null >>"$log" 2>&1
 exec elixir --erl "-noshell -noinput" -S mix run --no-halt
