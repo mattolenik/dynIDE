@@ -129,6 +129,7 @@ defmodule HerdrServer.Client.SessionPointerTest do
 
     assert %{pane: 1, shown: true, anchor: {0, 0}, head: {4, 0}} = pointer(sa).selection
     assert pointer(sb).selection == nil
+    assert [{1, %{args: %{from: {0, 0}, to: {4, 0}}}}] = selection_overlays(last_scene(a))
     assert selection_overlays(last_scene(b) || %{panes: []}) == []
 
     input(sa, a, mouse(:release, :left, r.x + 4, r.y))

@@ -58,8 +58,8 @@ defmodule HerdrServer.Client.Session do
   context from `Client.PointerIo`, which then executes the actions; a failure forwards
   the event to the Store as before. Selection and hover live in `state.pointer` (per
   client); a change repaints. Autoscroll ticks every 30 ms; a kept word highlight
-  expires after 500 ms. Each pushed scene prunes pointer state of panes that left it
-  or changed size. This session becomes the foreground client (`Client.Foreground`) on
+  expires after 500 ms. Each push prunes pointer state of panes that left or
+  resized, before the scene is computed. This session becomes the foreground client (`Client.Foreground`) on
   attach and on each slow-path input; pane bells and child clipboard writes sent to it
   go to the client as `{:bell, id}` and `{:clipboard, %{source: :pane}}`, and
   `{:pane_facts, id}` repaints when the pane is in the last scene.
@@ -592,13 +592,6 @@ defmodule HerdrServer.Client.Session do
 
   defp focus_moved(state, _app), do: state
 
-  defp prune(state, old, new) do
-    case Guard.run_twice(Pointer, :prune, [state.pointer, old, new], guard()) do
-      {:ok, %Pointer{} = p} when p != state.pointer -> repaint(%{state | pointer: p})
-      _same_or_failed -> state
-    end
-  end
-
   # Same check as an in-VM client (contract decision 6), for remote/GUI clients, after
   # `Client.Keys` forwarded the key (so this client's own mode allowed it). Releases go
   # through the Store.
@@ -687,22 +680,10 @@ defmodule HerdrServer.Client.Session do
         _ -> state
       end
 
-    # the budget copies args into a worker: pass only what View reads, never last_scene
-    view_state = %State{
-      size: state.size,
-      transport: state.transport,
-      mode: state.mode,
-      notice: state.notice,
-      runtime: state.runtime,
-      toasts: state.toasts
-    }
-
-    case Guard.run_twice(View, :compute, [app, view_state],
-           budget_ms: 50,
-           scan: false,
-           server: Store.reload_server()
-         ) do
+    case view(state, app) do
       {:ok, scene} ->
+        # drop selection/hover of panes that left or resized BEFORE they reach a scene
+        {state, scene} = pruned(state, app, scene)
         send_scene(state, if(state.transport == :inline, do: fill(scene), else: scene))
 
       {:failed, reason} ->
@@ -725,11 +706,67 @@ defmodule HerdrServer.Client.Session do
 
   defp capturing?(_app), do: false
 
+  # the budget copies args into a worker: pass only what View reads, never last_scene
+  defp view(state, app) do
+    view_state = %State{
+      size: state.size,
+      transport: state.transport,
+      mode: state.mode,
+      notice: state.notice,
+      runtime: state.runtime,
+      toasts: state.toasts,
+      pointer: state.pointer,
+      facts: facts(state, app)
+    }
+
+    Guard.run_twice(View, :compute, [app, view_state],
+      budget_ms: 50,
+      scan: false,
+      server: Store.reload_server()
+    )
+  end
+
+  # scrolled panes (scrollbar) and the selection's pane (offset), one Facts read per pane
+  defp facts(state, app) do
+    ids =
+      with %{session: %{workspaces: wss, active_workspace: aw}} <- app,
+           %{tabs: tabs, active_tab: at} <- Enum.find(wss, &(&1.id == aw)),
+           %{layout: layout} <- Enum.find(tabs, &(&1.id == at)) do
+        HerdrServer.Layout.pane_ids(layout)
+      else
+        _ -> []
+      end
+
+    sel = state.pointer.selection
+    sel_pane = sel && sel.pane
+
+    case Guard.run_twice(PointerIo, :scene_facts, [ids, sel_pane], guard()) do
+      {:ok, %{} = facts} -> facts
+      _failed -> %{}
+    end
+  end
+
+  # one recompute when pruning changed the pointer (rare: close or resize under a selection)
+  defp pruned(state, app, scene) do
+    case Guard.run_twice(Pointer, :prune, [state.pointer, state.last_scene, scene], guard()) do
+      {:ok, %Pointer{} = p} when p != state.pointer ->
+        state = %{state | pointer: p}
+
+        case view(state, app) do
+          {:ok, scene} -> {state, scene}
+          _failed -> {state, scene}
+        end
+
+      _same_or_failed ->
+        {state, scene}
+    end
+  end
+
   defp send_scene(%{last_scene: scene} = state, scene), do: state
 
   defp send_scene(state, scene) do
     send(state.client, {:scene, scene})
-    prune(%{state | last_scene: scene}, state.last_scene, scene)
+    %{state | last_scene: scene}
   end
 
   # inline transport: full rows and cursors in the scene (M16 optimizes)

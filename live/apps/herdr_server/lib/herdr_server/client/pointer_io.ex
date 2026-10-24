@@ -81,6 +81,32 @@ defmodule HerdrServer.Client.PointerIo do
     end
   end
 
+  @doc """
+  `pane_id => %{scrolled, scroll, alt_screen}` for `ids` that are scrolled (one ETS read
+  each) plus `sel_pane`, whose live scrollbar is read when it is not scrolled (its
+  `Facts.scroll` is stale). Everything else is left out.
+  """
+  @spec scene_facts([term], term) :: map
+  def scene_facts(ids, sel_pane) do
+    Enum.reduce(Enum.uniq(ids ++ List.wrap(sel_pane)), %{}, fn id, acc ->
+      case Facts.get(id) do
+        %{scrolled: true} = f -> Map.put(acc, id, Map.take(f, [:scrolled, :scroll, :alt_screen]))
+        %{} = f when id == sel_pane -> Map.put(acc, id, live(f, id))
+        _ -> acc
+      end
+    end)
+  end
+
+  defp live(f, id) do
+    scroll =
+      case vt(id) do
+        {:ok, vt} -> Kernel.vt().scrollbar(vt)
+        :error -> f.scroll
+      end
+
+    %{scrolled: f.scrolled, alt_screen: f.alt_screen, scroll: scroll}
+  end
+
   defp with_offset(facts, id) do
     case vt(id) do
       {:ok, vt} -> Map.put(facts, :offset, Kernel.vt().scrollbar(vt).offset)

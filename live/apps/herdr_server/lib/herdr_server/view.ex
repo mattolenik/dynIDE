@@ -34,11 +34,11 @@ defmodule HerdrServer.View do
   alias HerdrServer.App.Modal
   alias HerdrServer.Client.State
   alias HerdrServer.Layout
-  alias HerdrServer.View.{Frame, Sidebar, Status, Tabs, Toast}
+  alias HerdrServer.View.{Frame, Overlays, Sidebar, Status, Tabs, Toast}
   alias HerdrServer.View.Modal, as: ModalView
 
   @spec compute(map, State.t()) :: Scene.t()
-  def compute(app, %State{size: %{cols: cols, rows: rows} = size, transport: transport} = client) do
+  def compute(app, %State{size: %{cols: cols, rows: rows} = size} = client) do
     regions = Frame.regions(size, app.ui)
     area = regions.panes
     ws = Enum.find(app.session.workspaces, &(&1.id == app.session.active_workspace))
@@ -49,7 +49,7 @@ defmodule HerdrServer.View do
       layout
       |> Layout.panes(area)
       |> Layout.borders(area)
-      |> Enum.map(&pane(&1, app, transport))
+      |> Enum.map(&pane(&1, app, client))
 
     modal = Modal.view(app, size)
     {chrome_focus, cursor} = ModalView.cursor(modal) || {nil, nil}
@@ -64,14 +64,15 @@ defmodule HerdrServer.View do
     }
   end
 
-  defp pane(%{id: id, rect: rect, border: border}, app, transport) do
+  defp pane(%{id: id, rect: rect, border: border}, app, %State{transport: transport} = client) do
     meta = Map.get(app.session.panes, id, %{title: nil, layout_gen: 0})
 
     %Pane{
       id: id,
       rect: rect,
       border: border && %{border | title: meta.title || Map.get(meta, :name)},
-      rows: if(transport == :inline, do: {:inline, []}, else: {:ref, id, meta.layout_gen})
+      rows: if(transport == :inline, do: {:inline, []}, else: {:ref, id, meta.layout_gen}),
+      overlays: Overlays.pane(id, rect, client)
     }
   end
 

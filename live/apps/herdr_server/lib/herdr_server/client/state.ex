@@ -10,6 +10,9 @@ defmodule HerdrServer.Client.State do
   `{:focus, bool}` report (nil: unknown). `pointer` is this client's
   `Client.Pointer` (selection, link hover, gestures; transient, not mirrored) and
   `pointer_refs` the session's pointer timers (`:autoscroll` ref, `:expire` `{ref, selection}`).
+  `facts` is `pane_id => %{scrolled, scroll, alt_screen}` that the session gathers
+  (`PointerIo.scene_facts/2`) before `View.compute`, only for scrolled panes and the
+  selection's pane, so the pure View reads no ETS.
   """
 
   defstruct [
@@ -34,7 +37,8 @@ defmodule HerdrServer.Client.State do
     toasts: [],
     focused: nil,
     pointer: %HerdrServer.Client.Pointer{},
-    pointer_refs: %{}
+    pointer_refs: %{},
+    facts: %{}
   ]
 
   @type t :: %__MODULE__{
@@ -59,6 +63,7 @@ defmodule HerdrServer.Client.State do
           toasts: [HerdrServer.Client.Toasts.toast()],
           focused: boolean() | nil,
           pointer: HerdrServer.Client.Pointer.t(),
-          pointer_refs: map()
+          pointer_refs: map(),
+          facts: map()
         }
 end
