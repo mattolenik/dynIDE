@@ -1,6 +1,6 @@
 //! BEAM boundary: `HerdrServer.Native` NIFs over `Vt` and `Pty`. Facades live in
 //! `HerdrServer.Native.Vt` and `HerdrServer.Native.Pty`; term shapes are in
-//! `.superpowers/sdd/m1/context.md` ("Event and term shapes").
+//! `docs/herdr-live/results/m1.md` ("Events").
 
 use std::cell::Cell;
 use std::ptr;
@@ -78,6 +78,12 @@ fn deliver(pids: &[LocalPid], msg: impl for<'a> Fn(Env<'a>) -> Term<'a>) {
     }
     if is_scheduler_thread() {
         let raw = CALLER.with(Cell::get);
+        // A scheduler thread (normal or dirty) can only send through the calling NIF's env;
+        // events emitted outside `with_caller` are dropped. Wrap any emitting NIF in it.
+        debug_assert!(
+            !raw.is_null(),
+            "event sent from a scheduler outside with_caller"
+        );
         if raw.is_null() {
             return;
         }
@@ -271,7 +277,8 @@ fn vt_feed(vt: ResourceArc<VtRes>, bytes: Binary) -> u64 {
     vt.0.refresh()
 }
 
-#[rustler::nif]
+// ponytail: takes the blocking core lock and rebuilds the snapshot, so DirtyCpu; upgrade path is applying it on the reader thread between chunks.
+#[rustler::nif(schedule = "DirtyCpu")]
 fn vt_resize(
     vt: ResourceArc<VtRes>,
     cols: u16,
@@ -326,7 +333,8 @@ fn vt_scrollbar(vt: ResourceArc<VtRes>) -> ScrollbarMap {
     }
 }
 
-#[rustler::nif]
+// ponytail: takes the blocking core lock and rebuilds the snapshot, so DirtyCpu; upgrade path is applying it on the reader thread between chunks.
+#[rustler::nif(schedule = "DirtyCpu")]
 fn vt_scroll_to(vt: ResourceArc<VtRes>, offset: usize) -> NifResult<Atom> {
     vt.0.scroll_to(offset)
         .map_err(|e| raise(format!("{e:?}")))?;
@@ -563,7 +571,8 @@ fn pty_subscribe(env: Env, pty: ResourceArc<PtyRes>, pid: LocalPid) -> Atom {
     atoms::ok()
 }
 
-#[rustler::nif]
+// ponytail: takes the blocking core lock and rebuilds the snapshot, so DirtyCpu; upgrade path is applying it on the reader thread between chunks.
+#[rustler::nif(schedule = "DirtyCpu")]
 fn pty_set_hidden(env: Env, pty: ResourceArc<PtyRes>, hidden: bool) -> Atom {
     with_caller(env, || pty.pty.set_hidden(hidden));
     atoms::ok()
