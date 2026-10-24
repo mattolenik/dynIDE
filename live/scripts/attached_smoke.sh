@@ -57,7 +57,7 @@ alive() { st=\$(ps -o stat= -p "\$1" 2>/dev/null); [ -n "\$st" ] && [ "\${st#Z}"
 stty cols 120 rows 40
 stty -a >"$tmp/before.\$run"
 log="$tmp/log.\$run"
-HERDR_LIVE_RUNTIME_DIR="$tmp/rt.\$run" HERDR_LIVE_LOG="\$log" "$root/bin/herdr-live" &
+HERDR_LIVE_RUNTIME_DIR="$tmp/rt.\$run" HERDR_LIVE_CONTROL="$tmp/ctl.\$run" HERDR_LIVE_LOG="\$log" "$root/bin/herdr-live" &
 pid=\$!
 echo "\$pid" >"$tmp/pid.\$run"
 i=0
@@ -73,7 +73,7 @@ until ready; do
 done
 sleep 1
 if [ "\$2" = TERM ]; then
-  HERDR_LIVE_RUNTIME_DIR="$tmp/rt.\$run" "$root/bin/herdr-live" kernel-restart >"$tmp/restart.\$run" 2>&1
+  HERDR_LIVE_RUNTIME_DIR="$tmp/rt.\$run" HERDR_LIVE_CONTROL="$tmp/ctl.\$run" "$root/bin/herdr-live" kernel-restart >"$tmp/restart.\$run" 2>&1
   echo \$? >"$tmp/restart_status.\$run"
   i=0
   until [ "\$(grep -c 'terminal client started' "\$log")" -ge 2 ]; do
@@ -87,7 +87,7 @@ fi
 if [ "\$2" = KILL ]; then
   # bin/herdr-live execs the broker; kill -9 its primary VM, wait for the
   # handoff and the new VM's client, then stop the broker like run 1
-  vm=\$(HERDR_LIVE_RUNTIME_DIR="$tmp/rt.\$run" "$root/bin/herdr-live" status | sed -n 's/^primary_pid=//p')
+  vm=\$(HERDR_LIVE_RUNTIME_DIR="$tmp/rt.\$run" HERDR_LIVE_CONTROL="$tmp/ctl.\$run" "$root/bin/herdr-live" status | sed -n 's/^primary_pid=//p')
   echo "\$vm" >"$tmp/vm.\$run"
   kill -KILL "\$vm"
   i=0

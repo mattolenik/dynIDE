@@ -32,6 +32,7 @@ defmodule HandoffDriver do
       {~c"HERDR_LIVE_HEADLESS", ~c"1"},
       {~c"HERDR_LIVE_RUNTIME_DIR", String.to_charlist(Path.join(dir, "rt"))},
       {~c"HERDR_LIVE_LOG", String.to_charlist(log)},
+      {~c"HERDR_LIVE_CONTROL", String.to_charlist(Path.join(dir, "ctl.sock"))},
       {~c"PATH", String.to_charlist(path())},
       {~c"HERDR_SOCKET_PATH", false},
       {~c"HERDR_CLIENT_SOCKET_PATH", false},
