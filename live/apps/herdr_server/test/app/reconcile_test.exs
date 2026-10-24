@@ -71,7 +71,7 @@ defmodule HerdrServer.App.ReconcileTest do
 
   test "an emptied active tab is removed and its neighbour activated" do
     # tab 1: pane 1; tab 2: pane 2 (active)
-    app = pfx(fresh(), "c")
+    app = HerdrServer.ViewHelpers.new_tab(fresh())
     {new, eff} = Reconcile.run(app, live([1]))
     assert eff == [{:close, 2}]
     assert Enum.map(ws(new).tabs, & &1.id) == [1]

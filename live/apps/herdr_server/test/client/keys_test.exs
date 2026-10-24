@@ -28,7 +28,7 @@ defmodule HerdrServer.Client.KeysTest do
     assert {%{mode: :terminal}, {:run, {Actions, :split, [:horizontal]}}} =
              keys(fresh(), [{"b", [:ctrl]}, "v"])
 
-    assert {%{mode: :terminal}, {:run, {Actions, :close_tab, []}}} =
+    assert {%{mode: :terminal}, {:run, {HerdrServer.App.Modal.Confirm, :close_tab, []}}} =
              keys(fresh(), [{"b", [:ctrl]}, {"X", [:shift]}])
   end
 

@@ -3,6 +3,32 @@ defmodule HerdrServer.ServerTest.Boom do
   def boom(_app), do: raise("boom")
 end
 
+defmodule HerdrServer.ServerTest.Capture do
+  @moduledoc false
+  # a test-only modal kind that captures keys (Task 8's keybind capture sets `capture`)
+  @behaviour HerdrServer.App.Modal.Kind
+  alias HerdrServer.App.Modal
+
+  def open(app), do: {Modal.push(app, %{kind: __MODULE__, capture: true, got: []}), []}
+
+  @impl true
+  def key(m, {:key, %{key: k, mods: mods}}, _app), do: {:keep, %{m | got: m.got ++ [{k, mods}]}}
+
+  @impl true
+  def chrome(m, _path, _action, _app), do: {:keep, m}
+
+  @impl true
+  def node(_m, _app, size),
+    do: %HerdrScene.Scene.Node{
+      role: :modal,
+      rect: HerdrServer.View.Modal.panel(size, 20, 6),
+      props: %{kind: :capture}
+    }
+
+  @impl true
+  def ignores_escape?(_m), do: true
+end
+
 defmodule HerdrServer.ServerTest do
   # Fake in-VM clients speak the protocol against the running herdr_server app.
   use ExUnit.Case, async: false
@@ -141,9 +167,13 @@ defmodule HerdrServer.ServerTest do
     assert mode_text(:sys.get_state(sb).last_scene) == "TERMINAL"
     assert mode_text(:sys.get_state(sa).last_scene) == "PREFIX"
 
-    # A's "x" closes the (only) pane once: it is replaced by a fresh one
+    # A's "x" on the only pane asks first (the workspace would go); Enter closes it once
+    # and a fresh one replaces it
     input(sa, a, 2, Event.key("x"))
     assert mode_before_ack(a, 2) == :terminal
+    assert [%{kind: :confirm}] = Store.snapshot().focus.modal
+    input(sa, a, 3, Event.key(:enter))
+    assert_receive {^a, {:ack, 3}}
     assert Map.keys(Store.snapshot().session.panes) == [2]
     assert mode_text(:sys.get_state(sa).last_scene) == "TERMINAL"
   end
@@ -337,6 +367,8 @@ defmodule HerdrServer.ServerTest do
     scene(c)
     input(s, c, 1, Event.key("b", [:ctrl]))
     input(s, c, 2, Event.key("c"))
+    # the new tab's name prompt: keep the suggested name
+    input(s, c, 21, Event.key(:enter))
     scene_until(c, &match?([%{id: 2}], &1.panes))
     [{p1, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
     assert :sys.get_state(p1).hidden
@@ -546,6 +578,8 @@ defmodule HerdrServer.ServerTest do
     scene(c)
     input(s, c, 1, Event.key("b", [:ctrl]))
     input(s, c, 2, Event.key("c"))
+    # the new tab's name prompt: keep the suggested name
+    input(s, c, 21, Event.key(:enter))
     scene_until(c, &match?([%{id: 2}], &1.panes))
     [{pid, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
     assert :sys.get_state(pid).hidden
@@ -946,6 +980,20 @@ defmodule HerdrServer.ServerTest do
     assert Map.has_key?(Store.snapshot().session.panes, 1)
   end
 
+  test "while the top modal captures keys they bypass Client.Keys and reach it, prefix too" do
+    {c, s} = client()
+    scene(c)
+    :ok = Store.run({HerdrServer.ServerTest.Capture, :open, []}, %{cols: 80, rows: 24})
+    scene_until(c, &Scene.Node.find(&1.chrome, [{:modal, 0}]))
+    input(s, c, 1, Event.key("b", [:ctrl]))
+    input(s, c, 2, Event.key("x"))
+    assert_receive {^c, {:ack, 2}}
+    assert [%{got: [{"b", [:ctrl]}, {"x", []}]}] = Store.snapshot().focus.modal
+    assert :sys.get_state(s).mode == :terminal
+    refute_received {^c, {:input_mode, _}}
+    assert Fake.Pty.writes(pty(1)) == []
+  end
+
   test "a raising keybind yields an error notice and the store survives" do
     {c, s} = client()
     scene(c)
@@ -1047,6 +1095,8 @@ defmodule HerdrServer.ServerTest do
     scene(c)
     input(s, c, 1, Event.key("b", [:ctrl]))
     input(s, c, 2, Event.key("c"))
+    # the new tab's name prompt: keep the suggested name
+    input(s, c, 21, Event.key(:enter))
     scene_until(c, &match?([%{id: 2}], &1.panes))
     assert :sys.get_state(pty(1)).hidden
     refute :sys.get_state(pty(2)).hidden

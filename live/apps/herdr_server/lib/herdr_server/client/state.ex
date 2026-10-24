@@ -2,7 +2,8 @@ defmodule HerdrServer.Client.State do
   @moduledoc """
   State of one attached client connection (used by `Client.Session`). `mode` and
   `swallow` are this client's input state (`Client.Keys`); `keybinds` caches the app's
-  keybinds from the last app the session saw; `runtime` is the last
+  keybinds from the last app the session saw, `capture` whether its top modal captures
+  keys (`App.Modal.capturing?/1`); `runtime` is the last
   `HerdrServer.RuntimeStatus` the session got from `ReloadNotices` (shared facts, copied
   here so the pure View reads only its client).
   """
@@ -19,6 +20,7 @@ defmodule HerdrServer.Client.State do
     mode: :terminal,
     swallow: MapSet.new(),
     keybinds: nil,
+    capture: false,
     notice: nil,
     runtime: nil,
     last_scene: nil,
@@ -39,6 +41,7 @@ defmodule HerdrServer.Client.State do
           mode: :terminal | :prefix | :resize,
           swallow: MapSet.t(),
           keybinds: HerdrServer.App.Keybinds.t() | nil,
+          capture: boolean(),
           notice: nil | %{level: atom(), text: String.t(), ref: reference()},
           runtime: HerdrServer.RuntimeStatus.t() | nil,
           last_scene: term(),

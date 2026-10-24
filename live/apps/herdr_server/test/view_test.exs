@@ -6,6 +6,7 @@ defmodule HerdrServer.ViewTest do
   alias HerdrScene.Scene
   alias HerdrScene.Scene.Node
   alias HerdrServer.App.Actions
+  alias HerdrServer.App.Modal.Prompt
   alias HerdrServer.Client.State
   alias HerdrServer.RuntimeStatus
   alias HerdrServer.View
@@ -103,7 +104,7 @@ defmodule HerdrServer.ViewTest do
   end
 
   test "tabs mark the active one" do
-    s = View.compute(pfx(fresh(80, 24), "c"), client(80, 24))
+    s = View.compute(new_tab(fresh(80, 24)), client(80, 24))
 
     assert [
              %{role: :tab, props: %{index: 1, active: false, zoomed: false}},
@@ -167,7 +168,7 @@ defmodule HerdrServer.ViewTest do
   end
 
   test "tiny clients never raise and validate" do
-    apps = [fresh(80, 24), many(fresh(80, 24), 6), pfx(pfx(fresh(80, 24), "b"), "c")]
+    apps = [fresh(80, 24), many(fresh(80, 24), 6), new_tab(pfx(fresh(80, 24), "b"))]
 
     for c <- Enum.to_list(1..30) ++ [46, 50], r <- 1..8, app <- apps do
       s = View.compute(app, client(c, r))
@@ -207,7 +208,7 @@ defmodule HerdrServer.ViewTest do
     assert child(info, :notice).token == :muted
   end
 
-  defp tabs(app, n), do: Enum.reduce(2..n//1, app, fn _, a -> pfx(a, "c") end)
+  defp tabs(app, n), do: Enum.reduce(2..n//1, app, fn _, a -> new_tab(a) end)
 
   test "runtime status sits after the mode, before the notice, and the hint stays at 50 cols" do
     rt =
@@ -243,5 +244,39 @@ defmodule HerdrServer.ViewTest do
     # no runtime, no nodes
     s = View.compute(fresh(80, 24), client(80, 24))
     assert [:mode, :title, :hint] == Enum.map(status(s).children, & &1.id)
+  end
+
+  test "an open prompt is the last chrome child; the scene cursor sits in its input" do
+    {app, []} = Prompt.rename_tab(fresh(80, 24))
+    s = View.compute(app, client(80, 24))
+    assert :ok = Scene.validate(s)
+    assert %Node{role: :modal, id: {:modal, 0}} = List.last(s.chrome.children)
+    assert s.focus == %{pane: 1, chrome: [{:modal, 0}, :input]}
+    # panel x 12, y 8; input row y + 3, text from x + 2, cursor after "1"
+    assert s.cursor == %{x: 15, y: 11, shape: :bar}
+
+    # long text scrolls: the cursor stays inside the input row
+    app =
+      update_in(app.focus.modal, fn [m | r] ->
+        [%{m | field: %{text: String.duplicate("y", 64), cursor: 64}} | r]
+      end)
+
+    s = View.compute(app, client(80, 24))
+    assert :ok = Scene.validate(s)
+    assert Node.find(s.chrome, [{:modal, 0}, :input]).props.offset == 64 - 52
+    assert s.cursor.x == 12 + 2 + 52
+
+    # no modal: no chrome focus, no scene cursor
+    s = View.compute(fresh(80, 24), client(80, 24))
+    assert s.focus.chrome == nil and s.cursor == nil
+  end
+
+  test "an open prompt validates at every size, tiny ones included" do
+    {app, []} = Prompt.rename_tab(fresh(80, 24))
+
+    for c <- [1, 10, 20, 80], r <- [1, 3, 5, 24] do
+      s = View.compute(app, client(c, r))
+      assert :ok = Scene.validate(s), "#{c}x#{r}"
+    end
   end
 end

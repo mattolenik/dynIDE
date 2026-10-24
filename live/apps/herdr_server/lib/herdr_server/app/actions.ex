@@ -12,12 +12,14 @@ defmodule HerdrServer.App.Actions do
   `{:pane_exited, id}` emits `{:close, id}`; the Store must treat closing an already-gone
   pane as idempotent. Mouse `px` is passed through unchanged (not pane-relative) in M3.
   Keys arrive here already resolved by the client's `Client.Keys` and go to the focused
-  pane; bindings are applied by the Store as `apply(m, f, [app | a])`.
+  pane; bindings are applied by the Store as `apply(m, f, [app | a])`. While the modal
+  stack is non-empty, keys and pastes go to its top (`App.Modal`) and pane mouse events
+  are dropped.
 
   Ponytail: panes' `layout_gen` is not bumped here; the Store owns resize bookkeeping.
   """
 
-  alias HerdrServer.App.{Chrome, Commands, Focus, Keybinds, Session, Ui, Workspaces}
+  alias HerdrServer.App.{Chrome, Commands, Focus, Keybinds, Modal, Session, Ui, Workspaces}
   alias HerdrServer.Layout
   alias HerdrServer.View.Frame
 
@@ -55,6 +57,11 @@ defmodule HerdrServer.App.Actions do
   # --- events ---
 
   @spec apply(app(), tuple()) :: {app(), [effect()]}
+  # an open modal takes keys and pastes; pane mouse input waits until it closes
+  def apply(%{focus: %{modal: [_ | _]}} = app, {:key, _} = event), do: Modal.key(app, event)
+  def apply(%{focus: %{modal: [_ | _]}} = app, {:paste, bin}), do: Modal.paste(app, bin)
+  def apply(%{focus: %{modal: [_ | _]}} = app, {:mouse, _}), do: {app, []}
+
   # key resolution (prefix, modes, consumed releases) is per-client, in `Client.Keys`
   def apply(app, {:key, _} = event), do: to_focused(app, :key, event)
 
@@ -132,6 +139,12 @@ defmodule HerdrServer.App.Actions do
   @spec close_tab(app()) :: {app(), [effect()]}
   def close_tab(app), do: drop_tab(app, ws(app).active_tab)
 
+  @doc "Closes tab `tab_id` of the active workspace; unknown ids are a no-op."
+  @spec close_tab(app(), term()) :: {app(), [effect()]}
+  def close_tab(app, tab_id) do
+    if Enum.any?(ws(app).tabs, &(&1.id == tab_id)), do: drop_tab(app, tab_id), else: {app, []}
+  end
+
   @spec next_tab(app()) :: {app(), [effect()]}
   def next_tab(app), do: step_tab(app, 1)
 
@@ -173,6 +186,9 @@ defmodule HerdrServer.App.Actions do
 
   @spec close_pane(app()) :: {app(), [effect()]}
   def close_pane(app), do: close_pane_id(app, app.focus.pane)
+
+  @spec close_pane(app(), term()) :: {app(), [effect()]}
+  def close_pane(app, id), do: close_pane_id(app, id)
 
   @spec focus_dir(app(), Layout.nav()) :: {app(), [effect()]}
   def focus_dir(app, nav) do

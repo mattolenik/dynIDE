@@ -76,7 +76,9 @@ defmodule HerdrServer.App.ActionsTest do
 
   test "tabs" do
     {app, _} = pfx(fresh(), "v")
-    {app, eff} = pfx(app, "c")
+    # c asks for the new tab's name first; Enter keeps the suggested "2"
+    {app, []} = pfx(app, "c")
+    {app, eff} = press(app, :enter)
     assert [{:spawn, 3, %{cols: 74, rows: 23}}] = eff
     assert app.focus.pane == 3 and hd(app.session.workspaces).active_tab == 2
     {app, _} = pfx(app, "p")
@@ -91,7 +93,8 @@ defmodule HerdrServer.App.ActionsTest do
   end
 
   test "closing last pane respawns; unknown id is a no-op" do
-    {app, eff} = pfx(fresh(), "x")
+    # the bare action (the x binding confirms first, see Modal.ConfirmTest)
+    {app, eff} = Actions.close_pane(fresh())
     assert [{:close, 1}, {:spawn, 2, %{cols: 74, rows: 23}}] = eff
     assert app.focus.pane == 2 and app.session.panes |> Map.keys() == [2]
     assert {^app, []} = Actions.apply(app, {:pane_exited, 99})

@@ -1,7 +1,8 @@
 defmodule HerdrServer.App.Keybinds do
   @moduledoc """
   Keybind tables, mirroring herdr's defaults (`src/config/model.rs`). Values are
-  `{HerdrServer.App.Actions, fun, args}` called as `apply(m, f, [app | args])`; never funs.
+  `{module, fun, args}` (`App.Actions`, or the modal openers `Modal.Prompt` / `Modal.Confirm`
+  for new tab, renames and closes) called as `apply(m, f, [app | args])`; never funs.
   Mode changes are per-client: they target `{HerdrServer.Client.Keys, :enter_mode, [mode]}`
   and are applied to the client's input state by `Client.Keys`, never to the app.
 
@@ -11,6 +12,7 @@ defmodule HerdrServer.App.Keybinds do
   """
 
   alias HerdrServer.App.Actions
+  alias HerdrServer.App.Modal.{Confirm, Prompt}
   alias HerdrServer.Client.Keys
 
   defstruct prefix: [], prefix_binds: %{}, direct: %{}, resize: %{}
@@ -30,15 +32,19 @@ defmodule HerdrServer.App.Keybinds do
 
     prefix_binds =
       %{
-        {"c", []} => a(:new_tab),
+        {"c", []} => {Prompt, :new_tab, []},
         {"n", []} => a(:next_tab),
         {"p", []} => a(:previous_tab),
-        {"X", []} => a(:close_tab),
+        {"X", []} => {Confirm, :close_tab, []},
+        {"T", []} => {Prompt, :rename_tab, []},
+        {"W", []} => {Prompt, :rename_workspace, []},
+        {"P", []} => {Prompt, :rename_pane, []},
+        {"D", []} => {Confirm, :close_workspace, []},
         {:tab, []} => a(:cycle, [:next]),
         {:tab, [:shift]} => a(:cycle, [:previous]),
         {"v", []} => a(:split, [:horizontal]),
         {"-", []} => a(:split, [:vertical]),
-        {"x", []} => a(:close_pane),
+        {"x", []} => {Confirm, :close_pane, []},
         {"r", []} => {Keys, :enter_mode, [:resize]},
         {"q", []} => a(:detach),
         {"b", []} => a(:toggle_sidebar),

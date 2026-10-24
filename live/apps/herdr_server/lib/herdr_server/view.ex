@@ -9,11 +9,14 @@ defmodule HerdrServer.View do
     * Panes follow `Layout.panes` preorder inside the pane area. `Pane.rect` is the content
       rect, the border carries the outer rect (see `Layout.borders/2`). Rows are
       `{:ref, id, layout_gen}` (or `{:inline, []}` for inline clients; the caller fills
-      rows). Cursors are nil here.
+      rows). Pane cursors are nil here.
     * Chrome: `:root` (props `theme`, `indicators` and `mouse: true`) holding the
       `:sidebar` region (`View.Sidebar`, omitted when the frame has none), the `:tabs`
       region (`View.Tabs`, omitted when the frame has no tab bar), one `:divider` node per
-      split in `Layout.splits` preorder, then the `:status` region (`View.Status`).
+      split in `Layout.splits` preorder, then the `:status` region (`View.Status`), then
+      the top modal's `:modal` / `:menu` region (`App.Modal.view/2`) when the stack is
+      non-empty. A prompt on top puts `focus.chrome` on its input and sets the scene
+      `cursor` there (`View.Modal.cursor/1`); otherwise both are nil.
     * Divider rect choice: with borders on, a split's boundary is `pos`, the first cell of
       the second child. The divider is the 1-cell line at `pos` (second child's leading
       border column or row), spanning the split's area. A client resolves
@@ -26,9 +29,11 @@ defmodule HerdrServer.View do
 
   alias HerdrScene.Scene
   alias HerdrScene.Scene.{Node, Pane}
+  alias HerdrServer.App.Modal
   alias HerdrServer.Client.State
   alias HerdrServer.Layout
   alias HerdrServer.View.{Frame, Sidebar, Status, Tabs}
+  alias HerdrServer.View.Modal, as: ModalView
 
   @spec compute(map, State.t()) :: Scene.t()
   def compute(app, %State{size: %{cols: cols, rows: rows} = size, transport: transport} = client) do
@@ -44,11 +49,16 @@ defmodule HerdrServer.View do
       |> Layout.borders(area)
       |> Enum.map(&pane(&1, app, transport))
 
+    modal = Modal.view(app, size)
+    {chrome_focus, cursor} = ModalView.cursor(modal) || {nil, nil}
+    chrome = chrome(app, client, ws, layout, regions)
+
     %Scene{
       size: %{cols: cols, rows: rows},
       panes: panes,
-      chrome: chrome(app, client, ws, layout, regions),
-      focus: %{pane: app.focus.pane, chrome: nil}
+      chrome: %{chrome | children: chrome.children ++ List.wrap(modal)},
+      focus: %{pane: app.focus.pane, chrome: chrome_focus},
+      cursor: cursor
     }
   end
 

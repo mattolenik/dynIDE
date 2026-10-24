@@ -4,7 +4,8 @@ defmodule HerdrServer.App.Chrome do
   (delegated from `App.Actions.apply/2`) to an action, returning `{app, effects}`.
 
     * `[:tabs, {:tab, id}]` click switches to the tab; wheel anywhere on `[:tabs | _]`
-      steps tabs; `[:tabs, :new_tab]` click opens a tab (`Actions.new_tab/1`).
+      steps tabs; `[:tabs, :new_tab]` click opens a tab (`Modal.Prompt.new_tab/1`: asks
+      for its name when `ui.prompt_new_tab_name`).
     * `[{:divider, split_path}]` drag / drop sets the split's ratio from the pointer's
       position in the split's area along its direction (clamped 0.1-0.9 by `Layout`); a
       pointer on the divider's current line changes nothing (no rounding drift on a
@@ -20,10 +21,14 @@ defmodule HerdrServer.App.Chrome do
       `ui.sidebar.spaces_offset` / `agents_offset` by one, clamped to `0..items - 1`
       (the server does not know the client's row heights). `View.Sidebar` puts it in the
       list's `offset` prop; the client rasterizer is the one owner of skipping items.
-    * `[{:modal, _} | _]`, `[{:menu, _} | _]` (Task 7) and unknown paths: no-op.
+    * `[{:modal, _} | _]`, `[{:menu, _} | _]` go to the top modal (`App.Modal.chrome/3`).
+    * Right clicks on a tab, a workspace or an agents item open its context menu at the
+      click; the sidebar's `menu` button opens the global menu (`App.Modal.Menu`).
+    * Unknown paths: no-op.
   """
 
-  alias HerdrServer.App.Actions
+  alias HerdrServer.App.{Actions, Modal}
+  alias HerdrServer.App.Modal.{Menu, Prompt}
   alias HerdrServer.Layout
   alias HerdrServer.View.Frame
 
@@ -38,7 +43,20 @@ defmodule HerdrServer.App.Chrome do
     end
   end
 
-  def apply(app, [:tabs, :new_tab], {:click, _}), do: Actions.new_tab(app)
+  def apply(app, [{tag, _} | _] = path, action) when tag in [:modal, :menu],
+    do: Modal.chrome(app, path, action)
+
+  def apply(app, [:tabs, {:tab, id}], {:right_click, at}), do: Menu.open(app, :tab, id, at)
+
+  def apply(app, [:sidebar, :spaces, :list, {:workspace, id}], {:right_click, at}),
+    do: Menu.open(app, :workspace, id, at)
+
+  def apply(app, [:sidebar, :agents, :list, {:pane, id}], {:right_click, at}),
+    do: Menu.open(app, :pane, id, at)
+
+  def apply(app, [:sidebar, :spaces, :menu], {:click, at}), do: Menu.open(app, :global, nil, at)
+
+  def apply(app, [:tabs, :new_tab], {:click, _}), do: Prompt.new_tab(app)
   def apply(app, [:tabs | _], {:scroll_up, _}), do: Actions.previous_tab(app)
   def apply(app, [:tabs | _], {:scroll_down, _}), do: Actions.next_tab(app)
 

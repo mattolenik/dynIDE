@@ -19,7 +19,9 @@ defmodule HerdrServer.Client.Session do
   press takes the fast path when the published record allows it, other forwarded keys
   go to `App.Store.event/2`, bindings to `App.Store.run/2`. When the client's mode
   changes, the session sends `{:input_mode, mode}` to the input's `from` pid before its
-  `{:ack, seq}`, and re-pushes the scene (the status shows the mode). Non-key events go
+  `{:ack, seq}`, and re-pushes the scene (the status shows the mode). While the app's
+  top modal captures keys (`App.Modal.capturing?/1`, cached in `state.capture` from each
+  pushed app) keys skip `Client.Keys` and go to `App.Store.event/2`. Non-key events go
   to `App.Store` with this client's size. The session monitors the Store; when it dies
   the session waits for the restarted one (polling every 10 ms, up to 1 s, else it
   stops), re-subscribes and pushes a full scene of the adopted app.
@@ -51,7 +53,7 @@ defmodule HerdrServer.Client.Session do
 
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
-  alias HerdrServer.App.{Keybinds, Store}
+  alias HerdrServer.App.{Keybinds, Modal, Store}
   alias HerdrServer.Client.{Keys, State}
   alias HerdrServer.Handoff.Notice
   alias HerdrServer.Mirror
@@ -304,6 +306,12 @@ defmodule HerdrServer.Client.Session do
     resized(%{state | size: %{cols: c, rows: r}, cell_px: m.cell_px})
   end
 
+  # a capturing modal (keybind capture) takes every key, the prefix too: no Client.Keys
+  defp apply_input(%{capture: true} = state, {:key, _} = ev, _from) do
+    Store.event(ev, driving_size(state))
+    state
+  end
+
   defp apply_input(%{keybinds: %{}} = state, {:key, _} = ev, from) do
     case Guard.run_twice(Keys, :resolve, [Map.take(state, [:mode, :swallow]), state.keybinds, ev],
            server: Store.reload_server()
@@ -438,7 +446,7 @@ defmodule HerdrServer.Client.Session do
     # outside the guard: an app without keybinds (a broken Store) must not crash us
     state =
       case app do
-        %{ui: %{keybinds: kb}} -> %{state | keybinds: kb}
+        %{ui: %{keybinds: kb}} -> %{state | keybinds: kb, capture: capturing?(app)}
         _ -> state
       end
 
@@ -469,6 +477,16 @@ defmodule HerdrServer.Client.Session do
     end
   end
 
+  # a failing check never captures: the client keeps its keys
+  defp capturing?(%{focus: focus}) do
+    case Guard.run_twice(Modal, :capturing?, [focus], scan: false, server: Store.reload_server()) do
+      {:ok, true} -> true
+      _ -> false
+    end
+  end
+
+  defp capturing?(_app), do: false
+
   defp send_scene(%{last_scene: scene} = state, scene), do: state
 
   defp send_scene(state, scene) do
@@ -486,7 +504,9 @@ defmodule HerdrServer.Client.Session do
         end
       end)
 
-    %{scene | panes: panes, cursor: host(panes, scene.focus.pane)}
+    # with chrome focus (a prompt) the cursor is View's, never the pane's
+    cursor = if scene.focus.chrome, do: scene.cursor, else: host(panes, scene.focus.pane)
+    %{scene | panes: panes, cursor: cursor}
   end
 
   defp indexed(rows), do: rows |> Tuple.to_list() |> Enum.with_index(fn b, n -> {n, b} end)

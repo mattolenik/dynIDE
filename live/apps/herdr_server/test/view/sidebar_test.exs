@@ -77,7 +77,7 @@ defmodule HerdrServer.View.SidebarTest do
   end
 
   test "an agent name, else the pane title, names the agent line; tabs show with > 1 tab" do
-    app = pfx(fresh(120, 40), "c")
+    app = new_tab(fresh(120, 40))
     app = put_in(app.session.panes[1], %{app.session.panes[1] | title: "vim"})
     app = put_in(app.session.panes[2], Map.put(app.session.panes[2], :agent, "claude"))
     [a1, a2] = items(Sidebar.node(app, @rect), :agents)

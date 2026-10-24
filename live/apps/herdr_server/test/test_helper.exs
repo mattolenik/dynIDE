@@ -19,6 +19,9 @@ defmodule HerdrServer.ViewHelpers do
     end
   end
 
+  @doc "Opens a tab without the new-tab name prompt."
+  def new_tab(app), do: elem(Actions.new_tab(app), 0)
+
   @doc "Grows to `n` panes by splitting the largest pane each time, alternating direction."
   def many(app, n) do
     Enum.reduce(1..(n - 1)//1, app, fn i, a ->

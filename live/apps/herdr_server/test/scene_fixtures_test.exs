@@ -3,6 +3,7 @@ defmodule HerdrServer.SceneFixturesTest do
 
   alias HerdrScene.{Fixture, Scene}
   alias HerdrServer.App.Actions
+  alias HerdrServer.App.Modal.{Confirm, Prompt}
   alias HerdrServer.Client.State
   alias HerdrServer.View
 
@@ -17,7 +18,11 @@ defmodule HerdrServer.SceneFixturesTest do
     {"narrow_15_panes_200x50", {200, 50}, [{:many, 15}]},
     {"sidebar_expanded_120x40", {120, 40}, [:v]},
     {"sidebar_collapsed_80x24", {80, 24}, [:b]},
-    {"two_workspaces_120x40", {120, 40}, [:c, {:workspace, "two"}]}
+    {"two_workspaces_120x40", {120, 40}, [:c, {:workspace, "two"}]},
+    {"modal_confirm_80x24", {80, 24}, [:confirm]},
+    {"modal_prompt_80x24", {80, 24}, [:prompt]},
+    {"menu_tab_80x24", {80, 24}, [:c, {:right_click, [:tabs, {:tab, 2}], 36, 0}]},
+    {"menu_global_120x40", {120, 40}, [{:click, [:sidebar, :spaces, :menu], 20, 36}]}
   ]
 
   for {name, size, steps} <- @fixtures do
@@ -56,7 +61,14 @@ defmodule HerdrServer.SceneFixturesTest do
 
   defp step(:v, app), do: HerdrServer.ViewHelpers.pfx(app, "v")
   defp step(:h, app), do: HerdrServer.ViewHelpers.pfx(app, "-")
-  defp step(:c, app), do: HerdrServer.ViewHelpers.pfx(app, "c")
+  # a tab without the new-tab name prompt
+  defp step(:c, app), do: elem(Actions.new_tab(app), 0)
+  defp step(:confirm, app), do: elem(Confirm.close_workspace(app), 0)
+  defp step(:prompt, app), do: elem(Prompt.rename_tab(app), 0)
+
+  defp step({kind, path, x, y}, app),
+    do: elem(Actions.apply(app, {:chrome, path, {kind, %{x: x, y: y}}}), 0)
+
   defp step(:b, app), do: HerdrServer.ViewHelpers.pfx(app, "b")
   defp step({:workspace, name}, app), do: HerdrServer.ViewHelpers.add_workspace(app, name)
   defp step(:prefix, app), do: app

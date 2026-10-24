@@ -34,9 +34,16 @@ defmodule HerdrServer.App.ChromeTest do
     assert app2 == app
   end
 
-  test "new tab button opens a tab" do
-    {app, [{:spawn, 2, _}]} = chrome(fresh(), [:tabs, :new_tab], :click)
+  test "new tab button asks for the name, then opens a tab" do
+    {app, []} = chrome(fresh(), [:tabs, :new_tab], :click)
+    assert [%{kind: :prompt, title: "new tab"}] = app.focus.modal
+    {app, [{:spawn, 2, _}]} = Actions.apply(app, HerdrScene.Event.key(:enter))
     assert length(ws(app).tabs) == 2
+
+    {app, [{:spawn, 3, _}]} =
+      chrome(put_in(app.ui.prompt_new_tab_name, false), [:tabs, :new_tab], :click)
+
+    assert length(ws(app).tabs) == 3
   end
 
   test "divider drag sets the split ratio from the pointer, clamped" do
