@@ -21,7 +21,8 @@ use crate::vt::{lock, LinkKind, Mode, RowBatch, TextRange, Vt};
 mod atoms {
     rustler::atoms! {
         ok, error, nil, stale, damage, exit, osc, dcs, bell, title, pwd, signal, panic, unknown,
-        truncated, backpressure, closed, hyperlink, text, viewport, screen, rows,
+        truncated, backpressure, closed, too_large, enoent, eacces, enotdir, enoexec, e2big,
+        os, spawn, hyperlink, text, viewport, screen, rows,
         block, bar, underline, block_hollow, hup, term, kill, int,
         key, mods, event, kind, button, x, y, px, disabled,
     }
@@ -495,7 +496,19 @@ fn pty_spawn<'a>(
             let pid = pty.os_pid();
             (atoms::ok(), ResourceArc::new(PtyRes { pty, sink }), pid).encode(env)
         }
-        Err(e) => (atoms::error(), e.to_string()).encode(env),
+        Err(e) => (atoms::error(), spawn_error(env, &e)).encode(env),
+    }
+}
+
+fn spawn_error<'a>(env: Env<'a>, e: &std::io::Error) -> Term<'a> {
+    match e.raw_os_error() {
+        Some(libc::ENOENT) => atoms::enoent().encode(env),
+        Some(libc::EACCES) => atoms::eacces().encode(env),
+        Some(libc::ENOTDIR) => atoms::enotdir().encode(env),
+        Some(libc::ENOEXEC) => atoms::enoexec().encode(env),
+        Some(libc::E2BIG) => atoms::e2big().encode(env),
+        Some(n) => (atoms::os(), n).encode(env),
+        None => (atoms::spawn(), e.to_string()).encode(env),
     }
 }
 
@@ -506,6 +519,7 @@ fn pty_write<'a>(env: Env<'a>, pty: ResourceArc<PtyRes>, data: Term<'a>) -> NifR
         Ok(()) => atoms::ok().encode(env),
         Err(WriteError::Backpressure) => (atoms::error(), atoms::backpressure()).encode(env),
         Err(WriteError::Closed) => (atoms::error(), atoms::closed()).encode(env),
+        Err(WriteError::TooLarge) => (atoms::error(), atoms::too_large()).encode(env),
     })
 }
 

@@ -72,6 +72,8 @@ pub struct SpawnOptions {
 pub enum WriteError {
     Backpressure,
     Closed,
+    /// A single BEAM write larger than `WRITE_CAP`.
+    TooLarge,
 }
 
 #[derive(Default)]
@@ -89,13 +91,18 @@ struct Writer {
 }
 
 impl Writer {
-    /// `cap` applies to BEAM writes; a write is accepted whenever the queue is empty.
-    fn push(&self, b: &[u8], cap: Option<usize>) -> Result<(), WriteError> {
+    /// The queue holds at most `WRITE_CAP` bytes. A BEAM write (`beam`) of up to
+    /// `WRITE_CAP` bytes is accepted whenever the queue is empty; a ghostty reply that
+    /// does not fit is refused (the caller drops it).
+    fn push(&self, b: &[u8], beam: bool) -> Result<(), WriteError> {
         let mut q = lock(&self.q);
         if q.closed {
             return Err(WriteError::Closed);
         }
-        if cap.is_some_and(|cap| q.bytes > 0 && q.bytes + b.len() > cap) {
+        if beam && b.len() > WRITE_CAP {
+            return Err(WriteError::TooLarge);
+        }
+        if q.bytes + b.len() > WRITE_CAP && (q.bytes > 0 || !beam) {
             return Err(WriteError::Backpressure);
         }
         if !b.is_empty() {
@@ -584,7 +591,15 @@ impl Pty {
         // resets SIGCHLD/SIGHUP/SIGINT/SIGQUIT/SIGTERM/SIGALRM to SIG_DFL, clears the signal
         // mask, calls setsid + TIOCSCTTY, and closes every fd above 2 (close_random_fds).
         // std::process::Command also restores SIGPIPE. Master and slave are CLOEXEC.
-        let child = pair.slave.spawn_command(cmd).map_err(io::Error::other)?;
+        // Keep the errno when there is one (exec failures); portable-pty's own checks (e.g.
+        // a missing executable) are plain messages.
+        let child = pair
+            .slave
+            .spawn_command(cmd)
+            .map_err(|e| match e.downcast::<io::Error>() {
+                Ok(io) => io,
+                Err(e) => io::Error::other(format!("{e:#}")),
+            })?;
         drop(pair.slave);
         drop(pair.master);
         let pid = child
@@ -595,11 +610,11 @@ impl Pty {
 
         let writer = Arc::new(Writer::default());
         let w = Arc::clone(&writer);
-        // ghostty replies (DA, DSR, ...) bypass the cap; the callback runs under the core
-        // lock, so it only enqueues.
+        // ghostty replies (DA, DSR, ...) are dropped when the queue is full; the callback
+        // runs under the core lock, so it only enqueues.
         // This closure is called from C: no unwind may cross back into it.
         vt.set_write_pty(move |b| {
-            let _ = catch_unwind(AssertUnwindSafe(|| w.push(b, None)));
+            let _ = catch_unwind(AssertUnwindSafe(|| w.push(b, false)));
         });
         let inner = Arc::new(Inner {
             id: opts.id,
@@ -637,7 +652,7 @@ impl Pty {
     }
 
     pub fn write(&self, bytes: &[u8]) -> Result<(), WriteError> {
-        self.inner.writer.push(bytes, Some(WRITE_CAP))
+        self.inner.writer.push(bytes, true)
     }
 
     /// PTY winsize only; `px` is the total pixel size. The `Vt` is resized separately.
@@ -931,6 +946,23 @@ mod tests {
     }
 
     #[test]
+    fn write_caps() {
+        let w = Writer::default();
+        assert_eq!(
+            w.push(&vec![0; WRITE_CAP + 1], true),
+            Err(WriteError::TooLarge)
+        );
+        assert_eq!(w.push(&vec![0; WRITE_CAP], true), Ok(()));
+        assert_eq!(w.push(b"x", true), Err(WriteError::Backpressure));
+        // Replies beyond the cap are refused, so the queue never exceeds it.
+        assert_eq!(w.push(b"x", false), Err(WriteError::Backpressure));
+        assert_eq!(lock(&w.q).bytes, WRITE_CAP);
+        let w = Writer::default();
+        assert_eq!(w.push(&vec![0; WRITE_CAP], false), Ok(()));
+        assert_eq!(w.push(b"x", false), Err(WriteError::Backpressure));
+    }
+
+    #[test]
     fn write_after_exit_is_closed() {
         let (_vt, pty, rx) = sh("exit 0");
         assert_eq!(exit_of(&rx), ExitStatus::Code(0));
@@ -950,7 +982,7 @@ mod tests {
                     hit = true;
                     break;
                 }
-                Err(WriteError::Closed) => panic!("closed"),
+                Err(e) => panic!("{e:?}"),
             }
         }
         assert!(hit, "accepted {accepted} bytes without backpressure");

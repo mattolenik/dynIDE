@@ -54,17 +54,41 @@ defmodule HerdrServer.Native.Vt do
           shape: :block | :bar | :underline | :block_hollow
         }
 
-  @doc "Creates a `cols` x `rows` terminal keeping up to `max_scrollback` bytes of history."
+  @doc "True for a valid column or row count: an integer in 1..65535."
+  defguard is_size(n) when is_integer(n) and n >= 1 and n <= 65_535
+
+  @doc false
+  @spec check_size!(term, term) :: :ok
+  def check_size!(cols, rows) when is_size(cols) and is_size(rows), do: :ok
+
+  def check_size!(cols, rows) do
+    raise ArgumentError,
+          "cols and rows must be integers in 1..65535, got: #{inspect(cols)} x #{inspect(rows)}"
+  end
+
+  @doc """
+  Creates a `cols` x `rows` terminal keeping up to `max_scrollback` bytes of history.
+  Raises `ArgumentError` for sizes outside 1..65535, and on a ghostty error.
+  """
   @spec new(pos_integer, pos_integer, non_neg_integer) :: {:ok, vt}
-  def new(cols, rows, max_scrollback), do: Native.vt_new(cols, rows, max_scrollback)
+  def new(cols, rows, max_scrollback) do
+    check_size!(cols, rows)
+    Native.vt_new(cols, rows, max_scrollback)
+  end
 
   @doc "Parses `bytes` and refreshes the snapshot; returns the new generation. Tests and replay only."
   @spec feed(vt, binary) :: gen
   def feed(vt, bytes), do: Native.vt_feed(vt, bytes)
 
-  @doc "Resizes the grid; `cell_px` is the pixel size of one cell (nil keeps the last one)."
+  @doc """
+  Resizes the grid; `cell_px` is the pixel size of one cell (nil keeps the last one).
+  Raises `ArgumentError` for sizes outside 1..65535, and on a ghostty error.
+  """
   @spec resize(vt, pos_integer, pos_integer, cell_px) :: :ok
-  def resize(vt, cols, rows, cell_px), do: Native.vt_resize(vt, cols, rows, cell_px)
+  def resize(vt, cols, rows, cell_px) do
+    check_size!(cols, rows)
+    Native.vt_resize(vt, cols, rows, cell_px)
+  end
 
   @doc "Rows changed since the last `dirty_rows/1` call (or since a resubscribe reset)."
   @spec dirty_rows(vt) :: rows
@@ -94,7 +118,7 @@ defmodule HerdrServer.Native.Vt do
         }
   def scrollbar(vt), do: Native.vt_scrollbar(vt)
 
-  @doc "Scrolls the viewport to `offset` rows from the top of the scrollback."
+  @doc "Scrolls the viewport to `offset` rows from the top of the scrollback. Raises on a ghostty error."
   @spec scroll_to(vt, non_neg_integer) :: :ok
   def scroll_to(vt, offset), do: Native.vt_scroll_to(vt, offset)
 

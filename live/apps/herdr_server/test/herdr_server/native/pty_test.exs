@@ -133,9 +133,36 @@ defmodule HerdrServer.Native.PtyTest do
   end
 
   test "invalid arguments raise" do
-    {_vt, pty} = spawn_sh(7)
+    {vt, pty} = spawn_sh(7)
     assert_raise ArgumentError, fn -> Pty.kill(pty, :bogus) end
+
+    for {cols, rows} <- [{0, 24}, {80, 0}, {65_536, 24}, {80, 1.5}, {nil, 24}] do
+      assert_raise ArgumentError, ~r/1\.\.65535/, fn -> Vt.new(cols, rows, 100) end
+      assert_raise ArgumentError, ~r/1\.\.65535/, fn -> Vt.resize(vt, cols, rows, nil) end
+      assert_raise ArgumentError, ~r/1\.\.65535/, fn -> Pty.resize(pty, cols, rows, nil) end
+
+      assert_raise ArgumentError, ~r/1\.\.65535/, fn ->
+        Pty.spawn(vt, 70, "/bin/sh", [], @env, nil, cols, rows)
+      end
+    end
+
+    assert Vt.resize(vt, 65_535, 1, nil) == :ok
     Pty.kill(pty, :kill)
+  end
+
+  test "a write over 1 MiB is too large" do
+    {_vt, pty} = spawn_sh(9, ["-c", "sleep 30"])
+    assert Pty.write(pty, :binary.copy("x", 1024 * 1024 + 1)) == {:error, :too_large}
+    assert Pty.write(pty, :binary.copy("x", 1024 * 1024)) == :ok
+    Pty.kill(pty, :kill)
+  end
+
+  test "spawn errors" do
+    {:ok, vt} = Vt.new(80, 24, 100)
+    # portable-pty checks the executable itself and reports errno only in the message.
+    assert {:error, {:spawn, msg}} = Pty.spawn(vt, 10, "/nonexistent/xyz", [], [], nil, 80, 24)
+    assert msg =~ "ENOENT"
+    assert {:error, {:spawn, _}} = Pty.spawn(vt, 11, "/", [], [], nil, 80, 24)
   end
 
   test "erts coexistence: System.cmd and kernel panes reap independently" do

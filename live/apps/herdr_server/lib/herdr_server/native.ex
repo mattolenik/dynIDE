@@ -72,10 +72,10 @@ defmodule HerdrServer.Native do
 
   @doc false
   @spec pty_spawn(term, term, term, term, term, term, term, term) ::
-          {:ok, reference, pos_integer} | {:error, binary}
+          {:ok, reference, pos_integer} | {:error, atom | {atom, term}}
   def pty_spawn(_vt, _id, _cmd, _args, _env, _cwd, _cols, _rows), do: err()
   @doc false
-  @spec pty_write(term, term) :: :ok | {:error, :backpressure | :closed}
+  @spec pty_write(term, term) :: :ok | {:error, :backpressure | :closed | :too_large}
   def pty_write(_pty, _data), do: err()
   @doc false
   @spec pty_resize(term, term, term, term) :: :ok
