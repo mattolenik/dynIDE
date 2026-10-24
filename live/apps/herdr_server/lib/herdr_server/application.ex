@@ -25,8 +25,9 @@ defmodule HerdrServer.Application do
           HerdrServer.App.Store,
           HerdrServer.Pane.Supervisor,
           HerdrServer.Client.Supervisor,
-          HerdrServer.Client.Endpoint
-        ]
+          HerdrServer.Client.Endpoint,
+          HerdrServer.ReloadNotices
+        ] ++ control()
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
@@ -36,6 +37,13 @@ defmodule HerdrServer.Application do
       Logger.info("herdr-live started")
       {:ok, pid}
     end
+  end
+
+  # the rollback socket only makes sense with the reload pipeline running
+  defp control do
+    if Application.get_env(:herdr_reload, HerdrReload, [])[:enabled],
+      do: [{HerdrServer.Control, []}],
+      else: []
   end
 
   @impl true

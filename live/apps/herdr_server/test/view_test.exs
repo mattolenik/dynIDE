@@ -114,4 +114,21 @@ defmodule HerdrServer.ViewTest do
       assert status(s).rect == %{x: 0, y: r - 1, w: c, h: 1}
     end
   end
+
+  test "a notice renders after the tabs, truncated to the free width, dropped when tiny" do
+    notice = %{level: :warning, text: String.duplicate("w", 200), until: :sticky}
+    s = View.compute(fresh(80, 24), %{client(80, 24) | notice: notice})
+    assert :ok = Scene.validate(s)
+    assert [:mode, :tabs, :notice, :title, :hint] == Enum.map(status(s).children, & &1.id)
+    n = child(s, :notice)
+    assert %Node{role: :text, token: :warning} = n
+    # 80 - "TERMINAL " - " 1:1 " and gap - "ctrl+b" and gap
+    assert String.length(n.text) == 80 - 9 - 6 - 7
+
+    assert child(View.compute(fresh(80, 24), client(80, 24)), :notice) == nil
+    tiny = View.compute(fresh(24, 10), %{client(24, 10) | notice: notice})
+    assert child(tiny, :notice) == nil
+    info = View.compute(fresh(80, 24), %{client(80, 24) | notice: %{notice | level: :info}})
+    assert child(info, :notice).token == :muted
+  end
 end

@@ -17,6 +17,7 @@ defmodule HerdrServer.Client.State do
     mode: :terminal,
     swallow: MapSet.new(),
     keybinds: nil,
+    notice: nil,
     last_scene: nil,
     monitor: nil,
     store_monitor: nil
@@ -34,6 +35,8 @@ defmodule HerdrServer.Client.State do
           mode: :terminal | :prefix | :resize,
           swallow: MapSet.t(),
           keybinds: HerdrServer.App.Keybinds.t() | nil,
+          notice:
+            nil | %{level: atom(), text: String.t(), until: integer() | :sticky, ref: reference()},
           last_scene: term(),
           monitor: reference() | nil,
           store_monitor: reference() | nil

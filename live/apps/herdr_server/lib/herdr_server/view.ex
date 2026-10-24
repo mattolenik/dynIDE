@@ -8,7 +8,8 @@ defmodule HerdrServer.View do
     * Panes follow `Layout.panes` preorder. `Pane.rect` is the content rect, the border
       carries the outer rect (see `Layout.borders/2`). Rows are `{:ref, id, layout_gen}`
       (or `{:inline, []}` for inline clients; the caller fills rows). Cursors are nil here.
-    * Chrome: `:root` holding a `:status` node (`:mode`, `:tabs`, `:title`, `:hint`) and one
+    * Chrome: `:root` holding a `:status` node (`:mode`, `:tabs`, `:notice` when the client
+      has one, `:title`, `:hint`) and one
       `:divider` node per split, in `Layout.splits` preorder, after the status.
     * Divider rect choice: with borders on, a split's boundary is `pos`, the first cell of
       the second child. The divider is the 1-cell line at `pos` (second child's leading
@@ -44,7 +45,7 @@ defmodule HerdrServer.View do
     %Scene{
       size: %{cols: cols, rows: rows},
       panes: panes,
-      chrome: chrome(app, client.mode, ws, layout, size, area),
+      chrome: chrome(app, client.mode, ws, layout, size, area, client.notice),
       focus: %{pane: app.focus.pane, chrome: nil}
     }
   end
@@ -60,12 +61,15 @@ defmodule HerdrServer.View do
     }
   end
 
-  defp chrome(app, mode, ws, layout, %{cols: cols, rows: rows}, area) do
+  defp chrome(app, mode, ws, layout, %{cols: cols, rows: rows}, area, notice) do
+    left = [mode(mode), tabs(ws)]
+    hint = hint(mode, app.ui)
+
     status = %Node{
       role: :status,
       id: :status,
       rect: %{x: 0, y: rows - 1, w: cols, h: 1},
-      children: [mode(mode), tabs(ws), title(app), hint(mode, app.ui)]
+      children: left ++ notice(notice, cols - width(left) - width([hint])) ++ [title(app), hint]
     }
 
     dividers =
@@ -128,6 +132,32 @@ defmodule HerdrServer.View do
       _ ->
         text(:hint, "", :muted)
     end
+  end
+
+  # before the title so a long title cannot hide it; clipped to the cells left after the
+  # mode, tabs and hint, dropped below 4 cells
+  defp notice(nil, _free), do: []
+  defp notice(_n, free) when free < 4, do: []
+
+  defp notice(%{level: level, text: text}, free) do
+    token = Map.get(%{error: :error, warning: :warning}, level, :muted)
+    [text(:notice, String.slice(text, 0, free), token)]
+  end
+
+  # cells a status renderer gives these nodes: text, tabs as " i:name ", one gap after each
+  defp width(nodes) do
+    nodes
+    |> Enum.map(fn
+      %Node{role: :tabs, children: tabs} ->
+        Enum.sum_by(tabs, &(String.length(" #{&1.props.index}:#{&1.text} ") + 1))
+
+      %Node{text: t} when t in [nil, ""] ->
+        0
+
+      %Node{text: t} ->
+        String.length(t) + 1
+    end)
+    |> Enum.sum()
   end
 
   defp text(id, text, token), do: %Node{role: :text, id: id, text: text, token: token}

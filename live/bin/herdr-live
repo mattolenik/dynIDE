@@ -4,6 +4,23 @@
 # HERDR_LIVE_HEADLESS=1 starts no terminal client (server only) and never
 # touches the tty; otherwise the local terminal client paints /dev/tty in the
 # same VM and scripts/tty_guard.sh restores the tty after the VM exits, even on kill -9.
+#
+# herdr-live rollback [n]: roll back the newest n live reload batches (default 1)
+# through the control socket of the running instance (HerdrServer.Control).
+if [ "${1:-}" = rollback ]; then
+  sock=${HERDR_LIVE_CONTROL:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/control.sock}
+  [ -S "$sock" ] || { echo "herdr-live is not running" >&2; exit 1; }
+  exec elixir -e '
+    [sock, n] = System.argv()
+    with {:ok, s} <- :gen_tcp.connect({:local, sock}, 0, [:binary, packet: :line, active: false], 2000),
+         :ok <- :gen_tcp.send(s, "rollback #{n}\n"),
+         {:ok, reply} <- :gen_tcp.recv(s, 0, 60_000) do
+      IO.write(reply)
+      System.halt(if String.starts_with?(reply, "ok"), do: 0, else: 1)
+    else
+      _ -> IO.puts(:stderr, "herdr-live is not running"); System.halt(1)
+    end' "$sock" "${2:-1}"
+fi
 log=${HERDR_LIVE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/herdr-live.log}
 case $log in /*) ;; *) log=$PWD/$log ;; esac
 mkdir -p "$(dirname "$log")" || exit 1

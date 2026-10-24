@@ -103,8 +103,7 @@ defmodule HerdrServer.Client.Session do
           input(state, ev, from)
 
         {:error, why} ->
-          send(state.client, {:notice, %{level: :warning, text: "input rejected: " <> why}})
-          state
+          notice(state, %{level: :warning, text: "input rejected: " <> why})
       end
 
     if is_pid(from), do: send(from, {:ack, seq})
@@ -113,8 +112,12 @@ defmodule HerdrServer.Client.Session do
 
   def handle_info({:notice, n}, state) do
     state = Map.merge(%State{}, state)
-    send(state.client, {:notice, n})
-    {:noreply, state}
+    {:noreply, notice(state, n)}
+  end
+
+  def handle_info({:notice_expired, ref}, %{notice: %{ref: ref}} = state) do
+    state = Map.merge(%State{}, state)
+    {:noreply, repaint(%{state | notice: nil})}
   end
 
   # the protocol's client -> server detach message, or the Store's {:detach} effect for an
@@ -177,6 +180,35 @@ defmodule HerdrServer.Client.Session do
       Process.sleep(@store_wait_ms)
       await_store(n - 1)
     end
+  end
+
+  # --- notices ---
+
+  # Forwarded to the client and shown in the status line until it expires (info 3 s,
+  # warning 8 s, `config :herdr_server, :notice_ms`) or a newer notice replaces it. A
+  # reload error stays until then (the next reload's notice replaces it).
+  defp notice(state, %{level: level, text: text} = n) do
+    send(state.client, {:notice, n})
+    ref = make_ref()
+    ms = Application.get_env(:herdr_server, :notice_ms, info: 3000, warning: 8000)
+
+    until =
+      if level == :error and n[:source] == :reload do
+        :sticky
+      else
+        t = if level == :info, do: ms[:info], else: ms[:warning]
+        Process.send_after(self(), {:notice_expired, ref}, t)
+        System.monotonic_time(:millisecond) + t
+      end
+
+    repaint(%{state | notice: %{level: level, text: text, until: until, ref: ref}})
+  end
+
+  # the Store may be restarting: the session follows it and repaints then
+  defp repaint(state) do
+    push(state, Store.snapshot())
+  catch
+    :exit, _ -> state
   end
 
   # --- input ---
@@ -293,7 +325,12 @@ defmodule HerdrServer.Client.Session do
   defp push(state, app) do
     state = %{state | keybinds: app.ui.keybinds}
     # the budget copies args into a worker: pass only what View reads, never last_scene
-    view_state = %State{size: state.size, transport: state.transport, mode: state.mode}
+    view_state = %State{
+      size: state.size,
+      transport: state.transport,
+      mode: state.mode,
+      notice: state.notice
+    }
 
     case Guard.run_twice(View, :compute, [app, view_state], budget_ms: 50, scan: false) do
       {:ok, scene} ->
