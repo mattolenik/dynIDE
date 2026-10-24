@@ -6,6 +6,7 @@ defmodule HerdrServer.Client.SessionPointerTest do
 
   alias HerdrScene.{Cell, Event, Protocol}
   alias HerdrServer.App.Store
+  alias HerdrServer.Client.PointerIo
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Pane.{Facts, Rows, Server}
 
@@ -162,6 +163,62 @@ defmodule HerdrServer.Client.SessionPointerTest do
     # the rest of the gesture is harmless
     input(sa, a, mouse(:release, :left, r.x + 5, r.y + 1))
     assert Process.alive?(sa)
+  end
+
+  test "an unscrolled selection pane gets the live offset: overlay rows follow the history" do
+    {a, sa} = client()
+    r = rect(last_scene(a), 1)
+    :ok = Fake.Vt.set_history(vt(1), for(i <- 1..10, do: "h#{i}"))
+    off = Fake.Vt.scrollbar(vt(1)).offset
+    assert off > 0
+    refute Facts.scrolled?(1)
+
+    input(sa, a, mouse(:press, :left, r.x, r.y))
+    input(sa, a, mouse(:drag, :left, r.x + 4, r.y + 1))
+
+    assert %{anchor: {0, ^off}} = pointer(sa).selection
+    assert %{1 => %{scrolled: false, scroll: %{offset: ^off}}} = PointerIo.scene_facts([1], 1)
+    scene = scene_until(a, &(selection_overlays(&1) != []))
+    assert [{1, %{args: %{from: {0, 0}, to: {4, 1}}}}] = selection_overlays(scene)
+  end
+
+  test "scene_facts: unknown selection pane is absent; no kernel resources falls back" do
+    assert PointerIo.scene_facts([], 4242) == %{}
+
+    stale = %{total: 50, viewport: 10, offset: 0}
+    Facts.put(4243, %{scrolled: false, alt_screen: false, scroll: stale})
+    on_exit(fn -> Facts.delete(4243) end)
+
+    assert %{4243 => %{scrolled: false, scroll: ^stale}} = PointerIo.scene_facts([], 4243)
+
+    c = %HerdrServer.Client.State{
+      pointer: %HerdrServer.Client.Pointer{
+        selection: %HerdrServer.Client.Selection{
+          pane: 4243,
+          anchor: {0, 40},
+          head: {2, 41},
+          unit: :char,
+          shown: true
+        }
+      },
+      facts: PointerIo.scene_facts([], 4243)
+    }
+
+    assert HerdrServer.View.Overlays.pane(4243, %{x: 0, y: 0, w: 20, h: 10}, c) == []
+  end
+
+  test "a resize that changes the selection pane's size drops the overlay in the same push" do
+    {a, sa} = client()
+    r = rect(last_scene(a), 1)
+    output(1, "hello")
+    input(sa, a, mouse(:press, :left, r.x, r.y))
+    input(sa, a, mouse(:drag, :left, r.x + 3, r.y))
+    assert selection_overlays(scene_until(a, &(selection_overlays(&1) != []))) != []
+
+    send(sa, {:input, a, 99, {:resize, %{cols: 100, rows: 30, cell_px: nil}}})
+    scene = scene_until(a, &(&1.size.cols == 100))
+    assert selection_overlays(scene) == []
+    assert pointer(sa).selection == nil
   end
 
   test "a press on an unfocused pane focuses it" do

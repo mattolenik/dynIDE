@@ -58,9 +58,9 @@ defmodule HerdrServer.Client.Session do
   context from `Client.PointerIo`, which then executes the actions; a failure forwards
   the event to the Store as before. Selection and hover live in `state.pointer` (per
   client); a change repaints. Autoscroll ticks every 30 ms; a kept word highlight
-  expires after 500 ms. Each push prunes pointer state of panes that left or
-  resized, before the scene is computed. This session becomes the foreground client (`Client.Foreground`) on
-  attach and on each slow-path input; pane bells and child clipboard writes sent to it
+  expires after 500 ms. Each push prunes pointer state of panes that left or resized,
+  before the scene is computed. This session becomes the foreground client
+  (`Client.Foreground`) on attach and on each slow-path input; pane bells and child clipboard writes sent to it
   go to the client as `{:bell, id}` and `{:clipboard, %{source: :pane}}`, and
   `{:pane_facts, id}` repaints when the pane is in the last scene.
   """
@@ -71,6 +71,7 @@ defmodule HerdrServer.Client.Session do
   alias HerdrServer.App.{Actions, Keybinds, Modal, Store}
   alias HerdrServer.Client.{Foreground, Keys, Pointer, PointerIo, State, Toasts}
   alias HerdrServer.Handoff.Notice
+  alias HerdrServer.Layout
   alias HerdrServer.Mirror
   alias HerdrServer.Pane.Rows
   alias HerdrServer.View
@@ -732,7 +733,7 @@ defmodule HerdrServer.Client.Session do
       with %{session: %{workspaces: wss, active_workspace: aw}} <- app,
            %{tabs: tabs, active_tab: at} <- Enum.find(wss, &(&1.id == aw)),
            %{layout: layout} <- Enum.find(tabs, &(&1.id == at)) do
-        HerdrServer.Layout.pane_ids(layout)
+        Layout.pane_ids(layout)
       else
         _ -> []
       end
@@ -754,12 +755,28 @@ defmodule HerdrServer.Client.Session do
 
         case view(state, app) do
           {:ok, scene} -> {state, scene}
-          _failed -> {state, scene}
+          _failed -> {state, drop_stale(scene, p)}
         end
 
       _same_or_failed ->
         {state, scene}
     end
+  end
+
+  # recompute failed: keep no selection/hover overlay the pruned pointer no longer owns
+  defp drop_stale(scene, p) do
+    panes =
+      for pane <- scene.panes do
+        keep = fn
+          :selection -> p.selection != nil and p.selection.pane == pane.id
+          :link_hover -> p.hover != nil and p.hover.pane == pane.id
+          _other -> true
+        end
+
+        %{pane | overlays: Enum.filter(pane.overlays, &keep.(&1.kind))}
+      end
+
+    %{scene | panes: panes}
   end
 
   defp send_scene(%{last_scene: scene} = state, scene), do: state
