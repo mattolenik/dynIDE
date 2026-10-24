@@ -1,9 +1,10 @@
 defmodule HerdrServer.SceneFixturesTest do
   use ExUnit.Case, async: true
 
-  alias HerdrScene.{Fixture, Scene}
+  alias HerdrScene.{Event, Fixture, Scene}
   alias HerdrServer.App.Actions
-  alias HerdrServer.App.Modal.{Confirm, Prompt}
+  alias HerdrServer.App.Modal.{Confirm, Onboarding, Prompt, Settings}
+  alias HerdrServer.App.Modal.Keybinds, as: KeybindsModal
   alias HerdrServer.Client.State
   alias HerdrServer.View
 
@@ -22,7 +23,12 @@ defmodule HerdrServer.SceneFixturesTest do
     {"modal_confirm_80x24", {80, 24}, [:confirm]},
     {"modal_prompt_80x24", {80, 24}, [:prompt]},
     {"menu_tab_80x24", {80, 24}, [:c, {:right_click, [:tabs, {:tab, 2}], 36, 0}]},
-    {"menu_global_120x40", {120, 40}, [{:click, [:sidebar, :spaces, :menu], 20, 36}]}
+    {"menu_global_120x40", {120, 40}, [{:click, [:sidebar, :spaces, :menu], 20, 36}]},
+    {"modal_settings_120x40", {120, 40}, [{:open, Settings}, {:key, :tab}]},
+    {"modal_onboarding_80x24", {80, 24}, [:onboarding]},
+    {"modal_keybinds_120x40", {120, 40}, [{:open, KeybindsModal}, {:key, "j"}]},
+    {"modal_keybind_capture_120x40", {120, 40},
+     [{:open, KeybindsModal}, {:click, [{:modal, 0}, :list, {:action, "rename_tab"}], 0, 0}]}
   ]
 
   for {name, size, steps} <- @fixtures do
@@ -69,6 +75,9 @@ defmodule HerdrServer.SceneFixturesTest do
   defp step({kind, path, x, y}, app),
     do: elem(Actions.apply(app, {:chrome, path, {kind, %{x: x, y: y}}}), 0)
 
+  defp step({:open, mod}, app), do: elem(mod.open(app), 0)
+  defp step({:key, k}, app), do: elem(Actions.apply(app, Event.key(k)), 0)
+  defp step(:onboarding, app), do: Onboarding.at_start(put_in(app.ui.onboarding, true))
   defp step(:b, app), do: HerdrServer.ViewHelpers.pfx(app, "b")
   defp step({:workspace, name}, app), do: HerdrServer.ViewHelpers.add_workspace(app, name)
   defp step(:prefix, app), do: app

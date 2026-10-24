@@ -20,6 +20,7 @@ defmodule HerdrServer.App.Actions do
   """
 
   alias HerdrServer.App.{Chrome, Commands, Focus, Keybinds, Modal, Session, Ui, Workspaces}
+  alias HerdrServer.App.Modal.Onboarding
   alias HerdrServer.Layout
   alias HerdrServer.View.Frame
 
@@ -49,7 +50,7 @@ defmodule HerdrServer.App.Actions do
       area: area
     }
 
-    app = %{session: session, focus: %Focus{pane: 1}, ui: ui}
+    app = Onboarding.at_start(%{session: session, focus: %Focus{pane: 1}, ui: ui})
 
     {app, [{:spawn, 1, size_of(layout, area, 1)}]}
   end

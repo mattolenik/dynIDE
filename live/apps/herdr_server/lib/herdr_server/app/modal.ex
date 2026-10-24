@@ -1,7 +1,7 @@
 defmodule HerdrServer.App.Modal.Kind do
   @moduledoc """
-  A modal kind (`App.Modal.Confirm`, `Prompt`, `Menu`; Task 8 adds settings, onboarding
-  and keybinds). Callbacks are pure. `key/3` and `chrome/4` get the modal and the app
+  A modal kind (`App.Modal.Confirm`, `Prompt`, `Menu`, `Settings`, `Onboarding`,
+  `Keybinds`). Callbacks are pure. `key/3` and `chrome/4` get the modal and the app
   with that modal already popped, so an action they run sees the rest of the stack and
   may push a new modal of its own. Results:
 
@@ -36,7 +36,8 @@ defmodule HerdrServer.App.Modal do
   @moduledoc """
   The modal stack (`App.Focus.modal`, top first) and the routing into its top modal
   (pure). A modal is a plain map `%{kind: atom, id: pos_integer, ...kind fields}`; the
-  kind names its module (`:confirm`, `:prompt`, `:menu`, or a module implementing
+  kind names its module (`:confirm`, `:prompt`, `:menu`, `:settings`, `:onboarding`,
+  `:keybinds`, or a module implementing
   `App.Modal.Kind` itself). Callbacks inside modals are `{M, F, A}`, never funs.
 
     * `key/2`: releases are dropped; Esc closes the top modal (unless its kind
@@ -53,9 +54,16 @@ defmodule HerdrServer.App.Modal do
   """
 
   alias HerdrScene.Scene.Node
-  alias HerdrServer.App.Modal.{Confirm, Menu, Prompt, TextField}
+  alias HerdrServer.App.Modal.{Confirm, Keybinds, Menu, Onboarding, Prompt, Settings, TextField}
 
-  @kinds %{confirm: Confirm, prompt: Prompt, menu: Menu}
+  @kinds %{
+    confirm: Confirm,
+    prompt: Prompt,
+    menu: Menu,
+    settings: Settings,
+    onboarding: Onboarding,
+    keybinds: Keybinds
+  }
 
   @type modal :: HerdrServer.App.Modal.Kind.modal()
 

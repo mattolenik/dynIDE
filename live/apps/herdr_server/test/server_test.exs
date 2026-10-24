@@ -994,6 +994,23 @@ defmodule HerdrServer.ServerTest do
     assert Fake.Pty.writes(pty(1)) == []
   end
 
+  test "a keybind captured in the keybinds modal republishes the fast path's intercept set" do
+    {c, s} = client()
+    scene(c)
+    refute MapSet.member?(fast().intercept, {"t", [:ctrl]})
+    :ok = Store.run({HerdrServer.App.Modal.Keybinds, :open, []}, %{cols: 80, rows: 24})
+    scene_until(c, &Scene.Node.find(&1.chrome, [{:modal, 0}]))
+    path = [{:modal, 0}, :list, {:action, "rename_tab"}]
+    input(s, c, 1, {:chrome, path, {:click, %{x: 0, y: 0}}})
+    assert_receive {^c, {:ack, 1}}
+    assert eventually(fn -> :sys.get_state(s).capture end)
+    input(s, c, 2, Event.key("t", [:ctrl]))
+    assert_receive {^c, {:ack, 2}}
+    assert MapSet.member?(fast().intercept, {"t", [:ctrl]})
+    assert eventually(fn -> Map.has_key?(:sys.get_state(s).keybinds.direct, {"t", [:ctrl]}) end)
+    assert Fake.Pty.writes(pty(1)) == []
+  end
+
   test "prefix bindings do nothing while a modal is open; the modal still takes keys" do
     {c, s} = client()
     scene(c)

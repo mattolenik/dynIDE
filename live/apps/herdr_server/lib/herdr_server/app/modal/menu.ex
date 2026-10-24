@@ -12,15 +12,16 @@ defmodule HerdrServer.App.Modal.Menu do
   Items (exact labels; items whose task has not landed are omitted): tab `New tab`,
   `Rename`, `Close`; workspace `Rename`, `Close`; pane `Rename pane`, `Clear pane name`
   (when named), `Swap with focused pane` (another pane of the same tab is focused),
-  `Split right`, `Split down`, `Close pane`; global `detach` (settings, keybinds and
-  reload config land with Tasks 8 and 9).
+  `Split right`, `Split down`, `Close pane`; global `settings`, `keybinds`, `detach`
+  (reload config lands with Task 9).
   """
 
   @behaviour HerdrServer.App.Modal.Kind
 
   alias HerdrScene.Scene.Node
   alias HerdrServer.App.{Actions, Modal, Workspaces}
-  alias HerdrServer.App.Modal.{Confirm, Prompt}
+  alias HerdrServer.App.Modal.{Confirm, Prompt, Settings}
+  alias HerdrServer.App.Modal.Keybinds, as: KeybindsModal
   alias HerdrServer.Layout
   alias HerdrServer.View.Modal, as: V
 
@@ -81,7 +82,12 @@ defmodule HerdrServer.App.Modal.Menu do
     end
   end
 
-  defp items(_app, :global, _), do: [{:detach, "detach", {Actions, :detach, []}}]
+  defp items(_app, :global, _),
+    do: [
+      {:settings, "settings", {Settings, :open, []}},
+      {:keybinds, "keybinds", {KeybindsModal, :open, []}},
+      {:detach, "detach", {Actions, :detach, []}}
+    ]
 
   # --- item actions ---
 

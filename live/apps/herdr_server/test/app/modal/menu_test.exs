@@ -94,8 +94,12 @@ defmodule HerdrServer.App.Modal.MenuTest do
   test "global menu from the sidebar menu button lists the landed items" do
     {app, []} = chrome(fresh(), [:sidebar, :spaces, :menu], :click, 20, 10)
     assert %{menu: :global, at: %{x: 20, y: 10}} = Modal.top(app)
-    assert labels(app) == ["detach"]
-    assert {_, [{:detach}]} = Actions.apply(app, Event.key(:enter))
+    assert labels(app) == ["settings", "keybinds", "detach"]
+    assert {_, [{:detach}]} = chrome(app, [{:menu, 0}, {:entry, :detach}], :click)
+    {opened, []} = Actions.apply(app, Event.key(:enter))
+    assert [%{kind: :settings}] = opened.focus.modal
+    {opened, []} = chrome(app, [{:menu, 0}, {:entry, :keybinds}], :click)
+    assert [%{kind: :keybinds}] = opened.focus.modal
   end
 
   test "node: a menu region at the click, clamped on screen, entries with a selection" do
