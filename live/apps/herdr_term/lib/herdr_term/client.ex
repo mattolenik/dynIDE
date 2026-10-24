@@ -6,11 +6,14 @@ defmodule HerdrTerm.Client do
   `{:via, Registry, {HerdrTerm.Registry, {id, role}}}` so restarted children
   find their siblings again.
 
-  Options: `tty_opts` (passed to the tty kernel's `open`), `endpoint`
-  (default `HerdrScene.Protocol.endpoint/0`), `id`, `name`.
+  Options: `tty_opts` (map merged into the tty kernel's `open` options),
+  `endpoint` (default `HerdrScene.Protocol.endpoint/0`), `id`, `name`, `local`
+  (true only for `HerdrTerm.LocalClient`: see `local_exit/1`).
   """
 
   use Supervisor
+
+  require Logger
 
   alias HerdrTerm.Client.Term.{Input, Render}
   alias HerdrTerm.Tty.Owner
@@ -32,6 +35,19 @@ defmodule HerdrTerm.Client do
     opts = opts |> Keyword.delete(:name) |> Keyword.put_new_lazy(:id, &make_ref/0)
     children = [{Owner, opts}, {Render, opts}, {Input, opts}]
     Supervisor.init(children, strategy: :rest_for_one)
+  end
+
+  @doc """
+  The local client is done (`{:detached, reason}` from the server, or
+  `{:tty, reason}` when the host terminal hung up). Applies
+  `config :herdr_term, :on_local_exit` (an MFA, default `{System, :stop, [0]}`):
+  until M5's broker exists, detaching the local client quits herdr-live.
+  """
+  @spec local_exit(term) :: term
+  def local_exit(why) do
+    Logger.info("local terminal client done (#{inspect(why)}), stopping herdr-live")
+    {m, f, a} = Application.get_env(:herdr_term, :on_local_exit, {System, :stop, [0]})
+    apply(m, f, a)
   end
 
   @doc "The tty resource held by this client's `Tty.Owner`."

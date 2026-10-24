@@ -7,9 +7,10 @@ defmodule HerdrTerm.Kernel.FakeTest do
   @s Cells.style([])
   @opts %{cursor: nil, shape: :block, repaint: false}
 
-  test "inject, size, write" do
-    {:ok, tty} = Tty.open()
+  test "inject, size, write, stats, kitty, suspend, hangup" do
+    {:ok, tty} = Tty.open(%{path: "/dev/tty", kitty_flags: 1})
     assert Tty.size(tty) == {80, 24, 0, 0}
+    assert Tty.kitty_keyboard(tty) == nil
     :ok = Tty.subscribe(tty, self())
     Tty.inject(tty, "x")
     assert_receive {:tty_input, "x"}
@@ -19,9 +20,15 @@ defmodule HerdrTerm.Kernel.FakeTest do
     Tty.set_size(tty, {10, 5, 1, 2})
     assert Tty.size(tty) == {10, 5, 1, 2}
     assert :ok = Tty.suspend(tty)
+    assert_receive {:tty_resumed}
+    Tty.hangup(tty)
+    assert_receive {:exit, :tty, :hangup}
     assert :ok = Tty.restore(tty)
-    {:ok, t2} = Tty.open(size: {1, 2, 3, 4})
+    assert %{frames_written: 0, frames_dropped: 0, queued_bytes: 0} = Tty.stats(tty)
+    {:ok, t2} = Tty.open(%{size: {1, 2, 3, 4}, kitty: 0})
     assert Tty.size(t2) == {1, 2, 3, 4}
+    assert Tty.kitty_keyboard(t2) == 0
+    assert Tty.open(%{error: :enxio}) == {:error, :enxio}
   end
 
   test "frames apply to the retained screen" do
@@ -37,11 +44,32 @@ defmodule HerdrTerm.Kernel.FakeTest do
              Blit.frames(tty)
 
     assert is_integer(at)
+    assert Tty.stats(tty).frames_written == 2
+  end
+
+  test "bad frames are refused like the real blitter, and not recorded" do
+    {:ok, tty} = Tty.open()
+    row = Cells.text("ab", @s)
+
+    for {rows, opts} <- [
+          {[], @opts},
+          {[{1, row}], @opts},
+          {[{0, row}, {2, row}], @opts},
+          {[{0, row}, {1, Cells.text("abc", @s)}], @opts},
+          {[{0, Cells.text("", @s)}], @opts},
+          {[{0, row}], %{@opts | shape: :beam}}
+        ] do
+      assert Blit.frame(tty, rows, opts) == {:error, :bad_frame}, inspect({rows, opts})
+    end
+
+    assert Blit.frames(tty) == []
   end
 
   test "frame log is bounded" do
     {:ok, tty} = Tty.open()
-    for _ <- 1..1005, do: Blit.frame(tty, [], @opts)
+    row = [{0, Cells.text("x", @s)}]
+    for _ <- 1..1005, do: Blit.frame(tty, row, @opts)
     assert length(Blit.frames(tty)) == 1000
+    assert Tty.stats(tty).frames_written == 1005
   end
 end

@@ -32,7 +32,7 @@ defmodule HerdrIntegration.Driver do
   """
   def start_client({cols, rows}, opts \\ []) do
     id = make_ref()
-    opts = [id: id, tty_opts: [size: {cols, rows, 0, 0}]] ++ opts
+    opts = [id: id, tty_opts: %{size: {cols, rows, 0, 0}}] ++ opts
     client = start_supervised!({Client, opts}, id: id)
     true = wait(client, fn -> scene(client) != nil and Blit.frames(tty(client)) != [] end)
     client

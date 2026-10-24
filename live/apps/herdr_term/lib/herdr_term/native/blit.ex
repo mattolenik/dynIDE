@@ -9,6 +9,8 @@ defmodule HerdrTerm.Native.Blit do
   A frame whose rows fail to decode is dropped the same way.
   """
 
+  @behaviour HerdrTerm.Kernel.Blit
+
   alias HerdrTerm.Native
   alias HerdrTerm.Native.Tty
 

@@ -1,9 +1,10 @@
 defmodule HerdrTerm.Client.Term.Input do
   @moduledoc """
   Host-tty bytes to neutral events. Holds the `Parse` state, subscribes itself
-  to the tty through `Tty.Owner` on init, and on start writes the kitty flags
-  query and DA1 and opens their reply windows (500ms). Replies are consumed
-  here (kept in `replies`).
+  to the tty through `Tty.Owner` on init and opens the kitty flags and DA1
+  reply windows (500ms): the tty kernel's open already sent that probe, and
+  replies arriving after its own 250ms deadline come in as input. Replies are
+  consumed here (kept in `replies`).
 
   Each event takes the fast path (contract decision 6: the focused pane's
   write MFA from `:persistent_term`, read per event) or goes to the session
@@ -13,8 +14,8 @@ defmodule HerdrTerm.Client.Term.Input do
   by Render after each attach) are queued. A buffered ESC is flushed after 25ms.
 
   Parse runs through `SafeApply`: a failing chunk is dropped (logged) and the parser
-  state, queue and in-flight event stay as they were. `{:tty_resumed}` asks Render for
-  a full repaint.
+  state, queue and in-flight event stay as they were. `{:tty_resumed}` and
+  `{:exit, :tty, _}` are forwarded to `Tty.Owner` (modes, repaint, local exit).
   """
 
   use GenServer
@@ -22,7 +23,7 @@ defmodule HerdrTerm.Client.Term.Input do
   require Logger
 
   alias HerdrScene.Protocol
-  alias HerdrTerm.{Client, Kernel, SafeApply}
+  alias HerdrTerm.{Client, SafeApply}
   alias HerdrTerm.Client.Term.Input.Parse
   alias HerdrTerm.Tty.Owner
 
@@ -52,7 +53,6 @@ defmodule HerdrTerm.Client.Term.Input do
     owner = Client.via(opts[:id], :tty_owner)
     :ok = Owner.subscribe(owner, self())
     tty = Owner.tty(owner)
-    Kernel.tty().write(tty, ["\e[?u", "\e[c"])
     deadline = now() + @window_ms
 
     parse =
@@ -134,15 +134,18 @@ defmodule HerdrTerm.Client.Term.Input do
     {:noreply, drain(%{state | session: pid, inflight: nil, queue: queue})}
   end
 
-  def handle_info({:tty_resumed}, state) do
-    state = Map.merge(%__MODULE__{}, state)
-    if pid = Client.whereis(state.id, :render), do: send(pid, :repaint)
-    {:noreply, state}
-  end
+  def handle_info({:tty_resumed} = msg, state), do: to_owner(msg, state)
+  def handle_info({:exit, :tty, _} = msg, state), do: to_owner(msg, state)
 
   def handle_info(msg, state) do
     state = Map.merge(%__MODULE__{}, state)
     Logger.debug("input: ignored #{inspect(msg)}")
+    {:noreply, state}
+  end
+
+  defp to_owner(msg, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    if pid = Client.whereis(state.id, :tty_owner), do: send(pid, msg)
     {:noreply, state}
   end
 

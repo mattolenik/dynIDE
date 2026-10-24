@@ -18,6 +18,8 @@ defmodule HerdrTerm.Native.Tty do
   ordinary `{:tty_input, binary}`.
   """
 
+  @behaviour HerdrTerm.Kernel.Tty
+
   alias HerdrTerm.Native
 
   @type t :: Native.tty()

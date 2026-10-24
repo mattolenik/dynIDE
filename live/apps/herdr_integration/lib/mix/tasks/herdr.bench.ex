@@ -147,7 +147,7 @@ if Mix.env() == :test do
     # -- keystroke -> glass -------------------------------------------------
 
     defp start_client({cols, rows}) do
-      {:ok, sup} = Client.start_link(id: make_ref(), tty_opts: [size: {cols, rows, 0, 0}])
+      {:ok, sup} = Client.start_link(id: make_ref(), tty_opts: %{size: {cols, rows, 0, 0}})
       until(fn -> Driver.scene(sup) != nil and Blit.frames(Driver.tty(sup)) != [] end, 2000)
       # quiesce subscribes this process to the tty's frames (once, via the Driver)
       :ok = Driver.quiesce(sup)
@@ -305,7 +305,7 @@ if Mix.env() == :test do
 
     defp frame_cost(scene, cfg) do
       {cols, rows} = @size
-      {:ok, tty} = Tty.open(size: {cols, rows, 0, 0})
+      {:ok, tty} = Tty.open(%{size: {cols, rows, 0, 0}})
       theme = Theme.default()
       full = full_rows(scene, "x")
       alt = full_rows(scene, "y")

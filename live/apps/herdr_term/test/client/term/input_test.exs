@@ -30,8 +30,8 @@ defmodule HerdrTerm.Client.Term.InputTest do
     })
   end
 
-  test "queries the terminal on start and consumes the replies", %{tty: tty} do
-    assert Tty.written(tty) == "\e[?u\e[c"
+  test "leaves the probe to the tty kernel and consumes late replies", %{tty: tty} do
+    refute Tty.written(tty) =~ "\e[?u"
     Tty.inject(tty, "\e[?1u")
     refute_receive {:input, _, _, _}, 50
   end
@@ -101,14 +101,16 @@ defmodule HerdrTerm.Client.Term.InputTest do
     assert_receive {:input, ^from, _, {:key, %{key: "b"}}}
   end
 
-  test "unknown messages are ignored and {:tty_resumed} asks Render to repaint", %{sup: sup} do
+  test "unknown messages are ignored; resume and tty exit go to Tty.Owner", %{sup: sup} do
     input = Client.input(sup)
     before = :sys.get_state(input)
     send(input, :bogus)
     assert :sys.get_state(input) == before
-    :erlang.trace(Client.render(sup), true, [:receive])
+    :erlang.trace(Client.owner(sup), true, [:receive])
     send(input, {:tty_resumed})
-    assert_receive {:trace, _, :receive, :repaint}, 500
+    assert_receive {:trace, _, :receive, {:tty_resumed}}, 500
+    send(input, {:exit, :tty, :hangup})
+    assert_receive {:trace, _, :receive, {:exit, :tty, :hangup}}, 500
     assert Process.alive?(input)
   end
 

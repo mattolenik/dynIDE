@@ -41,14 +41,16 @@ config :herdr_server,
          ]
        )
 
-# Host-terminal modules used by herdr_term (see HerdrTerm.Kernel). The
-# in-memory fakes are the test double and the default until the Rust NIFs
-# land; swap by pointing these at NIF-backed modules implementing the
-# HerdrTerm.Kernel.{Tty,Blit} behaviours (e.g. in config/prod.exs). Read with
-# Application.compile_env, so recompile herdr_term after changing them.
-config :herdr_term, :kernel,
-  tty: HerdrTerm.Kernel.Fake.Tty,
-  blit: HerdrTerm.Kernel.Fake.Blit
+# Host-terminal modules used by herdr_term (see HerdrTerm.Kernel): M2's
+# NIF-backed HerdrTerm.Native.* in dev and prod, the in-memory fakes (the test
+# double) in test. `sigwinch` says the tty is real, so Tty.Owner handles
+# SIGWINCH. Read once when herdr_term starts; restart the app after changing them.
+config :herdr_term,
+       :kernel,
+       if(config_env() == :test,
+         do: [tty: HerdrTerm.Kernel.Fake.Tty, blit: HerdrTerm.Kernel.Fake.Blit, sigwinch: false],
+         else: [tty: HerdrTerm.Native.Tty, blit: HerdrTerm.Native.Blit, sigwinch: true]
+       )
 
 # Headless (no terminal client children) in test; HERDR_LIVE_HEADLESS=1 does
 # the same at runtime. Frames are at least min_frame_interval_ms apart.

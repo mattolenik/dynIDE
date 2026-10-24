@@ -18,8 +18,8 @@ defmodule HerdrTerm.Client.Term.Render do
 
   Frames are at least `:min_frame_interval_ms` (default 6) apart with at most one
   pending timer. A frame repaints fully on the first frame, after a re-attach, when the
-  scene size changes and on `:repaint` (Input sends it when the tty resumes). A failing
-  compose or cursor keeps the last frame.
+  scene size changes and on `:repaint` (`Tty.Owner` sends it when the tty resumes). A
+  failing compose or cursor keeps the last frame. `{:detached, reason}` goes to `Tty.Owner`.
   """
 
   use GenServer
@@ -140,6 +140,13 @@ defmodule HerdrTerm.Client.Term.Render do
     {:noreply, %{state | notice: notice}}
   end
 
+  # the server ended this client's session (protocol `{:detached, reason}`)
+  def handle_info({:detached, _reason} = msg, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    if pid = Client.whereis(state.id, :tty_owner), do: send(pid, msg)
+    {:noreply, state}
+  end
+
   def handle_info(:frame, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:noreply, render(%{state | timer: nil})}
@@ -161,7 +168,9 @@ defmodule HerdrTerm.Client.Term.Render do
   end
 
   defp attach(state, endpoint) do
+    # a pty that never got a window size reports 0x0
     {cols, rows, pw, ph} = Kernel.tty().size(state.tty)
+    {cols, rows} = {max(cols, 1), max(rows, 1)}
     cell_px = if pw > 0 and ph > 0, do: {div(pw, cols), div(ph, rows)}
 
     req = %{
@@ -228,7 +237,11 @@ defmodule HerdrTerm.Client.Term.Render do
          {:ok, cursor} <- SafeApply.run(Compose, :cursor, [scene, state.cursors]) do
       repaint = state.repaint or scene.size != state.last_size
       {at, shape} = cursor || {nil, :block}
-      Kernel.blit().frame(state.tty, frame, %{cursor: at, shape: shape, repaint: repaint})
+      opts = %{cursor: at, shape: shape, repaint: repaint}
+
+      with {:error, why} <- Kernel.blit().frame(state.tty, frame, opts),
+           do: Logger.warning("frame refused: #{inspect(why)}")
+
       %{state | repaint: false, last_size: scene.size, last_at: now()}
     else
       {:failed, _} -> state
