@@ -7,7 +7,7 @@ defmodule Live.MixProject do
       version: "0.1.0",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      dialyzer: [plt_core_path: "_build/#{Mix.env()}"]
+      dialyzer: [plt_core_path: "_build/#{Mix.env()}", plt_add_apps: [:mix, :ex_unit]]
     ]
   end
 
