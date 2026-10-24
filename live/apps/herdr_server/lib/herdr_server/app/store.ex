@@ -291,8 +291,8 @@ defmodule HerdrServer.App.Store do
   defp reload_server, do: Application.get_env(:herdr_server, :reload_server, HerdrReload.Server)
 
   # Batch `k`'s new code corrupted state the old code then failed on: go back to a state
-  # from before `k` was loaded (`k`'s own, or an older batch's when the re-run rolled
-  # that back too), reconciled with the keeper.
+  # from before `k` was loaded (`k`'s own; the Guard's re-run never rolls back an older
+  # batch), reconciled with the keeper.
   defp restore(%{app: app} = state, k) when is_integer(k) and app != nil do
     with {:ok, id, at_load} when id <= k and at_load != nil <- last_rolled_back(),
          at_load = put_in(at_load.session.area, app.session.area),

@@ -28,7 +28,8 @@ defmodule HerdrReload.Guard do
   @doc """
   Applies `fun` of `mod` to `args`. Opts: `budget_ms` (nil runs inline),
   `server` (default `HerdrReload.Server`), `scan` (local fun scan of
-  the result; defaults to the `:scan_local_funs` config).
+  the result; defaults to the `:scan_local_funs` config), `attribute`
+  (default true; false never calls `Server.fail`, so nothing rolls back).
   """
   @spec run(module(), atom(), [term()], keyword()) :: {:ok, term()} | {:failed, failure()}
   def run(mod, fun, args, opts \\ []) do
@@ -39,15 +40,17 @@ defmodule HerdrReload.Guard do
     server = Keyword.get(opts, :server, Server)
 
     case call(mod, fun, args, opts[:budget_ms]) do
-      {:ok, value} -> succeeded(mod, value, server, scan?(opts))
-      failure -> failed(stack_modules(mod, failure), failure, server)
+      {:ok, value} -> succeeded(mod, value, server, opts)
+      failure -> failed(stack_modules(mod, failure), failure, server, opts)
     end
   end
 
   @doc """
   The call-site shape: `run/4` with every failure logged. A failure that
   rolled a batch back is re-run once on the old code; an unattributed one
-  would only fail again, so it is returned at once.
+  would only fail again, so it is returned at once. The re-run never
+  attributes: the old code failing too means corrupt state, not another bad
+  batch.
   """
   @spec run_twice(module(), atom(), [term()], keyword()) :: {:ok, term()} | {:failed, failure()}
   def run_twice(mod, fun, args, opts \\ []) do
@@ -67,7 +70,7 @@ defmodule HerdrReload.Guard do
   def run_twice_attributed(mod, fun, args, opts \\ []) do
     case logged_run(mod, fun, args, opts) do
       {:failed, _, {:rolled_back, id}} ->
-        case logged_run(mod, fun, args, opts) do
+        case logged_run(mod, fun, args, Keyword.put(opts, :attribute, false)) do
           {:failed, failure, _} -> {:failed, failure, id}
           ok -> ok
         end
@@ -185,16 +188,16 @@ defmodule HerdrReload.Guard do
     :exit, reason -> {:exit, reason, __STACKTRACE__}
   end
 
-  defp succeeded(mod, value, server, scan?) do
+  defp succeeded(mod, value, server, opts) do
     if is_atom(server) and :ets.whereis(server) != :undefined do
       :ets.update_counter(server, mod, 1, {mod, 0})
       :ets.update_counter(server, :total, 1, {:total, 0})
     end
 
-    case scan? && LocalFuns.find(value) do
+    case scan?(opts) && LocalFuns.find(value) do
       {:local_fun, fun_mod, path} = failure ->
         Notices.broadcast({:rejected, fun_mod, path})
-        failed(Enum.uniq([fun_mod, mod]), failure, server)
+        failed(Enum.uniq([fun_mod, mod]), failure, server, opts)
 
       _ ->
         {:ok, value}
@@ -202,9 +205,12 @@ defmodule HerdrReload.Guard do
   end
 
   # stamped now: the Server may be mid-compile and only answers once it has loaded
-  defp failed(stack_modules, failure, server) do
+  defp failed(stack_modules, failure, server, opts) do
     at = System.monotonic_time(:millisecond)
-    {:failed, failure, attribute(server, stack_modules, failure, at)}
+
+    if Keyword.get(opts, :attribute, true),
+      do: {:failed, failure, attribute(server, stack_modules, failure, at)},
+      else: {:failed, failure, :unattributed}
   end
 
   # A server dying between whereis and the call must not crash the caller.

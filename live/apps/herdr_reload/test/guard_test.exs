@@ -173,6 +173,25 @@ defmodule HerdrReload.GuardTest do
     assert length(String.split(log, "Toy.A.f/1 failed")) == 3
   end
 
+  test "a failing re-run after a rollback rolls back nothing more" do
+    dir = toy!(:toy_g_rerun, %{"lib/a.ex" => a_src(1)})
+    HerdrReload.ReloadCase.write_source!(dir, "lib/a.ex", a_src(2))
+    assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "a")])
+    HerdrReload.ReloadCase.write_source!(dir, "lib/a.ex", a_src(3))
+    assert {:ok, %Batch{id: 3}} = Server.reload([path(dir, "a")])
+
+    # batch 3's code fails, batch 2's code fails the same call: only 3 rolls back
+    capture_log(fn ->
+      assert {:failed, {:raise, %RuntimeError{message: "boom 2"}, _}, 3} =
+               Guard.run_twice_attributed(Toy.A, :f, [:boom])
+    end)
+
+    assert [%Batch{id: 3, rolled_back: true}, %Batch{id: 2, rolled_back: false} | _] =
+             Server.batches()
+
+    assert Guard.run(Toy.A, :f, [:ok]) == {:ok, 2}
+  end
+
   test "run_twice_attributed names the batch the first run rolled back" do
     dir = toy!(:toy_g_twice_attr, %{"lib/a.ex" => a_src(1)})
     HerdrReload.ReloadCase.write_source!(dir, "lib/a.ex", a_src(2))
