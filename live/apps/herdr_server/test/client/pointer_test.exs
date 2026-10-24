@@ -207,6 +207,10 @@ defmodule HerdrServer.Client.PointerTest do
       assert actions == [{:scroll, 1, -1}, :repaint]
       assert p.selection.head == {4, 19}
       assert {_, [:autoscroll_stop]} = Pointer.tick(%Pointer{}, c)
+
+      # at the end of the history the ticking stops
+      top = ctx(p1: [scroll: %{total: 25, viewport: 5, offset: 0}])
+      assert {%{autoscroll: nil}, [:autoscroll_stop]} = Pointer.tick(p, top)
     end
   end
 
@@ -265,6 +269,16 @@ defmodule HerdrServer.Client.PointerTest do
       assert p.hover == nil
     end
 
+    test "a ctrl move off the link, or outside every pane, clears the hover" do
+      c = ctx(p1: [rows: link_rows()])
+      {p, _} = Pointer.resolve(%Pointer{}, m(:move, :none, 5, 1, [:ctrl]), c)
+      assert p.hover != nil
+      {q, actions} = Pointer.resolve(p, m(:move, :none, 1, 1, [:ctrl]), c)
+      assert q.hover == nil and :repaint in actions
+      {q, actions} = Pointer.resolve(p, m(:move, :none, 20, 0, [:ctrl]), c)
+      assert q.hover == nil and :repaint in actions
+    end
+
     test "plain moves over a non any-motion pane reach nothing" do
       assert {_, []} = Pointer.resolve(%Pointer{}, m(:move, :none, 5, 1), ctx())
 
@@ -301,6 +315,46 @@ defmodule HerdrServer.Client.PointerTest do
   test "events outside every pane are forwarded" do
     ev = m(:press, :left, 20, 0)
     assert {_, [{:forward, ^ev}]} = Pointer.resolve(%Pointer{}, ev, ctx())
+  end
+
+  describe "facts and focus" do
+    test "an alternate screen toggle clears the selection and hover; a scroll only the hover" do
+      {p, _} = run(%Pointer{}, [m(:press, :left, 2, 2), m(:drag, :left, 5, 2)], ctx())
+      assert p.alt == {1, false}
+      assert Pointer.facts(p, 1, %{alt_screen: false, offset: 7}).selection != nil
+      assert Pointer.facts(p, 2, %{alt_screen: true}) == p
+      assert %Pointer{selection: nil, press: nil} = Pointer.facts(p, 1, %{alt_screen: true})
+
+      {h, _} =
+        Pointer.resolve(%Pointer{}, m(:move, :none, 5, 1, [:ctrl]), ctx(p1: [rows: link_rows()]))
+
+      assert %{offset: 0} = h.hover
+      assert Pointer.facts(h, 1, %{alt_screen: false, offset: 0}) == h
+      assert Pointer.facts(h, 1, %{alt_screen: false, offset: 3}).hover == nil
+      assert Pointer.facts(h, 1, %{alt_screen: true}).hover == nil
+    end
+
+    test "focus moving to another pane clears the selection and hover" do
+      {p, _} = run(%Pointer{}, [m(:press, :left, 2, 2), m(:drag, :left, 5, 2)], ctx())
+      assert Pointer.focus_moved(p, 1, 1) == p
+      assert Pointer.focus_moved(p, 2, 1) == p
+      assert %Pointer{selection: nil, press: nil} = Pointer.focus_moved(p, 1, 2)
+    end
+  end
+
+  test "wheel-extending a word selection reads words only inside the fetched rows" do
+    # rows fetched at offset 20 of 25: their row 0 is absolute row 20
+    c = ctx(p1: [scroll: %{total: 25, viewport: 5, offset: 20}])
+    events = [m(:press, :left, 7, 1), m(:release, :left, 7, 1)]
+    {p, _} = run(%Pointer{}, events, %{c | now_ms: 1000})
+    {p, _} = Pointer.resolve(p, m(:press, :left, 7, 1), %{c | now_ms: 1100})
+    assert Selection.range(p.selection) == {{6, 20}, {10, 20}}
+    # up 3 to offset 17: pointer row 0 is absolute 17, above the fetched rows: a cell
+    {q, _} = Pointer.resolve(p, m(:scroll, :wheel_up, 13, 1), c)
+    assert Selection.range(q.selection) == {{13, 17}, {10, 20}}
+    # pointer row 4 is absolute 21, fetched row 1 ("second line"): the word "line"
+    {q, _} = Pointer.resolve(p, m(:scroll, :wheel_up, 9, 5), c)
+    assert Selection.range(q.selection) == {{6, 20}, {10, 21}}
   end
 
   describe "prune" do

@@ -12,7 +12,7 @@ defmodule HerdrServer.Client.PointerIo do
   alias HerdrServer.App.{Actions, Store}
   alias HerdrServer.Client.{Links, Pointer}
   alias HerdrServer.Kernel
-  alias HerdrServer.Pane.{Input, Rows, Server}
+  alias HerdrServer.Pane.{Facts, Input, Rows, Server}
 
   @tracking [:mouse_x10, :mouse_normal, :mouse_button, :mouse_any]
 
@@ -67,6 +67,28 @@ defmodule HerdrServer.Client.PointerIo do
   end
 
   @doc """
+  Pane `id`'s pointer-relevant facts: `%{alt_screen}` from `Pane.Facts` (one ETS read),
+  plus the live scroll `offset` when `offset?`; nil for an unknown pane.
+  """
+  @spec facts(term, boolean) :: map | nil
+  def facts(id, offset?) do
+    case Facts.get(id) do
+      %{alt_screen: alt} ->
+        if offset?, do: with_offset(%{alt_screen: alt}, id), else: %{alt_screen: alt}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp with_offset(facts, id) do
+    case vt(id) do
+      {:ok, vt} -> Map.put(facts, :offset, Kernel.vt().scrollbar(vt).offset)
+      :error -> facts
+    end
+  end
+
+  @doc """
   Executes `actions` for the session of client `io.client` (driving size `io.size`).
   Returns `{pointer, notices}`.
   """
@@ -107,9 +129,10 @@ defmodule HerdrServer.Client.PointerIo do
 
   defp act(_other, _p, _io), do: :ok
 
-  # no link under the press after all: replay it, and let its release through
-  defp opened(nil, %{swallow_up: %{ev: ev}} = p, io) do
-    Store.event(ev, io.size)
+  # no link under the press after all: a tracking child gets the press (and then its
+  # release); on a non-tracking pane the click is dropped
+  defp opened(nil, %{swallow_up: %{tracking: true, pane: id, local: ev}} = p, _io) do
+    Input.mouse(ev, id)
     %{p | swallow_up: nil}
   end
 

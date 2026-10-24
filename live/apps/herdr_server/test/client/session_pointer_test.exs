@@ -7,7 +7,7 @@ defmodule HerdrServer.Client.SessionPointerTest do
   alias HerdrScene.{Cell, Event, Protocol}
   alias HerdrServer.App.Store
   alias HerdrServer.Kernel.Fake
-  alias HerdrServer.Pane.{Facts, Rows}
+  alias HerdrServer.Pane.{Facts, Rows, Server}
 
   setup do
     reset()
@@ -219,5 +219,113 @@ defmodule HerdrServer.Client.SessionPointerTest do
     assert_receive {^a, {:clipboard, %{text: "x", source: :pane}}}, 500
     input(sa, a, mouse(:move, :none, 0, 0))
     assert Facts.get(:foreground) == sa
+  end
+
+  defp pty(id) do
+    {:ok, %{pty: pty}} = Fake.Keeper.lookup(Rows.kernel_id(id))
+    pty
+  end
+
+  defp two_panes(a, sa) do
+    _ = last_scene(a)
+    input(sa, a, Event.key("b", [:ctrl]))
+    input(sa, a, Event.key("v"))
+    scene_until(a, &(length(&1.panes) == 2))
+  end
+
+  defp select(sa, a, r) do
+    input(sa, a, mouse(:press, :left, r.x + 1, r.y))
+    input(sa, a, mouse(:drag, :left, r.x + 3, r.y))
+    assert %{shown: true} = pointer(sa).selection
+  end
+
+  describe "selection and hover clearing" do
+    test "the alternate screen toggling clears the selection" do
+      {a, sa} = client()
+      r = rect(last_scene(a), 1)
+      select(sa, a, r)
+      :ok = Fake.Vt.set_mode(vt(1), :alt_screen, true)
+      output(1, "x")
+      assert eventually(fn -> pointer(sa).selection == nil end)
+    end
+
+    test "app focus moving to another pane clears the selection" do
+      {a, sa} = client()
+      scene = two_panes(a, sa)
+      select(sa, a, rect(scene, 2))
+      input(sa, a, Event.key("b", [:ctrl]))
+      input(sa, a, Event.key("h"))
+      assert scene_until(a, &(&1.focus.pane == 1))
+      assert pointer(sa).selection == nil
+    end
+
+    test "scrolling the pane clears a hover but keeps the selection" do
+      {a, sa} = client()
+      r = rect(last_scene(a), 1)
+      output(1, "go https://e.com/x")
+      :ok = Fake.Vt.set_history(vt(1), for(i <- 1..10, do: "h#{i}"))
+      input(sa, a, mouse(:move, :none, r.x + 5, r.y, [:ctrl]))
+      assert %{url: "https://e.com/x"} = pointer(sa).hover
+      Server.scroll(1, {:delta, -2})
+      assert eventually(fn -> pointer(sa).hover == nil end)
+    end
+  end
+
+  describe "ctrl+click on an osc 8 link" do
+    setup do
+      {a, sa} = client()
+      r = rect(last_scene(a), 1)
+      %{a: a, sa: sa, r: r}
+    end
+
+    defp link(uri) do
+      :ok = Fake.Vt.set_link(vt(1), for(x <- 0..3, do: {x, 0}), 4, uri)
+      output(1, "link")
+
+      assert eventually(fn ->
+               elem(Rows.fetch(1), 1) |> elem(0) |> Cell.decode_row() |> hd() |> Map.get(:link) ==
+                 4
+             end)
+    end
+
+    defp click(%{a: a, sa: sa, r: r}) do
+      input(sa, a, mouse(:press, :left, r.x + 1, r.y, [:ctrl]))
+      input(sa, a, mouse(:release, :left, r.x + 1, r.y, [:ctrl]))
+    end
+
+    test "a safe url opens on the client", c do
+      link("https://e.com/z")
+      click(c)
+      assert_receive {_, {:open_url, "https://e.com/z"}}, 500
+    end
+
+    test "an unsafe url is dropped", c do
+      link("file:///etc/passwd")
+      click(c)
+      refute_receive {_, {:open_url, _}}, 100
+      assert Process.alive?(c.sa)
+    end
+
+    test "no link after all: a tracking child gets the press and release", c do
+      link(nil)
+      :ok = Fake.Vt.set_mode(vt(1), :mouse_normal, true)
+      before = pty(1) |> Fake.Pty.writes() |> IO.iodata_to_binary()
+      click(c)
+
+      assert eventually(fn ->
+               now = pty(1) |> Fake.Pty.writes() |> IO.iodata_to_binary()
+               String.replace_prefix(now, before, "") =~ "\e[<"
+             end)
+
+      assert pointer(c.sa).swallow_up == nil
+    end
+
+    test "no link after all on a non-tracking pane drops the click", c do
+      link(nil)
+      before = pty(1) |> Fake.Pty.writes()
+      click(c)
+      assert pty(1) |> Fake.Pty.writes() == before
+      assert pointer(c.sa).swallow_up == nil and pointer(c.sa).selection == nil
+    end
   end
 end

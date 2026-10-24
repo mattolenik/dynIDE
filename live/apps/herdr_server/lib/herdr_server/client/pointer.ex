@@ -9,16 +9,21 @@ defmodule HerdrServer.Client.Pointer do
   State (all nil by default):
 
     * `selection` - `%Client.Selection{}` (absolute rows), shown or not
-    * `hover` - the ctrl-hovered link: `Links.at/4`'s map plus `pane`, i.e.
-      `%{pane, id, from, to}` (OSC 8) or `%{pane, id: 0, url, from, to}` (text), with
-      viewport coordinates (`to` inclusive)
+    * `hover` - the ctrl-hovered link: `Links.at/4`'s map plus `pane` and the scroll
+      `offset` it was found at, i.e. `%{pane, offset, id, from, to}` (OSC 8) or
+      `%{pane, offset, id: 0, url, from, to}` (text), with viewport coordinates (`to`
+      inclusive)
     * `press` - a left-button gesture on a non-tracking pane:
       `%{pane, x, row, at, word: nil | {first, last, row}, moved: boolean}`
     * `last_click` - `%{pane, x, row, at}` of the last plain click (double-click)
     * `drag` - `%{kind: :scrollbar, pane, grab}` while dragging a scrollbar thumb
-    * `swallow_up` - `%{ev}`: a consumed ctrl+click press; its drags and release are
-      dropped (`ev` is replayed by `PointerIo` when the kernel finds no link)
+    * `swallow_up` - `%{pane, local, tracking}`: a consumed ctrl+click press; its drags
+      and release are dropped. When the kernel finds no link, `PointerIo` replays
+      `local` (the pane-relative press) to a tracking child and stops swallowing; a
+      non-tracking pane drops the click.
     * `autoscroll` - `%{pane, dir: :up | :down}` while a drag holds an edge
+    * `alt` - `{pane, alt_screen?}` of the selection's (or hover's) pane when last seen;
+      `facts/3` clears both when it toggles
 
   `ctx`: `%{panes: [%{id, rect}], focused, info: %{id => %{tracking, any_motion,
   alt_screen, alternate_scroll, scroll: %{total, viewport, offset}, rows}}, now_ms,
@@ -30,6 +35,10 @@ defmodule HerdrServer.Client.Pointer do
   `{:open, id, %{id, x, y} | %{url}}`, `{:autoscroll, id, dir}`, `:autoscroll_stop`,
   `{:expire_selection, ms}` (clear the kept word highlight after `ms` if unchanged)
   and `:repaint` (selection or hover changed).
+
+  Like herdr, a selection and hover are cleared when the pane leaves the scene or is
+  resized (`prune/3`), when its alternate screen toggles (`facts/3`) and when app focus
+  moves to another pane (`focus_moved/3`); a hover also when the pane scrolls.
   """
 
   alias HerdrScene.{Cell, Event}
@@ -41,7 +50,8 @@ defmodule HerdrServer.Client.Pointer do
             last_click: nil,
             drag: nil,
             swallow_up: nil,
-            autoscroll: nil
+            autoscroll: nil,
+            alt: nil
 
   @type t :: %__MODULE__{}
 
@@ -52,9 +62,63 @@ defmodule HerdrServer.Client.Pointer do
   @spec resolve(t, tuple, map) :: {t, [term]}
   def resolve(p, {:mouse, m} = ev, ctx) do
     p = Map.merge(%__MODULE__{}, p)
-    hovering? = m.kind == :move and :ctrl in m.mods
-    {new, actions} = route(if(hovering?, do: p, else: %{p | hover: nil}), ev, m, ctx)
-    {new, repaint(p, new, actions)}
+    {new, actions} = route(%{p | hover: nil}, ev, m, ctx)
+    {seen(new, ctx), repaint(p, new, actions)}
+  end
+
+  # the alternate-screen state of the selection's (or hover's) pane, as last seen
+  defp seen(p, ctx) do
+    case p.selection || p.hover do
+      %{pane: id} ->
+        case ctx.info[id] do
+          %{alt_screen: alt} -> %{p | alt: {id, alt}}
+          _ -> p
+        end
+
+      nil ->
+        %{p | alt: nil}
+    end
+  end
+
+  @doc """
+  Pane `id`'s facts changed (`%{alt_screen: boolean}`, optionally `offset`, the live
+  scroll offset): an alternate-screen toggle clears the selection, hover and gesture
+  on that pane; another scroll offset clears its hover (the selection is in absolute
+  rows and survives scrolling).
+  """
+  @spec facts(t, term, map) :: t
+  def facts(p, id, facts) do
+    p = Map.merge(%__MODULE__{}, p)
+
+    p =
+      case p.alt do
+        {^id, alt} when alt != facts.alt_screen ->
+          %{p | selection: nil, hover: nil, press: nil, autoscroll: nil, alt: nil}
+
+        _ ->
+          p
+      end
+
+    case p.hover do
+      %{pane: ^id, offset: off} when is_map_key(facts, :offset) and off != facts.offset ->
+        %{p | hover: nil}
+
+      _ ->
+        p
+    end
+  end
+
+  @doc "App focus moved from `old` to `new`: a selection or hover on another pane is cleared."
+  @spec focus_moved(t, term, term) :: t
+  def focus_moved(p, old, new) do
+    p = Map.merge(%__MODULE__{}, p)
+
+    if old == new or new == nil do
+      p
+    else
+      p = if match?(%{pane: ^new}, p.selection), do: p, else: %{p | selection: nil, press: nil}
+      if match?(%{pane: ^new}, p.hover), do: p, else: %{p | hover: nil}
+    end
   end
 
   @doc "One autoscroll step (every 30 ms while `autoscroll` is set): one line and extend."
@@ -78,7 +142,8 @@ defmodule HerdrServer.Client.Pointer do
     hx = if p.selection, do: elem(p.selection.head, 0), else: press.x
 
     if new_off == off do
-      {p, []}
+      # at the end of the history: stop (a later edge drag re-arms)
+      {%{p | autoscroll: nil}, [:autoscroll_stop]}
     else
       new = select(p, press, {hx, vy + new_off}, info)
       {new, repaint(p, new, [{:scroll, press.pane, delta}])}
@@ -145,7 +210,7 @@ defmodule HerdrServer.Client.Pointer do
 
   defp on_pane(p, ev, %{kind: :move} = m, id, rect, info, _ctx) do
     link = if :ctrl in m.mods, do: link(info, rect, m.x - rect.x, m.y - rect.y)
-    p = if link, do: %{p | hover: Map.put(link, :pane, id)}, else: p
+    p = %{p | hover: link && Map.merge(link, %{pane: id, offset: info.scroll.offset})}
     {p, if(info.tracking and info.any_motion, do: [{:forward, ev}], else: [])}
   end
 
@@ -156,7 +221,9 @@ defmodule HerdrServer.Client.Pointer do
 
     cond do
       link != nil ->
-        {%{p | swallow_up: %{ev: ev}, press: nil}, [{:open, id, target(link, vx, vy)}]}
+        local = {:mouse, %{m | x: vx, y: vy}}
+        swallow = %{pane: id, local: local, tracking: info.tracking}
+        {%{p | swallow_up: swallow, press: nil}, [{:open, id, target(link, vx, vy)}]}
 
       scrollbar?(info, rect, vx) ->
         scrollbar_press(p, id, rect, info, vy, ctx)
@@ -306,6 +373,9 @@ defmodule HerdrServer.Client.Pointer do
     %{p | selection: sel, press: %{press | moved: moved}}
   end
 
+  # `info.rows` are the rows fetched before any scroll this event asked for, at
+  # `info.scroll.offset`: absolute row `hrow` is their row `hrow - offset` when inside
+  # them, else the head is a plain cell
   defp select(p, %{word: {f, l, arow}} = press, {hx, hrow} = at, info) do
     {hf, hl} = word(info, hrow - info.scroll.offset, hx) || {hx, hx}
 

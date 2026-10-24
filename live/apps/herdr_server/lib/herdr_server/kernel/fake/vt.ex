@@ -32,7 +32,8 @@ defmodule HerdrServer.Kernel.Fake.Vt do
             offset: nil,
             colors: nil,
             scheme: nil,
-            fail_scroll: false
+            fail_scroll: false,
+            links: %{}
 
   @impl HerdrServer.Kernel.Vt
   def new(cols, rows, _max_scrollback), do: GenServer.start_link(__MODULE__, {cols, rows})
@@ -129,8 +130,15 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   @impl HerdrServer.Kernel.Vt
   def kitty_keyboard_flags(vt), do: GenServer.call(vt, :kitty)
 
+  @doc """
+  Test hook: OSC 8 link `id` on the viewport cells `cells` (`[{x, y}]`), packed into
+  their rows from the next read on; `link_at/3` there answers `uri` (nil: no link,
+  as a stale id would).
+  """
+  def set_link(vt, cells, id, uri), do: GenServer.call(vt, {:set_link, cells, id, uri})
+
   @impl HerdrServer.Kernel.Vt
-  def link_at(_vt, _x, _y), do: nil
+  def link_at(vt, x, y), do: GenServer.call(vt, {:link_at, x, y})
 
   @impl HerdrServer.Kernel.Vt
   def graphics_placements(_vt), do: []
@@ -273,6 +281,24 @@ defmodule HerdrServer.Kernel.Fake.Vt do
       else: {:reply, :ok, %{state | offset: new, dirty: all_rows(state), gen: state.gen + 1}}
   end
 
+  def handle_call({:set_link, cells, id, uri}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    links = Enum.reduce(cells, state.links, &Map.put(&2, &1, {id, uri}))
+    {:reply, :ok, %{state | links: links}}
+  end
+
+  def handle_call({:link_at, x, y}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+
+    case state.links do
+      %{{^x, ^y} => {_id, uri}} when is_binary(uri) ->
+        {:reply, %{uri: uri, kind: :hyperlink}, state}
+
+      _ ->
+        {:reply, nil, state}
+    end
+  end
+
   def handle_call(:fail_scroll, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:reply, :ok, %{state | fail_scroll: true}}
@@ -371,7 +397,21 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   defp offset(state), do: state.offset || length(state.history)
 
   # viewport row y
+  defp pack(%{links: links} = state, y) when map_size(links) > 0 do
+    state
+    |> line(offset(state) + y)
+    |> Enum.with_index(fn g, x -> %Cell{glyph: g, link: link_id(links, x, y)} end)
+    |> Cell.encode_row()
+  end
+
   defp pack(state, y), do: pack_line(state, offset(state) + y)
+
+  defp link_id(links, x, y) do
+    case links do
+      %{{^x, ^y} => {id, _}} -> id
+      _ -> 0
+    end
+  end
 
   defp pack_line(state, sy),
     do: state |> line(sy) |> Enum.map(&%Cell{glyph: &1}) |> Cell.encode_row()

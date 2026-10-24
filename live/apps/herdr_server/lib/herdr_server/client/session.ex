@@ -126,6 +126,14 @@ defmodule HerdrServer.Client.Session do
   def handle_info({:pane_damage, id, gen}, state) do
     state = Map.merge(%State{}, state)
     gen = latest(id, gen)
+
+    # a selection's pane may have switched screens (one ETS read, only with a selection)
+    state =
+      case state.pointer.alt do
+        {^id, _} -> pointer_facts(state, id, false, &repaint/1)
+        _ -> state
+      end
+
     scene = state.last_scene
 
     if scene != nil and Enum.any?(scene.panes, &(&1.id == id)),
@@ -255,6 +263,12 @@ defmodule HerdrServer.Client.Session do
 
   def handle_info({:pane_facts, id}, state) do
     state = Map.merge(%State{}, state)
+    p = state.pointer
+
+    state =
+      if match?({^id, _}, p.alt) or match?(%{pane: ^id}, p.hover),
+        do: pointer_facts(state, id, true, & &1),
+        else: state
 
     if state.last_scene != nil and Enum.any?(state.last_scene.panes, &(&1.id == id)),
       do: {:noreply, repaint(state)},
@@ -273,7 +287,8 @@ defmodule HerdrServer.Client.Session do
         do: {:noreply, arm(new, :autoscroll, 30, &{:autoscroll, &1}, & &1)},
         else: {:noreply, new}
     else
-      _failed -> {:noreply, state}
+      # a later edge drag re-arms
+      _failed -> {:noreply, %{state | pointer: %{state.pointer | autoscroll: nil}}}
     end
   end
 
@@ -514,8 +529,9 @@ defmodule HerdrServer.Client.Session do
   defp pointed(state, p, actions) do
     io = %{client: state.client, size: driving_size(state)}
 
+    # impure: never re-run (a re-run would repeat its side effects)
     {p, notices} =
-      case Guard.run_twice(PointerIo, :run, [actions, p, io], guard()) do
+      case Guard.run(PointerIo, :run, [actions, p, io], guard()) do
         {:ok, {%Pointer{} = p, notices}} when is_list(notices) -> {p, notices}
         other -> {p, [%{level: :error, text: "pointer failed: #{inspect(other)}"}]}
       end
@@ -553,6 +569,28 @@ defmodule HerdrServer.Client.Session do
     Process.send_after(self(), msg.(ref), ms)
     %{state | pointer_refs: Map.put(state.pointer_refs, key, value.(ref))}
   end
+
+  # `changed` (repaint or not) runs when the facts cleared pointer state
+  defp pointer_facts(state, id, offset?, changed) do
+    with {:ok, %{} = facts} <- Guard.run_twice(PointerIo, :facts, [id, offset?], guard()),
+         {:ok, %Pointer{} = p} when p != state.pointer <-
+           Guard.run_twice(Pointer, :facts, [state.pointer, id, facts], guard()) do
+      changed.(%{state | pointer: p})
+    else
+      _ -> state
+    end
+  end
+
+  defp focus_moved(state, %{focus: %{pane: new}}) do
+    old = state.last_scene && state.last_scene.focus.pane
+
+    case Guard.run_twice(Pointer, :focus_moved, [state.pointer, old, new], guard()) do
+      {:ok, %Pointer{} = p} -> %{state | pointer: p}
+      _failed -> state
+    end
+  end
+
+  defp focus_moved(state, _app), do: state
 
   defp prune(state, old, new) do
     case Guard.run_twice(Pointer, :prune, [state.pointer, old, new], guard()) do
@@ -639,6 +677,9 @@ defmodule HerdrServer.Client.Session do
   defp push(state, nil), do: state
 
   defp push(state, app) do
+    # every app the session sees, before View reads the pointer
+    state = focus_moved(state, app)
+
     # outside the guard: an app without keybinds (a broken Store) must not crash us
     state =
       case app do
