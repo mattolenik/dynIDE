@@ -137,4 +137,34 @@ defmodule HerdrServer.Native.PtyTest do
     assert_raise ArgumentError, fn -> Pty.kill(pty, :bogus) end
     Pty.kill(pty, :kill)
   end
+
+  test "erts coexistence: System.cmd and kernel panes reap independently" do
+    alias HerdrServer.Native.Keeper
+
+    cmds =
+      Task.async(fn ->
+        for _ <- 1..20, do: System.cmd("true", [])
+      end)
+
+    ids =
+      for n <- 1..10 do
+        {:ok, id} =
+          Keeper.open(%{
+            cmd: "/bin/sh",
+            args: ["-c", "exit #{n}"],
+            env: [],
+            cwd: nil,
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+            subscriber: self()
+          })
+
+        {id, n}
+      end
+
+    for {id, n} <- ids, do: assert_receive({:exit, ^id, ^n}, 10_000)
+    assert Enum.all?(Task.await(cmds, 30_000), fn {_, status} -> status == 0 end)
+    for {id, _} <- ids, do: Keeper.close(id)
+  end
 end
