@@ -14,7 +14,8 @@ defmodule HerdrServer.Persist.Writer do
   (mirror on failure) with the scrollback of every pane, hidden ones included, unless a
   handoff is in progress.
 
-  Kernel facts and capture run through `HerdrReload.Guard`: a failure skips that tick.
+  Kernel facts, capture and every `Persist.Disk` call run through `HerdrReload.Guard`: a
+  failure skips that tick (logged as `persist_error`), so a bad edit cannot crash the Writer.
   Write failures log `persist_error` once per distinct reason until a write succeeds.
   `start_link/1` returns `:ignore` unless the config (`Disk.config/0` overridden by
   `opts`) has `enabled: true`.
@@ -66,10 +67,17 @@ defmodule HerdrServer.Persist.Writer do
 
     if cfg.enabled do
       Process.flag(:trap_exit, true)
-      Disk.sweep_tmp(cfg)
+      state = %__MODULE__{cfg: cfg}
+
+      state =
+        case guard(Disk, :sweep_tmp, [cfg]) do
+          {:ok, _} -> state
+          {:failed, f} -> error(state, :sweep, Guard.message(f))
+        end
+
       Process.send_after(self(), :poll, cfg.poll_ms)
       Process.send_after(self(), :scrollback, cfg.scrollback_ms)
-      {:ok, %__MODULE__{cfg: cfg}}
+      {:ok, state}
     else
       :ignore
     end
@@ -158,10 +166,10 @@ defmodule HerdrServer.Persist.Writer do
   defp do_write(state, snap) do
     t0 = System.monotonic_time(:microsecond)
 
-    case Disk.write(state.cfg, snap) do
-      :ok ->
+    case guard(Disk, :write, [state.cfg, snap]) do
+      {:ok, :ok} ->
         us = System.monotonic_time(:microsecond) - t0
-        bytes = file_size(Disk.session_path(state.cfg))
+        bytes = file_size(guard(Disk, :session_path, [state.cfg]))
         Telemetry.event(:persist_write, panes: map_size(snap.panes), bytes: bytes, us: us)
 
         stats = %{
@@ -173,14 +181,19 @@ defmodule HerdrServer.Persist.Writer do
 
         %{state | last_written: snap, error: nil, stats: stats}
 
-      {:error, reason} ->
+      {:ok, {:error, reason}} ->
         state |> error(:write, reason) |> skipped()
+
+      {:failed, f} ->
+        state |> error(:write, Guard.message(f)) |> skipped()
     end
   end
 
   defp skipped(state), do: update_in(state.stats.skipped, &(&1 + 1))
 
-  defp file_size(path) do
+  defp file_size({:failed, _}), do: 0
+
+  defp file_size({:ok, path}) do
     case File.stat(path) do
       {:ok, %{size: s}} -> s
       _ -> 0
@@ -210,7 +223,12 @@ defmodule HerdrServer.Persist.Writer do
     {state, written} =
       Enum.reduce(ids, {state, []}, fn id, acc -> pane_scrollback(acc, id, cols, app, which) end)
 
-    Disk.prune_scrollback(state.cfg, ids)
+    state =
+      case guard(Disk, :prune_scrollback, [state.cfg, ids]) do
+        {:ok, _} -> state
+        {:failed, f} -> error(state, :prune, Guard.message(f))
+      end
+
     state = %{state | sb_gens: Map.take(state.sb_gens, ids)}
 
     if written == [] do
@@ -228,13 +246,17 @@ defmodule HerdrServer.Persist.Writer do
   end
 
   defp pane_scrollback({state, written} = acc, id, cols, app, which) do
-    gen = Facts.gen(id)
+    case guard(Facts, :gen, [id]) do
+      {:ok, gen} ->
+        if which == :all or gen != Map.get(state.sb_gens, id) do
+          tail = guard(Facts, :tail, [id, state.cfg.scrollback_rows])
+          store_tail(tail, acc, id, gen, Map.get(cols, id, app.session.area.w))
+        else
+          acc
+        end
 
-    if which == :all or gen != Map.get(state.sb_gens, id) do
-      tail = guard(Facts, :tail, [id, state.cfg.scrollback_rows])
-      store_tail(tail, acc, id, gen, Map.get(cols, id, app.session.area.w))
-    else
-      {state, written}
+      {:failed, f} ->
+        {error(state, :gen, Guard.message(f)), written}
     end
   end
 
@@ -242,9 +264,10 @@ defmodule HerdrServer.Persist.Writer do
     if handing_off?() do
       acc
     else
-      case Disk.write_scrollback(state.cfg, id, bin, w) do
-        :ok -> {put_gen(state, id, gen), [byte_size(bin) | written]}
-        {:error, reason} -> {error(state, :write, reason), written}
+      case guard(Disk, :write_scrollback, [state.cfg, id, bin, w]) do
+        {:ok, :ok} -> {put_gen(state, id, gen), [byte_size(bin) | written]}
+        {:ok, {:error, reason}} -> {error(state, :write, reason), written}
+        {:failed, f} -> {error(state, :write, Guard.message(f)), written}
       end
     end
   end

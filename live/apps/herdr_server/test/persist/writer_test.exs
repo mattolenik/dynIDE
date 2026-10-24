@@ -198,4 +198,24 @@ defmodule HerdrServer.Persist.WriterTest do
     assert length(Regex.scan(~r/herdr-event persist_error /, log)) == 1
     assert log =~ ~r/persist_error ts=\d+ op=write reason=/
   end
+
+  test "a Disk call that raises skips the tick and the writer lives", %{cfg: cfg} do
+    # a dir that is not a binary: every Disk call (sweep, write, scrollback, prune) raises
+    log =
+      quiet(fn ->
+        pid = start(cfg, dir: 123)
+        wait_until(fn -> Mirror.app() != nil end)
+        [id] = Map.keys(Mirror.app().session.panes)
+        Fake.Pty.output(pty(id), "marker\r\n")
+        %{skipped: s} = Writer.stats()
+        # several layout ticks and at least two scrollback rounds
+        wait_until(fn -> Writer.stats().skipped >= s + 5 end)
+        Process.sleep(120)
+        assert Process.alive?(pid)
+        assert %{writes: 0, scrollback_writes: 0} = Writer.stats()
+      end)
+
+    assert length(Regex.scan(~r/herdr-event persist_error /, log)) == 1
+    assert log =~ ~r/persist_error ts=\d+ op=sweep reason=.*FunctionClauseError/
+  end
 end
