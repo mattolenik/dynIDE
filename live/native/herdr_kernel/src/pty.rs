@@ -22,6 +22,9 @@ const FINAL_DRAIN: usize = 64 * 1024;
 /// How often a writer blocked on a full PTY rechecks whether the pane closed.
 // ponytail: tick poll, so close latency is <= 50 ms; add a writer wake pipe if that matters.
 const WRITER_TICK_MS: i32 = 50;
+/// OSC and DCS events sent per damage window; the rest are dropped.
+// ponytail: fixed cap with silent drop; add a dropped-count event if a consumer needs to know.
+const EVENT_CAP_PER_WINDOW: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExitStatus {
@@ -297,7 +300,7 @@ impl Inner {
         }
     }
 
-    fn feed(&self, sp: &mut Splitter, seqs: &mut Vec<Seq>, chunk: &[u8]) {
+    fn feed(&self, sp: &mut Splitter, seqs: &mut Vec<Seq>, win: &mut Window, chunk: &[u8]) {
         self.check_injected_panic();
         sp.observe(chunk, seqs);
         // Clipboard and pwd effects are ignored: OSC 52 and OSC 7 arrive via the splitter.
@@ -308,11 +311,18 @@ impl Inner {
                     code: 0 | 2,
                     payload,
                     ..
-                } => Event::Title(payload),
+                } => {
+                    win.title = Some(payload);
+                    continue;
+                }
                 Seq::Osc {
                     code: 7, payload, ..
-                } => Event::Pwd(payload),
+                } => {
+                    win.pwd = Some(payload);
+                    continue;
+                }
                 Seq::Osc { code: 1, .. } => continue,
+                _ if win.sent >= EVENT_CAP_PER_WINDOW => continue,
                 Seq::Osc {
                     code,
                     payload,
@@ -324,6 +334,7 @@ impl Inner {
                 },
                 Seq::Dcs { payload, truncated } => Event::Dcs { payload, truncated },
             };
+            win.sent += 1;
             self.sink.send(ev);
         }
         if fx.bells > 0 {
@@ -332,17 +343,44 @@ impl Inner {
     }
 }
 
+/// Per damage window: title and pwd keep only the last value; OSC and DCS events are
+/// capped at `EVENT_CAP_PER_WINDOW`.
+#[derive(Default)]
+struct Window {
+    title: Option<Vec<u8>>,
+    pwd: Option<Vec<u8>>,
+    sent: usize,
+}
+
+impl Window {
+    fn pending(&self) -> bool {
+        self.title.is_some() || self.pwd.is_some() || self.sent > 0
+    }
+
+    fn flush(&mut self, sink: &dyn EventSink) {
+        if let Some(t) = self.title.take() {
+            sink.send(Event::Title(t));
+        }
+        if let Some(p) = self.pwd.take() {
+            sink.send(Event::Pwd(p));
+        }
+        self.sent = 0;
+    }
+}
+
 fn reader_main(inner: &Inner) {
     let fd = inner.fd.as_raw_fd();
     let mut sp = Splitter::new();
     let mut seqs = Vec::new();
+    let mut win = Window::default();
     let mut buf = vec![0u8; READ_CHUNK];
     let mut eof = false;
     let mut pending = false;
     let mut last: Option<Instant> = None;
     loop {
-        // Pending damage waits at most until the interval since the last damage ends.
-        let timeout = match (pending, last) {
+        // Pending damage (or window events, which flush even when hidden) waits at most
+        // until the interval since the last flush ends.
+        let timeout = match (pending || win.pending(), last) {
             (true, Some(t)) => DAMAGE_INTERVAL
                 .saturating_sub(t.elapsed())
                 .as_micros()
@@ -368,7 +406,7 @@ fn reader_main(inner: &Inner) {
             match read_fd(fd, &mut buf) {
                 Ok(0) => eof = true,
                 Ok(n) => {
-                    inner.feed(&mut sp, &mut seqs, &buf[..n]);
+                    inner.feed(&mut sp, &mut seqs, &mut win, &buf[..n]);
                     pending = true;
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -385,8 +423,12 @@ fn reader_main(inner: &Inner) {
         }
         // Leading edge after idle, then at most one damage per interval; a quiescent tail
         // is flushed when the interval ends (poll timeout above), with no further input.
-        if pending && (eof || last.is_none_or(|t| t.elapsed() >= DAMAGE_INTERVAL)) {
-            inner.damage();
+        let due = pending || win.pending();
+        if due && (eof || last.is_none_or(|t| t.elapsed() >= DAMAGE_INTERVAL)) {
+            win.flush(&*inner.sink);
+            if pending {
+                inner.damage();
+            }
             last = Some(Instant::now());
             pending = false;
         }
@@ -397,13 +439,14 @@ fn reader_main(inner: &Inner) {
         match read_fd(fd, &mut buf[..room]) {
             Ok(0) => break,
             Ok(n) => {
-                inner.feed(&mut sp, &mut seqs, &buf[..n]);
+                inner.feed(&mut sp, &mut seqs, &mut win, &buf[..n]);
                 total += n;
             }
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(_) => break,
         }
     }
+    win.flush(&*inner.sink);
     if !inner.hidden() {
         inner.damage();
     }
@@ -841,6 +884,50 @@ mod tests {
             evs.iter().filter(|e| matches!(e, Event::Title(_))).count(),
             1
         );
+    }
+
+    /// Every event up to and including the exit, and the elapsed time.
+    fn all_until_exit(rx: &Receiver<Event>) -> Vec<Event> {
+        let mut evs = Vec::new();
+        until(rx, Duration::from_secs(20), |ev| {
+            evs.push(ev.clone());
+            matches!(ev, Event::Exit(_))
+        });
+        evs
+    }
+
+    #[test]
+    fn titles_coalesce_to_last_per_window() {
+        let (_vt, _pty, rx) =
+            sh("awk 'BEGIN { for (i = 0; i < 10000; i++) printf \"\\033]0;t%d\\007\", i }'");
+        let titles: Vec<_> = all_until_exit(&rx)
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::Title(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !titles.is_empty() && titles.len() <= 20,
+            "{} titles",
+            titles.len()
+        );
+        assert_eq!(titles.last().map(Vec::as_slice), Some(&b"t9999"[..]));
+    }
+
+    #[test]
+    fn osc_capped_per_window() {
+        let start = Instant::now();
+        let (_vt, _pty, rx) =
+            sh("awk 'BEGIN { for (i = 0; i < 10000; i++) printf \"\\033]777;x\\007\" }'");
+        let evs = all_until_exit(&rx);
+        let ms = start.elapsed().as_millis() as usize;
+        let osc = evs
+            .iter()
+            .filter(|e| matches!(e, Event::Osc { code: 777, .. }))
+            .count();
+        assert!(osc > 0 && osc <= 64 * (ms / 4 + 2), "{osc} osc in {ms} ms");
+        assert!(osc < 10000, "nothing dropped");
     }
 
     #[test]
