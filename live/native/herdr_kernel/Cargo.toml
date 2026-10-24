@@ -1,0 +1,25 @@
+[package]
+name = "herdr_kernel"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "=0.38.0"
+ghostty-vt = { path = "../../../crates/ghostty-vt" }
+
+# NOTE: the repo-root `[patch.crates-io] portable-pty` is NOT inherited by this
+# independent workspace. When M1 adds portable-pty, repeat the patch here:
+#   [patch.crates-io]
+#   portable-pty = { path = "../../../vendor/portable-pty" }
+
+# Independent of the repo-root workspace.
+[workspace]
+
+[profile.dev]
+panic = "unwind"
+
+[profile.release]
+panic = "unwind"
