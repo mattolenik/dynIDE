@@ -6,9 +6,10 @@ defmodule HerdrServer.Client.SessionPointerTest do
 
   alias HerdrScene.{Cell, Event, Protocol}
   alias HerdrServer.App.Store
-  alias HerdrServer.Client.PointerIo
+  alias HerdrServer.Client.{Pointer, PointerIo, Selection, State}
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Pane.{Facts, Rows, Server}
+  alias HerdrServer.View.Overlays
 
   setup do
     reset()
@@ -191,9 +192,9 @@ defmodule HerdrServer.Client.SessionPointerTest do
 
     assert %{4243 => %{scrolled: false, scroll: ^stale}} = PointerIo.scene_facts([], 4243)
 
-    c = %HerdrServer.Client.State{
-      pointer: %HerdrServer.Client.Pointer{
-        selection: %HerdrServer.Client.Selection{
+    c = %State{
+      pointer: %Pointer{
+        selection: %Selection{
           pane: 4243,
           anchor: {0, 40},
           head: {2, 41},
@@ -204,7 +205,7 @@ defmodule HerdrServer.Client.SessionPointerTest do
       facts: PointerIo.scene_facts([], 4243)
     }
 
-    assert HerdrServer.View.Overlays.pane(4243, %{x: 0, y: 0, w: 20, h: 10}, c) == []
+    assert Overlays.pane(4243, %{x: 0, y: 0, w: 20, h: 10}, c) == []
   end
 
   test "a resize that changes the selection pane's size drops the overlay in the same push" do
