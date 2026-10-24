@@ -1,4 +1,6 @@
 pub mod cell;
+#[cfg(unix)]
+pub mod exitwatch;
 pub mod input;
 #[cfg(unix)]
 mod nif;

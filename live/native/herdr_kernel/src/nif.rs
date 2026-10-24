@@ -3,6 +3,7 @@
 //! `docs/herdr-live/results/m1.md` ("Events").
 
 use std::cell::Cell;
+use std::os::fd::OwnedFd;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -15,7 +16,7 @@ use rustler::{
 };
 
 use crate::input::{Key, KeyAction, KeyInput, Mods, MouseButton, MouseInput, MouseKind, NamedKey};
-use crate::pty::{Event, EventSink, ExitStatus, Pty, SpawnOptions, WriteError};
+use crate::pty::{AdoptOptions, Event, EventSink, ExitStatus, Pty, SpawnOptions, WriteError};
 use crate::vt::{lock, LinkKind, Mode, RowBatch, TextRange, Vt};
 
 mod atoms {
@@ -24,7 +25,8 @@ mod atoms {
         truncated, backpressure, closed, too_large, enoent, eacces, enotdir, enoexec, e2big,
         os, spawn, hyperlink, text, viewport, screen, rows,
         block, bar, underline, block_hollow, hup, term, kill, int,
-        key, mods, event, kind, button, x, y, px, disabled,
+        key, mods, event, kind, button, x, y, px, disabled, consumed, not_frozen,
+        os_pid, adopted, hidden, exited,
     }
 }
 
@@ -46,6 +48,13 @@ impl Resource for PtyRes {
         lock(&self.sink.subs).retain(|(_, m)| *m != mon);
     }
 }
+
+/// An fd held by the BEAM (`HerdrServer.Native.Fd`): a pane master from `pty_dup_fd`, or
+/// one received from the broker. Consumed (taken) by the NIF that uses it.
+pub struct FdRes(pub Mutex<Option<OwnedFd>>);
+
+#[rustler::resource_impl]
+impl Resource for FdRes {}
 
 /// Keeps a row's `Arc<[u8]>` alive for as long as the BEAM references its binary.
 pub struct RowBytes(Arc<[u8]>);
@@ -493,11 +502,7 @@ fn pty_spawn<'a>(
     cols: u16,
     rows: u16,
 ) -> Term<'a> {
-    let sink = Arc::new(BeamSink {
-        id,
-        subs: Mutex::new(Vec::new()),
-        exit: Mutex::new(None),
-    });
+    let sink = new_sink(id);
     let opts = SpawnOptions {
         id,
         cmd,
@@ -514,6 +519,102 @@ fn pty_spawn<'a>(
         }
         Err(e) => (atoms::error(), spawn_error(env, &e)).encode(env),
     }
+}
+
+fn new_sink(id: u64) -> Arc<BeamSink> {
+    Arc::new(BeamSink {
+        id,
+        subs: Mutex::new(Vec::new()),
+        exit: Mutex::new(None),
+    })
+}
+
+#[allow(clippy::too_many_arguments)] // mirrors the facade's `adopt/7`
+#[rustler::nif(schedule = "DirtyIo")]
+fn pty_adopt<'a>(
+    env: Env<'a>,
+    vt: ResourceArc<VtRes>,
+    id: u64,
+    fd: ResourceArc<FdRes>,
+    os_pid: u32,
+    exited: bool,
+    title: Option<Binary>,
+    pwd: Option<Binary>,
+) -> Term<'a> {
+    let Some(fd) = lock(&fd.0).take() else {
+        return (atoms::error(), atoms::consumed()).encode(env);
+    };
+    let sink = new_sink(id);
+    let opts = AdoptOptions {
+        id,
+        pid: os_pid,
+        exited,
+        title: title.map(|b| b.as_slice().to_vec()),
+        pwd: pwd.map(|b| b.as_slice().to_vec()),
+    };
+    match Pty::adopt(Arc::clone(&vt.0), fd, opts, sink.clone()) {
+        Ok(pty) => (atoms::ok(), ResourceArc::new(PtyRes { pty, sink })).encode(env),
+        Err(e) => (atoms::error(), spawn_error(env, &e)).encode(env),
+    }
+}
+
+#[rustler::nif]
+fn pty_dup_fd(env: Env, pty: ResourceArc<PtyRes>) -> Term {
+    match pty.pty.dup_fd() {
+        Ok(fd) => (atoms::ok(), ResourceArc::new(FdRes(Mutex::new(Some(fd))))).encode(env),
+        Err(e) => (atoms::error(), spawn_error(env, &e)).encode(env),
+    }
+}
+
+/// Joins the reader and writer (bounded by the writer's 50 ms tick).
+#[rustler::nif(schedule = "DirtyIo")]
+fn pty_freeze(env: Env, pty: ResourceArc<PtyRes>) -> Term {
+    bin(env, &pty.pty.freeze())
+}
+
+#[rustler::nif]
+fn pty_take_pending(env: Env, pty: ResourceArc<PtyRes>) -> Term {
+    bin(env, &pty.pty.take_pending())
+}
+
+#[rustler::nif(schedule = "DirtyIo")]
+fn pty_thaw(env: Env, pty: ResourceArc<PtyRes>) -> Term {
+    match pty.pty.thaw() {
+        Ok(()) => atoms::ok().encode(env),
+        Err(e) => (atoms::error(), spawn_error(env, &e)).encode(env),
+    }
+}
+
+#[rustler::nif]
+fn pty_release(env: Env, pty: ResourceArc<PtyRes>) -> Term {
+    match pty.pty.release() {
+        Ok(()) => atoms::ok().encode(env),
+        Err(_) => (atoms::error(), atoms::not_frozen()).encode(env),
+    }
+}
+
+#[rustler::nif]
+fn pty_info(env: Env, pty: ResourceArc<PtyRes>) -> NifResult<Term> {
+    let i = pty.pty.info();
+    let opt = |b: &Option<Vec<u8>>| match b {
+        Some(b) => bin(env, b),
+        None => atoms::nil().encode(env),
+    };
+    let exited = match &i.exited {
+        Some(s) => encode_status(env, s),
+        None => atoms::nil().encode(env),
+    };
+    Term::map_from_pairs(
+        env,
+        &[
+            (atoms::os_pid().encode(env), i.pid.encode(env)),
+            (atoms::adopted().encode(env), i.adopted.encode(env)),
+            (atoms::hidden().encode(env), i.hidden.encode(env)),
+            (atoms::title().encode(env), opt(&i.title)),
+            (atoms::pwd().encode(env), opt(&i.pwd)),
+            (atoms::exited().encode(env), exited),
+        ],
+    )
 }
 
 fn spawn_error<'a>(env: Env<'a>, e: &std::io::Error) -> Term<'a> {

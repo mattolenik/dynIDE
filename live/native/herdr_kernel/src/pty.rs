@@ -8,10 +8,12 @@ use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
+use crate::exitwatch::{self, Watch};
 use crate::splitter::{Seq, Splitter};
 use crate::vt::{lock, Vt};
 
@@ -68,6 +70,32 @@ pub struct SpawnOptions {
     pub rows: u16,
 }
 
+/// A pane handed over by a previous VM: `fd` is its PTY master, `pid` its child (not ours).
+#[derive(Debug, Clone)]
+pub struct AdoptOptions {
+    pub id: u64,
+    pub pid: u32,
+    /// The child already exited: no watcher, `kill` is a no-op, the exit follows the drain.
+    pub exited: bool,
+    /// Last title and pwd the previous owner saw, so `info` survives a handoff.
+    pub title: Option<Vec<u8>>,
+    pub pwd: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PtyInfo {
+    pub pid: u32,
+    pub adopted: bool,
+    pub hidden: bool,
+    pub title: Option<Vec<u8>>,
+    pub pwd: Option<Vec<u8>>,
+    pub exited: Option<ExitStatus>,
+}
+
+/// `release` needs a frozen pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotFrozen;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteError {
     Backpressure,
@@ -81,6 +109,10 @@ struct Queue {
     bufs: VecDeque<Vec<u8>>,
     bytes: usize,
     closed: bool,
+    /// Frozen: `pop` returns None so the writer stops, while `push` still queues.
+    paused: bool,
+    /// Closed by `take`, so `resume` reopens it.
+    taken: bool,
 }
 
 /// Writer queue. Shared with ghostty's write-pty callback, so it must not own the `Vt`.
@@ -121,15 +153,52 @@ impl Writer {
         self.cv.notify_all();
     }
 
-    fn is_closed(&self) -> bool {
-        lock(&self.q).closed
+    /// For a writer blocked mid-buffer: true when it must stop. Paused, the unwritten
+    /// `rest` goes back to the queue front so no byte is lost or reordered.
+    fn interrupted(&self, rest: &[u8]) -> bool {
+        let mut q = lock(&self.q);
+        if q.paused && !q.closed {
+            q.bytes += rest.len();
+            q.bufs.push_front(rest.to_vec());
+        }
+        q.closed || q.paused
     }
 
-    /// Next buffer in order, or None once closed.
+    fn pause(&self) {
+        lock(&self.q).paused = true;
+        self.cv.notify_all();
+    }
+
+    fn resume(&self) {
+        let mut q = lock(&self.q);
+        q.paused = false;
+        if q.taken {
+            q.taken = false;
+            q.closed = false;
+        }
+    }
+
+    fn copy(&self) -> Vec<u8> {
+        lock(&self.q).bufs.iter().flatten().copied().collect()
+    }
+
+    /// Closes the queue and returns everything still in it.
+    fn take(&self) -> Vec<u8> {
+        let mut q = lock(&self.q);
+        if q.closed {
+            return Vec::new();
+        }
+        q.closed = true;
+        q.taken = true;
+        q.bytes = 0;
+        std::mem::take(&mut q.bufs).into_iter().flatten().collect()
+    }
+
+    /// Next buffer in order, or None once closed or paused.
     fn pop(&self) -> Option<Vec<u8>> {
         let mut q = lock(&self.q);
         loop {
-            if q.closed {
+            if q.closed || q.paused {
                 return None;
             }
             if let Some(b) = q.bufs.pop_front() {
@@ -144,9 +213,25 @@ impl Writer {
 /// State shared by the `Pty` handle and its three threads. The threads hold `Arc<Inner>`,
 /// never `Arc<Pty>`, so dropping the last `Arc<Pty>` runs `Pty::drop` (SIGHUP) while they
 /// are still running; they end on exit, and `Inner` (and its fds) drops with the last one.
+/// The waiter (spawned) or exit watcher (adopted) blocks until the child exits, so like the
+/// reader it keeps `Inner` alive exactly as long as the child lives.
 struct Inner {
     id: u64,
     pid: libc::pid_t,
+    /// Handed over by a previous VM; not our child, so never waited on.
+    adopted: bool,
+    /// Exit watch for an adopted, live child; also how it is signalled.
+    watch: Option<Watch>,
+    /// Set by `freeze`: the reader and writer stop without draining or closing.
+    frozen: AtomicBool,
+    /// Set by `release`: no SIGHUP on drop, no exit event ever.
+    released: AtomicBool,
+    /// Reader and writer handles, joined by `freeze`. Its lock serializes freeze, thaw,
+    /// take_pending and release.
+    threads: Mutex<Vec<JoinHandle<()>>>,
+    /// Last title and pwd the reader flushed (or the adoption seed).
+    title: Mutex<Option<Vec<u8>>>,
+    pwd: Mutex<Option<Vec<u8>>>,
     vt: Arc<Vt>,
     sink: Arc<dyn EventSink>,
     /// Dup of the PTY master, O_NONBLOCK. Used by the reader, the writer and `resize`.
@@ -256,6 +341,48 @@ fn panic_msg(p: Box<dyn Any + Send>) -> String {
 }
 
 impl Inner {
+    /// A fresh `Inner` for a non-adopted pane, and the vt's write-pty hook into its writer.
+    fn new(
+        vt: Arc<Vt>,
+        sink: Arc<dyn EventSink>,
+        fd: OwnedFd,
+        id: u64,
+        pid: libc::pid_t,
+    ) -> io::Result<Inner> {
+        let (wake_r, wake_w) = pipe()?;
+        let writer = Arc::new(Writer::default());
+        let w = Arc::clone(&writer);
+        // ghostty replies (DA, DSR, ...) are dropped when the queue is full; the callback
+        // runs under the core lock, so it only enqueues.
+        // This closure is called from C: no unwind may cross back into it.
+        vt.set_write_pty(move |b| {
+            let _ = catch_unwind(AssertUnwindSafe(|| w.push(b, false)));
+        });
+        Ok(Inner {
+            id,
+            pid,
+            adopted: false,
+            watch: None,
+            frozen: AtomicBool::new(false),
+            released: AtomicBool::new(false),
+            threads: Mutex::new(Vec::new()),
+            title: Mutex::new(None),
+            pwd: Mutex::new(None),
+            vt,
+            sink,
+            fd,
+            wake_r,
+            wake_w,
+            writer,
+            hidden: AtomicBool::new(false),
+            exit_sent: AtomicBool::new(false),
+            stop: AtomicBool::new(false),
+            exit: Mutex::new(None),
+            reaped: Mutex::new(None),
+            inject_panic: AtomicBool::new(false),
+        })
+    }
+
     fn wake(&self) {
         // EAGAIN means a wake is already pending; nothing else can fail here.
         let _ = write_fd(self.wake_w.as_raw_fd(), &[1]);
@@ -266,17 +393,24 @@ impl Inner {
         if reaped.is_some() {
             return Ok(());
         }
-        // SAFETY: plain syscall; the pid is our unreaped child (see `reaped`).
-        if unsafe { libc::kill(self.pid, signo) } == 0 {
-            return Ok(());
-        }
-        match last_err() {
-            e if e.raw_os_error() == Some(libc::ESRCH) => Ok(()),
-            e => Err(e),
+        let r = match &self.watch {
+            Some(w) => w.signal(signo),
+            // SAFETY: plain syscall; the pid is our unreaped child (see `reaped`).
+            None => match unsafe { libc::kill(self.pid, signo) } {
+                0 => Ok(()),
+                _ => Err(last_err()),
+            },
+        };
+        match r {
+            Err(e) if e.raw_os_error() == Some(libc::ESRCH) => Ok(()),
+            r => r,
         }
     }
 
     fn send_exit(&self, status: ExitStatus) {
+        if self.released.load(Ordering::Acquire) {
+            return;
+        }
         if !self.exit_sent.swap(true, Ordering::AcqRel) {
             *lock(&self.exit) = Some(status.clone());
             self.sink.send(Event::Exit(status));
@@ -364,12 +498,14 @@ impl Window {
         self.title.is_some() || self.pwd.is_some() || self.sent > 0
     }
 
-    fn flush(&mut self, sink: &dyn EventSink) {
+    fn flush(&mut self, inner: &Inner) {
         if let Some(t) = self.title.take() {
-            sink.send(Event::Title(t));
+            *lock(&inner.title) = Some(t.clone());
+            inner.sink.send(Event::Title(t));
         }
         if let Some(p) = self.pwd.take() {
-            sink.send(Event::Pwd(p));
+            *lock(&inner.pwd) = Some(p.clone());
+            inner.sink.send(Event::Pwd(p));
         }
         self.sent = 0;
     }
@@ -403,6 +539,17 @@ fn reader_main(inner: &Inner) {
         if inner.stop.load(Ordering::Acquire) {
             break;
         }
+        // Frozen: unread output stays in the PTY for the next owner; no drain, no close,
+        // no exit event.
+        // ponytail: the splitter's partial OSC/DCS state is dropped, so an event split
+        // across freeze and thaw is lost (the Vt itself keeps its parser state).
+        if inner.frozen.load(Ordering::Acquire) {
+            win.flush(inner);
+            if pending && !inner.hidden() {
+                inner.damage();
+            }
+            return;
+        }
         if fds[0].revents != 0 {
             while matches!(read_fd(inner.wake_r.as_raw_fd(), &mut buf), Ok(n) if n > 0) {}
             if lock(&inner.reaped).is_some() {
@@ -432,7 +579,7 @@ fn reader_main(inner: &Inner) {
         // is flushed when the interval ends (poll timeout above), with no further input.
         let due = pending || win.pending();
         if due && (eof || last.is_none_or(|t| t.elapsed() >= DAMAGE_INTERVAL)) {
-            win.flush(&*inner.sink);
+            win.flush(inner);
             if pending {
                 inner.damage();
             }
@@ -453,7 +600,7 @@ fn reader_main(inner: &Inner) {
             Err(_) => break,
         }
     }
-    win.flush(&*inner.sink);
+    win.flush(inner);
     if !inner.hidden() {
         inner.damage();
     }
@@ -480,7 +627,7 @@ fn writer_main(inner: &Inner) {
                         inner.writer.close();
                         return;
                     }
-                    if inner.writer.is_closed() {
+                    if inner.writer.interrupted(&buf[off..]) {
                         return;
                     }
                 }
@@ -533,7 +680,19 @@ fn waiter_main(inner: &Inner) {
     inner.wake();
 }
 
-fn run(inner: &Arc<Inner>, name: &str, body: fn(&Inner)) -> io::Result<()> {
+/// Adopted panes: never waits (the child is not ours); reports `Unknown` on exit.
+fn watcher_main(inner: &Inner) {
+    if let Some(w) = &inner.watch {
+        w.wait();
+    }
+    lock(&inner.reaped).get_or_insert(ExitStatus::Unknown);
+    inner.wake();
+}
+
+/// A kernel thread body.
+type Body = fn(&Inner);
+
+fn run(inner: &Arc<Inner>, name: &str, body: Body) -> io::Result<JoinHandle<()>> {
     let inner = Arc::clone(inner);
     std::thread::Builder::new()
         .name(format!("herdr-pty-{name}-{}", inner.id))
@@ -542,7 +701,33 @@ fn run(inner: &Arc<Inner>, name: &str, body: fn(&Inner)) -> io::Result<()> {
                 inner.fail(panic_msg(p));
             }
         })
-        .map(drop)
+}
+
+/// Starts the writer and reader, keeping their handles for `freeze`.
+fn start_io(inner: &Arc<Inner>, threads: &mut Vec<JoinHandle<()>>) -> io::Result<()> {
+    threads.push(run(inner, "writer", writer_main)?);
+    threads.push(run(inner, "reader", reader_main)?);
+    // A reap seen while the reader was not running (thaw, or adopt of an exited child)
+    // is noticed on this wake.
+    inner.wake();
+    Ok(())
+}
+
+/// Starts `side` (waiter or watcher, detached) and the I/O threads.
+fn launch(inner: Inner, side: Option<(&str, Body)>) -> io::Result<Arc<Pty>> {
+    let inner = Arc::new(inner);
+    let started = side
+        .map_or(Ok(()), |(name, body)| run(&inner, name, body).map(drop))
+        .and_then(|()| start_io(&inner, &mut lock(&inner.threads)));
+    if let Err(e) = started {
+        inner.writer.close();
+        // An adopted child is not ours to kill on a local failure.
+        if !inner.adopted {
+            let _ = inner.signal(libc::SIGKILL);
+        }
+        return Err(e);
+    }
+    Ok(Arc::new(Pty { inner }))
 }
 
 pub struct Pty {
@@ -575,7 +760,6 @@ impl Pty {
             libc::F_SETFL,
             libc::O_NONBLOCK,
         )?;
-        let (wake_r, wake_w) = pipe()?;
 
         let mut cmd = CommandBuilder::new(&opts.cmd);
         cmd.args(&opts.args);
@@ -607,40 +791,120 @@ impl Pty {
             .ok_or_else(|| io::Error::other("child has no pid"))?;
         // Dropping a std Child neither kills nor reaps; the waiter thread reaps.
         drop(child);
+        let inner = match Inner::new(vt, sink, fd, opts.id, pid as libc::pid_t) {
+            Ok(inner) => inner,
+            Err(e) => {
+                // No waiter runs yet: kill and reap the just-spawned child here.
+                let mut status = 0;
+                // SAFETY: plain syscalls on our own unreaped child.
+                unsafe {
+                    libc::kill(pid as libc::pid_t, libc::SIGKILL);
+                    libc::waitpid(pid as libc::pid_t, &mut status, 0);
+                }
+                return Err(e);
+            }
+        };
+        launch(inner, Some(("waiter", waiter_main)))
+    }
 
-        let writer = Arc::new(Writer::default());
-        let w = Arc::clone(&writer);
-        // ghostty replies (DA, DSR, ...) are dropped when the queue is full; the callback
-        // runs under the core lock, so it only enqueues.
-        // This closure is called from C: no unwind may cross back into it.
-        vt.set_write_pty(move |b| {
-            let _ = catch_unwind(AssertUnwindSafe(|| w.push(b, false)));
-        });
-        let inner = Arc::new(Inner {
-            id: opts.id,
-            pid: pid as libc::pid_t,
-            vt,
-            sink,
-            fd,
-            wake_r,
-            wake_w,
-            writer,
-            hidden: AtomicBool::new(false),
-            exit_sent: AtomicBool::new(false),
-            stop: AtomicBool::new(false),
-            exit: Mutex::new(None),
-            reaped: Mutex::new(None),
-            inject_panic: AtomicBool::new(false),
-        });
-        let started = run(&inner, "waiter", waiter_main)
-            .and_then(|()| run(&inner, "writer", writer_main))
-            .and_then(|()| run(&inner, "reader", reader_main));
-        if let Err(e) = started {
-            inner.writer.close();
-            let _ = inner.signal(libc::SIGKILL);
-            return Err(e);
+    /// Takes over a PTY master `fd` whose child `opts.pid` some earlier process spawned.
+    /// The exit is always `Unknown` (the status is not ours to collect).
+    pub fn adopt(
+        vt: Arc<Vt>,
+        fd: OwnedFd,
+        opts: AdoptOptions,
+        sink: Arc<dyn EventSink>,
+    ) -> io::Result<Arc<Pty>> {
+        set_flags(
+            fd.as_raw_fd(),
+            libc::F_GETFL,
+            libc::F_SETFL,
+            libc::O_NONBLOCK,
+        )?;
+        let watch = match opts.exited {
+            true => None,
+            false => match exitwatch::watch(opts.pid) {
+                Ok(w) => Some(w),
+                Err(e) if e.raw_os_error() == Some(libc::ESRCH) => None,
+                Err(e) => return Err(e),
+            },
+        };
+        let base = Inner::new(vt, sink, fd, opts.id, opts.pid as libc::pid_t)?;
+        let side = watch.is_some().then_some(("watch", watcher_main as Body));
+        let inner = Inner {
+            adopted: true,
+            reaped: Mutex::new(watch.is_none().then_some(ExitStatus::Unknown)),
+            watch,
+            title: Mutex::new(opts.title),
+            pwd: Mutex::new(opts.pwd),
+            ..base
+        };
+        launch(inner, side)
+    }
+
+    /// A CLOEXEC dup of the PTY master (it shares the file description, so O_NONBLOCK).
+    pub fn dup_fd(&self) -> io::Result<OwnedFd> {
+        self.inner.fd.try_clone()
+    }
+
+    /// Stops the writer at a buffer boundary and the reader after its current chunk, joins
+    /// both, and returns a copy of the queued input. Writes keep queueing. Idempotent.
+    pub fn freeze(&self) -> Vec<u8> {
+        let mut threads = lock(&self.inner.threads);
+        self.inner.frozen.store(true, Ordering::Release);
+        self.inner.writer.pause();
+        self.inner.wake();
+        for h in threads.drain(..) {
+            // Thread bodies run under catch_unwind, so join never sees a panic.
+            let _ = h.join();
         }
-        Ok(Arc::new(Pty { inner }))
+        self.inner.writer.copy()
+    }
+
+    /// After `freeze`: closes the queue (later writes are `Closed`) and returns its bytes.
+    /// Not frozen: returns nothing and leaves the queue alone.
+    pub fn take_pending(&self) -> Vec<u8> {
+        let _threads = lock(&self.inner.threads);
+        match self.inner.frozen.load(Ordering::Acquire) {
+            true => self.inner.writer.take(),
+            false => Vec::new(),
+        }
+    }
+
+    /// Restarts the reader and writer on the same pane, reopening a taken queue. No-op
+    /// when not frozen.
+    pub fn thaw(&self) -> io::Result<()> {
+        let mut threads = lock(&self.inner.threads);
+        if !self.inner.frozen.swap(false, Ordering::AcqRel) {
+            return Ok(());
+        }
+        self.inner.writer.resume();
+        // The reader already ended with the exit event; nothing to restart.
+        if self.inner.exit_sent.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        start_io(&self.inner, &mut threads)
+    }
+
+    /// Hands the pane off for good: no SIGHUP on drop and no exit event, ever.
+    pub fn release(&self) -> Result<(), NotFrozen> {
+        let _threads = lock(&self.inner.threads);
+        if !self.inner.frozen.load(Ordering::Acquire) {
+            return Err(NotFrozen);
+        }
+        self.inner.released.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    pub fn info(&self) -> PtyInfo {
+        PtyInfo {
+            pid: self.inner.pid as u32,
+            adopted: self.inner.adopted,
+            hidden: self.inner.hidden(),
+            title: lock(&self.inner.title).clone(),
+            pwd: lock(&self.inner.pwd).clone(),
+            exited: self.exit_status(),
+        }
     }
 
     pub fn id(&self) -> u64 {
@@ -701,7 +965,9 @@ impl Pty {
 
 impl Drop for Pty {
     fn drop(&mut self) {
-        let _ = self.inner.signal(libc::SIGHUP);
+        if !self.inner.released.load(Ordering::Acquire) {
+            let _ = self.inner.signal(libc::SIGHUP);
+        }
     }
 }
 
@@ -1027,5 +1293,183 @@ mod tests {
             assert_eq!(exit_of(rx), ExitStatus::Code(*n));
         }
         assert!(other.join().expect("join"));
+    }
+
+    fn alive(pid: u32) -> bool {
+        // SAFETY: signal 0 only checks existence.
+        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    }
+
+    fn sigkill(pid: u32) {
+        // SAFETY: plain syscall on a test child.
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    }
+
+    /// Spawns `cmd`, hands its master over (dup, freeze, release, drop) and adopts it into
+    /// a fresh Vt, as a restarted VM would.
+    fn handed_over(
+        cmd: &str,
+        args: &[&str],
+        exited: bool,
+    ) -> (Arc<Vt>, Arc<Pty>, Receiver<Event>, u32) {
+        let (_vt, pty, _rx) = spawn(cmd, args);
+        let pid = pty.os_pid();
+        let fd = pty.dup_fd().expect("dup");
+        assert!(pty.freeze().is_empty());
+        pty.release().expect("release");
+        drop(pty);
+        let vt = Vt::new(80, 24, 1000).expect("vt");
+        let (tx, rx) = mpsc::channel();
+        let opts = AdoptOptions {
+            id: 2,
+            pid,
+            exited,
+            title: None,
+            pwd: None,
+        };
+        let pty = Pty::adopt(
+            Arc::clone(&vt),
+            fd,
+            opts,
+            Arc::new(ChanSink(Mutex::new(tx))),
+        )
+        .expect("adopt");
+        (vt, pty, rx, pid)
+    }
+
+    #[test]
+    fn adopt_dup_keeps_child_and_io() {
+        let (vt, pty, rx, pid) = handed_over("/bin/sh", &[], false);
+        assert!(pty.info().adopted);
+        pty.write(b"echo adopted-ok\n").expect("write");
+        // The output line, not the echoed command line.
+        until(&rx, T, |ev| {
+            matches!(ev, Event::Damage(_))
+                && lines(&vt)
+                    .iter()
+                    .any(|l| l.ends_with("adopted-ok") && !l.contains("echo"))
+        });
+        assert!(alive(pid));
+        sigkill(pid);
+    }
+
+    #[test]
+    fn adopted_exit_is_unknown() {
+        let (_vt, pty, rx, _pid) = handed_over("/bin/sh", &[], false);
+        pty.write(b"exit 7\n").expect("write");
+        assert_eq!(exit_of(&rx), ExitStatus::Unknown);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(rx.try_iter().all(|ev| !matches!(ev, Event::Exit(_))));
+        assert_eq!(pty.info().exited, Some(ExitStatus::Unknown));
+    }
+
+    #[test]
+    fn adopt_exited_reports_at_once() {
+        let (_vt, pty, rx, pid) = handed_over("/bin/sleep", &["30"], true);
+        assert_eq!(exit_of(&rx), ExitStatus::Unknown);
+        assert!(pty.kill(libc::SIGKILL).is_ok());
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(alive(pid));
+        sigkill(pid);
+    }
+
+    #[test]
+    fn freeze_then_thaw_resumes() {
+        let (vt, pty, rx) = spawn("/bin/cat", &[]);
+        assert!(pty.freeze().is_empty());
+        pty.write(b"abc\n").expect("write");
+        // Idempotent: still frozen, the queued input is reported again.
+        assert_eq!(pty.freeze(), b"abc\n");
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!lines(&vt).iter().any(|l| l.contains("abc")));
+        pty.thaw().expect("thaw");
+        until(&rx, T, |ev| {
+            matches!(ev, Event::Damage(_)) && lines(&vt).iter().any(|l| l == "abc")
+        });
+    }
+
+    #[test]
+    fn freeze_carries_unwritten_input() {
+        const TOTAL: usize = 512 * 1024;
+        let out = std::env::temp_dir().join(format!("herdr-freeze-{}", std::process::id()));
+        let script = format!(
+            "stty raw -echo; printf ready; sleep 2; head -c {TOTAL} > '{}'; printf done; sleep 30",
+            out.display()
+        );
+        let (vt, pty, rx) = sh(&script);
+        until(&rx, T, |ev| {
+            matches!(ev, Event::Damage(_)) && lines(&vt)[0].starts_with("ready")
+        });
+        // Printable bytes only (raw mode passes them verbatim) in a period that does not
+        // divide the chunk size, so a reordered chunk changes the stream.
+        let written: Vec<u8> = (0..TOTAL).map(|i| b'!' + (i % 89) as u8).collect();
+        let mut off = 0;
+        while off < TOTAL {
+            match pty.write(&written[off..(off + 64 * 1024).min(TOTAL)]) {
+                Ok(()) => off += 64 * 1024,
+                Err(WriteError::Backpressure) => break,
+                Err(e) => panic!("{e:?}"),
+            }
+        }
+        let written = &written[..off.min(TOTAL)];
+        std::thread::sleep(Duration::from_millis(100));
+        let start = Instant::now();
+        let copy = pty.freeze();
+        assert!(
+            start.elapsed() < Duration::from_millis(500),
+            "{:?}",
+            start.elapsed()
+        );
+        let pending = pty.take_pending();
+        assert_eq!(copy, pending);
+        assert!(!pending.is_empty() && pending.len() < written.len());
+        assert_eq!(&written[written.len() - pending.len()..], &pending[..]);
+        // What the PTY accepted plus the pending bytes, replayed after a thaw, is exactly
+        // the written stream: the child copies all of it to `out`.
+        pty.thaw().expect("thaw");
+        pty.write(&pending).expect("write pending");
+        until(&rx, Duration::from_secs(10), |ev| {
+            matches!(ev, Event::Damage(_)) && lines(&vt)[0].starts_with("readydone")
+        });
+        let got = std::fs::read(&out).expect("read out");
+        let _ = std::fs::remove_file(&out);
+        assert_eq!(got.len(), written.len());
+        assert!(got == written, "stream differs");
+    }
+
+    #[test]
+    fn release_does_not_hup() {
+        let (vt, pty, rx) = spawn("/bin/sleep", &["30"]);
+        let pid = pty.os_pid();
+        let fd = pty.dup_fd().expect("dup");
+        assert!(pty.release().is_err(), "release requires freeze");
+        pty.freeze();
+        pty.release().expect("release");
+        drop((vt, pty, rx));
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(alive(pid));
+        sigkill(pid);
+        drop(fd);
+    }
+
+    #[test]
+    fn write_after_take_pending_is_closed() {
+        let (_vt, pty, _rx) = spawn("/bin/cat", &[]);
+        pty.freeze();
+        pty.write(b"x").expect("write");
+        assert_eq!(pty.take_pending(), b"x");
+        assert_eq!(pty.write(b"y"), Err(WriteError::Closed));
+        pty.thaw().expect("thaw");
+        assert_eq!(pty.write(b"z"), Ok(()));
+    }
+
+    #[test]
+    fn info_records_title_and_pwd() {
+        let (_vt, pty, rx) = sh("printf '\\033]2;tt\\007\\033]7;file://h/tmp\\007'; sleep 30");
+        until(&rx, T, |ev| matches!(ev, Event::Pwd(_)));
+        let info = pty.info();
+        assert_eq!(info.title.as_deref(), Some(&b"tt"[..]));
+        assert_eq!(info.pwd.as_deref(), Some(&b"file://h/tmp"[..]));
+        assert!(!info.adopted && info.exited.is_none() && info.pid == pty.os_pid());
     }
 }

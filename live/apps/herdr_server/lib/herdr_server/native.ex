@@ -95,6 +95,28 @@ defmodule HerdrServer.Native do
   @doc false
   @spec pty_set_hidden(term, term) :: :ok
   def pty_set_hidden(_pty, _hidden), do: err()
+  @doc false
+  @spec pty_adopt(term, term, term, term, term, term, term) ::
+          {:ok, reference} | {:error, atom | {atom, term}}
+  def pty_adopt(_vt, _id, _fd, _os_pid, _exited, _title, _pwd), do: err()
+  @doc false
+  @spec pty_dup_fd(term) :: {:ok, reference} | {:error, atom | {atom, term}}
+  def pty_dup_fd(_pty), do: err()
+  @doc false
+  @spec pty_freeze(term) :: binary
+  def pty_freeze(_pty), do: err()
+  @doc false
+  @spec pty_take_pending(term) :: binary
+  def pty_take_pending(_pty), do: err()
+  @doc false
+  @spec pty_thaw(term) :: :ok | {:error, atom | {atom, term}}
+  def pty_thaw(_pty), do: err()
+  @doc false
+  @spec pty_release(term) :: :ok | {:error, :not_frozen}
+  def pty_release(_pty), do: err()
+  @doc false
+  @spec pty_info(term) :: map
+  def pty_info(_pty), do: err()
 
   # Test only: makes the pane's reader panic holding the vt core lock.
   # `{:error, :disabled}` outside the test env.

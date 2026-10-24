@@ -23,6 +23,9 @@ defmodule HerdrServer.Native.Pty do
 
   @opaque pty :: reference
   @type signal :: :hup | :term | :kill | :int | pos_integer
+  @typedoc "A PTY master fd held as a resource (`HerdrServer.Native.Fd` in the kernel)."
+  @type fd :: reference
+  @type exit_status :: non_neg_integer | {:signal, pos_integer} | {:panic, binary} | :unknown
   @typedoc """
   A posix atom when the OS reported an errno (an exec failure), `{:os, errno}` for
   other errnos, `{:spawn, message}` when there is none (portable-pty's own checks,
@@ -83,4 +86,56 @@ defmodule HerdrServer.Native.Pty do
   @doc "Hidden panes keep parsing but emit no damage; unhiding sends a full damage."
   @spec set_hidden(pty, boolean) :: :ok
   def set_hidden(pty, hidden), do: Native.pty_set_hidden(pty, hidden)
+
+  @doc """
+  Adopts a pane handed over by an earlier VM: `fd` is its PTY master (consumed; a
+  second use is `{:error, :consumed}`), `os_pid` its child, which is not ours, so the
+  exit is always `{:exit, id, :unknown}`. With `exited` the child is already gone:
+  the exit follows the drain of what is left in the PTY, and `kill/2` is a no-op.
+  `title` and `pwd` seed `info/1`.
+  """
+  @spec adopt(Vt.vt(), non_neg_integer, fd, pos_integer, boolean, binary | nil, binary | nil) ::
+          {:ok, pty} | {:error, :consumed | spawn_error}
+  def adopt(vt, id, fd, os_pid, exited, title, pwd),
+    do: Native.pty_adopt(vt, id, fd, os_pid, exited, title, pwd)
+
+  @doc "A CLOEXEC dup of the PTY master, as a single-use fd resource."
+  @spec dup_fd(pty) :: {:ok, fd} | {:error, spawn_error}
+  def dup_fd(pty), do: Native.pty_dup_fd(pty)
+
+  @doc """
+  Stops the reader and writer (unread output stays in the PTY, no exit event) and
+  returns a copy of the queued input. Writes keep queueing. Idempotent.
+  """
+  @spec freeze(pty) :: binary
+  def freeze(pty), do: Native.pty_freeze(pty)
+
+  @doc """
+  After `freeze/1`: returns the queued input and closes the queue, so later writes
+  are `{:error, :closed}`. Not frozen: `""`, and the queue is left alone.
+  """
+  @spec take_pending(pty) :: binary
+  def take_pending(pty), do: Native.pty_take_pending(pty)
+
+  @doc "Restarts a frozen pane, reopening a taken queue. No-op when not frozen."
+  @spec thaw(pty) :: :ok | {:error, spawn_error}
+  def thaw(pty), do: Native.pty_thaw(pty)
+
+  @doc "Marks a frozen pane handed off: no SIGHUP when dropped and no exit event."
+  @spec release(pty) :: :ok | {:error, :not_frozen}
+  def release(pty), do: Native.pty_release(pty)
+
+  @doc """
+  Runtime facts: the last title and pwd the reader flushed (or the adoption seed),
+  and `exited` in the `:exit` event's status shape, or nil.
+  """
+  @spec info(pty) :: %{
+          os_pid: pos_integer,
+          adopted: boolean,
+          hidden: boolean,
+          title: binary | nil,
+          pwd: binary | nil,
+          exited: exit_status | nil
+        }
+  def info(pty), do: Native.pty_info(pty)
 end
