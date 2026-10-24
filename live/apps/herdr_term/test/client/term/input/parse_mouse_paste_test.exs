@@ -85,6 +85,17 @@ defmodule HerdrTerm.Client.Term.Input.ParseMousePasteTest do
     assert {[{:paste, ^body}, {:key, %{key: "z"}}], _} = run(chunks)
   end
 
+  test "a paste past paste_max is emitted so far and stays in paste mode" do
+    max = Parse.paste_max()
+    big = :binary.copy("a", max)
+
+    {[{:paste, first}], t} = run(["\e[200~" <> big, "bc"])
+    assert byte_size(first) == max + 2 - 5
+    assert t.paste != nil
+    assert {[{:paste, rest}, {:key, %{key: "z"}}], %{paste: nil}} = run(["\r\e[201~z"], t)
+    assert first <> rest == big <> "bc\r"
+  end
+
   test "kitty reply sets kitty flag only inside a window" do
     assert {[_], %{kitty: true}} = run(["\e[?1u"], win([:kitty_flags]))
     assert {[], %{kitty: false}} = run(["\e[?1u"])

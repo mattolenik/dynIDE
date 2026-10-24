@@ -24,8 +24,12 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
     * `flush/1` of ESC plus a partial UTF-8 character emits `:escape` and drops
       the partial bytes.
     * SGR mouse (`\\e[<b;x;y M|m`), focus (`\\e[I`/`\\e[O`) and bracketed paste are
-      always parsed. Paste bodies are buffered (unbounded, across chunks) until
-      `\\e[201~` and never parsed as keys; the 64-byte CSI cap does not apply.
+      always parsed. Paste bodies are buffered (across chunks) until `\\e[201~`
+      and never parsed as keys; the 64-byte CSI cap does not apply. A body that
+      grows past 16 MiB (`paste_max/0`) without its end marker is emitted as one
+      `{:paste, binary}` so far and buffering starts over, still in paste mode
+      (so the rest of the paste is never typed as keys); one long paste then
+      arrives as several `{:paste, _}` events.
     * Query replies (DA1, kitty flags, OSC 10/11 colours, cursor position) are
       emitted as `{:reply, kind, data}` only while a window opened with
       `open_window/3` is live, else dropped. A DA1 reply closes all windows.
@@ -147,6 +151,12 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
 
   def flush(%__MODULE__{} = t), do: {[], %{t | buffer: "", skip: false}}
 
+  @paste_max 16 * 1024 * 1024
+
+  @doc "Paste body cap in bytes (see moduledoc)."
+  @spec paste_max() :: pos_integer
+  def paste_max, do: @paste_max
+
   defp drain("", acc, t), do: {Enum.reverse(acc), %{t | buffer: ""}}
 
   # Inside bracketed paste: accumulate until the end marker.
@@ -158,6 +168,12 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
       {pos, 6} ->
         rest = binary_part(all, pos + 6, byte_size(all) - pos - 6)
         drain(rest, [{:paste, binary_part(all, 0, pos)} | acc], %{t | paste: nil})
+
+      # over the cap: emit the body so far, keep 5 bytes that may start the marker
+      :nomatch when byte_size(all) > @paste_max ->
+        cut = byte_size(all) - 5
+        tail = binary_part(all, cut, 5)
+        {Enum.reverse([{:paste, binary_part(all, 0, cut)} | acc]), %{t | buffer: "", paste: tail}}
 
       :nomatch ->
         {Enum.reverse(acc), %{t | buffer: "", paste: all}}

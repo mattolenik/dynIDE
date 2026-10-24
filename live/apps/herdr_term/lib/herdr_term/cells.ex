@@ -32,10 +32,11 @@ defmodule HerdrTerm.Cells do
     }
   end
 
-  @doc "One cell per grapheme; wide graphemes get a width-0 tail cell."
+  @doc "One cell per grapheme; wide graphemes get a width-0 tail cell. Invalid UTF-8 becomes U+FFFD."
   @spec text(binary, Cell.t()) :: Cell.row()
   def text(str, %Cell{} = style) do
     str
+    |> String.replace_invalid()
     |> String.graphemes()
     |> Enum.flat_map(fn g ->
       <<cp::utf8, _::binary>> = g

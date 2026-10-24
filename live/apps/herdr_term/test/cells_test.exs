@@ -14,6 +14,11 @@ defmodule HerdrTerm.CellsTest do
     assert Cell.cols(Cells.text("日本", @s)) == 4
   end
 
+  test "text of invalid UTF-8 renders U+FFFD instead of raising" do
+    row = Cells.text(<<"ok", 0xFF, 0xC3>>, @s)
+    assert Cells.to_text(row) == "ok\uFFFD\uFFFD"
+  end
+
   test "repeat and blank match per-cell encoding" do
     s = Cells.style(fg: {:palette, 4}, attrs: [:bold])
 

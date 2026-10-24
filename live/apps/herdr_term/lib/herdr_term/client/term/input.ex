@@ -11,6 +11,10 @@ defmodule HerdrTerm.Client.Term.Input do
   held until `{:ack, seq}`. Key releases always go slow. Delivery is
   at-least-once: an unacked event is re-sent first to the next session. Events before the first `{:session, pid}` (sent
   by Render after each attach) are queued. A buffered ESC is flushed after 25ms.
+
+  Parse runs through `SafeApply`: a failing chunk is dropped (logged) and the parser
+  state, queue and in-flight event stay as they were. `{:tty_resumed}` asks Render for
+  a full repaint.
   """
 
   use GenServer
@@ -52,9 +56,12 @@ defmodule HerdrTerm.Client.Term.Input do
     deadline = now() + @window_ms
 
     parse =
-      Parse.new()
-      |> Parse.open_window(:kitty_flags, deadline)
-      |> Parse.open_window(:da1, deadline)
+      Enum.reduce([:kitty_flags, :da1], Parse.new(), fn kind, p ->
+        case SafeApply.run(Parse, :open_window, [p, kind, deadline]) do
+          {:ok, p} -> p
+          {:failed, _} -> p
+        end
+      end)
 
     # a restarted Input asks Render for the current session
     GenServer.cast(Client.via(opts[:id], :render), {:input_up, self()})
@@ -70,15 +77,22 @@ defmodule HerdrTerm.Client.Term.Input do
   @impl true
   def handle_info({:tty_input, bin}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {items, parse} = state.parse |> Parse.expire_windows(now()) |> then(&Parse.events(bin, &1))
-    state = arm_esc(%{state | parse: parse})
-    {:noreply, enqueue(state, items)}
+
+    with {:ok, parse} <- SafeApply.run(Parse, :expire_windows, [state.parse, now()]),
+         {:ok, {items, parse}} <- SafeApply.run(Parse, :events, [bin, parse]) do
+      {:noreply, enqueue(arm_esc(%{state | parse: parse}), items)}
+    else
+      {:failed, _} -> {:noreply, state}
+    end
   end
 
   def handle_info({:esc_flush, ref}, %{esc: ref} = state) do
     state = Map.merge(%__MODULE__{}, state)
-    {items, parse} = Parse.flush(state.parse)
-    {:noreply, enqueue(%{state | parse: parse, esc: nil}, items)}
+
+    case SafeApply.run(Parse, :flush, [state.parse]) do
+      {:ok, {items, parse}} -> {:noreply, enqueue(%{state | parse: parse, esc: nil}, items)}
+      {:failed, _} -> {:noreply, %{state | esc: nil}}
+    end
   end
 
   def handle_info({:esc_flush, _stale}, state) do
@@ -102,6 +116,12 @@ defmodule HerdrTerm.Client.Term.Input do
     {:noreply, %{state | session: nil}}
   end
 
+  # the same session again (Render answers both its attach and our :input_up): no resend
+  def handle_info({:session, pid}, %{session: pid} = state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, state}
+  end
+
   def handle_info({:session, pid}, state) do
     state = Map.merge(%__MODULE__{}, state)
 
@@ -112,6 +132,18 @@ defmodule HerdrTerm.Client.Term.Input do
       end
 
     {:noreply, drain(%{state | session: pid, inflight: nil, queue: queue})}
+  end
+
+  def handle_info({:tty_resumed}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    if pid = Client.whereis(state.id, :render), do: send(pid, :repaint)
+    {:noreply, state}
+  end
+
+  def handle_info(msg, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    Logger.debug("input: ignored #{inspect(msg)}")
+    {:noreply, state}
   end
 
   defp arm_esc(%{parse: %Parse{buffer: "\e" <> _}} = state) do

@@ -101,6 +101,28 @@ defmodule HerdrTerm.Client.Term.InputTest do
     assert_receive {:input, ^from, _, {:key, %{key: "b"}}}
   end
 
+  test "unknown messages are ignored and {:tty_resumed} asks Render to repaint", %{sup: sup} do
+    input = Client.input(sup)
+    before = :sys.get_state(input)
+    send(input, :bogus)
+    assert :sys.get_state(input) == before
+    :erlang.trace(Client.render(sup), true, [:receive])
+    send(input, {:tty_resumed})
+    assert_receive {:trace, _, :receive, :repaint}, 500
+    assert Process.alive?(input)
+  end
+
+  test "a failing Parse drops the chunk and keeps the Input state", %{sup: sup, tty: tty} do
+    input = Client.input(sup)
+    :sys.replace_state(input, &%{&1 | parse: :broken})
+    before = :sys.get_state(input)
+    Tty.inject(tty, "a")
+    send(input, {:esc_flush, before.esc})
+    assert :sys.get_state(input) == %{before | esc: nil}
+    refute_receive {:input, _, _, _}, 50
+    assert Client.input(sup) == input
+  end
+
   defp wait_until(f, n \\ 100) do
     case f.() do
       x when x in [nil, false] and n > 0 ->
