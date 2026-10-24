@@ -3,7 +3,8 @@
 //! `docs/herdr-live/results/m1.md` ("Events").
 
 use std::cell::Cell;
-use std::os::fd::OwnedFd;
+use std::os::fd::{AsFd, OwnedFd};
+use std::path::Path;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -16,6 +17,7 @@ use rustler::{
 };
 
 use crate::input::{Key, KeyAction, KeyInput, Mods, MouseButton, MouseInput, MouseKind, NamedKey};
+use crate::link::{Frame, Link, LinkSink};
 use crate::pty::{
     AdoptOptions, Event, EventSink, ExitStatus, Pty, SpawnOptions, ThawError, WriteError,
 };
@@ -29,6 +31,8 @@ mod atoms {
         block, bar, underline, block_hollow, hup, term, kill, int,
         key, mods, event, kind, button, x, y, px, disabled, consumed, not_frozen, released,
         os_pid, adopted, hidden, exited,
+        herdr_link, herdr_link_closed, eof, timeout, noproc, econnrefused, einval,
+        connect_failed,
     }
 }
 
@@ -711,6 +715,146 @@ fn pty_subscribe(env: Env, pty: ResourceArc<PtyRes>, pid: LocalPid) -> Atom {
 #[rustler::nif(schedule = "DirtyCpu")]
 fn pty_set_hidden(env: Env, pty: ResourceArc<PtyRes>, hidden: bool) -> Atom {
     with_caller(env, || pty.pty.set_hidden(hidden));
+    atoms::ok()
+}
+
+// ---- Link ----
+
+/// The broker link (`HerdrServer.Native.Link`). The owner is monitored: its death closes
+/// the socket, which ends the reader thread.
+pub struct LinkRes(Link);
+
+#[rustler::resource_impl]
+impl Resource for LinkRes {
+    const IMPLEMENTS_DOWN: bool = true;
+
+    fn down<'a>(&'a self, _env: Env<'a>, _pid: LocalPid, _mon: Monitor) {
+        self.0.close();
+    }
+}
+
+/// Holds the resource so frames can name their link; the reader exits on close.
+struct LinkBeamSink {
+    owner: LocalPid,
+    link: ResourceArc<LinkRes>,
+}
+
+impl LinkSink for LinkBeamSink {
+    fn frame(&self, f: Frame) {
+        let fds: Vec<ResourceArc<FdRes>> = f
+            .fds
+            .into_iter()
+            .map(|fd| ResourceArc::new(FdRes(Mutex::new(Some(fd)))))
+            .collect();
+        deliver(&[self.owner], |env| {
+            (
+                atoms::herdr_link(),
+                self.link.clone(),
+                f.kind,
+                bin(env, &f.body),
+                fds.clone(),
+            )
+                .encode(env)
+        });
+    }
+
+    fn closed(&self, reason: Option<String>) {
+        deliver(&[self.owner], |env| {
+            let r = match &reason {
+                None => atoms::eof().encode(env),
+                Some(m) => m.as_str().encode(env),
+            };
+            (atoms::herdr_link_closed(), self.link.clone(), r).encode(env)
+        });
+    }
+}
+
+/// Known link errors as atoms; `None` for the rest.
+fn link_reason(e: &std::io::Error) -> Option<Atom> {
+    use std::io::ErrorKind::*;
+    Some(match (e.kind(), e.raw_os_error()) {
+        (_, Some(libc::ENOENT)) => atoms::enoent(),
+        (_, Some(libc::EACCES)) => atoms::eacces(),
+        (_, Some(libc::ECONNREFUSED)) => atoms::econnrefused(),
+        (_, Some(libc::EPIPE | libc::ECONNRESET | libc::ENOTCONN)) => atoms::closed(),
+        (WouldBlock | TimedOut, _) => atoms::timeout(),
+        // herdr_fdpass's "frame too large".
+        (InvalidInput, None) => atoms::too_large(),
+        _ => return None,
+    })
+}
+
+#[rustler::nif(schedule = "DirtyIo")]
+fn link_connect(env: Env, path: String, owner: LocalPid) -> Term {
+    let fail = |e: &std::io::Error| {
+        let r = match e.kind() {
+            // std's over-long socket path (no errno).
+            std::io::ErrorKind::InvalidInput => atoms::einval(),
+            _ => link_reason(e).unwrap_or_else(atoms::connect_failed),
+        };
+        (atoms::error(), r).encode(env)
+    };
+    let link = match Link::connect(Path::new(&path)) {
+        Ok(l) => l,
+        Err(e) => return fail(&e),
+    };
+    let res = ResourceArc::new(LinkRes(link));
+    if env.monitor(&res, &owner).is_none() {
+        res.0.close();
+        return (atoms::error(), atoms::noproc()).encode(env);
+    }
+    let sink = LinkBeamSink {
+        owner,
+        link: res.clone(),
+    };
+    match res.0.start(sink) {
+        Ok(()) => (atoms::ok(), res).encode(env),
+        Err(e) => {
+            res.0.close();
+            fail(&e)
+        }
+    }
+}
+
+/// Each fd is sent as a fresh dup: a pty's master, or an unconsumed `FdRes` (left in place;
+/// a dup also lets one `FdRes` appear twice without locking its mutex twice).
+#[rustler::nif(schedule = "DirtyIo")]
+fn link_send<'a>(
+    env: Env<'a>,
+    link: ResourceArc<LinkRes>,
+    kind: u8,
+    body: Term<'a>,
+    fds: Vec<Term<'a>>,
+) -> NifResult<Term<'a>> {
+    let body = Binary::from_iolist(body)?;
+    let mut owned: Vec<OwnedFd> = Vec::with_capacity(fds.len());
+    for t in fds {
+        let dup = if let Ok(f) = t.decode::<ResourceArc<FdRes>>() {
+            match lock(&f.0).as_ref() {
+                Some(fd) => fd.try_clone(),
+                None => return Ok((atoms::error(), atoms::consumed()).encode(env)),
+            }
+        } else {
+            t.decode::<ResourceArc<PtyRes>>()?.pty.dup_fd()
+        };
+        match dup {
+            Ok(fd) => owned.push(fd),
+            Err(e) => return Ok((atoms::error(), e.to_string()).encode(env)),
+        }
+    }
+    let borrowed: Vec<_> = owned.iter().map(|f| f.as_fd()).collect();
+    Ok(match link.0.send(kind, body.as_slice(), &borrowed) {
+        Ok(()) => atoms::ok().encode(env),
+        Err(e) => match link_reason(&e) {
+            Some(a) => (atoms::error(), a).encode(env),
+            None => (atoms::error(), e.to_string()).encode(env),
+        },
+    })
+}
+
+#[rustler::nif]
+fn link_close(link: ResourceArc<LinkRes>) -> Atom {
+    link.0.close();
     atoms::ok()
 }
 

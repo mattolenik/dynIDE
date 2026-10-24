@@ -3,6 +3,8 @@ pub mod cell;
 pub mod exitwatch;
 pub mod input;
 #[cfg(unix)]
+pub mod link;
+#[cfg(unix)]
 mod nif;
 #[cfg(unix)]
 pub mod pty;

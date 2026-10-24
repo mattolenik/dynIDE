@@ -337,7 +337,7 @@ fn wait_status(status: libc::c_int) -> ExitStatus {
     }
 }
 
-fn panic_msg(p: Box<dyn Any + Send>) -> String {
+pub(crate) fn panic_msg(p: Box<dyn Any + Send>) -> String {
     match p.downcast::<&str>() {
         Ok(s) => s.to_string(),
         Err(p) => match p.downcast::<String>() {

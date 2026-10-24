@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 rustler = "=0.38.0"
 ghostty-vt = { path = "../../../crates/ghostty-vt" }
 libc = "0.2"
+herdr_fdpass = { path = "../herdr_fdpass" }
 portable-pty = "=0.9.0"
 
 # The repo-root `[patch.crates-io]` is not inherited by this independent workspace.

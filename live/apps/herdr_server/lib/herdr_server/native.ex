@@ -118,6 +118,16 @@ defmodule HerdrServer.Native do
   @spec pty_info(term) :: map
   def pty_info(_pty), do: err()
 
+  @doc false
+  @spec link_connect(term, term) :: {:ok, reference} | {:error, atom}
+  def link_connect(_path, _owner), do: err()
+  @doc false
+  @spec link_send(term, term, term, term) :: :ok | {:error, atom | binary}
+  def link_send(_link, _kind, _body, _fds), do: err()
+  @doc false
+  @spec link_close(term) :: :ok
+  def link_close(_link), do: err()
+
   # Test only: makes the pane's reader panic holding the vt core lock.
   # `{:error, :disabled}` outside the test env.
   @doc false
