@@ -15,6 +15,7 @@ defmodule HerdrServer.Persist.Load do
 
   alias HerdrReload.{Guard, Telemetry}
   alias HerdrServer.App.{Store, Upgrade}
+  alias HerdrServer.Handoff.Link
   alias HerdrServer.Persist.{Disk, RestorePlan, Schema}
 
   @doc "Restores the app on disk into `state` (`app: nil`), spawning through `effect`."
@@ -73,6 +74,6 @@ defmodule HerdrServer.Persist.Load do
     for id <- ids, bytes = Disk.read_scrollback(cfg, id), into: %{}, do: {id, bytes}
   end
 
-  # Task 6 replaces this with Handoff.Link.fresh_reason/0 (:boot or :fallback)
-  defp fresh_reason, do: :boot
+  # :fallback after the broker lost the session; nil without a broker
+  defp fresh_reason, do: Link.fresh_reason() || :boot
 end

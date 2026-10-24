@@ -48,6 +48,8 @@ defmodule HerdrServer.Handoff.Link do
   defstruct link: nil,
             gen: 0,
             reason: nil,
+            # FRESH: :boot or :fallback (the broker lost the session); nil when adopted
+            fresh: nil,
             adopted: [],
             claimed: 0,
             rejected: [],
@@ -85,6 +87,15 @@ defmodule HerdrServer.Handoff.Link do
 
   @spec adopt_reason() :: :graceful | :crash | nil
   def adopt_reason, do: call(:reason, nil)
+
+  @doc "Why this VM started fresh: nil without a broker or in an adopted VM."
+  @spec fresh_reason() :: :boot | :fallback | nil
+  def fresh_reason, do: call(:fresh, nil)
+
+  @doc "FRESH body: `<<1>>` is a fallback after failed adoptions, anything else a boot."
+  @spec parse_fresh(binary) :: :boot | :fallback
+  def parse_fresh(<<1>>), do: :fallback
+  def parse_fresh(_body), do: :boot
 
   @doc "After an adoption: RESTORED to the broker, DROPs for unclaimed entries."
   @spec restored() :: :ok
@@ -142,10 +153,10 @@ defmodule HerdrServer.Handoff.Link do
 
     with {:ok, l} <- NLink.connect(path, self()),
          :ok <- NLink.send(l, NLink.kind(:hello), <<gen::64, os_pid::32>>, []) do
-      {reason, adopted} = await(l, [])
+      {reason, fresh, adopted} = await(l, [])
       :persistent_term.put(@key, l)
-      Logger.info("handoff link gen=#{gen} #{reason || :fresh} entries=#{length(adopted)}")
-      {:ok, %__MODULE__{link: l, gen: gen, reason: reason, adopted: adopted}}
+      Logger.info("handoff link gen=#{gen} #{reason || fresh} entries=#{length(adopted)}")
+      {:ok, %__MODULE__{link: l, gen: gen, reason: reason, fresh: fresh, adopted: adopted}}
     else
       {:error, reason} -> {:stop, {:broker_link, reason}}
     end
@@ -174,15 +185,15 @@ defmodule HerdrServer.Handoff.Link do
   # Plain receive on purpose: a standby VM waits here until it is promoted.
   defp await(l, acc) do
     receive do
-      {:herdr_link, ^l, @fresh, _, _} ->
-        {nil, []}
+      {:herdr_link, ^l, @fresh, body, _} ->
+        {nil, parse_fresh(body), []}
 
       {:herdr_link, ^l, @adopt, body, fds} ->
         {key, blob} = NLink.parse_key(body)
         await(l, [{key, blob, fds} | acc])
 
       {:herdr_link, ^l, @adopt_end, <<_count::32, r>>, _} ->
-        {if(r == 0, do: :graceful, else: :crash), Enum.reverse(acc)}
+        {if(r == 0, do: :graceful, else: :crash), nil, Enum.reverse(acc)}
 
       {:herdr_link_closed, ^l, reason} ->
         halt("handoff link closed before start: #{inspect(reason)}")
@@ -207,6 +218,11 @@ defmodule HerdrServer.Handoff.Link do
   def handle_call(:reason, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:reply, state.reason, state}
+  end
+
+  def handle_call(:fresh, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, state.fresh, state}
   end
 
   def handle_call(:restored, _from, state) do

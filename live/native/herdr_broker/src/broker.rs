@@ -128,9 +128,10 @@ enum Step {
 #[derive(Clone)]
 enum Plan {
     Idle,
-    /// Waiting for `gen`'s HELLO, then FRESH.
+    /// Waiting for `gen`'s HELLO, then FRESH (`restore`: after a lost session).
     Fresh {
         gen: u64,
+        restore: bool,
     },
     /// Ruling 13: adopt into `to` (`sent` = entries once ADOPT_END went out).
     Crash {
@@ -263,7 +264,12 @@ impl<S: Spawner> Broker<S> {
     /// Runs until a stop completes and every VM is reaped; removes the socket.
     pub fn run(&mut self) -> io::Result<Outcome> {
         match self.spawn_vm(Role::Primary) {
-            Some(gen) => self.plan = Plan::Fresh { gen },
+            Some(gen) => {
+                self.plan = Plan::Fresh {
+                    gen,
+                    restore: false,
+                }
+            }
             None => self.begin_stop(1),
         }
         while !(matches!(self.plan, Plan::Stopping) && self.vms.is_empty()) {
@@ -513,8 +519,9 @@ impl<S: Spawner> Broker<S> {
             c.kind = ConnKind::Vm(gen);
         }
         match self.plan.clone() {
-            Plan::Fresh { gen: g } if g == gen => {
-                if self.send(t, kind::FRESH, &[]) {
+            Plan::Fresh { gen: g, restore } if g == gen => {
+                // FRESH body: 0 boot, 1 fallback after failed adoptions
+                if self.send(t, kind::FRESH, &[u8::from(restore)]) {
                     self.promote(gen);
                     self.go_idle();
                 }
@@ -887,14 +894,15 @@ impl<S: Spawner> Broker<S> {
         self.crash_try(from, attempts + 1, t0, None);
     }
 
-    /// Ruling 13's disk-restore hook (M8), then a fresh VM; held fds close.
+    /// Ruling 13's disk-restore hook (M8): held fds close and a fresh VM is told
+    /// (FRESH body 1) that it restores a lost session from disk.
     fn fallback_restore(&mut self, lost: u64) {
-        log!("handoff failed; disk restore not implemented (M8)");
-        event!("session_lost", "reason" => "disk_restore_not_implemented", "gen" => lost);
+        log!("handoff failed; fresh vm restores from disk");
+        event!("session_lost", "reason" => "fallback_restore", "gen" => lost);
         self.entries.clear();
         self.deadline = None;
         match self.spawn_vm(Role::Primary) {
-            Some(gen) => self.plan = Plan::Fresh { gen },
+            Some(gen) => self.plan = Plan::Fresh { gen, restore: true },
             None => self.begin_stop(1),
         }
     }
@@ -1158,7 +1166,7 @@ impl<S: Spawner> Broker<S> {
             return;
         }
         match self.plan.clone() {
-            Plan::Fresh { gen: g } if g == gen => self.begin_stop(1),
+            Plan::Fresh { gen: g, .. } if g == gen => self.begin_stop(1),
             Plan::Crash { to, .. } if to == gen => self.crash_fail("target died"),
             Plan::Graceful { to, .. } if to == gen => self.graceful_fail("target died"),
             Plan::Thawing { to, .. } if to == gen => self.thaw(),
@@ -1194,7 +1202,7 @@ impl<S: Spawner> Broker<S> {
 
     fn plan_target(&self) -> Option<u64> {
         match self.plan {
-            Plan::Fresh { gen } => Some(gen),
+            Plan::Fresh { gen, .. } => Some(gen),
             Plan::Crash { to, .. } | Plan::Graceful { to, .. } => Some(to),
             _ => None,
         }
@@ -1441,7 +1449,7 @@ mod tests {
         assert_eq!((g, r), (1, Role::Primary));
         assert!(h.status().contains("phase=booting\n"));
         hello(&vm1, 1);
-        expect(&vm1, kind::FRESH);
+        assert_eq!(expect(&vm1, kind::FRESH).body, [0]);
         let st = h.wait_status("primary_gen=1");
         for k in [
             "broker_pid",
@@ -1632,6 +1640,32 @@ mod tests {
         send(&vm2, kind::RESTORED, &0u32.to_be_bytes(), &[]);
         let st = h.wait_status("primary_gen=2");
         assert!(st.contains("last_handoff_kind=crash\n"));
+    }
+
+    #[test]
+    fn fallback_after_three_failed_adoptions_sends_fresh_restore() {
+        let h = start("fallback");
+        let (vm1, vm2) = h.boot();
+        drop(vm1);
+        h.reaps.lock().unwrap().push((pid(1), 1));
+        (&h.sig_w).write_all(b"C").unwrap();
+        // attempt 1 reuses the standby, attempts 2 and 3 spawn targets; none RESTOREs
+        expect(&vm2, kind::ADOPT_END);
+        h.wait_signal(pid(2), libc::SIGKILL);
+        let mut held = vec![vm2];
+        for gen in [3, 4] {
+            let (g, r, vm) = h.vm();
+            assert_eq!((g, r), (gen, Role::Target));
+            hello(&vm, gen);
+            expect(&vm, kind::ADOPT_END);
+            h.wait_signal(pid(gen), libc::SIGKILL);
+            held.push(vm);
+        }
+        let (g, r, vm5) = h.vm();
+        assert_eq!((g, r), (5, Role::Primary));
+        hello(&vm5, 5);
+        assert_eq!(expect(&vm5, kind::FRESH).body, [1]);
+        h.wait_status("primary_gen=5");
     }
 
     /// Kinds received on `s` until EOF or 300 ms of silence.

@@ -14,6 +14,18 @@ defmodule HerdrServer.Handoff.LinkTest do
     assert Link.take_adopted("pane/") == []
   end
 
+  test "parse_fresh reads the FRESH body" do
+    assert Link.parse_fresh(<<>>) == :boot
+    assert Link.parse_fresh(<<0>>) == :boot
+    assert Link.parse_fresh(<<1>>) == :fallback
+    assert Link.parse_fresh(<<2>>) == :boot
+    assert Link.parse_fresh(<<1, 0>>) == :boot
+  end
+
+  test "fresh_reason is nil without a broker" do
+    assert Link.fresh_reason() == nil
+  end
+
   test "hold is sent before open replies" do
     path = "/tmp/hh-#{System.unique_integer([:positive])}.sock"
     {:ok, l} = :gen_tcp.listen(0, ifaddr: {:local, path}, mode: :binary, active: false)
@@ -106,6 +118,7 @@ defmodule HerdrServer.Handoff.LinkTest do
     {pid, peer} = start_link_with(<<2::32, 0x41, 0>>)
     assert Link.enabled?()
     assert Link.adopt_reason() == nil
+    assert Link.fresh_reason() == :boot
     assert Link.restored() == :ok
 
     request(peer, 42, :ping)
@@ -121,6 +134,13 @@ defmodule HerdrServer.Handoff.LinkTest do
     :ok = :gen_tcp.send(peer, <<2::32, 0x46, 0>>)
     assert_receive {:handoff, %{phase: :aborted, gen: 7}}, 5000
 
+    stop(pid)
+  end
+
+  test "a FRESH body of 1 is a fallback restore" do
+    {pid, _peer} = start_link_with(<<3::32, 0x41, 0, 1>>)
+    assert Link.adopt_reason() == nil
+    assert Link.fresh_reason() == :fallback
     stop(pid)
   end
 
@@ -245,6 +265,7 @@ defmodule HerdrServer.Handoff.LinkTest do
     # ADOPT_END, count 0, graceful
     {pid, peer} = start_link_with(<<7::32, 0x43, 0, 0::32, 0>>)
     assert Link.adopt_reason() == :graceful
+    assert Link.fresh_reason() == nil
     :ok = Keeper.adopt_entries([{"pane/450", blob, [fd]}])
 
     assert {0x03, body} = frame(peer)
