@@ -923,8 +923,10 @@ defmodule HerdrServer.ServerTest do
     assert_receive {^c2, {:notice, %{level: :error}}}, 500
     assert_receive {^c2, {:ack, 2}}
     assert Process.whereis(Store) == store
-    # only the activity record of c2 changed
-    assert %{:sys.get_state(store) | clients: nil} == %{before | clients: nil}
+    # only the activity record of c2 changed; the mirror's 20 ms debounce (`flush`,
+    # `mirrored`) may fire between the two reads on a slow host
+    transient = &%{&1 | clients: nil, flush: nil, mirrored: nil}
+    assert transient.(:sys.get_state(store)) == transient.(before)
   end
 
   test "View.compute's budgeted worker gets only size, transport and runtime of the client state" do

@@ -173,6 +173,9 @@ defmodule HerdrServer.Persist.WriterTest do
     end)
   end
 
+  @root System.cmd("id", ["-u"]) |> elem(0) |> String.trim() == "0"
+
+  @tag skip: if(@root, do: "root writes into a mode-0500 dir")
   test "a read-only dir logs one persist_error and the writer lives", %{cfg: cfg} do
     File.mkdir_p!(cfg.dir)
     File.chmod!(cfg.dir, 0o500)
