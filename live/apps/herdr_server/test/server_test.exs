@@ -183,8 +183,24 @@ defmodule HerdrServer.ServerTest do
     scene(c)
     ref = Process.monitor(s)
     send(s, {:detach})
+    assert_receive {^c, {:detached, :requested}}
     assert_receive {:DOWN, ^ref, :process, ^s, :normal}
     assert Process.alive?(c)
+  end
+
+  test "the detach binding (prefix q) detaches only the client that pressed it" do
+    {c, s} = client()
+    scene(c)
+    {c2, s2} = client()
+    scene(c2)
+    ref = Process.monitor(s)
+    input(s, c, 1, Event.key("b", [:ctrl]))
+    input(s, c, 2, Event.key("q"))
+    assert_receive {^c, {:detached, :requested}}
+    assert Protocol.validate_server_msg({:detached, :requested}) == :ok
+    assert_receive {:DOWN, ^ref, :process, ^s, :normal}
+    refute_receive {^c2, {:detached, _}}, 50
+    assert Process.alive?(s2)
   end
 
   test "inline clients get full rows and cursors in scenes, and rows on damage" do

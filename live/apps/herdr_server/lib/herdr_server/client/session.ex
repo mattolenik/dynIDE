@@ -92,9 +92,11 @@ defmodule HerdrServer.Client.Session do
     {:noreply, state}
   end
 
-  # the protocol's client -> server detach message
+  # the protocol's client -> server detach message, or the Store's {:detach} effect for an
+  # event from this session
   def handle_info({:detach}, state) do
     state = Map.merge(%State{}, state)
+    send(state.client, {:detached, :requested})
     {:stop, :normal, state}
   end
 

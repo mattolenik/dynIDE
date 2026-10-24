@@ -19,6 +19,8 @@ defmodule HerdrScene.Protocol do
     * `{:notice, %{level: :info | :warning | :error, text: binary}}`
     * `{:ack, seq}`
     * `{:handoff, map}`
+    * `{:detached, reason :: atom}`: the server ended this client's session (`:requested`:
+      the client's own detach binding or `{:detach}`); the session is gone after it
 
   Generations: `{:ref, id, layout_gen}` in a scene is the pane's layout generation;
   the `gen` of `{:damage, ...}`, `{:rows, ...}` and the rows MFA is its content
@@ -81,6 +83,7 @@ defmodule HerdrScene.Protocol do
   end
 
   def validate_server_msg({:handoff, %{}}), do: :ok
+  def validate_server_msg({:detached, reason}) when is_atom(reason), do: :ok
   def validate_server_msg(other), do: {:error, "unknown server message #{inspect(other)}"}
 
   @doc "Validates the reply to `{:attach, _}`."

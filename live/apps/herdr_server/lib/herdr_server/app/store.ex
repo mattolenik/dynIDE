@@ -250,7 +250,9 @@ defmodule HerdrServer.App.Store do
 
   defp io({:focus_report, id, f}, _), do: Input.focus(f, id)
   defp io({:notice, n}, origin), do: notice(origin, n)
-  defp io({:detach}, origin), do: notice(origin, %{level: :info, text: "detach not implemented"})
+  # the originating session tells its client {:detached, :requested} and stops
+  defp io({:detach}, origin) when is_pid(origin), do: send(origin, {:detach})
+  defp io({:detach}, _origin), do: :ok
   defp io(other, _), do: Logger.warning("unknown effect #{inspect(other)}")
 
   # idempotent: closing an already-gone pane is a no-op everywhere

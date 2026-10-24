@@ -55,7 +55,8 @@ defmodule HerdrScene.ProtocolTest do
           {:rows, 1, 0, [{0, "x"}]},
           {:notice, %{level: :warning, text: "hi"}},
           {:ack, 3},
-          {:handoff, %{}}
+          {:handoff, %{}},
+          {:detached, :requested}
         ] do
       assert Protocol.validate_server_msg(m) == :ok, inspect(m)
     end
@@ -68,6 +69,7 @@ defmodule HerdrScene.ProtocolTest do
           {:notice, %{level: :fatal, text: "hi"}},
           {:ack, :x},
           {:handoff, []},
+          {:detached, "requested"},
           :junk
         ] do
       assert {:error, msg} = Protocol.validate_server_msg(m), inspect(m)

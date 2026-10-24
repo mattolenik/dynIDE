@@ -269,7 +269,7 @@ defmodule HerdrServer.App.Actions do
   def enter_mode(app, mode), do: {put_mode(app, mode), []}
 
   @spec detach(app()) :: {app(), [effect()]}
-  def detach(app), do: {app, [{:notice, %{level: :info, text: "detach not implemented"}}]}
+  def detach(app), do: {app, [{:detach}]}
 
   # --- helpers ---
 
