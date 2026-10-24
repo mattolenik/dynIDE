@@ -2,12 +2,15 @@ defmodule HerdrTerm.Application do
   @moduledoc """
   Loads the kernel config (`HerdrTerm.Kernel.load/0`), starts
   `HerdrTerm.Registry` and, unless headless (`HERDR_LIVE_HEADLESS=1` or
-  `config :herdr_term, :headless`), the local terminal client `HerdrTerm.LocalClient`.
+  `config :herdr_term, :headless`), the local terminal client `HerdrTerm.LocalClient`
+  once the server endpoint exists (`start_when_ready/1`).
   """
 
   use Application
 
   require Logger
+
+  alias HerdrScene.Protocol
 
   @impl true
   def start(_type, _args) do
@@ -17,12 +20,27 @@ defmodule HerdrTerm.Application do
       System.get_env("HERDR_LIVE_HEADLESS") == "1" or
         Application.get_env(:herdr_term, :headless, false)
 
-    children = [{Registry, keys: :unique, name: HerdrTerm.Registry}]
+    starter = Supervisor.child_spec({Task, fn -> start_when_ready([]) end}, id: :local_starter)
 
-    with {:ok, _} = ok <-
-           Supervisor.start_link(children, strategy: :one_for_one, name: HerdrTerm.Supervisor) do
-      if not headless?, do: start_local()
-      ok
+    children =
+      [{Registry, keys: :unique, name: HerdrTerm.Registry}] ++
+        if(headless?, do: [], else: [starter])
+
+    Supervisor.start_link(children, strategy: :one_for_one, name: HerdrTerm.Supervisor)
+  end
+
+  @doc false
+  # Blocks until the endpoint (`opts[:endpoint]`, default `Protocol.endpoint/0`) exists,
+  # then `start_local/1`. A standby VM has no endpoint until it is promoted, so its
+  # client never opens /dev/tty under the primary's.
+  # ponytail: polls every 20 ms; add a registration notice if the delay matters
+  @spec start_when_ready(keyword) :: {:ok, pid} | {:error, term}
+  def start_when_ready(opts) do
+    if GenServer.whereis(Keyword.get(opts, :endpoint, Protocol.endpoint())) do
+      start_local(opts)
+    else
+      Process.sleep(20)
+      start_when_ready(opts)
     end
   end
 

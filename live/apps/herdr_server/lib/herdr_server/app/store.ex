@@ -38,6 +38,15 @@ defmodule HerdrServer.App.Store do
       error notice.
       The reload server is `config :herdr_server, :reload_server` (default
       `HerdrReload.Server`).
+    * Handoff (M5): after each event that changed the app, the app and the pane/keeper
+      id map are held with the broker under `"app/store"` (`Handoff.Link.hold/3`, a no-op
+      without one). A new VM's `init/1` that finds that entry adopts it: it maps the panes
+      the Keeper adopted, starts their `Pane.Server`s, and leaves every other keeper pane
+      alone (they belong to whoever opened them, e.g. ctl). A mapped pane the Keeper lost
+      is closed as `{:pane_exited, id}`.
+      The carried app is mirrored at once, so a later Store restart in this VM restarts
+      from the mirror as above. A VM's ETS mirror never crosses a handoff; the carried
+      entry is the only app a new VM starts from.
   """
   use GenServer
 
@@ -46,12 +55,14 @@ defmodule HerdrServer.App.Store do
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
   alias HerdrServer.App.{Actions, Keybinds, Reconcile, Restore}
+  alias HerdrServer.Handoff.Link
   alias HerdrServer.{Kernel, Layout, Mirror}
   alias HerdrServer.Pane.{Input, Rows, Server}
   alias HerdrServer.Pane.Supervisor, as: Panes
 
   # bytes of scrollback per pane
   @max_scrollback 10_000_000
+  @hold_key "app/store"
 
   defstruct app: nil,
             subs: %{},
@@ -105,6 +116,17 @@ defmodule HerdrServer.App.Store do
 
   @impl true
   def init(:ok) do
+    case Link.take_adopted(@hold_key) do
+      [{_key, blob, _fds}] ->
+        :persistent_term.erase(Protocol.fast_path_key())
+        {:ok, adopt_carried(blob)}
+
+      [] ->
+        init_local()
+    end
+  end
+
+  defp init_local do
     case Mirror.app() do
       nil ->
         # a fresh start: close what a previous incarnation without a mirror left open
@@ -215,7 +237,12 @@ defmodule HerdrServer.App.Store do
         else: commit(state, batch(state, ev, size), origin, &drive(&1, size, origin))
 
     state = state |> settle() |> publish_fast()
-    if state.app != old, do: Enum.each(Map.keys(state.subs), &send(&1, {:app_changed, state.app}))
+
+    if state.app != old do
+      hold(state)
+      Enum.each(Map.keys(state.subs), &send(&1, {:app_changed, state.app}))
+    end
+
     state
   end
 
@@ -402,6 +429,60 @@ defmodule HerdrServer.App.Store do
 
   defp notice(origin, n) when is_pid(origin), do: send(origin, {:notice, n})
   defp notice(_origin, n), do: Logger.info("notice: #{inspect(n)}")
+
+  # --- handoff ---
+
+  defp hold(state) do
+    if Link.enabled?() do
+      blob = :erlang.term_to_binary(%{v: 1, app: state.app, kernel_ids: Rows.kernel_ids()})
+      Link.hold(@hold_key, blob, [])
+    end
+  end
+
+  defp adopt_carried(blob) do
+    case decode(blob) do
+      %{v: 1, app: app, kernel_ids: kids} ->
+        adopt_carried(app, Map.new(kids))
+
+      other ->
+        # the keeper's panes are left alone, as unmapped ones are below
+        Logger.error("handoff: unusable app/store entry #{inspect(other, limit: 5)}")
+        %__MODULE__{}
+    end
+  end
+
+  defp adopt_carried(app, kids) do
+    keeper = Kernel.keeper()
+    ids = Map.keys(app.session.panes)
+    live = Enum.filter(ids, &start_adopted(&1, kids[&1], keeper))
+    # after init: drops the pane from the layout and closes whatever is left of it
+    Enum.each(ids -- live, &event_async({:pane_exited, &1}))
+    unmapped = keeper.ids() -- Enum.map(live, &kids[&1])
+    if unmapped != [], do: Logger.info("handoff: keeper panes left alone: #{inspect(unmapped)}")
+    Logger.info("handoff: adopted app with panes #{inspect(live)}")
+    # sizes are unknown here: {0, 0} makes the next settle resize each visible pane to
+    # its rect (the same size it has, so no SIGWINCH)
+    # mirrored now: a Store restart in this VM must find the carried app, not close it
+    flush(publish_fast(%__MODULE__{app: app, sizes: Map.new(live, &{&1, {0, 0}})}))
+  end
+
+  defp start_adopted(_id, nil, _keeper), do: false
+
+  defp start_adopted(id, kid, keeper) do
+    with {:ok, _} <- keeper.lookup(kid),
+         :ok <- Rows.put_kernel_id(id, kid),
+         {:ok, pid} when is_pid(pid) <- Panes.start_pane(id) do
+      true
+    else
+      _ -> false
+    end
+  end
+
+  defp decode(blob) do
+    :erlang.binary_to_term(blob, [:safe])
+  rescue
+    ArgumentError -> :undecodable
+  end
 
   # --- after every event ---
 

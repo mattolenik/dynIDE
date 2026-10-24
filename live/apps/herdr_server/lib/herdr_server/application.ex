@@ -32,8 +32,9 @@ defmodule HerdrServer.Application do
         [
           {Registry, keys: :duplicate, name: HerdrServer.Client.Registry},
           {Registry, keys: :unique, name: HerdrServer.Pane.Registry},
-          HerdrServer.App.Store,
+          # before the Store: an adopting Store starts its panes' servers in init
           HerdrServer.Pane.Supervisor,
+          HerdrServer.App.Store,
           HerdrServer.Client.Supervisor,
           HerdrServer.Client.Endpoint,
           HerdrServer.ReloadNotices

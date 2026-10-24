@@ -16,7 +16,9 @@ defmodule HerdrTerm.Tty.Owner do
   `{:tty_resumed}` re-sends the modes (the kernel's suspend turned them off)
   and asks Render for a full repaint; `{:exit, :tty, reason}` (host terminal
   gone) and `{:detached, reason}` (from Render, sent by the server) end the
-  local client through `HerdrTerm.Client.local_exit/1`. Other clients only log.
+  local client through `HerdrTerm.Client.local_exit/1`; `{:handoff, %{phase: :begin}}`
+  stops the local client without stopping herdr-live (`HerdrTerm.Client.stop_local/0`).
+  Other clients only log.
 
   SIGWINCH: when `HerdrTerm.Kernel.sigwinch?/0` (real tty),
   `:os.set_signal(:sigwinch, :handle)` makes `erl_signal_server` emit a
@@ -132,6 +134,13 @@ defmodule HerdrTerm.Tty.Owner do
     state = Map.merge(%__MODULE__{}, state)
     Logger.info("detached: #{inspect(reason)}")
     if state.local, do: Client.local_exit({:detached, reason})
+    {:noreply, state}
+  end
+
+  def handle_info({:handoff, %{phase: :begin}}, %{local: true} = state) do
+    state = Map.merge(%__MODULE__{}, state)
+    Logger.info("handoff: releasing the host terminal")
+    Client.stop_local()
     {:noreply, state}
   end
 

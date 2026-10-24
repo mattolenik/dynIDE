@@ -87,6 +87,44 @@ defmodule HerdrTerm.Tty.OwnerTest do
   end
 
   describe "HerdrTerm.Application.start_local/1" do
+    test "local client waits for the endpoint" do
+      on_exit(fn -> Supervisor.terminate_child(HerdrTerm.Supervisor, HerdrTerm.LocalClient) end)
+      ep = FakeServer.unique_name()
+      starter = Task.async(fn -> HerdrTerm.Application.start_when_ready(endpoint: ep) end)
+      Process.sleep(100)
+      # a standby VM: no endpoint, so no tty is opened
+      assert Process.whereis(HerdrTerm.LocalClient) == nil
+      FakeServer.start(self(), ep, {__MODULE__, :rows, []})
+      assert {:ok, pid} = Task.await(starter)
+      assert Process.whereis(HerdrTerm.LocalClient) == pid
+      assert_receive {:attached, _, _}
+    end
+
+    test "local client stops on handoff begin", %{ep: ep} do
+      on_exit(fn -> Supervisor.terminate_child(HerdrTerm.Supervisor, HerdrTerm.LocalClient) end)
+      {:ok, pid} = HerdrTerm.Application.start_local(endpoint: ep)
+      assert_receive {:attached, %{client: render}, _}
+      owner = Client.owner(pid)
+      tty = Client.tty(pid)
+      :erlang.trace_pattern({Tty, :_, :_}, true, [:local])
+      :erlang.trace(owner, true, [:call])
+      ref = Process.monitor(pid)
+      send(render, {:handoff, %{phase: :begin, gen: 1, panes: []}})
+      assert_receive {:DOWN, ^ref, :process, ^pid, :shutdown}, 1000
+      assert_receive {:trace, ^owner, :call, {Tty, :restore, [^tty]}}
+      # stopping the client does not stop herdr-live
+      refute_received :local_exit
+    after
+      :erlang.trace_pattern({Tty, :_, :_}, false, [:local])
+    end
+
+    test "other clients ignore a handoff", %{ep: ep} do
+      %{sup: sup} = start(ep)
+      send(Client.render(sup), {:handoff, %{phase: :begin, gen: 1, panes: []}})
+      Process.sleep(50)
+      assert Process.alive?(sup)
+    end
+
     test "an open error is logged once and leaves the app running", %{ep: ep} do
       log =
         capture_log(fn ->

@@ -30,6 +30,11 @@ defmodule HerdrServer.Client.Session do
   normally (client gone, detach, Store gone); a crash keeps it for the re-attach.
   If the restarted Store dies while the session re-subscribes, the client gets
   `{:detached, :store_restart}`.
+
+  Handoff (M5): every `Handoff.Notice` event is forwarded verbatim (`{:handoff, map}`).
+  From `:begin` input is held: each input gets a warning notice and no ack, so the
+  client keeps it unacked (at-least-once: resent first to its next session, in the new
+  VM). `:aborted` runs the held input in order, acking each.
   """
   use GenServer, restart: :temporary
 
@@ -37,6 +42,7 @@ defmodule HerdrServer.Client.Session do
   alias HerdrScene.Protocol
   alias HerdrServer.App.{Keybinds, Store}
   alias HerdrServer.Client.{Keys, State}
+  alias HerdrServer.Handoff.Notice
   alias HerdrServer.Mirror
   alias HerdrServer.Pane.Rows
   alias HerdrServer.View
@@ -55,6 +61,7 @@ defmodule HerdrServer.Client.Session do
   def init(info) do
     {:ok, _} = Registry.register(HerdrServer.Client.Registry, :clients, nil)
     :ok = Store.subscribe(self())
+    :ok = Notice.subscribe()
 
     state = %State{
       kind: info.kind,
@@ -96,6 +103,12 @@ defmodule HerdrServer.Client.Session do
       else: {:noreply, state}
   end
 
+  def handle_info({:input, _, _, _} = msg, %{held: held} = state) when is_list(held) do
+    state = Map.merge(%State{}, state)
+    send(state.client, {:notice, %{level: :warning, text: "input held: handoff in progress"}})
+    {:noreply, %{state | held: [msg | held]}}
+  end
+
   def handle_info({:input, from, seq, ev} = msg, state) do
     state = Map.merge(%State{}, state)
 
@@ -110,6 +123,24 @@ defmodule HerdrServer.Client.Session do
 
     if is_pid(from), do: send(from, {:ack, seq})
     {:noreply, state}
+  end
+
+  def handle_info({:handoff, %{phase: phase}} = event, state) do
+    state = Map.merge(%State{}, state)
+    send(state.client, event)
+
+    case phase do
+      :begin ->
+        {:noreply, %{state | held: state.held || []}}
+
+      :aborted ->
+        held = Enum.reverse(state.held || [])
+
+        {:noreply, Enum.reduce(held, %{state | held: nil}, &elem(handle_info(&1, &2), 1))}
+
+      _ ->
+        {:noreply, state}
+    end
   end
 
   def handle_info({:notice, n}, state) do

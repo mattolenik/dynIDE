@@ -64,6 +64,14 @@ defmodule HerdrServer.Handoff.Link do
   @spec restored() :: :ok
   def restored, do: call(:restored, :ok)
 
+  @doc false
+  # Test hook: runs a Link without a broker whose adopted list is `entries`.
+  @spec put_adopted_for_test([{binary, binary, [Pty.fd()]}]) :: :ok
+  def put_adopted_for_test(entries) do
+    {:ok, _} = GenServer.start(__MODULE__, {:adopted_for_test, entries}, name: __MODULE__)
+    :ok
+  end
+
   defp call(msg, disabled) do
     if GenServer.whereis(__MODULE__),
       do: GenServer.call(__MODULE__, msg, :infinity),
@@ -83,6 +91,9 @@ defmodule HerdrServer.Handoff.Link do
   end
 
   @impl true
+  def init({:adopted_for_test, entries}),
+    do: {:ok, %__MODULE__{adopted: entries}}
+
   def init(_opts) do
     case System.get_env("HERDR_BROKER_SOCK") do
       nil -> :ignore

@@ -50,6 +50,17 @@ defmodule HerdrTerm.Client do
     apply(m, f, a)
   end
 
+  @doc """
+  Handoff `:begin` reached the local client: stops `HerdrTerm.LocalClient` normally (its
+  `Tty.Owner` restores the tty for the next VM's client) without stopping herdr-live.
+  Returns at once (the caller is one of the children being stopped).
+  """
+  @spec stop_local() :: :ok
+  def stop_local do
+    spawn(fn -> Supervisor.terminate_child(HerdrTerm.Supervisor, HerdrTerm.LocalClient) end)
+    :ok
+  end
+
   @doc "The tty resource held by this client's `Tty.Owner`."
   def tty(sup), do: sup |> owner() |> Owner.tty()
 

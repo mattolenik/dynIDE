@@ -20,7 +20,8 @@ defmodule HerdrTerm.Client.Term.Render do
   pending timer. A frame repaints fully on the first frame, after a re-attach, when the
   scene size changes and on `:repaint` (`Tty.Owner` sends it when the tty resumes). A
   failing compose keeps the last frame and retries a full repaint every 500ms; a failing
-  cursor keeps the last frame. `{:detached, reason}` goes to `Tty.Owner`.
+  cursor keeps the last frame. `{:detached, reason}` and
+  `{:handoff, map}` go to `Tty.Owner`.
   """
 
   use GenServer
@@ -145,8 +146,8 @@ defmodule HerdrTerm.Client.Term.Render do
     {:noreply, %{state | notice: notice}}
   end
 
-  # the server ended this client's session (protocol `{:detached, reason}`)
-  def handle_info({:detached, _reason} = msg, state) do
+  # the server ended this client's session (protocol `{:detached, reason}`), or a handoff
+  def handle_info({tag, _} = msg, state) when tag in [:detached, :handoff] do
     state = Map.merge(%__MODULE__{}, state)
     if pid = Client.whereis(state.id, :tty_owner), do: send(pid, msg)
     {:noreply, state}

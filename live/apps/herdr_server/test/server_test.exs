@@ -10,6 +10,7 @@ defmodule HerdrServer.ServerTest do
 
   alias HerdrScene.{Cell, Event, Protocol, Scene}
   alias HerdrServer.App.Store
+  alias HerdrServer.Handoff.Notice
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Pane.{Input, Rows}
 
@@ -810,6 +811,26 @@ defmodule HerdrServer.ServerTest do
     send(s, {:app_changed, app})
     send(s, {:app_changed, app})
     refute_receive {^c, {:scene, _}}, 100
+  end
+
+  test "handoff notice is forwarded and input is held after begin" do
+    {c, s} = client()
+    scene(c)
+    begin = {:handoff, %{phase: :begin, gen: 3, panes: [1]}}
+    Notice.broadcast(begin)
+    assert_receive {^c, ^begin}
+    assert Protocol.validate_server_msg(begin) == :ok
+
+    # held: a rejection notice, no ack (the client keeps it), nothing reaches the pane
+    input(s, c, 5, Event.key("x"))
+    assert_receive {^c, {:notice, %{level: :warning}}}
+    refute_receive {^c, {:ack, 5}}, 100
+    assert Fake.Pty.writes(pty(1)) == []
+
+    Notice.broadcast({:handoff, %{phase: :aborted, gen: 3, panes: [1]}})
+    assert_receive {^c, {:handoff, %{phase: :aborted}}}
+    assert_receive {^c, {:ack, 5}}
+    assert Fake.Pty.writes(pty(1)) == ["x"]
   end
 
   test "server-internal and invalid events from clients are rejected but acked" do

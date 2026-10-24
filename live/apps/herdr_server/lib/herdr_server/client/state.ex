@@ -20,7 +20,8 @@ defmodule HerdrServer.Client.State do
     notice: nil,
     last_scene: nil,
     monitor: nil,
-    store_monitor: nil
+    store_monitor: nil,
+    held: nil
   ]
 
   @type t :: %__MODULE__{
@@ -38,6 +39,7 @@ defmodule HerdrServer.Client.State do
           notice: nil | %{level: atom(), text: String.t(), ref: reference()},
           last_scene: term(),
           monitor: reference() | nil,
-          store_monitor: reference() | nil
+          store_monitor: reference() | nil,
+          held: [tuple()] | nil
         }
 end
