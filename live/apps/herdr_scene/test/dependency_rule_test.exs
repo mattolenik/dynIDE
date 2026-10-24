@@ -1,5 +1,6 @@
 defmodule HerdrScene.DependencyRuleTest do
-  use ExUnit.Case, async: true
+  # Mix.Project.in_project changes VM-wide cwd and project stack
+  use ExUnit.Case, async: false
 
   test "every app depends on herdr_scene only; herdr_scene depends on nothing" do
     deps =
@@ -12,6 +13,9 @@ defmodule HerdrScene.DependencyRuleTest do
           if Mix.Project.config()[:app] == app,
             do: Mix.Project.config(),
             else: Mix.Project.in_project(app, dir, fn _ -> Mix.Project.config() end)
+
+        assert config[:consolidate_protocols] == (Mix.env() == :prod),
+               "#{app} must set consolidate_protocols: Mix.env() == :prod"
 
         in_umbrella =
           for {name, opts} <- config[:deps],

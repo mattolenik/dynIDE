@@ -6,7 +6,7 @@ live_crates := "herdr_kernel herdr_term"
 # Elixir and Rust tests
 live-test:
     cd '{{live_dir}}' && mix test
-    for c in {{live_crates}}; do (cd '{{live_dir}}/native'/$c && cargo test) || exit 1; done
+    for c in {{live_crates}}; do (cd '{{live_dir}}/native'/$c && cargo test --locked) || exit 1; done
 
 # Milestone gate: lint, types, tests, launcher smoke
 live-check:
@@ -14,7 +14,7 @@ live-check:
     cd '{{live_dir}}' && mix format --check-formatted
     cd '{{live_dir}}' && mix credo --strict
     cd '{{live_dir}}' && mix dialyzer
-    for c in {{live_crates}}; do (cd '{{live_dir}}/native'/$c && cargo fmt --check && cargo clippy --all-targets -- -D warnings) || exit 1; done
+    for c in {{live_crates}}; do (cd '{{live_dir}}/native'/$c && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings) || exit 1; done
     just --justfile '{{justfile()}}' live-test
     '{{live_dir}}/scripts/launcher_smoke.sh'
 
