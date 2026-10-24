@@ -35,3 +35,12 @@ config :herdr_server, :kernel,
   vt: HerdrServer.Kernel.Fake.Vt,
   pty: HerdrServer.Kernel.Fake.Pty,
   keeper: HerdrServer.Kernel.Fake.Keeper
+
+# Host-terminal modules used by herdr_term (see HerdrTerm.Kernel). The
+# in-memory fakes are the test double and the default until the Rust NIFs
+# land; swap by pointing these at NIF-backed modules implementing the
+# HerdrTerm.Kernel.{Tty,Blit} behaviours (e.g. in config/prod.exs). Read with
+# Application.compile_env, so recompile herdr_term after changing them.
+config :herdr_term, :kernel,
+  tty: HerdrTerm.Kernel.Fake.Tty,
+  blit: HerdrTerm.Kernel.Fake.Blit
