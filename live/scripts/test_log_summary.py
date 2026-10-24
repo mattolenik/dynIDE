@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -65,7 +66,8 @@ class LogSummaryTest(unittest.TestCase):
             "period", "vm_starts", "reloads", "modules_reloaded", "fanout_max",
             "compile_errors", "rollbacks", "rollback_reasons", "guard_failures", "tests",
             "syncs", "handoffs", "handoff_ms_p50", "handoff_ms_p95", "handoff_ms_max",
-            "crashes", "store_restarts", "session_losses", "unparsed", "exit_criterion"])
+            "crashes", "store_restarts", "restores", "persist_writes", "persist_errors",
+            "session_losses", "unparsed", "exit_criterion"])
         self.assertIn("rollbacks: manual 1, auto 1", out)
         self.assertIn("handoffs: crash 2, graceful 1, failed 1", out)
         self.assertEqual(out[-1], "exit_criterion: session_losses=0 -> FAIL (3)")
@@ -97,6 +99,32 @@ class LogSummaryTest(unittest.TestCase):
         self.assertEqual(got["session_losses"], 0)
         self.assertEqual(got["store_restarts"], 1)
 
+    def test_persist_events(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".log") as f:
+            f.write("herdr-event persist_restore ts=1 source=none reason=boot\n"
+                    "herdr-event persist_write ts=2 panes=2 bytes=900 us=40\n"
+                    "herdr-event persist_write ts=3 kind=scrollback panes=2 bytes=4000 us=90\n"
+                    "herdr-event persist_restore ts=4 source=disk reason=boot panes=2 scrollback=1 ms=8\n"
+                    "herdr-event persist_error ts=5 op=write reason=enospc\n"
+                    "herdr-event session_lost ts=6 reason=fallback_restore\n"
+                    "herdr-event persist_restore ts=7 source=disk reason=fallback panes=2 scrollback=2 ms=9\n")
+            f.flush()
+            got = json.loads(run(f.name, "--json").stdout)
+            out = run(f.name).stdout.splitlines()
+        self.assertEqual(got["restores"], {"disk": 2, "boot": 1, "fallback": 1, "none": 1})
+        self.assertEqual(got["persist_writes"], 2)
+        self.assertEqual(got["persist_errors"], 1)
+        # a fallback restore still follows a lost session: the rule is unchanged
+        self.assertEqual(got["session_losses"], 1)
+        self.assertIn("restores: disk=2 (boot=1 fallback=1) none=1", out)
+        self.assertIn("persist_writes: 2", out)
+        self.assertIn("persist_errors: 1", out)
+
+    def test_fixture_has_no_persist_events(self):
+        got = json.loads(run(FIXTURE, "--json").stdout)
+        self.assertEqual(got["restores"], {"disk": 0, "boot": 0, "fallback": 0, "none": 0})
+        self.assertEqual((got["persist_writes"], got["persist_errors"]), (0, 0))
+
     def test_unreadable_log_exits_2(self):
         self.assertEqual(run("/nonexistent/herdr.log").returncode, 2)
 
@@ -124,6 +152,38 @@ class LogSummaryTest(unittest.TestCase):
         self.assertIsNone(log_summary.parse_line("just a log line"))
         self.assertIs(log_summary.parse_line("herdr-event x ts=abc"), False)
         self.assertIs(log_summary.parse_line('herdr-event x ts=1 a="unterminated'), False)
+
+
+LIVE = os.path.dirname(HERE)
+# a launch of bin/herdr-live in code: a quoted path ending in bin/herdr-live (sh, exs) or
+# os.path.join(..., "bin", "herdr-live") (python); prose mentions use backticks or no quote
+LAUNCH = re.compile(r'bin/herdr-live"|"bin", "herdr-live"')
+
+
+def launchers():
+    for top in ("scripts", "bench"):
+        for d, _dirs, files in os.walk(os.path.join(LIVE, top)):
+            for name in files:
+                path = os.path.join(d, name)
+                if path == os.path.abspath(__file__) or not name.endswith((".sh", ".py", ".exs")):
+                    continue
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+                code = [l for l in text.splitlines() if not l.lstrip().startswith("#")]
+                if any(LAUNCH.search(l) for l in code):
+                    yield os.path.relpath(path, LIVE), text
+
+
+class LaunchIsolationTest(unittest.TestCase):
+    """Every scripted launch keeps its session file away from the human's (M8)."""
+
+    def test_every_launch_sets_a_state_dir(self):
+        found = dict(launchers())
+        for known in ("scripts/launcher_smoke.sh", "scripts/attached_smoke.sh",
+                      "scripts/tty_harness.py", "bench/handoff/driver.exs", "bench/gate/glass.py"):
+            self.assertIn(known, found, "launch detection missed a known launcher")
+        missing = sorted(p for p, text in found.items() if "HERDR_LIVE_STATE_DIR" not in text)
+        self.assertEqual(missing, [], "these launch bin/herdr-live without HERDR_LIVE_STATE_DIR")
 
 
 if __name__ == "__main__":

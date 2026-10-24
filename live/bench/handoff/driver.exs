@@ -32,6 +32,10 @@ defmodule HandoffDriver do
       {~c"HERDR_LIVE_HEADLESS", ~c"1"},
       {~c"HERDR_LIVE_RUNTIME_DIR", String.to_charlist(Path.join(dir, "rt"))},
       {~c"HERDR_LIVE_LOG", String.to_charlist(log)},
+      # session files (M8) under the run dir, never the real session
+      {~c"HERDR_LIVE_STATE_DIR", String.to_charlist(Path.join(dir, "state"))},
+      {~c"HERDR_LIVE_SESSION", false},
+      {~c"HERDR_LIVE_PERSIST", false},
       {~c"HERDR_LIVE_CONTROL", String.to_charlist(Path.join(dir, "ctl.sock"))},
       {~c"PATH", String.to_charlist(path())},
       {~c"HERDR_SOCKET_PATH", false},

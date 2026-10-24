@@ -38,6 +38,8 @@ cat >"$tmp/inner.sh" <<INNER
 alive() { st=\$(ps -o stat= -p "\$1" 2>/dev/null); [ -n "\$st" ] && [ "\${st#Z}" = "\$st" ]; }
 stty -a >"$tmp/before"
 export HERDR_LIVE_CONTROL="$tmp/control.sock"
+# session files (M8) under the run dir, never the real session
+export HERDR_LIVE_STATE_DIR="$tmp/state"
 HERDR_LIVE_HEADLESS=1 HERDR_LIVE_RUNTIME_DIR="$tmp/rt" HERDR_LIVE_LOG="$tmp/log/herdr-live.log" "$root/bin/herdr-live" &
 pid=\$!
 echo "\$pid" >"$tmp/pid"

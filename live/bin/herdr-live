@@ -8,6 +8,11 @@
 # HERDR_LIVE_HEADLESS=1 (inherited by the VMs) starts no terminal client.
 # HERDR_LIVE_RUNTIME_DIR picks the broker socket dir (read by the broker).
 # kernel-restart and status talk to the running broker on this terminal.
+# Session persistence (M8): the VM saves the layout, focus, ui prefs, pane cwds and
+# scrollback to <state dir>/session.<name>.etf and restores them at the next start.
+# HERDR_LIVE_STATE_DIR is the state dir (default ${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live),
+# HERDR_LIVE_SESSION the name (default `default`; [A-Za-z0-9_.-], at most 64),
+# HERDR_LIVE_PERSIST=0 turns persistence off. Scripted launches set their own state dir.
 #
 # herdr-live rollback [n]: roll back the newest n live reload batches (default 1)
 # through the control socket of the running instance (HerdrServer.Control, served
@@ -45,6 +50,7 @@ esac
 log=${HERDR_LIVE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/herdr-live.log}
 case $log in /*) ;; *) log=$PWD/$log ;; esac
 case ${HERDR_LIVE_RUNTIME_DIR:-} in /* | '') ;; *) HERDR_LIVE_RUNTIME_DIR=$PWD/$HERDR_LIVE_RUNTIME_DIR ;; esac
+case ${HERDR_LIVE_STATE_DIR:-} in /* | '') ;; *) export HERDR_LIVE_STATE_DIR="$PWD/$HERDR_LIVE_STATE_DIR" ;; esac
 # 0700 when created here: the control socket (HerdrServer.Control) lives beside the log
 (umask 077 && mkdir -p "$(dirname "$log")") || exit 1
 # resolve symlinks (portable: no readlink -f on macOS)

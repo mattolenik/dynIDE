@@ -57,6 +57,8 @@ alive() { st=\$(ps -o stat= -p "\$1" 2>/dev/null); [ -n "\$st" ] && [ "\${st#Z}"
 stty cols 120 rows 40
 stty -a >"$tmp/before.\$run"
 log="$tmp/log.\$run"
+# session files (M8) under the run dir, never the real session
+export HERDR_LIVE_STATE_DIR="$tmp/state.\$run"
 HERDR_LIVE_RUNTIME_DIR="$tmp/rt.\$run" HERDR_LIVE_CONTROL="$tmp/ctl.\$run" HERDR_LIVE_LOG="\$log" "$root/bin/herdr-live" &
 pid=\$!
 echo "\$pid" >"$tmp/pid.\$run"

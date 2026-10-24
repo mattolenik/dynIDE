@@ -181,6 +181,8 @@ def herdr(tmp, bin_, cols, rows):
 def herdr_live(tmp, bin_, cols, rows):
     env = base_env(tmp)
     env["HERDR_LIVE_LOG"] = os.path.join(tmp, "herdr-live.log")
+    # session files (M8) under the run dir, never the real session
+    env["HERDR_LIVE_STATE_DIR"] = os.path.join(tmp, "state")
     term = Term([bin_], env, cols, rows)
 
     def stop():

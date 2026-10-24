@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end host tty checks for HerdrTerm.Native.Tty under a real pty.
 
-Usage: tty_harness.py destructor|demo|herdr|herdr-stress|selfhost [-v]
+Usage: tty_harness.py destructor|demo|herdr|herdr-stress|selfhost|persist [-v]
 
 destructor: runs scripts/tty_destructor.exs in the BEAM as the pty's session
 leader. Answers each kitty/DA1 probe, then checks: the destructor of a killed
@@ -43,14 +43,23 @@ handoffs graceful 1, session_losses 0. The probe file is removed in a
 _build/dev/lib/herdr_server/ebin and `git status --porcelain -- live/apps`
 equals its value at the start.
 
-herdr, herdr-stress and selfhost launch bin/herdr-live and compile into the
+persist: M8's exit criterion (stop, start, identical layout and cwds). Run 1
+(120x40): prefix v, in the new pane `cd <tmp>/dir-b; echo m8-marker-b`, prefix c
+(new tab) and `cd <tmp>/dir-c`, prefix p back to tab 1, 3 s, prefix q (exit 0);
+persist_dump.exs on <tmp>/state/session.default.etf is dump A (it must record both
+cwds, two tabs, a side-by-side split). Run 2 on the same state dir: the log has
+`persist_restore source=disk reason=boot`, the screen shows m8-marker-b (scrollback
+replay), the focused pane's `pwd` is dir-b; 3 s, prefix q, dump B. PASS when A == B.
+
+herdr, herdr-stress, selfhost and persist launch bin/herdr-live and compile into the
 shared _build/dev, so they skip (print SKIP, exit 0) inside a herdr-live pane:
 pane shells inherit the VM's HERDR_BROKER_SOCK. Run them outside the dogfood
 instance (another terminal or worktree).
 
-Every herdr-live launch gets its own HERDR_LIVE_LOG, HERDR_LIVE_CONTROL and
-HERDR_LIVE_RUNTIME_DIR under the run's temp dir, so the CLI calls address
-that instance only.
+Every herdr-live launch gets its own HERDR_LIVE_LOG, HERDR_LIVE_CONTROL,
+HERDR_LIVE_RUNTIME_DIR and HERDR_LIVE_STATE_DIR under the run's temp dir, so the
+CLI calls address that instance only and no run reads or writes the human's
+session file.
 
 Prints PASS lines; exits 1 on the first failure. Every mode SIGKILLs the
 process groups it started on any exit, including Ctrl-C. The 120 s deadline
@@ -467,8 +476,10 @@ def demo():
 class Herdr:
     """bin/herdr-live attached, leading the session of a fresh cols x rows pty."""
 
-    def __init__(self, tmp, cols, rows):
-        self.log = os.path.join(tmp, "herdr-live.log")
+    def __init__(self, tmp, cols, rows, run=""):
+        """`run` names the log, control socket and runtime dir, so two launches in one
+        temp dir (persist) stay apart; the state dir (session files) is the temp dir's."""
+        self.log = os.path.join(tmp, f"herdr-live{run}.log")
         self.tmp = tmp
         self.master, slave = os.openpty()
         fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -477,11 +488,14 @@ class Herdr:
         self.answered = 0
         env = {k: v for k, v in os.environ.items()
                if k not in ("ENV", "BASH_ENV", "HERDR_SOCKET_PATH", "HERDR_CLIENT_SOCKET_PATH",
-                            "HERDR_LIVE_HEADLESS", "HERDR_LIVE_TEST_ON_SAVE", "HERDR_BROKER_SOCK")}
-        # the panes' shell: plain sh with a known prompt; sockets of this instance only
+                            "HERDR_LIVE_HEADLESS", "HERDR_LIVE_TEST_ON_SAVE", "HERDR_BROKER_SOCK",
+                            "HERDR_LIVE_SESSION", "HERDR_LIVE_PERSIST")}
+        # the panes' shell: plain sh with a known prompt; sockets and session files of
+        # this instance only (never the human's session.default.etf)
+        self.state = os.path.join(tmp, "state")
         env.update(SHELL="/bin/sh", PS1="$ ", HISTFILE="/dev/null", TERM="xterm-256color",
-                   HERDR_LIVE_LOG=self.log, HERDR_LIVE_CONTROL=os.path.join(tmp, "control.sock"),
-                   HERDR_LIVE_RUNTIME_DIR=os.path.join(tmp, "rt"))
+                   HERDR_LIVE_LOG=self.log, HERDR_LIVE_CONTROL=os.path.join(tmp, f"control{run}.sock"),
+                   HERDR_LIVE_RUNTIME_DIR=os.path.join(tmp, f"rt{run}"), HERDR_LIVE_STATE_DIR=self.state)
         self.env = env
         pid = os.fork()
         if pid == 0:
@@ -786,15 +800,111 @@ def selfhost():
         print("--- screen", h.screen.text(), sep="\n")
 
 
+def persist_dump(path):
+    """persist_dump.exs lines for a session file (fails on a missing or bad file)."""
+    if not os.path.exists(path):
+        fail(f"no session file {path}")
+    r = subprocess.run(["elixir", os.path.join(LIVE, "scripts", "persist_dump.exs"), path],
+                       capture_output=True, text=True, timeout=180)
+    if r.returncode != 0:
+        fail(f"persist_dump.exs {path} exited {r.returncode}: {r.stderr.strip()}")
+    return r.stdout
+
+
+def log_json(log):
+    return json.loads(subprocess.run([sys.executable, os.path.join(LIVE, "scripts", "log_summary.py"),
+                                      log, "--json"], capture_output=True, text=True, check=True).stdout)
+
+
+def persist():
+    global DEADLINE
+    # under /tmp: a short realpath keeps the cwds on one row and the sockets short
+    with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+        tmp = os.path.realpath(tmp)
+        compile_then_start_clock(tmp)
+        DEADLINE += 240
+        dir_b, dir_c = os.path.join(tmp, "dir-b"), os.path.join(tmp, "dir-c")
+        os.makedirs(dir_b)
+        os.makedirs(dir_c)
+        cols, rows = 120, 40
+        h = Herdr(tmp, cols, rows, run=".1")
+        h.start()
+        h.send(b"\x02v")
+        h.until(lambda: h.prompts() >= 2, "second prompt after prefix v")
+        h.send(f'cd {dir_b}; echo m8-""marker-b\r'.encode())
+        h.until(lambda: h.shows("m8-marker-b"), "m8-marker-b in the new pane", timeout=30)
+        ok(True, "persist run 1: prefix v split, the new pane cd'd to dir-b and echoed m8-marker-b")
+        h.send(b"\x02c")
+        h.until(lambda: not h.shows("m8-marker-b") and h.prompts() >= 1, "new tab after prefix c",
+                timeout=30)
+        h.send(f'cd {dir_c}; echo in-""dir-c\r'.encode())
+        h.until(lambda: h.shows("in-dir-c"), "in-dir-c in the new tab", timeout=30)
+        ok(True, "persist run 1: prefix c new tab, its pane cd'd to dir-c")
+        h.send(b"\x02p")
+        h.until(lambda: h.shows("m8-marker-b") and h.prompts() >= 2, "tab 1 again after prefix p",
+                timeout=30)
+        ok(True, "persist run 1: prefix p back to tab 1 (two panes, m8-marker-b)")
+        end = time.monotonic() + 3
+        while time.monotonic() < end:
+            h.pump(0.1)
+        h.quit()
+        session = os.path.join(h.state, "session.default.etf")
+        a = persist_dump(session)
+        if verbose:
+            print("--- dump A", a, sep="\n", end="")
+        ok(f'cwd="{dir_b}"' in a and f'cwd="{dir_c}"' in a,
+           "persist run 1: the session file records the dir-b and dir-c cwds")
+        ok(len(re.findall(r"^tab=", a, re.M)) == 2 and re.search(r"root=h\(", a),
+           "persist run 1: the session file has two tabs and a side-by-side split")
+        s1 = log_json(h.log)
+        ok(s1["restores"]["none"] == 1 and s1["persist_writes"] >= 1 and s1["persist_errors"] == 0,
+           f"persist run 1: log has a fresh start, writes, no errors ({s1['restores']},"
+           f" writes {s1['persist_writes']}, errors {s1['persist_errors']})")
+
+        # run 2: same state dir, a new log, sockets and runtime dir; the probe-reply count
+        # follows the transcript, so it starts empty again
+        del transcript[:]
+        h = Herdr(tmp, cols, rows, run=".2")
+        h.start()
+        h.until(lambda: re.search(r"herdr-event persist_restore .*source=disk", open(h.log).read()),
+                "persist_restore source=disk in the run 2 log", timeout=60)
+        line = re.search(r"herdr-event persist_restore .*", open(h.log).read()).group(0)
+        ok("reason=boot" in line, f"persist run 2: log has {line.strip()}")
+        h.until(lambda: h.shows("m8-marker-b"), "m8-marker-b replayed in run 2", timeout=60)
+        ok(True, "persist run 2: m8-marker-b from run 1's scrollback is on screen")
+        h.until(lambda: h.prompts() >= 2, "two prompts on tab 1 in run 2", timeout=30)
+        # the comparison prints a short word whatever the cwd's length
+        h.send(f'case $(pwd -P) in {dir_b}) echo cwd-""is-b ;; *) pwd ;; esac\r'.encode())
+        h.until(lambda: h.shows("cwd-is-b"), "pwd of the focused pane is dir-b", timeout=30)
+        ok(True, f"persist run 2: pwd in the focused pane is {dir_b}")
+        end = time.monotonic() + 3
+        while time.monotonic() < end:
+            h.pump(0.1)
+        h.quit()
+        b = persist_dump(session)
+        if verbose:
+            print("--- dump B", b, sep="\n", end="")
+        if a != b:
+            print("--- dump A", a, "--- dump B", b, sep="\n", end="", file=sys.stderr)
+        ok(a == b, "persist: stop, start, identical layout and cwds (dump A == dump B)")
+        s2 = log_json(h.log)
+        ok(s2["restores"] == {"disk": 1, "boot": 1, "fallback": 0, "none": 0}
+           and s2["persist_errors"] == 0 and s2["session_losses"] == 0,
+           f"persist run 2: log summary restores {s2['restores']}, errors {s2['persist_errors']},"
+           f" session_losses {s2['session_losses']}")
+    if verbose:
+        print("--- screen", h.screen.text(), sep="\n")
+
+
 if __name__ == "__main__":
     modes = {"destructor": destructor, "demo": demo, "herdr": herdr, "herdr-stress": herdr_stress,
-             "selfhost": selfhost}
+             "selfhost": selfhost, "persist": persist}
     args = [a for a in sys.argv[1:] if a != "-v"]
     if len(args) != 1 or args[0] not in modes:
         sys.exit(__doc__)
     # a pane of a running herdr-live inherits the VM's env: these modes would compile into
     # and reload that instance's own _build
-    if args[0] in ("herdr", "herdr-stress", "selfhost") and os.environ.get("HERDR_BROKER_SOCK"):
+    if args[0] in ("herdr", "herdr-stress", "selfhost", "persist") and os.environ.get("HERDR_BROKER_SOCK"):
         print(f"SKIP: {args[0]}: running inside herdr-live (run live-check outside it, see editing-live.md)")
         sys.exit(0)
     # CI cancellation: let `finally` kill the process groups.

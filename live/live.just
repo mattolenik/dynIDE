@@ -12,7 +12,7 @@ live-test:
 
 # Milestone gate: lint, types, tests, launcher, handoff and attached smokes, tty harness
 # (M2 destructor and demo; herdr-live attached on the real kernels, then 15 panes + cat flood,
-# then selfhost: edit, reload, rollback, kernel-restart)
+# then selfhost: edit, reload, rollback, kernel-restart; then persist: stop, start, same layout and cwds)
 live-check:
     cd '{{live_dir}}' && mix deps.get
     cd '{{live_dir}}' && mix format --check-formatted
@@ -28,8 +28,9 @@ live-check:
     python3 '{{live_dir}}/scripts/tty_harness.py' herdr
     python3 '{{live_dir}}/scripts/tty_harness.py' herdr-stress
     python3 '{{live_dir}}/scripts/tty_harness.py' selfhost
+    python3 '{{live_dir}}/scripts/tty_harness.py' persist
 
-# Summarise a herdr-live log (reloads, rollbacks, handoffs, session losses); args: [LOG ...] [--since ISO] [--json]
+# Summarise a herdr-live log (reloads, rollbacks, handoffs, restores, session losses); args: [LOG ...] [--since ISO] [--json]
 live-log-summary *args:
     python3 '{{live_dir}}/scripts/log_summary.py' {{args}}
 

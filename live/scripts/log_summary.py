@@ -130,6 +130,16 @@ def summarize(events, unparsed=0):
             broker_up = True
         elif kind == "broker_stop":
             broker_up = False
+        elif kind == "persist_restore":
+            if f.get("source") == "disk":
+                c["r_disk"] += 1
+                c["r_fallback" if f.get("reason") == "fallback" else "r_boot"] += 1
+            else:
+                c["r_none"] += 1
+        elif kind == "persist_write":
+            c["persist_writes"] += 1
+        elif kind == "persist_error":
+            c["persist_errors"] += 1
     hand_ms.sort()
     stamps = [e[1] for e in events]
     return {
@@ -150,6 +160,10 @@ def summarize(events, unparsed=0):
         "handoff_ms_max": hand_ms[-1] if hand_ms else None,
         "crashes": dict(sorted(crashes.items())),
         "store_restarts": c["store_restarts"],
+        "restores": {"disk": c["r_disk"], "boot": c["r_boot"], "fallback": c["r_fallback"],
+                     "none": c["r_none"]},
+        "persist_writes": c["persist_writes"],
+        "persist_errors": c["persist_errors"],
         "session_losses": c["session_losses"],
         "unparsed": unparsed,
     }
@@ -180,6 +194,9 @@ def render_text(s):
         ("handoff_ms_max", na(s["handoff_ms_max"])),
         ("crashes", kv(s["crashes"])),
         ("store_restarts", s["store_restarts"]),
+        ("restores", "disk={disk} (boot={boot} fallback={fallback}) none={none}".format(**s["restores"])),
+        ("persist_writes", s["persist_writes"]),
+        ("persist_errors", s["persist_errors"]),
         ("session_losses", n),
         ("unparsed", s["unparsed"]),
         ("exit_criterion", f"session_losses=0 -> {'OK' if n == 0 else f'FAIL ({n})'}"),
