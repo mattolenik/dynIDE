@@ -12,10 +12,19 @@ defmodule HerdrServer.Application do
     reload = Application.get_env(:herdr_server, HerdrServer.Reload, [])
     reload_children = if reload[:enabled], do: [HerdrServer.Reload.Supervisor], else: []
 
+    # Order follows design.md "Supervision trees": Keeper, Reload, then the app.
     children =
-      [
-        HerdrServer.Kernel.keeper()
-      ] ++ reload_children
+      [HerdrServer.Kernel.keeper()] ++
+        reload_children ++
+        [
+          HerdrServer.Pane.Rows,
+          {Registry, keys: :duplicate, name: HerdrServer.Client.Registry},
+          {Registry, keys: :unique, name: HerdrServer.Pane.Registry},
+          HerdrServer.App.Store,
+          HerdrServer.Pane.Supervisor,
+          HerdrServer.Client.Supervisor,
+          HerdrServer.Client.Endpoint
+        ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
