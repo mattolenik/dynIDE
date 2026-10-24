@@ -14,7 +14,7 @@ defmodule HerdrTerm.Client.Term.Render do
 
   Chrome: the layout (`Render.Chrome.layout/3`, guarded) is cached and recomputed only
   when the scene's chrome or size or the theme changed; a failing layout keeps the old
-  one. When its hits change they go to Input as `{:chrome_hits, hits}`.
+  one and is re-attempted every 500ms until it succeeds (then a full repaint). When its hits change they go to Input as `{:chrome_hits, hits}`.
 
   Rows (inline): the rows listed in a scene's `{:inline, rows}` replace those rows of the
   pane's cache and unlisted rows keep it (`{:inline, []}` changes nothing);
@@ -58,6 +58,7 @@ defmodule HerdrTerm.Client.Term.Render do
     :notice,
     :theme,
     :chrome_key,
+    :chrome_retry,
     transport: :ref,
     chrome: %{base: %{}, top: %{}, hits: [], dim: false},
     rows: %{},
@@ -166,6 +167,11 @@ defmodule HerdrTerm.Client.Term.Render do
     {:noreply, state}
   end
 
+  def handle_info(:chrome_retry, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, %{state | chrome_retry: nil, repaint: true} |> chrome() |> schedule()}
+  end
+
   def handle_info(:frame, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:noreply, render(%{state | timer: nil})}
@@ -232,13 +238,20 @@ defmodule HerdrTerm.Client.Term.Render do
 
   # chrome layout, once per chrome/size/theme change
 
+  # An equal key is stored anyway: it holds the scene's own terms, so later per-frame
+  # compares are pointer-equal instead of deep.
   defp chrome(%{scene: scene, theme: theme} = state) do
     key = {scene.chrome, scene.size, theme}
 
-    if key == state.chrome_key, do: state, else: relayout(state, key)
+    cond do
+      key == state.chrome_key -> %{state | chrome_key: key}
+      state.chrome_retry -> state
+      true -> relayout(state, key)
+    end
   end
 
-  # a failing layout (logged by the Guard) keeps the old one until the next change
+  # A failing layout (logged by the Guard) keeps the old layout and key; it is
+  # re-attempted by `:chrome_retry` after @retry_frame_ms (one failure log each).
   defp relayout(state, {chrome, size, theme} = key) do
     case Guard.run_twice(Chrome, :layout, [chrome, size, theme], @compose) do
       {:ok, layout} ->
@@ -246,7 +259,7 @@ defmodule HerdrTerm.Client.Term.Render do
         %{state | chrome: layout, chrome_key: key}
 
       {:failed, _} ->
-        %{state | chrome_key: key}
+        %{state | chrome_retry: Process.send_after(self(), :chrome_retry, @retry_frame_ms)}
     end
   end
 

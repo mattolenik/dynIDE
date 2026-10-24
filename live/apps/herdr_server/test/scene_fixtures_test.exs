@@ -14,7 +14,10 @@ defmodule HerdrServer.SceneFixturesTest do
     {"three_pane_l_shape_100x30", {100, 30}, [:v, :h]},
     {"prefix_mode_status_80x24", {80, 24}, [:prefix]},
     {"two_tabs_80x24", {80, 24}, [:c]},
-    {"narrow_15_panes_200x50", {200, 50}, [{:many, 15}]}
+    {"narrow_15_panes_200x50", {200, 50}, [{:many, 15}]},
+    {"sidebar_expanded_120x40", {120, 40}, [:v]},
+    {"sidebar_collapsed_80x24", {80, 24}, [:b]},
+    {"two_workspaces_120x40", {120, 40}, [:c, {:workspace, "two"}]}
   ]
 
   for {name, size, steps} <- @fixtures do
@@ -54,6 +57,8 @@ defmodule HerdrServer.SceneFixturesTest do
   defp step(:v, app), do: HerdrServer.ViewHelpers.pfx(app, "v")
   defp step(:h, app), do: HerdrServer.ViewHelpers.pfx(app, "-")
   defp step(:c, app), do: HerdrServer.ViewHelpers.pfx(app, "c")
+  defp step(:b, app), do: HerdrServer.ViewHelpers.pfx(app, "b")
+  defp step({:workspace, name}, app), do: HerdrServer.ViewHelpers.add_workspace(app, name)
   defp step(:prefix, app), do: app
   defp step({:many, n}, app), do: HerdrServer.ViewHelpers.many(app, n)
 end

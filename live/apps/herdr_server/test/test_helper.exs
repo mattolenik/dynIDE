@@ -43,6 +43,31 @@ defmodule HerdrServer.ViewHelpers do
     elem(Actions.apply(app, ev), 0)
   end
 
+  @doc "Adds a workspace named `name` with one tab and one pane and makes it active."
+  def add_workspace(app, name) do
+    id = app.session.next_id
+    ws_id = Enum.max_by(app.session.workspaces, & &1.id).id + 1
+
+    ws = %{
+      id: ws_id,
+      name: name,
+      tabs: [%{id: 1, name: "1", layout: Layout.new(id)}],
+      active_tab: 1
+    }
+
+    app
+    |> update_in([:session], fn s ->
+      %{
+        s
+        | workspaces: s.workspaces ++ [ws],
+          active_workspace: ws_id,
+          next_id: id + 1,
+          panes: Map.put(s.panes, id, %{title: nil, layout_gen: 0})
+      }
+    end)
+    |> put_in([:focus, Access.key(:pane)], id)
+  end
+
   @doc "The input mode a client is in after pressing prefix, then `keys`."
   def mode_after(app, keys) do
     Enum.reduce(keys, %{mode: :prefix, swallow: MapSet.new()}, fn k, st ->

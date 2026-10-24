@@ -6,8 +6,321 @@
     rect: nil,
     text: nil,
     token: nil,
-    props: %{},
+    props: %{
+      mouse: true,
+      indicators: :dots,
+      theme: %{
+        name: "catppuccin",
+        auto_switch: false,
+        dark: "catppuccin",
+        light: "catppuccin-latte"
+      }
+    },
     children: [
+      %HerdrScene.Scene.Node{
+        role: :sidebar,
+        id: :sidebar,
+        rect: %{x: 0, y: 0, h: 29, w: 26},
+        text: nil,
+        token: nil,
+        props: %{collapsed: false},
+        children: [
+          %HerdrScene.Scene.Node{
+            role: :section,
+            id: :spaces,
+            rect: nil,
+            text: "spaces",
+            token: nil,
+            props: %{},
+            children: [
+              %HerdrScene.Scene.Node{
+                role: :list,
+                id: :list,
+                rect: nil,
+                text: nil,
+                token: nil,
+                props: %{offset: 0},
+                children: [
+                  %HerdrScene.Scene.Node{
+                    role: :item,
+                    id: {:workspace, 1},
+                    rect: nil,
+                    text: nil,
+                    token: nil,
+                    props: %{active: true, index: 1},
+                    children: [
+                      %HerdrScene.Scene.Node{
+                        role: :group,
+                        id: {:line, 0},
+                        rect: nil,
+                        text: nil,
+                        token: nil,
+                        props: %{},
+                        children: [
+                          %HerdrScene.Scene.Node{
+                            role: :badge,
+                            id: :state,
+                            rect: nil,
+                            text: nil,
+                            token: nil,
+                            props: %{state: :unknown, kind: :agent_state},
+                            children: []
+                          },
+                          %HerdrScene.Scene.Node{
+                            role: :text,
+                            id: :workspace,
+                            rect: nil,
+                            text: "1",
+                            token: nil,
+                            props: %{},
+                            children: []
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              %HerdrScene.Scene.Node{
+                role: :button,
+                id: :new,
+                rect: nil,
+                text: "new",
+                token: nil,
+                props: %{action: :new_workspace},
+                children: []
+              },
+              %HerdrScene.Scene.Node{
+                role: :button,
+                id: :menu,
+                rect: nil,
+                text: "menu",
+                token: nil,
+                props: %{action: :global_menu, attention: false},
+                children: []
+              }
+            ]
+          },
+          %HerdrScene.Scene.Node{
+            role: :divider,
+            id: :split,
+            rect: %{x: 0, y: 15, h: 1, w: 25},
+            text: nil,
+            token: nil,
+            props: %{target: :sidebar_split, direction: :vertical},
+            children: []
+          },
+          %HerdrScene.Scene.Node{
+            role: :section,
+            id: :agents,
+            rect: nil,
+            text: "agents",
+            token: nil,
+            props: %{},
+            children: [
+              %HerdrScene.Scene.Node{
+                role: :list,
+                id: :list,
+                rect: nil,
+                text: nil,
+                token: nil,
+                props: %{},
+                children: [
+                  %HerdrScene.Scene.Node{
+                    role: :item,
+                    id: {:pane, 1},
+                    rect: nil,
+                    text: nil,
+                    token: nil,
+                    props: %{active: false},
+                    children: [
+                      %HerdrScene.Scene.Node{
+                        role: :group,
+                        id: {:line, 0},
+                        rect: nil,
+                        text: nil,
+                        token: nil,
+                        props: %{},
+                        children: [
+                          %HerdrScene.Scene.Node{
+                            role: :badge,
+                            id: :state,
+                            rect: nil,
+                            text: nil,
+                            token: nil,
+                            props: %{state: :unknown, kind: :agent_state},
+                            children: []
+                          },
+                          %HerdrScene.Scene.Node{
+                            role: :text,
+                            id: :workspace,
+                            rect: nil,
+                            text: "1",
+                            token: nil,
+                            props: %{},
+                            children: []
+                          }
+                        ]
+                      },
+                      %HerdrScene.Scene.Node{
+                        role: :group,
+                        id: {:line, 1},
+                        rect: nil,
+                        text: nil,
+                        token: nil,
+                        props: %{},
+                        children: [
+                          %HerdrScene.Scene.Node{
+                            role: :text,
+                            id: :agent,
+                            rect: nil,
+                            text: "terminal",
+                            token: nil,
+                            props: %{},
+                            children: []
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  %HerdrScene.Scene.Node{
+                    role: :item,
+                    id: {:pane, 2},
+                    rect: nil,
+                    text: nil,
+                    token: nil,
+                    props: %{active: false},
+                    children: [
+                      %HerdrScene.Scene.Node{
+                        role: :group,
+                        id: {:line, 0},
+                        rect: nil,
+                        text: nil,
+                        token: nil,
+                        props: %{},
+                        children: [
+                          %HerdrScene.Scene.Node{
+                            role: :badge,
+                            id: :state,
+                            rect: nil,
+                            text: nil,
+                            token: nil,
+                            props: %{state: :unknown, kind: :agent_state},
+                            children: []
+                          },
+                          %HerdrScene.Scene.Node{
+                            role: :text,
+                            id: :workspace,
+                            rect: nil,
+                            text: "1",
+                            token: nil,
+                            props: %{},
+                            children: []
+                          }
+                        ]
+                      },
+                      %HerdrScene.Scene.Node{
+                        role: :group,
+                        id: {:line, 1},
+                        rect: nil,
+                        text: nil,
+                        token: nil,
+                        props: %{},
+                        children: [
+                          %HerdrScene.Scene.Node{
+                            role: :text,
+                            id: :agent,
+                            rect: nil,
+                            text: "terminal",
+                            token: nil,
+                            props: %{},
+                            children: []
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  %HerdrScene.Scene.Node{
+                    role: :item,
+                    id: {:pane, 3},
+                    rect: nil,
+                    text: nil,
+                    token: nil,
+                    props: %{active: true},
+                    children: [
+                      %HerdrScene.Scene.Node{
+                        role: :group,
+                        id: {:line, 0},
+                        rect: nil,
+                        text: nil,
+                        token: nil,
+                        props: %{},
+                        children: [
+                          %HerdrScene.Scene.Node{
+                            role: :badge,
+                            id: :state,
+                            rect: nil,
+                            text: nil,
+                            token: nil,
+                            props: %{state: :unknown, kind: :agent_state},
+                            children: []
+                          },
+                          %HerdrScene.Scene.Node{
+                            role: :text,
+                            id: :workspace,
+                            rect: nil,
+                            text: "1",
+                            token: nil,
+                            props: %{},
+                            children: []
+                          }
+                        ]
+                      },
+                      %HerdrScene.Scene.Node{
+                        role: :group,
+                        id: {:line, 1},
+                        rect: nil,
+                        text: nil,
+                        token: nil,
+                        props: %{},
+                        children: [
+                          %HerdrScene.Scene.Node{
+                            role: :text,
+                            id: :agent,
+                            rect: nil,
+                            text: "terminal",
+                            token: nil,
+                            props: %{},
+                            children: []
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          %HerdrScene.Scene.Node{
+            role: :button,
+            id: :toggle,
+            rect: nil,
+            text: nil,
+            token: nil,
+            props: %{action: :toggle_sidebar, collapsed: false},
+            children: []
+          },
+          %HerdrScene.Scene.Node{
+            role: :divider,
+            id: :edge,
+            rect: %{x: 25, y: 0, h: 29, w: 1},
+            text: nil,
+            token: nil,
+            props: %{target: :sidebar_width, direction: :horizontal},
+            children: []
+          }
+        ]
+      },
       %HerdrScene.Scene.Node{
         role: :tabs,
         id: :tabs,

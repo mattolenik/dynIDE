@@ -133,31 +133,55 @@ defmodule HerdrTerm.Client.Term.RenderTest do
       assert :sys.get_state(render).chrome.hits == hits
 
       # same hits (only the status title changed): no message, layout recomputed
-      [tabs, status] = sc.chrome.children
+      [sidebar, tabs, status] = sc.chrome.children
       title = %{status | children: Enum.map(status.children, &retitle/1)}
-      send(render, {:scene, %{sc | chrome: %{sc.chrome | children: [tabs, title]}}})
+      send(render, {:scene, %{sc | chrome: %{sc.chrome | children: [sidebar, tabs, title]}}})
       assert_receive {:frame, _, _}
       refute_receive {:trace, ^input, :receive, {:chrome_hits, _}}, 50
-      assert :sys.get_state(render).chrome_key |> elem(0) |> inspect() =~ "zz-title"
+
+      assert :sys.get_state(render).chrome_key |> elem(0) |> inspect(limit: :infinity) =~
+               "zz-title"
 
       send(render, {:scene, Fixture.load("single_pane_80x24")})
       assert_receive {:trace, ^input, :receive, {:chrome_hits, hits2}}
       assert hits2 != hits
     end
 
-    test "a failing layout keeps the old one", %{render: render} do
+    test "a failing layout keeps the old one and is retried", %{render: render} do
       sc = Fixture.load("two_tabs_80x24")
       send(render, {:scene, sc})
       assert_receive {:frame, _, _}
-      layout = :sys.get_state(render).chrome
+      %{chrome: layout, chrome_key: key} = :sys.get_state(render)
       :sys.replace_state(render, &%{&1 | theme: :broken})
       send(render, {:scene, %{sc | size: %{cols: 81, rows: 24}}})
 
-      assert eventually(fn ->
-               :sys.get_state(render).chrome_key |> elem(1) |> Map.get(:cols) == 81
-             end)
+      # the failed key is not stored: the old layout and key stay
+      assert eventually(fn -> :sys.get_state(render).scene.size.cols == 81 end)
+      assert %{chrome: ^layout, chrome_key: ^key} = :sys.get_state(render)
 
-      assert :sys.get_state(render).chrome == layout
+      # fixed, with no new scene or damage: the retry re-attempts the layout
+      :sys.replace_state(render, &%{&1 | theme: Theme.default()})
+
+      assert eventually(
+               fn -> :sys.get_state(render).chrome_key |> elem(1) |> Map.get(:cols) == 81 end,
+               150
+             )
+    end
+
+    test "an equal chrome stores the new scene's term as the key", %{render: render} do
+      sc = Fixture.load("two_tabs_80x24")
+      send(render, {:scene, sc})
+      assert_receive {:frame, _, _}
+      # an equal chrome arrives as a separate term (each message is a copy)
+      send(render, {:scene, sc})
+      test = self()
+
+      :sys.replace_state(render, fn s ->
+        send(test, {:same, :erts_debug.same(elem(s.chrome_key, 0), s.scene.chrome)})
+        s
+      end)
+
+      assert_receive {:same, true}
     end
   end
 

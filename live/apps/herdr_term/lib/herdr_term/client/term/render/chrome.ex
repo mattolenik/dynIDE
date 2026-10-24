@@ -13,15 +13,16 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
     * `dim`: the top-of-stack `:modal` has `props.dim`.
 
   Segments and hits are clipped to `size`. One module per region role; a region role
-  without its own module (modal, menu, toast, sidebar until their tasks land) draws a
-  blank box of its rect with one hit.
+  without its own module (modal, menu, toast until their tasks land) draws a blank box
+  of its rect with one hit. The root's `indicators` prop (`:dots`, default, or
+  `:symbols`) picks the sidebar's badge glyphs.
   """
 
   alias HerdrScene.Cell
   alias HerdrScene.Scene
   alias HerdrScene.Scene.Node
   alias HerdrTerm.Cells
-  alias HerdrTerm.Client.Term.Render.Chrome.{Status, Tabs}
+  alias HerdrTerm.Client.Term.Render.Chrome.{Sidebar, Status, Tabs}
   alias HerdrTerm.Client.Term.Theme
 
   @type seg :: {non_neg_integer, non_neg_integer, Cell.row()}
@@ -41,14 +42,16 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
   @spec layout(Node.t() | nil, %{cols: non_neg_integer, rows: non_neg_integer}, Theme.t()) :: t
   def layout(nil, _size, _theme), do: empty()
 
-  def layout(%Node{children: children}, size, theme) do
+  def layout(%Node{children: children, props: props}, size, theme) do
+    ind = Map.get(props, :indicators, :dots)
+
     {base, top} =
       children
       |> Enum.filter(&match?(%Node{rect: %{}}, &1))
       |> Enum.split_with(&(&1.role not in @top))
 
-    {base_rows, base_hits} = layer(base, theme, size)
-    {top_rows, top_hits} = layer(top, theme, size)
+    {base_rows, base_hits} = layer(base, theme, ind, size)
+    {top_rows, top_hits} = layer(top, theme, ind, size)
 
     %{
       base: base_rows,
@@ -63,8 +66,8 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
   def hit(rect, path, role, drag \\ false), do: %{rect: rect, path: path, role: role, drag: drag}
 
   # rows grouped by y (tree order kept), one hit list per node in tree order
-  defp layer(nodes, theme, size) do
-    {rows, hits} = nodes |> Enum.map(&region(&1, theme)) |> Enum.unzip()
+  defp layer(nodes, theme, ind, size) do
+    {rows, hits} = nodes |> Enum.map(&region(&1, theme, ind)) |> Enum.unzip()
 
     rows =
       rows
@@ -75,11 +78,14 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
     {rows, Enum.map(hits, &clip_hits(&1, size))}
   end
 
-  defp region(%Node{role: :status} = n, theme), do: Status.render(n, theme)
-  defp region(%Node{role: :tabs} = n, theme), do: Tabs.render(n, theme)
-  defp region(%Node{role: :divider, id: id, rect: r}, _), do: {[], [hit(r, [id], :divider, true)]}
+  defp region(%Node{role: :status} = n, theme, _), do: Status.render(n, theme)
+  defp region(%Node{role: :tabs} = n, theme, _), do: Tabs.render(n, theme)
+  defp region(%Node{role: :sidebar} = n, theme, ind), do: Sidebar.render(n, theme, ind)
 
-  defp region(%Node{id: id, role: role, rect: r}, theme) do
+  defp region(%Node{role: :divider, id: id, rect: r}, _, _),
+    do: {[], [hit(r, [id], :divider, true)]}
+
+  defp region(%Node{id: id, role: role, rect: r}, theme, _) do
     blank = Cells.blank(r.w, Theme.style(theme, :default))
     {for(y <- r.y..(r.y + r.h - 1)//1, do: {y, {r.x, r.w, blank}}), [hit(r, [id], role)]}
   end

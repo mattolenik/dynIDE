@@ -69,6 +69,39 @@ defmodule HerdrServer.ViewTest do
     assert child(s, :hint).text == ""
   end
 
+  test "prefix and resize modes show mode-bar hints after the mode" do
+    app = fresh(80, 24)
+
+    hints = fn mode ->
+      View.compute(app, client(80, 24, :ref, mode))
+      |> status()
+      |> Map.get(:children)
+      |> Enum.filter(&match?({_, _}, &1.id))
+      |> Enum.map(&{&1.role, &1.text})
+    end
+
+    assert hints.(:prefix) == [
+             {:keycap, "esc"},
+             {:text, "cancel"},
+             {:keycap, "ctrl+b"},
+             {:text, "send prefix"},
+             {:keycap, "?"},
+             {:text, "keybinds"}
+           ]
+
+    assert [{:keycap, "h"}, {:keycap, "l"}, {:text, "width"} | _] = hints.(:resize)
+    assert hints.(:terminal) == []
+
+    s = View.compute(app, client(80, 24, :ref, :prefix))
+
+    assert [%{id: :mode}, %{role: :keycap, props: %{key: :escape, mods: []}} | _] =
+             status(s).children
+
+    assert %{props: %{key: "b", mods: [:ctrl]}} = child(s, {:key, 1})
+    assert %{token: :muted} = child(s, {:hint_text, 0})
+    assert child(s, :hint).text == "ctrl+b"
+  end
+
   test "tabs mark the active one" do
     s = View.compute(pfx(fresh(80, 24), "c"), client(80, 24))
 
@@ -100,6 +133,8 @@ defmodule HerdrServer.ViewTest do
   defp plain_value?(v) when is_binary(v), do: byte_size(v) < 64
   defp plain_value?(v) when is_tuple(v), do: v |> Tuple.to_list() |> Enum.all?(&plain_value?/1)
   defp plain_value?(v) when is_list(v), do: Enum.all?(v, &plain_value?/1)
+  # the root's theme names (resolved by each client)
+  defp plain_value?(v) when is_map(v), do: plain?(v)
   defp plain_value?(_), do: false
 
   test "content rects lie inside their borders and the scene" do

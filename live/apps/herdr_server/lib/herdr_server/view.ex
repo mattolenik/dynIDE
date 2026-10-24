@@ -5,14 +5,15 @@ defmodule HerdrServer.View do
 
     * Regions come from `View.Frame.regions/2` at the client's own size (sidebar, top tab
       bar, full-width status row, pane area), so every client gets its own rects; pane ids
-      are shared. The sidebar region is reserved; its node comes later (M13 Task 4).
+      are shared.
     * Panes follow `Layout.panes` preorder inside the pane area. `Pane.rect` is the content
       rect, the border carries the outer rect (see `Layout.borders/2`). Rows are
       `{:ref, id, layout_gen}` (or `{:inline, []}` for inline clients; the caller fills
       rows). Cursors are nil here.
-    * Chrome: `:root` holding the `:tabs` region (`View.Tabs`, omitted when the frame has no
-      tab bar), one `:divider` node per split in `Layout.splits` preorder, then the
-      `:status` region (`View.Status`).
+    * Chrome: `:root` (props `theme`, `indicators` and `mouse: true`) holding the
+      `:sidebar` region (`View.Sidebar`, omitted when the frame has none), the `:tabs`
+      region (`View.Tabs`, omitted when the frame has no tab bar), one `:divider` node per
+      split in `Layout.splits` preorder, then the `:status` region (`View.Status`).
     * Divider rect choice: with borders on, a split's boundary is `pos`, the first cell of
       the second child. The divider is the 1-cell line at `pos` (second child's leading
       border column or row), spanning the split's area. A client resolves
@@ -27,7 +28,7 @@ defmodule HerdrServer.View do
   alias HerdrScene.Scene.{Node, Pane}
   alias HerdrServer.Client.State
   alias HerdrServer.Layout
-  alias HerdrServer.View.{Frame, Status, Tabs}
+  alias HerdrServer.View.{Frame, Sidebar, Status, Tabs}
 
   @spec compute(map, State.t()) :: Scene.t()
   def compute(app, %State{size: %{cols: cols, rows: rows} = size, transport: transport} = client) do
@@ -63,6 +64,7 @@ defmodule HerdrServer.View do
   end
 
   defp chrome(app, client, ws, layout, %{panes: area} = regions) do
+    sidebar = if regions.sidebar, do: [Sidebar.node(app, regions.sidebar)], else: []
     tabs = if regions.tabs, do: [Tabs.node(ws, regions.tabs)], else: []
 
     dividers =
@@ -76,7 +78,8 @@ defmodule HerdrServer.View do
       end
 
     status = Status.node(app, client, regions.status)
-    %Node{role: :root, id: :root, children: tabs ++ dividers ++ [status]}
+    props = %{theme: app.ui.theme, indicators: app.ui.indicators, mouse: true}
+    %Node{role: :root, id: :root, props: props, children: sidebar ++ tabs ++ dividers ++ [status]}
   end
 
   defp divider_rect(%{direction: :horizontal, pos: pos, area: a}, area),

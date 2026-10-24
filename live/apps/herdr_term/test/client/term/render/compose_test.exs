@@ -198,7 +198,8 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
   test "a top-level tab bar draws on its own row" do
     frame = Compose.frame(Fixture.load("two_tabs_80x24"), %{}, @theme)
     top = hd(texts(frame))
-    assert String.slice(top, 0, 26) == String.duplicate(" ", 26)
+    # the sidebar's header row, then the tab bar
+    assert String.slice(top, 0, 26) == " spaces" <> String.duplicate(" ", 18) <> "│"
     assert String.slice(top, 26, 20) == "   1    " <> " " <> "   2    " <> " + "
     assert List.last(texts(frame)) =~ ~r/^TERMINAL /
   end

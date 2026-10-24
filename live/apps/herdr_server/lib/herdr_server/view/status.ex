@@ -1,6 +1,8 @@
 defmodule HerdrServer.View.Status do
   @moduledoc """
   The status row region (pure): `:mode` (the client's own input mode, `props: %{mode}`),
+  herdr's mode-bar hints in prefix and resize modes (`:keycap` `{:key, n}` with
+  `props: %{key, mods}` and its label as text, then a `:muted` `:text` `{:hint_text, n}`),
   the runtime status `:reload`, `:tests`, `:handoff` from `client.runtime`
   (`RuntimeStatus.nodes/2`, those that fit), `:notice` when the client has one, `:title`
   (the focused pane's) and `:hint` (the prefix key, `props: %{key, mods}`; empty props when
@@ -12,7 +14,7 @@ defmodule HerdrServer.View.Status do
 
   @spec node(map, HerdrServer.Client.State.t(), HerdrScene.Scene.rect()) :: Node.t()
   def node(app, client, rect) do
-    left = [mode(client.mode)]
+    left = [mode(client.mode) | hints(client.mode, app.ui)]
     hint = hint(client.mode, app.ui)
     free = rect.w - width(left) - width([hint])
     runtime = RuntimeStatus.nodes(client.runtime, free)
@@ -37,6 +39,41 @@ defmodule HerdrServer.View.Status do
     %{text(:mode, label, token) | props: %{mode: m}}
   end
 
+  defp hints(:prefix, ui) do
+    prefix = List.first(ui.keybinds.prefix)
+
+    pairs(
+      [{{:escape, []}, "cancel"}] ++
+        if(prefix, do: [{prefix, "send prefix"}], else: []) ++ [{{"?", []}, "keybinds"}]
+    )
+  end
+
+  defp hints(:resize, _ui) do
+    keys = [{"h", nil}, {"l", "width"}, {"j", nil}, {"k", "height"}, {:escape, "done"}]
+    pairs(for {k, label} <- keys, do: {{k, []}, label})
+  end
+
+  defp hints(_mode, _ui), do: []
+
+  # a keycap, then its label unless nil (keys sharing one label)
+  defp pairs(hints) do
+    hints
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {{{key, mods}, label}, i} ->
+      cap = %Node{
+        role: :keycap,
+        id: {:key, i},
+        text: key_label(key, mods),
+        props: %{key: key, mods: mods}
+      }
+
+      if label, do: [cap, text({:hint_text, i}, label, :muted)], else: [cap]
+    end)
+  end
+
+  defp key_label(:escape, []), do: "esc"
+  defp key_label(key, mods), do: Enum.map_join(mods ++ [key], "+", &to_string/1)
+
   defp title(app) do
     meta = Map.get(app.session.panes, app.focus.pane)
     text(:title, (meta && meta.title) || "", :muted)
@@ -45,8 +82,7 @@ defmodule HerdrServer.View.Status do
   defp hint(mode, ui) do
     case ui.keybinds.prefix do
       [{key, mods} | _] when mode in [:terminal, :prefix] and ui.status.show_hints ->
-        label = Enum.map_join(mods ++ [key], "+", &to_string/1)
-        %{text(:hint, label, :muted) | props: %{key: key, mods: mods}}
+        %{text(:hint, key_label(key, mods), :muted) | props: %{key: key, mods: mods}}
 
       _ ->
         text(:hint, "", :muted)
