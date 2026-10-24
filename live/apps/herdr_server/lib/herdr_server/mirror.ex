@@ -64,6 +64,10 @@ defmodule HerdrServer.Mirror do
   @spec client(pid) :: map | nil
   def client(pid), do: get({:client, pid})
 
+  @doc "Every client pid with a mirror entry."
+  @spec clients() :: [pid]
+  def clients, do: for([pid] <- :ets.match(@mirror, {{:client, :"$1"}, :_}), do: pid)
+
   @spec get(term) :: term | nil
   def get(key) do
     case :ets.lookup(@mirror, key) do
