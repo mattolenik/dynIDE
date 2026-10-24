@@ -9,6 +9,11 @@ defmodule HerdrServer.App.Actions do
   `{:mouse, id, event}` (coordinates pane-relative), `{:paste, id, binary}`,
   `{:focus_report, id, boolean}`, `{:notice, %{level, text}}`, `{:detach}`.
 
+  `{:pane_exited, id}` emits `{:close, id}`; the Store must treat closing an already-gone
+  pane as idempotent. Mouse `px` is passed through unchanged (not pane-relative) in M3.
+  Presses consumed by the multiplexer are remembered in `focus.swallow` so their later
+  release is not forwarded to the pane.
+
   Ponytail: panes' `layout_gen` is not bumped here; the Store owns resize bookkeeping.
   """
 
@@ -50,13 +55,28 @@ defmodule HerdrServer.App.Actions do
   # --- events ---
 
   @spec apply(app(), tuple()) :: {app(), [effect()]}
-  def apply(app, {:key, %{event: :release}}) when app.focus.mode != :terminal, do: {app, []}
+  def apply(app, {:key, %{key: k, mods: m, event: :release}} = event) do
+    key = Keybinds.normalize(k, m)
+
+    cond do
+      MapSet.member?(app.focus.swallow, key) ->
+        {update_in(app.focus.swallow, &MapSet.delete(&1, key)), []}
+
+      app.focus.mode != :terminal ->
+        {app, []}
+
+      true ->
+        dispatch_key(app, event, key)
+    end
+  end
 
   def apply(app, {:key, %{key: k, mods: m}} = event) do
-    kb = app.ui.keybinds
     key = Keybinds.normalize(k, m)
-    mode = app.focus.mode
-    key_in(mode, app, event, key, Keybinds.lookup(kb, mode, key), Keybinds.prefix?(kb, key))
+    {app, effects} = dispatch_key(app, event, key)
+
+    if Enum.any?(effects, &match?({:key, _, ^event}, &1)),
+      do: {app, effects},
+      else: {update_in(app.focus.swallow, &MapSet.put(&1, key)), effects}
   end
 
   def apply(app, {:paste, bin}), do: to_focused(app, :paste, bin)
@@ -93,6 +113,12 @@ defmodule HerdrServer.App.Actions do
   end
 
   def apply(app, _other), do: {app, []}
+
+  defp dispatch_key(app, event, key) do
+    kb = app.ui.keybinds
+    mode = app.focus.mode
+    key_in(mode, app, event, key, Keybinds.lookup(kb, mode, key), Keybinds.prefix?(kb, key))
+  end
 
   # key_in(mode, app, event, key, bound_mfa | nil, prefix_key?)
   defp key_in(:terminal, app, {:key, %{event: :release}}, _, bound, prefix?)
@@ -161,15 +187,24 @@ defmodule HerdrServer.App.Actions do
   @spec split(app(), :horizontal | :vertical) :: {app(), [effect()]}
   def split(app, dir) do
     with %{} = l <- layout(app), focus when not is_nil(focus) <- l.focus do
-      {id, app} = take_id(app)
-      l = Layout.split(l, focus, dir, id)
-      app = app |> put_layout(l) |> sync()
-      app = put_in(app.session.panes[id], %{title: nil, layout_gen: 0})
-      {app, [{:spawn, id, size_of(l, app.session.area, id)}]}
+      {id, app2} = take_id(app)
+      l2 = Layout.split(l, focus, dir, id)
+      area = app.session.area
+      new = size_of(l2, area, id)
+
+      if big_enough?(new) and big_enough?(size_of(l2, area, focus)) do
+        app2 = app2 |> put_layout(l2) |> sync()
+        app2 = put_in(app2.session.panes[id], %{title: nil, layout_gen: 0})
+        {app2, [{:spawn, id, new}]}
+      else
+        {app, [{:notice, %{level: :warning, text: "pane too small to split"}}]}
+      end
     else
       _ -> {app, []}
     end
   end
+
+  defp big_enough?(%{cols: c, rows: r}), do: c >= 2 and r >= 1
 
   @spec close_pane(app()) :: {app(), [effect()]}
   def close_pane(app), do: close_pane_id(app, app.focus.pane)

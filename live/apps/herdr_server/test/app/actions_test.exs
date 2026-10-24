@@ -59,7 +59,7 @@ defmodule HerdrServer.App.ActionsTest do
     {app, _} = pfx(fresh(), "v")
     {app, _} = pfx(app, "r")
     assert app.focus.mode == :resize
-    ratio = fn a -> elem(tab_layout(a).root, 2) end
+    ratio = fn a -> hd(Layout.splits(tab_layout(a), a.session.area)).ratio end
     r0 = ratio.(app)
     {app, []} = press(app, "h")
     r1 = ratio.(app)
@@ -116,19 +116,61 @@ defmodule HerdrServer.App.ActionsTest do
     assert a.session.panes[1].title == "t"
   end
 
-  test "15 alternating splits keep positive content rects" do
-    {app, _} = Actions.apply(fresh(), {:resize, %{cols: 200, rows: 51, cell_px: nil}})
+  defp wide(app), do: elem(Actions.apply(app, {:resize, %{cols: 200, rows: 51, cell_px: nil}}), 0)
 
+  defp content_rects(app) do
+    area = app.session.area
+    Layout.borders(Layout.panes(tab_layout(app), area), area)
+  end
+
+  defp focus_pane(app, id) do
+    app = put_in(app.focus.pane, id)
+
+    update_in(app.session.workspaces, fn ws ->
+      Enum.map(ws, fn w ->
+        %{w | tabs: Enum.map(w.tabs, &%{&1 | layout: Layout.focus(&1.layout, id)})}
+      end)
+    end)
+  end
+
+  test "splitting the newest pane repeatedly is eventually refused, never zero-size" do
+    {app, refused} =
+      Enum.reduce_while(1..60, {wide(fresh()), nil}, fn i, {a, _} ->
+        {a2, eff} = pfx(a, if(rem(i, 2) == 0, do: "-", else: "v"))
+
+        case eff do
+          [{:notice, %{level: :warning, text: "pane too small to split"}}] ->
+            {:halt, {a2, a}}
+
+          _ ->
+            assert Enum.all?(content_rects(a2), &(&1.rect.w > 0 and &1.rect.h > 0))
+            {:cont, {a2, nil}}
+        end
+      end)
+
+    assert refused, "never refused"
+    assert length(ids(app)) == length(ids(refused))
+  end
+
+  test "balanced splits reach 15 panes at 200x50 with positive content rects" do
     app =
-      Enum.reduce(1..14, app, fn i, a ->
-        {a, _} = pfx(a, if(rem(i, 2) == 0, do: "-", else: "v"))
-        {a, _} = pfx(a, "tab" |> String.to_atom())
+      Enum.reduce(1..14, wide(fresh()), fn _, a ->
+        %{id: big, rect: r} = Enum.max_by(content_rects(a), &(&1.rect.w * &1.rect.h))
+        {a, [{:spawn, _, _}]} = pfx(focus_pane(a, big), if(r.w >= 2 * r.h, do: "v", else: "-"))
         a
       end)
 
-    area = app.session.area
-    rects = Layout.borders(Layout.panes(tab_layout(app), area), area)
+    rects = content_rects(app)
     assert length(rects) == 15
     assert Enum.all?(rects, &(&1.rect.w > 0 and &1.rect.h > 0))
+  end
+
+  test "release of a consumed press is swallowed; release of a forwarded press is not" do
+    {app, _} = pfx(fresh(), "v")
+    assert {_, []} = Actions.apply(app, Event.key("v", [], event: :release))
+    assert {_, []} = Actions.apply(app, Event.key("b", [:ctrl], event: :release))
+    {app, [{:key, 2, _}]} = press(app, "a")
+    rel = Event.key("a", [], event: :release)
+    assert {_, [{:key, 2, ^rel}]} = Actions.apply(app, rel)
   end
 end
