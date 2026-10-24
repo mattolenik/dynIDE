@@ -6,6 +6,8 @@ mod blit;
 #[cfg(unix)]
 mod cell;
 #[cfg(unix)]
+mod compose;
+#[cfg(unix)]
 mod output;
 #[cfg(unix)]
 mod probe;
@@ -222,6 +224,32 @@ mod nif {
             repaint,
         });
         atoms::ok().encode(env)
+    }
+
+    /// `Compose.frame/4` with `:nif`: one packed row of `cols` columns per
+    /// list of `{x, w, row, off}` segments (sorted by `x`). Raises `ArgumentError`
+    /// on a malformed row. Regular scheduler: bounded by `cols` x rows.
+    #[rustler::nif]
+    fn compose_rows<'a>(
+        env: Env<'a>,
+        cols: u16,
+        rows: Vec<Vec<(u32, u32, Binary<'a>, u32)>>,
+    ) -> Result<Vec<Term<'a>>, rustler::Error> {
+        let mut segs = Vec::new();
+        rows.iter()
+            .map(|row| {
+                segs.clear();
+                segs.extend(row.iter().map(|(x, w, bin, off)| crate::compose::Seg {
+                    x: *x as usize,
+                    w: *w as usize,
+                    row: bin.as_slice(),
+                    off: *off as usize,
+                }));
+                crate::compose::assemble(usize::from(cols), &segs)
+                    .map(|bytes| binary(env, &bytes))
+                    .map_err(|_| rustler::Error::BadArg)
+            })
+            .collect()
     }
 
     #[rustler::nif]

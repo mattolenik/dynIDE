@@ -1,7 +1,8 @@
 defmodule HerdrTerm.Native do
   @moduledoc """
   Rustler NIF module backed by the `herdr_term` crate. Use the facades
-  (`HerdrTerm.Native.Tty`, `HerdrTerm.Native.Blit`) rather than calling these directly.
+  (`HerdrTerm.Native.Tty`, `HerdrTerm.Native.Blit`,
+  `HerdrTerm.Native.Compose`) rather than calling these directly.
   """
   use Rustler, otp_app: :herdr_term, crate: :herdr_term, path: "../../native/herdr_term"
 
@@ -47,6 +48,13 @@ defmodule HerdrTerm.Native do
           queued_bytes: non_neg_integer()
         }
   def tty_stats(_tty), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  @spec compose_rows(
+          non_neg_integer(),
+          [[{non_neg_integer(), non_neg_integer(), binary(), non_neg_integer()}]]
+        ) :: [binary()]
+  def compose_rows(_cols, _rows), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc false
   @spec tty_kitty_keyboard(tty()) :: non_neg_integer() | nil

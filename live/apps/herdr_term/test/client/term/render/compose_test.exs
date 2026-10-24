@@ -289,4 +289,25 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
     assert Base.encode16(digest, case: :lower) ==
              "877ee358451f2053cd8870aff7dcf1bfaf533c4df609e2e8826b3f1dd29b3540"
   end
+
+  test "the :nif assembler produces the same bytes as the Elixir one" do
+    scenes =
+      [
+        {grid_scene(), grid_rows()},
+        {scene(), rows()},
+        # pane 2, its border and the status run past the screen's 30 columns
+        {%{scene() | size: %{cols: 30, rows: 10}}, rows()}
+      ] ++
+        for(n <- HerdrScene.Fixture.names(), do: {HerdrScene.Fixture.load(n), %{}})
+
+    for {sc, rows} <- scenes do
+      assert Compose.frame(sc, rows, @theme, :nif) == Compose.frame(sc, rows, @theme)
+    end
+
+    assert Compose.frame(%Scene{size: %{cols: 5, rows: 0}}, %{}, @theme, :nif) == []
+
+    assert_raise ArgumentError, fn ->
+      HerdrTerm.Native.Compose.rows(2, [[{0, 1, <<0, 0>>, 0}]])
+    end
+  end
 end
