@@ -10,6 +10,7 @@ defmodule HerdrTerm.Native.Blit do
   """
 
   alias HerdrTerm.Native
+  alias HerdrTerm.Native.Tty
 
   @typedoc "Cursor shape, sent as DECSCUSR 0..6."
   @type shape ::
@@ -41,7 +42,7 @@ defmodule HerdrTerm.Native.Blit do
   column count; otherwise (or for an unknown shape) returns
   `{:error, :bad_frame}`.
   """
-  @spec frame(Native.tty(), [{non_neg_integer(), binary()}], opts()) ::
+  @spec frame(Tty.t(), [{non_neg_integer(), binary()}], opts()) ::
           :ok | {:error, :bad_frame}
   def frame(tty, rows, %{cursor: cursor, shape: shape, repaint: repaint}) do
     case Map.fetch(@shapes, shape) do

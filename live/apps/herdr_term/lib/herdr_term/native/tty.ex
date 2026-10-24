@@ -28,8 +28,12 @@ defmodule HerdrTerm.Native.Tty do
   @doc """
   Opens the tty. Options: `:path` (default `"/dev/tty"`), `:kitty_flags`
   (default `0`, pushed only when the probe confirmed kitty keyboard support).
+  Errors are `t:HerdrTerm.Native.posix_error/0` (`{:error, :enoent}`,
+  `{:error, :enxio}`, ...), `{:error, {:panic, binary}}`, or
+  `{:error, :timeout}` when the kernel thread did not reply in 5 s.
   """
-  @spec open(map()) :: {:ok, t()} | {:error, term()}
+  @spec open(map()) ::
+          {:ok, t()} | {:error, Native.posix_error() | {:panic, String.t()} | :timeout}
   def open(opts \\ %{}) do
     path = Map.get(opts, :path, "/dev/tty")
     flags = Map.get(opts, :kitty_flags, 0)
@@ -39,7 +43,18 @@ defmodule HerdrTerm.Native.Tty do
       receive do
         {^tag, result} -> result
       after
-        @open_timeout -> {:error, :timeout}
+        @open_timeout ->
+          # A reply that raced the timeout must not leave a raw tty behind.
+          # ponytail: one that lands after this flush still lingers until the
+          # caller exits; the open work is bounded well under the timeout.
+          receive do
+            {^tag, {:ok, tty}} -> restore(tty)
+            {^tag, _} -> :ok
+          after
+            0 -> :ok
+          end
+
+          {:error, :timeout}
       end
     end
   end
@@ -56,13 +71,18 @@ defmodule HerdrTerm.Native.Tty do
 
   Returns `:ok` exactly when `{:tty_resumed}` follows. Returns
   `{:error, :restored}` (nothing done) after `restore/1`, and
-  `{:error, reason}` when the terminal could not be reset, in which case the
-  process was not stopped and no `{:tty_resumed}` is sent.
+  `{:error, posix_error}` when the terminal could not be reset or the
+  event thread could not start, in which case the process was not stopped
+  and no `{:tty_resumed}` is sent.
   """
-  @spec suspend(t()) :: :ok | {:error, :restored | String.t()}
+  @spec suspend(t()) :: :ok | {:error, :restored | Native.posix_error()}
   def suspend(tty), do: Native.tty_suspend(tty)
 
-  @doc "`{cols, rows, pixel_width, pixel_height}` of the host terminal."
+  @doc """
+  `{cols, rows, pixel_width, pixel_height}` of the host terminal. Raises
+  `ErlangError` with the `t:HerdrTerm.Native.posix_error/0` (e.g. `:enotty`)
+  when the size cannot be read (the fd is not, or no longer, a terminal).
+  """
   @spec size(t()) ::
           {non_neg_integer(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
   def size(tty), do: Native.tty_size(tty)

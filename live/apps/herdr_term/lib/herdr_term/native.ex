@@ -8,8 +8,15 @@ defmodule HerdrTerm.Native do
   @typedoc "Opaque tty resource."
   @type tty :: reference()
 
+  @typedoc """
+  An OS error: the lowercase posix atom (`:enoent`, `:eacces`, `:enxio`,
+  `:eio`, `:enotty`, ...) for common errnos, `{:os_error, errno}` for others,
+  or a message when the error carries no errno.
+  """
+  @type posix_error :: :file.posix() | :enotty | {:os_error, integer()} | String.t()
+
   @doc false
-  @spec tty_open(String.t(), non_neg_integer(), reference()) :: :ok | {:error, String.t()}
+  @spec tty_open(String.t(), non_neg_integer(), reference()) :: :ok | {:error, posix_error()}
   def tty_open(_path, _kitty_flags, _tag), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc false
@@ -17,7 +24,7 @@ defmodule HerdrTerm.Native do
   def tty_restore(_tty), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc false
-  @spec tty_suspend(tty()) :: :ok | {:error, :restored | String.t()}
+  @spec tty_suspend(tty()) :: :ok | {:error, :restored | posix_error()}
   def tty_suspend(_tty), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc false

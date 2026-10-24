@@ -22,7 +22,44 @@ mod nif {
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
     mod atoms {
-        rustler::atoms! { ok, error, tty_input, exit, tty, hangup, panic, backpressure, bad_frame, tty_resumed, restored }
+        rustler::atoms! {
+            ok, error, tty_input, exit, tty, hangup, panic, backpressure, bad_frame, tty_resumed,
+            restored, os_error, eperm, enoent, eintr, eio, enxio, ebadf, eagain, enomem, eacces,
+            ebusy, enodev, enotdir, eisdir, einval, enfile, emfile, enotty,
+        }
+    }
+
+    /// An `io::Error` for Elixir: the lowercase posix atom (`:enoent`) for
+    /// common errnos, `{:os_error, n}` for other errnos, else the message.
+    struct Posix(std::io::Error);
+
+    impl Encoder for Posix {
+        fn encode<'a>(&self, env: Env<'a>) -> Term<'a> {
+            let Some(n) = self.0.raw_os_error() else {
+                return self.0.to_string().encode(env);
+            };
+            let name = match n {
+                libc::EPERM => atoms::eperm(),
+                libc::ENOENT => atoms::enoent(),
+                libc::EINTR => atoms::eintr(),
+                libc::EIO => atoms::eio(),
+                libc::ENXIO => atoms::enxio(),
+                libc::EBADF => atoms::ebadf(),
+                libc::EAGAIN => atoms::eagain(),
+                libc::ENOMEM => atoms::enomem(),
+                libc::EACCES => atoms::eacces(),
+                libc::EBUSY => atoms::ebusy(),
+                libc::ENODEV => atoms::enodev(),
+                libc::ENOTDIR => atoms::enotdir(),
+                libc::EISDIR => atoms::eisdir(),
+                libc::EINVAL => atoms::einval(),
+                libc::ENFILE => atoms::enfile(),
+                libc::EMFILE => atoms::emfile(),
+                libc::ENOTTY => atoms::enotty(),
+                n => return (atoms::os_error(), n).encode(env),
+            };
+            name.encode(env)
+        }
     }
 
     impl rustler::Resource for TtyResource {}
@@ -88,7 +125,7 @@ mod nif {
                 let _ = owned.send_and_clear(&caller, |env| {
                     let reply = match result {
                         Ok(Ok(tty)) => (atoms::ok(), tty).encode(env),
-                        Ok(Err(err)) => (atoms::error(), err.to_string()).encode(env),
+                        Ok(Err(err)) => (atoms::error(), Posix(err)).encode(env),
                         Err(_) => {
                             (atoms::error(), (atoms::panic(), "tty open panicked")).encode(env)
                         }
@@ -98,7 +135,7 @@ mod nif {
             });
         match spawned {
             Ok(_) => Ok(atoms::ok()),
-            Err(err) => Err(rustler::Error::Term(Box::new(err.to_string()))),
+            Err(err) => Err(rustler::Error::Term(Box::new(Posix(err)))),
         }
     }
 
@@ -118,15 +155,16 @@ mod nif {
         match tty.inner.suspend() {
             Ok(true) => Ok(atoms::ok()),
             Ok(false) => Err(rustler::Error::Term(Box::new(atoms::restored()))),
-            Err(err) => Err(rustler::Error::Term(Box::new(err.to_string()))),
+            Err(err) => Err(rustler::Error::Term(Box::new(Posix(err)))),
         }
     }
 
+    /// Raises the posix reason when TIOCGWINSZ fails (the fd is no tty).
     #[rustler::nif]
     fn tty_size(tty: ResourceArc<TtyResource>) -> Result<(u16, u16, u16, u16), rustler::Error> {
         tty.inner
             .size()
-            .map_err(|err| rustler::Error::RaiseTerm(Box::new(err.to_string())))
+            .map_err(|err| rustler::Error::RaiseTerm(Box::new(Posix(err))))
     }
 
     #[rustler::nif]
