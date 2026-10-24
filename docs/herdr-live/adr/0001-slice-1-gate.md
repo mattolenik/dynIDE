@@ -43,8 +43,12 @@ Recommendation: **go with changes.** The architecture holds. Every reload, rollb
 and kernel-restart target is met on both OSes with wide margins, the local
 client-protocol hop costs 0.2-0.4 ms over herdr, and a 15-pane full repaint costs
 about a quarter of herdr's frame pipeline (herdr's figure also builds pane surfaces;
-herdr-live's starts from kernel-packed rows and excludes the scene compute). Two targets are missed as written, and in both the miss is not
-the architecture's:
+herdr-live's starts from kernel-packed rows and excludes `View.compute` and the row fetch,
+so the absolute comparison favours herdr-live by construction). Two targets are missed as
+written. The frame-ratio miss is Elixir per-segment cost, which is the composition risk
+design.md names, now measured and bounded (about 1045 segments per 15-pane frame, 2.3-3.1x
+herdr-live's own 1-pane frame). The stall miss reproduces with no herdr code at all, so it
+is the host's, not the architecture's:
 
 (b) changes written into design.md (each marked "M6 gate change"):
 
@@ -54,7 +58,9 @@ the architecture's:
    per-term overhead rather than the cost that bounds a frame. The design's
    compose-helper NIF was prototyped and gave nothing at 15 panes; the risk entry now
    says so and names the next lever (a NIF that places whole pane rectangles).
-2. Cat-flood row: typing ≤ 20 ms p95 (unchanged), and the scheduler stall no worse than
+2. Cat-flood row: the stall clause restated and typing judged at p95, as M3 did (the
+   original gave no percentile; both changes are marked in design.md). Typing ≤ 20 ms p95
+   (max 17-23 ms macOS, 69-622 ms Linux), and the scheduler stall no worse than
    the host's OS-only floor (a BEAM probe next to 15 pty floods with no herdr code),
    ≤ 10 ms where that floor allows. On both hosts the floor is 3-30x the 10 ms target.
 3. New risk entry: PTY floods starve schedulers through the OS; the kernel demotes
@@ -68,16 +74,21 @@ M7 must do first, before the dogfooding week:
 2. Run the human GUI-terminal checks still owed from M2 and M3 (procedures in their
    results), now with the QoS demotion in place, and watch a fast full-screen TUI,
    which the demotion treats as bulk output.
-3. Re-run the kill -9 bench with `runs=30` after any change to the snapshot path or a
+3. Log the module names the promotion sync loads (it logs only a count), so an
+   unattributed load can be traced.
+4. Re-run the kill -9 bench with `runs=30` after any change to the snapshot path or a
    libghostty-vt bump (patch 0008 must be kept or dropped deliberately).
 
 ## Consequences
 
 - Easier: M7+ can build on the reload and handoff machinery as is; the gate benches
   (`live/bench/gate_round.sh`, `live/scripts/linux_check.sh`, `bench/gate/glass.py`)
-  re-run the whole table on either OS.
+  re-run the whole table on either OS. The OS-only floor is `live/bench/gate/os_floor.sh`
+  (`just live-bench-os-floor`, suite `osfloor` in `gate_round.sh`); commit and re-run it
+  with each gate re-run.
 - Harder: two targets are now relative to a measured reference (herdr, OS floor), so
-  they need that reference re-measured on the same host every time.
+  they need that reference re-measured on the same host every time (herdr via the
+  `herdrref` suite, the floor via `osfloor`).
 - Costs if wrong: if per-segment Elixir work grows with overlays and graphics, frames
   get slower than herdr's and the pane-rectangle NIF is needed in M9/M10. If the
   stall restatement hides a herdr-specific problem, it would show as long schedules in
@@ -91,7 +102,8 @@ M7 must do first, before the dogfooding week:
 - **Go as is (no design changes).** Rejected: two rows would stay red with no plan,
   and the gate would not have said why.
 - **No-go.** Rejected: no miss traces to the BEAM/NIF split. The stall reproduces with
-  no herdr code, and composition is cheaper than herdr's in absolute terms.
+  no herdr code, and composition is cheaper than herdr's in absolute terms (frame scope as above:
+  herdr's figure builds pane surfaces, herdr-live's excludes `View.compute` and the row fetch).
 - **Switch Render to the compose-helper NIF.** Rejected: measured no gain at 15 panes,
   and it moves code out of the hot-reloadable brain.
 - **Static low priority for all PTY readers.** Rejected: it would also demote

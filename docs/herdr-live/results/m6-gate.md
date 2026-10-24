@@ -14,6 +14,9 @@ coordinator's dispatch note). Plan: [plans/m6.md](../plans/m6.md). Proposed deci
 | load during the 3 gate rounds | load average 6-13, CPU 62-75 % idle (`top`); a shared desktop (Firefox, Godot, Unity, WindowServer, Spotlight) | guest load average 1.5-7.6; the macOS host was the same desktop |
 | tree | the worktree itself | `git archive HEAD` export copied into the container (`live/scripts/linux_check.sh`), separate `_build`/`target` |
 
+Linux run env lines show `dirty=1`; that is an artifact of `git init` in the container
+(the export has no history), not a modified tree.
+
 The host was not quiet earlier in the day: macOS load average sat at 40-200 with
 50-60 % CPU idle (mostly blocked Spotlight threads). The three gate rounds per OS ran
 after it settled. On macOS the load average is a poor quietness signal, so every suite
@@ -40,7 +43,7 @@ of the three rounds.
 | frame cost, 15 full panes, 120x40 (herdr's profile geometry), full repaint | 167 / 175 / 162 µs mean; herdr 652 / 677 / 689 µs | 177 / 177 / 183 µs; herdr 755 / 726 / 750 µs | **(b)** 15-pane full repaint ≤ herdr's at the same geometry | met |
 | frame cost ratio 1 vs 15, 120x40 | 2.77 / 2.77 / 2.40x (herdr 1.13 / 1.15 / 1.18x) | 2.31 / 3.07 / 2.78x (herdr 1.14 / 1.12 / 1.12x) | was: within 2x herdr's ratio (≤ 2.24-2.36x) | missed as written; restated (b) |
 | frame cost at 200x50, 1 / 15 panes | 59 / 58 / 68 and 318 / 326 / 307 µs (4.5-5.6x) | 75 / 65 / 96 and 364 / 371 / 379 µs (3.9-5.7x) | (record) | — |
-| `cat` 100 MiB in 15 panes: typing in a 16th pane | p95 7.6 / 7.4 / 7.2 ms (max 23 / 19 / 17) | p95 11.4 / 12.0 / 11.6 ms (max 209 / 69 / 622) | ≤ 20 ms | met (p95) |
+| `cat` 100 MiB in 15 panes: typing in a 16th pane | p95 7.6 / 7.4 / 7.2 ms (max 23 / 19 / 17) | p95 11.4 / 12.0 / 11.6 ms (max 209 / 69 / 622) | ≤ 20 ms p95 (the original row gave no percentile; judged at p95 as M3 did, M6 gate change) | met (p95; max values shown) |
 | `cat` 100 MiB in 15 panes: scheduler stall (`Process.sleep(1)` probe max overshoot) | 19.4 / 11.0 / 11.9 ms (120x40 runs: 16.3 / 11.3 / 15.1) | 41.6 / 60.6 / 81.3 ms (120x40 runs: 63.3 / 53.1 / 25.4) | was: no stall > 10 ms | missed as written on both OSes; below the OS-only floor on both, see (b) |
 | OS-only floor: BEAM probe next to 15 pty `cat`s of 100 MiB, no herdr code | 92.1 / 61.1 / 91.2 ms | 451 / 340 / 699 ms | **(b)** stall no worse than this floor, ≤ 10 ms where the floor allows | met |
 | edit `Client.Term.Render`, save → visible | 288 / 291 / 296 ms | 289 / 282 / 296 ms | < 500 ms p95 | met |
@@ -79,9 +82,10 @@ Notes on the table:
 - **Flood.** `herdr.bench --kernel real`: 16 panes at 200x50 (or 120x40), 15 `cat` a
   100 MiB file, a 16th takes typing; the probe is a BEAM process looping
   `Process.sleep(1)`. The OS-only floor uses the same probe next to 15 `script(1)` pty
-  cats of a 100 MiB file with no herdr process running (scripts kept in the scratchpad
-  `m6ctl/`; Linux: `script -q -c "cat flood100" /dev/null`). On Linux the typing max is
-  still 69-622 ms (p95 holds).
+  cats of a 100 MiB file with no herdr process running: `live/bench/gate/os_floor.sh` (probe
+  `os_floor.exs`; macOS `script -q /dev/null cat F`, Linux `script -q -c "cat F" /dev/null`;
+  `just live-bench-os-floor`, suite `osfloor` of `gate_round.sh`). Typing is judged at p95
+  (max 23 / 19 / 17 ms macOS; 209 / 69 / 622 ms Linux, where p95 holds but the max does not).
 - **Second client.** The second client is an in-VM terminal client on a fake tty that
   attaches over the client protocol (`Client.Session`), as M3 did. A second real
   terminal window in another OS process needs the M16 transport. While B is attached the
@@ -118,7 +122,10 @@ re-measure, (b) design change written into design.md and listed in the ADR, (c) 
 - Ratio after the fix: 2.4-2.8x macOS, 2.3-3.1x Linux at 120x40, still over 2x herdr's.
   In absolute terms herdr-live's 15-pane full repaint is about 4x cheaper than herdr's
   at the same geometry (and its 1-pane frame about 9x cheaper), which is the cost the
-  ratio was a proxy for.
+  ratio was a proxy for. Frame scope differs: herdr's figure also builds pane surfaces;
+  herdr-live's starts from kernel-packed rows and excludes `View.compute` and the row
+  fetch. The remaining ratio miss is Elixir per-segment cost, the composition risk
+  design.md names, measured and bounded.
 - (b) design.md row restated: "15-pane full repaint ≤ herdr's at the same geometry;
   record the 1 vs 15 ratio".
 
@@ -152,7 +159,11 @@ re-measure, (b) design change written into design.md and listed in the ADR, (c) 
   7-12 ms on both. Still over 10 ms, which no process on these hosts gets under that
   load.
 - (b) design.md row restated: "typing ≤ 20 ms p95; scheduler stall no worse than the
-  host's OS-only floor, ≤ 10 ms where that floor allows"; and a new design.md risk
+  host's OS-only floor, ≤ 10 ms where that floor allows" (two changes: stall clause
+  restated, typing judged at p95 as M3 did). The floor is reproducible with
+  `live/bench/gate/os_floor.sh`; a macOS run after the gate rounds gave flood max
+  89-117 ms (idle 1.4-2.8 ms, flood wall 16.8-17.3 s), above the 61-92 ms of the gate
+  rounds but the same order on a shared desktop. A new design.md risk
   entry for PTY floods and the reader demotion policy.
 
 ### 3. Scrollback lost after about 18 handoffs (found in M6) (a)
@@ -169,7 +180,9 @@ re-measure, (b) design change written into design.md and listed in the ADR, (c) 
   `vendor/libghostty-vt.patches.md`): restored screen pages get the row capacity a new
   page of that width gets, when it still fits a pool item. Wire format unchanged; old
   blobs decode. Regression test `vt::tests::snapshot_round_trips_keep_scrollback` (30
-  trips; failed at trip 18 before). `82aec93e`: `kill9.exs` now fails when any run has
+  trips; failed at trip 18 before). The 30-handoff kill -9 check ran on macOS only;
+  the Linux cell is 3 sessions of 12 handoffs, below the ~18-handoff point where the bug
+  showed. `82aec93e`: `kill9.exs` now fails when any run has
   answered, scrollback or htop below N/N.
 
 ### 4. Promoted standby runs stale code (M5 ruling 28) (a)
@@ -181,7 +194,7 @@ re-measure, (b) design change written into design.md and listed in the ADR, (c) 
   it loads every loaded module whose on-disk beam md5 differs from the loaded one,
   through the existing soft-purge loader, and never touches NIF modules (beams importing
   `erlang:load_nif/2`). About 3 ms on a normal start. After: 3/3, marker live 68-235 ms
-  after the kill. Regression test in `herdr_reload/test/server_test.exs`. M5's earlier
+  after the kill (macOS only; not measured on Linux). Regression test in `herdr_reload/test/server_test.exs`. M5's earlier
   attempt broke the tty harness `quit` check; that did not reproduce and its code was
   never committed, so its cause is unknown.
 - Known cost: code loaded this way has no reload batch, so a failure in it is

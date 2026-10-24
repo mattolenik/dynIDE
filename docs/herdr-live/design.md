@@ -550,7 +550,7 @@ mechanism behind "never lose terminals" and the gate should prove it.
 |---|---|
 | keystroke → glass, local echo, idle | ≤ herdr + 1ms p95 (includes the client-protocol hop) |
 | frame cost, 1 vs 15 full panes, fixed geometry | 15-pane full repaint ≤ herdr's at the same geometry; record the 1 vs 15 ratio (M6 gate change: was "within 2× herdr's ratio") |
-| `cat` 100MB in 15 panes | typing in another pane stays ≤ 20ms p95; scheduler stall no worse than the host's OS-only floor (a BEAM probe next to 15 pty floods with no herdr code), and ≤ 10ms where that floor allows (M6 gate change: was "no scheduler stall > 10ms") |
+| `cat` 100MB in 15 panes | typing in another pane stays ≤ 20ms p95; scheduler stall no worse than the host's OS-only floor (a BEAM probe next to 15 pty floods with no herdr code), and ≤ 10ms where that floor allows (M6 gate change: stall clause restated, was "no scheduler stall > 10ms"; typing is judged at p95, as M3 did, the original gave no percentile) |
 | edit `Client.Term.Render`, save → visible | < 500ms p95 |
 | edit `View.compute` (chrome tree change), save → visible | < 500ms p95 |
 | add a field to `App.Ui` under load → visible | < 1s p95; record the fan-out module count |
