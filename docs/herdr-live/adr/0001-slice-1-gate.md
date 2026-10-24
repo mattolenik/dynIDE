@@ -35,7 +35,7 @@ relative. Evidence: [results/m6-gate.md](../results/m6-gate.md).
 The gate also found and fixed two defects that would have broken the "never lose
 terminals, scrollback, or layout" promise: scrollback lost after about 18 handoffs
 (vendored ghostty patch 0008) and a promoted standby silently running the code it
-booted with (M5 ruling 28). The M1 StallTest flake was the test's fault.
+booted with (M5 ruling 28; that fix was measured on macOS only). The M1 StallTest flake was the test's fault.
 
 ## Decision
 
