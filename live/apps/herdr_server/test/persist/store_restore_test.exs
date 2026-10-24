@@ -3,10 +3,11 @@ defmodule HerdrServer.Persist.StoreRestoreTest do
 
   import ExUnit.CaptureLog
 
-  alias HerdrServer.App.{Actions, Store}
+  alias HerdrServer.App.{Actions, Store, Ui}
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Pane.Rows
   alias HerdrServer.Persist.{Disk, Load, Schema}
+  alias HerdrServer.View.Frame
 
   @moduletag :tmp_dir
   @moduletag :capture_log
@@ -87,7 +88,9 @@ defmodule HerdrServer.Persist.StoreRestoreTest do
     assert opens() - before == 3
     after_event = Store.snapshot()
     assert after_event.session.workspaces |> hd() |> Map.get(:tabs) |> length() == 2
-    assert after_event.session.area.w == 100
+
+    assert after_event.session.area ==
+             Frame.regions(%{cols: 100, rows: 30}, %Ui{}).panes
   end
 
   test "no file: an empty Store, initialised lazily by the first event", %{cfg: cfg} do

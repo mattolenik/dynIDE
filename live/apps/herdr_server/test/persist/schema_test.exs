@@ -4,6 +4,7 @@ defmodule HerdrServer.Persist.SchemaTest do
 
   alias HerdrServer.App.{Actions, Keybinds, Session, Ui}
   alias HerdrServer.Persist.Schema
+  alias HerdrServer.View.Frame
 
   defp fresh, do: elem(Actions.init(%{cols: 80, rows: 24}), 0)
 
@@ -45,7 +46,7 @@ defmodule HerdrServer.Persist.SchemaTest do
                    active_workspace: 1,
                    next_id: 2,
                    size: %{cols: 80, rows: 24},
-                   area: %{x: 0, y: 0, w: 80, h: 23}
+                   area: Frame.regions(%{cols: 80, rows: 24}, %Ui{}).panes
                  },
                  focus: %{pane: 1},
                  ui: Map.delete(Map.from_struct(%Ui{}), :keybinds),

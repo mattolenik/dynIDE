@@ -917,6 +917,9 @@ def persist():
         h.until(lambda: h.shows("m8-marker-b"), "m8-marker-b in the new pane", timeout=30)
         ok(True, "persist run 1: prefix v split, the new pane cd'd to dir-b and echoed m8-marker-b")
         h.send(b"\x02c")
+        # m13: prefix c opens a name prompt; enter accepts the default name
+        h.until(lambda: h.shows("new tab") and h.shows("save"), "new tab name prompt", timeout=30)
+        h.send(b"\r")
         h.until(lambda: not h.shows("m8-marker-b") and h.prompts() >= 1, "new tab after prefix c",
                 timeout=30)
         h.send(f'cd {dir_c}; echo in-""dir-c\r'.encode())
