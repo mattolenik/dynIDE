@@ -1456,6 +1456,12 @@ mod tests {
         assert!(pty.info().start_time.is_some());
         pty.kill(libc::SIGKILL).expect("kill");
         assert_eq!(exit_of(&rx), ExitStatus::Unknown);
+        // The exit is reported at zombie time (pidfd/kqueue); the handed-over Pty's waiter
+        // in this process reaps it a moment later, and kill(pid, 0) sees a zombie as alive.
+        let end = Instant::now() + T;
+        while alive(pid) && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(5));
+        }
         assert!(!alive(pid));
     }
 
