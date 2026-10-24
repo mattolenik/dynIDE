@@ -59,7 +59,7 @@ of the three rounds.
 | `kill -9` with no ready standby (cold) | 671 / 676 / 673 ms | 694 / 706 / 661 ms | (report separately) | under 1 s |
 | graceful `kernel-restart` during typing | 1600/1600 bytes, window 9 / 8 / 12 ms | 1600/1600, window 8 / 9 / 7 ms | no loss | met |
 | second terminal client at a different size | typing in A visible in B: p95 321 / 355 / 354 µs (200x50 + 80x24), 368 / 334 / 344 µs (120x40 + 80x24); real-kernel two-client test passes | p95 602 / 596 / 620 µs; 629 / 648 / 653 µs; test passes | both render correctly; typing in one visible in the other | met (in-VM client over the client protocol; see notes) |
-| kill -9 after many handoffs: scrollback kept (found in M6) | 30 consecutive handoffs, 5/5 every run | 36 runs, 5/5 every run | scrollback restored | met after fix (a) |
+| kill -9 after many handoffs: scrollback kept (found in M6) | 30 consecutive handoffs, 5/5 every run | 3 sessions of 12 handoffs (below the ~18-handoff point), 5/5 every run; the 30-handoff check ran on macOS only | scrollback restored | met after fix (a) |
 | promoted standby runs current code (ruling 28, found in M5) | edit before kill -9 live in the new primary 3/3 (68-235 ms after the kill) | — (macOS run) | edits survive a crash | met after fix (a) |
 
 Notes on the table:
@@ -163,7 +163,10 @@ re-measure, (b) design change written into design.md and listed in the ADR, (c) 
   restated, typing judged at p95 as M3 did). The floor is reproducible with
   `live/bench/gate/os_floor.sh`; a macOS run after the gate rounds gave flood max
   89-117 ms (idle 1.4-2.8 ms, flood wall 16.8-17.3 s), above the 61-92 ms of the gate
-  rounds but the same order on a shared desktop. A new design.md risk
+  rounds but the same order on a shared desktop; a Linux run of the committed script at
+  `7722b36b` gave 360 / 16 / 655 ms (idle 1.6-2.0 ms, flood wall 5.0-5.7 s). The
+  script's probe window (12 s) is shorter than the macOS flood (about 17 s), so it can
+  only understate the macOS floor. A new design.md risk
   entry for PTY floods and the reader demotion policy.
 
 ### 3. Scrollback lost after about 18 handoffs (found in M6) (a)

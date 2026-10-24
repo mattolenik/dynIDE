@@ -101,7 +101,8 @@ M7 must do first, before the dogfooding week:
 
 - **Go as is (no design changes).** Rejected: two rows would stay red with no plan,
   and the gate would not have said why.
-- **No-go.** Rejected: no miss traces to the BEAM/NIF split. The stall reproduces with
+- **No-go.** Rejected: neither miss breaks the BEAM/NIF split. The frame-ratio miss is
+  the named Elixir composition risk, measured and bounded; the stall reproduces with
   no herdr code, and composition is cheaper than herdr's in absolute terms (frame scope as above:
   herdr's figure builds pane surfaces, herdr-live's excludes `View.compute` and the row fetch).
 - **Switch Render to the compose-helper NIF.** Rejected: measured no gain at 15 panes,
