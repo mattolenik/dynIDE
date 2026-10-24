@@ -22,6 +22,12 @@ defmodule HerdrServer.Native do
   @spec vt_new(term, term, term) :: {:ok, reference}
   def vt_new(_cols, _rows, _max_scrollback), do: err()
   @doc false
+  @spec vt_encode_snapshot(term) :: binary
+  def vt_encode_snapshot(_vt), do: err()
+
+  @spec vt_restore(term, term) :: {:ok, reference} | {:error, binary}
+  def vt_restore(_bytes, _max_scrollback), do: err()
+
   @spec vt_feed(term, term) :: non_neg_integer
   def vt_feed(_vt, _bytes), do: err()
   @doc false

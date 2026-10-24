@@ -206,6 +206,45 @@ pub const MODE_COLOR_SCHEME_REPORT: u16 = 2031;
 const TERMINAL_DATA_COLOR_FOREGROUND: ffi::GhosttyTerminalData = 18;
 const TERMINAL_DATA_COLOR_CURSOR: ffi::GhosttyTerminalData = 20;
 
+// The checked-in bindings predate the snapshot API and this option; values and
+// signatures follow vendor/libghostty-vt/include/ghostty/vt/{snapshot,terminal}.h.
+const TERMINAL_OPT_CONTINUATION_MAX_BYTES: ffi::GhosttyTerminalOption = 31;
+const SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION: ffi::GhosttyTerminalOption = 1;
+
+unsafe extern "C" {
+    fn ghostty_snapshot_encode_alloc(
+        terminal: ffi::GhosttyTerminal,
+        allocator: *const ffi::GhosttyAllocator,
+        out_ptr: *mut *mut u8,
+        out_len: *mut usize,
+    ) -> ffi::GhosttyResult;
+    fn ghostty_snapshot_decoder_new_buf(
+        allocator: *const ffi::GhosttyAllocator,
+        decoder: *mut ffi::GhosttySnapshotDecoder,
+        ptr: *const u8,
+        len: usize,
+    ) -> ffi::GhosttyResult;
+    fn ghostty_snapshot_decoder_set(
+        decoder: ffi::GhosttySnapshotDecoder,
+        option: ffi::GhosttyTerminalOption,
+        value: *const c_void,
+    ) -> ffi::GhosttyResult;
+    fn ghostty_snapshot_decoder_decode(
+        decoder: ffi::GhosttySnapshotDecoder,
+        terminal: *mut ffi::GhosttyTerminal,
+    ) -> ffi::GhosttyResult;
+    fn ghostty_snapshot_decoder_free(decoder: ffi::GhosttySnapshotDecoder);
+}
+
+fn raw_get_u16(raw: ffi::GhosttyTerminal, data: ffi::GhosttyTerminalData) -> Result<u16, Error> {
+    let mut out = 0u16;
+    // SAFETY: raw is a live terminal and out matches the requested u16 data type.
+    unsafe {
+        ffi::ghostty_terminal_get(raw, data, (&mut out as *mut u16).cast()).into_result()?;
+    }
+    Ok(out)
+}
+
 const KITTY_IMAGE_STORAGE_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 const APC_MAX_BYTES: usize = 16 * 1024 * 1024;
 const APC_MAX_BYTES_KITTY: usize = 16 * 1024 * 1024;
@@ -867,7 +906,92 @@ impl Terminal {
         unsafe {
             ffi::ghostty_terminal_new(ptr::null(), &mut raw, cols, rows).into_result()?;
         }
+        Self::configure(raw, cols, rows, max_scrollback)
+    }
 
+    /// Restores a terminal from `ghostty_snapshot_encode` output. The decoded
+    /// continuation is retained, so the restored terminal can be snapshotted again
+    /// even mid-escape; it gets the same options and callbacks as `new`.
+    pub fn from_snapshot(bytes: &[u8], max_scrollback: usize) -> Result<Self, Error> {
+        let mut decoder = ptr::null_mut();
+        let retain = true;
+        let mut raw: ffi::GhosttyTerminal = ptr::null_mut();
+        // SAFETY: bytes outlives the decoder, which is freed before returning; out
+        // pointers are valid. The decoded terminal is caller-owned.
+        unsafe {
+            ghostty_snapshot_decoder_new_buf(
+                ptr::null(),
+                &mut decoder,
+                bytes.as_ptr(),
+                bytes.len(),
+            )
+            .into_result()?;
+            let result = ghostty_snapshot_decoder_set(
+                decoder,
+                SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION,
+                (&retain as *const bool).cast(),
+            )
+            .into_result()
+            .and_then(|()| ghostty_snapshot_decoder_decode(decoder, &mut raw).into_result());
+            ghostty_snapshot_decoder_free(decoder);
+            result?;
+        }
+        let size = (
+            raw_get_u16(raw, ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLS),
+            raw_get_u16(raw, ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_ROWS),
+        );
+        match size {
+            (Ok(cols), Ok(rows)) => Self::configure(raw, cols, rows, max_scrollback),
+            (Err(e), _) | (_, Err(e)) => {
+                // SAFETY: raw is the live terminal returned by decode and owned here.
+                unsafe { ffi::ghostty_terminal_free(raw) };
+                Err(e)
+            }
+        }
+    }
+
+    /// Encodes the complete terminal state (screens, scrollback, modes, parser
+    /// continuation) in ghostty's snapshot format.
+    pub fn encode_snapshot(&self) -> Result<Vec<u8>, Error> {
+        let mut out = ptr::null_mut();
+        let mut len = 0usize;
+        // SAFETY: self.raw is live and &self excludes concurrent writes; the buffer comes
+        // from the default allocator and is freed with it after copying.
+        unsafe {
+            ghostty_snapshot_encode_alloc(self.raw, ptr::null(), &mut out, &mut len)
+                .into_result()?;
+            let bytes = if out.is_null() {
+                Vec::new()
+            } else {
+                std::slice::from_raw_parts(out, len).to_vec()
+            };
+            ffi::ghostty_free(ptr::null(), out, len);
+            Ok(bytes)
+        }
+    }
+
+    /// Enables VT continuation tracking up to `max` bytes (0 disables), so a snapshot
+    /// taken mid-escape can resume it.
+    pub fn set_continuation_max_bytes(&mut self, max: usize) -> Result<(), Error> {
+        // SAFETY: self.raw is live; the option takes a size_t pointer.
+        unsafe {
+            ffi::ghostty_terminal_set(
+                self.raw,
+                TERMINAL_OPT_CONTINUATION_MAX_BYTES,
+                (&max as *const usize).cast(),
+            )
+            .into_result()
+        }
+    }
+
+    /// Wraps a live terminal handle (freed by `Drop`, including on error) and applies
+    /// Herdr's options and callbacks.
+    fn configure(
+        raw: ffi::GhosttyTerminal,
+        cols: u16,
+        rows: u16,
+        max_scrollback: usize,
+    ) -> Result<Self, Error> {
         let mut terminal = Self {
             raw,
             max_scrollback,
@@ -1778,13 +1902,7 @@ impl Terminal {
     }
 
     fn get_u16(&self, data: ffi::GhosttyTerminalData) -> Result<u16, Error> {
-        let mut out = 0u16;
-        // SAFETY: out points to a u16 matching the requested terminal data type.
-        unsafe {
-            ffi::ghostty_terminal_get(self.raw, data, (&mut out as *mut u16).cast())
-                .into_result()?;
-        }
-        Ok(out)
+        raw_get_u16(self.raw, data)
     }
 
     fn get_u32(&self, data: ffi::GhosttyTerminalData) -> Result<u32, Error> {

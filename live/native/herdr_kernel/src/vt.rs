@@ -188,6 +188,8 @@ struct VtCore {
     last: Arc<Snapshot>,
 }
 
+const CONTINUATION_MAX_BYTES: usize = 65536;
+
 pub struct Vt {
     core: Mutex<VtCore>,
     snapshot: Mutex<Arc<Snapshot>>,
@@ -376,8 +378,22 @@ impl VtCore {
 
 impl Vt {
     pub fn new(cols: u16, rows: u16, max_scrollback: usize) -> Result<Arc<Vt>, VtError> {
-        let mut terminal = Terminal::new(cols, rows, max_scrollback)?;
+        Self::from_terminal(Terminal::new(cols, rows, max_scrollback)?)
+    }
+
+    /// Rebuilds a Vt from `encode_snapshot` bytes; size comes from the snapshot.
+    pub fn restore(bytes: &[u8], max_scrollback: usize) -> Result<Arc<Vt>, VtError> {
+        Self::from_terminal(Terminal::from_snapshot(bytes, max_scrollback)?)
+    }
+
+    pub fn encode_snapshot(&self) -> Result<Vec<u8>, VtError> {
+        Ok(lock(&self.core).terminal.encode_snapshot()?)
+    }
+
+    fn from_terminal(mut terminal: Terminal) -> Result<Arc<Vt>, VtError> {
         terminal.enable_kitty_graphics()?;
+        // Ruling 4 (m5): continuation tracking so a snapshot never fails mid-escape.
+        terminal.set_continuation_max_bytes(CONTINUATION_MAX_BYTES)?;
         let empty = Arc::new(Snapshot {
             gen: 0,
             cols: 0,
@@ -863,5 +879,109 @@ mod tests {
     #[test]
     fn no_placements_without_images() {
         assert!(vt().graphics_placements().is_empty());
+    }
+
+    fn roundtrip(vt: &Vt, max: usize) -> Arc<Vt> {
+        let bytes = vt.encode_snapshot().expect("encode");
+        Vt::restore(&bytes, max).expect("restore")
+    }
+
+    #[test]
+    fn snapshot_roundtrip_primary_scrollback() {
+        let vt = Vt::new(80, 24, 1_000_000).expect("vt");
+        for n in 1..=500 {
+            vt.write(format!("{n}\r\n").as_bytes());
+        }
+        let before = vt.read_text(TextRange::Screen).expect("read");
+        let vt2 = roundtrip(&vt, 1_000_000);
+        let after = vt2.read_text(TextRange::Screen).expect("read");
+        assert_eq!(before, after);
+        assert!(after.contains("1\n"));
+        assert!(after.contains("500"));
+    }
+
+    #[test]
+    fn snapshot_roundtrip_alt_screen() {
+        let vt = Vt::new(80, 24, 1_000_000).expect("vt");
+        for n in 1..=100 {
+            vt.write(format!("{n}\r\n").as_bytes());
+        }
+        vt.write(b"\x1b[?1049h\x1b[2J\x1b[Hhtop-like");
+        let vt2 = roundtrip(&vt, 1_000_000);
+        assert!(vt2.mode(Mode::AltScreen).0);
+        assert!(vt2
+            .read_text(TextRange::Viewport)
+            .expect("read")
+            .contains("htop-like"));
+        vt2.write(b"\x1b[?1049l");
+        let view = vt2.read_text(TextRange::Viewport).expect("read");
+        assert!(view.lines().any(|l| l.trim_end() == "100"), "{view}");
+    }
+
+    #[test]
+    fn snapshot_keeps_modes() {
+        let vt = vt();
+        vt.write(b"\x1b[?2004h\x1b[?1h\x1b[?1006h\x1b[>5u");
+        let vt2 = roundtrip(&vt, 10_000);
+        for m in [Mode::BracketedPaste, Mode::CursorKeys, Mode::MouseSgr] {
+            assert_eq!(vt2.mode(m).0, vt.mode(m).0, "{m:?}");
+            assert!(vt2.mode(m).0, "{m:?}");
+        }
+        assert_eq!(vt2.kitty_keyboard_flags().0, vt.kitty_keyboard_flags().0);
+        assert_eq!(vt2.kitty_keyboard_flags().0, 5);
+    }
+
+    #[test]
+    fn snapshot_keeps_cursor() {
+        let vt = Vt::new(80, 24, 10_000).expect("vt");
+        vt.write(b"\x1b[5;10H");
+        let vt2 = roundtrip(&vt, 10_000);
+        let c = vt2.cursor().expect("cursor");
+        assert_eq!((c.x, c.y), (9, 4));
+        assert_eq!(vt2.full_rows().1.len(), 24);
+    }
+
+    #[test]
+    fn snapshot_mid_escape() {
+        let vt = vt();
+        vt.write(b"\x1b[3");
+        let vt2 = roundtrip(&vt, 10_000);
+        vt2.write(b"1mX");
+        vt2.refresh();
+        let fresh = self::vt();
+        fresh.write(b"\x1b[31mX");
+        fresh.refresh();
+        let got = row(&vt2, 0);
+        assert_eq!(got[0].glyph, "X");
+        assert_eq!(got[0].fg, Color::Palette(1));
+        assert_eq!(got[0], row(&fresh, 0)[0]);
+    }
+
+    #[test]
+    fn restore_garbage_errors() {
+        assert!(Vt::restore(b"nope", 1000).is_err());
+    }
+
+    #[test]
+    fn snapshot_size_and_time() {
+        let vt = Vt::new(80, 24, 10_000_000).expect("vt");
+        let line = format!("{}\r\n", "x".repeat(79));
+        for _ in 0..10_000 {
+            vt.write(line.as_bytes());
+        }
+        let t = Instant::now();
+        let bytes = vt.encode_snapshot().expect("encode");
+        let encode_us = t.elapsed().as_micros();
+        let t = Instant::now();
+        let vt2 = Vt::restore(&bytes, 10_000_000).expect("restore");
+        let decode_us = t.elapsed().as_micros();
+        println!(
+            "SNAPSHOT bytes={} encode_us={encode_us} decode_us={decode_us}",
+            bytes.len()
+        );
+        assert_eq!(
+            vt2.read_text(TextRange::Screen).expect("read"),
+            vt.read_text(TextRange::Screen).expect("read")
+        );
     }
 }

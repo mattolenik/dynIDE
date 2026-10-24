@@ -78,6 +78,17 @@ defmodule HerdrServer.Native.Vt do
     Native.vt_new(cols, rows, max_scrollback)
   end
 
+  @doc """
+  Complete terminal state (screens, scrollback, modes, unfinished escape) in
+  ghostty's snapshot format. Raises `ErlangError` with the ghostty error on failure.
+  """
+  @spec encode_snapshot(vt) :: binary
+  def encode_snapshot(vt), do: Native.vt_encode_snapshot(vt)
+
+  @doc "Rebuilds a terminal from `encode_snapshot/1` output; its size comes from the snapshot."
+  @spec restore(binary, non_neg_integer) :: {:ok, vt} | {:error, binary}
+  def restore(bytes, max_scrollback), do: Native.vt_restore(bytes, max_scrollback)
+
   @doc "Parses `bytes` and refreshes the snapshot; returns the new generation. Tests and replay only."
   @spec feed(vt, binary) :: gen
   def feed(vt, bytes), do: Native.vt_feed(vt, bytes)

@@ -273,6 +273,22 @@ fn vt_new(cols: u16, rows: u16, max_scrollback: usize) -> NifResult<(Atom, Resou
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
+fn vt_encode_snapshot(env: Env, vt: ResourceArc<VtRes>) -> NifResult<Term> {
+    let bytes =
+        vt.0.encode_snapshot()
+            .map_err(|e| raise(format!("{e:?}")))?;
+    Ok(bin(env, &bytes))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn vt_restore<'a>(env: Env<'a>, bytes: Binary, max_scrollback: usize) -> Term<'a> {
+    match Vt::restore(bytes.as_slice(), max_scrollback) {
+        Ok(vt) => (atoms::ok(), ResourceArc::new(VtRes(vt))).encode(env),
+        Err(e) => (atoms::error(), format!("{e:?}")).encode(env),
+    }
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
 fn vt_feed(vt: ResourceArc<VtRes>, bytes: Binary) -> u64 {
     vt.0.write(bytes.as_slice());
     vt.0.refresh()
