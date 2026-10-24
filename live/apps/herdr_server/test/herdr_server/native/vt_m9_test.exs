@@ -93,4 +93,20 @@ defmodule HerdrServer.Native.VtM9Test do
     {:ok, vt} = Vt.new(20, 5, 1000)
     assert %{shape: :block, blinking: false} = Vt.cursor(vt)
   end
+
+  # Pane.Server re-reads :alt_screen on damage with dirty rows: a screen switch dirties
+  # some rows (only the cursor row here, so "every row dirty" would miss it)
+  test "switching to and from the alt screen dirties rows and flips the mode" do
+    {:ok, vt} = Vt.new(80, 24, 100)
+    Vt.feed(vt, "hello\r\n")
+    Vt.dirty_rows(vt)
+
+    Vt.feed(vt, "\e[?1049h")
+    assert {_, [_ | _]} = Vt.dirty_rows(vt)
+    assert Vt.mode(vt, :alt_screen) == true
+
+    Vt.feed(vt, "\e[?1049l")
+    assert {_, [_ | _]} = Vt.dirty_rows(vt)
+    assert Vt.mode(vt, :alt_screen) == false
+  end
 end

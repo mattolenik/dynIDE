@@ -18,7 +18,7 @@ defmodule HerdrServer.Client.Foreground do
   def send(msg) do
     case Facts.get(:foreground) do
       pid when is_pid(pid) -> if Process.alive?(pid), do: Kernel.send(pid, msg)
-      nil -> nil
+      _none -> nil
     end
 
     :ok

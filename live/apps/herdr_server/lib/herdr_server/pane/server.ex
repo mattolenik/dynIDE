@@ -11,9 +11,10 @@ defmodule HerdrServer.Pane.Server do
   This is the only caller of `dirty_rows/1` (one shared read cursor per vt).
 
   Terminal facts (`Pane.Facts`): the scrollbar is re-read on every damage (one snapshot
-  read) and after a scroll or resize; the alt-screen mode only when every row is dirty
-  (a screen switch repaints all of them) or after a scroll, resize or init. Facts are
-  written when they change; sessions get `{:pane_facts, id}` only when the pane becomes
+  read) and after a scroll or resize; the alt-screen mode on damage with dirty rows (a
+  screen switch dirties at least the cursor row; not every row) and after a scroll,
+  resize or init. Facts are written when `scrolled`, the scroll values while scrolled,
+  or a non-scroll fact change; sessions get `{:pane_facts, id}` only when the pane becomes
   scrolled or unscrolled, or its scroll values change while scrolled. Raw titles, OSC 7
   and the `:osc` codes are parsed by `Pane.Osc`; bells and child OSC 52 go to the
   foreground client (`Client.Foreground`). Host colours (`Pane.Facts.host_colors/0`)
@@ -79,7 +80,7 @@ defmodule HerdrServer.Pane.Server do
 
       state = %{
         state
-        | colors: apply_host_colors(vt),
+        | colors: apply_host_colors(id, vt),
           scroll: scroll,
           alt_screen: alt_screen?(vt)
       }
@@ -98,7 +99,7 @@ defmodule HerdrServer.Pane.Server do
     kernel_ok(state.id, :vt_resize, Kernel.vt().resize(state.vt, cols, rows, cell_px))
     kernel_ok(state.id, :pty_resize, Kernel.pty().resize(state.pty, cols, rows, cell_px))
     # herdr keeps a scrolled-back viewport the same distance from the bottom
-    keep_from_bottom(state.vt, sb.total - sb.viewport - sb.offset)
+    keep_from_bottom(state, sb.total - sb.viewport - sb.offset)
     {:reply, :ok, state |> scroll_facts(true) |> reload()}
   end
 
@@ -115,13 +116,13 @@ defmodule HerdrServer.Pane.Server do
     state = Map.merge(%State{}, state)
     sb = Kernel.vt().scrollbar(state.vt)
 
-    case scroll_target(req, sb) do
-      same when same == sb.offset ->
-        {:noreply, state}
+    target = scroll_target(req, sb)
 
-      target ->
-        :ok = Kernel.vt().scroll_to(state.vt, target)
-        {:noreply, state |> scroll_facts(true) |> reload()}
+    with true <- target != sb.offset,
+         :ok <- kernel(state.id, :scroll_to, fn -> Kernel.vt().scroll_to(state.vt, target) end) do
+      {:noreply, state |> scroll_facts(true) |> repaint()}
+    else
+      _same_or_error -> {:noreply, state}
     end
   end
 
@@ -145,7 +146,7 @@ defmodule HerdrServer.Pane.Server do
          if(cursor == state.cursor, do: state, else: publish(%{state | gen: gen}, cursor))}
 
       {gen, dirty} ->
-        state = scroll_facts(state, length(dirty) >= tuple_size(state.rows))
+        state = scroll_facts(state, true)
         {:noreply, publish(%{state | gen: gen, rows: Enum.reduce(dirty, state.rows, &put_row/2)})}
     end
   end
@@ -203,6 +204,14 @@ defmodule HerdrServer.Pane.Server do
   @impl true
   def code_change(_old, state, _extra), do: {:ok, Map.merge(%State{}, state)}
 
+  # A raising kernel call (the NIFs raise ArgumentError/ErlangError) is logged and the
+  # pane keeps running.
+  defp kernel(id, op, fun) do
+    kernel_ok(id, op, fun.())
+  rescue
+    e in [ArgumentError, ErlangError] -> kernel_ok(id, op, {:raised, Exception.message(e)})
+  end
+
   # a kernel error is logged and the pane keeps running on its previous size/visibility
   defp kernel_ok(_id, _op, :ok), do: :ok
 
@@ -250,16 +259,20 @@ defmodule HerdrServer.Pane.Server do
     end
   end
 
-  # writes `new`'s facts when they differ from `old`'s; tells sessions about scroll moves
+  # Writes `new`'s facts when they differ from `old`'s (an unscrolled pane's scroll values
+  # do not count); tells sessions when the pane scrolls.
   defp put_facts(old, new) do
-    facts = facts(new)
-    if facts != facts(old), do: Facts.put(new.id, facts)
+    {was, now} = {facts(old), facts(new)}
+    if relevant(now) != relevant(was), do: Facts.put(new.id, now)
 
-    if facts.scrolled != scrolled?(old.scroll) or (facts.scrolled and new.scroll != old.scroll),
+    if now.scrolled != was.scrolled or (now.scrolled and now.scroll != was.scroll),
       do: dispatch({:pane_facts, new.id})
 
     new
   end
+
+  defp relevant(%{scrolled: true} = f), do: f
+  defp relevant(f), do: %{f | scroll: nil}
 
   defp put_cwd(%{cwd: path} = state, path), do: state
 
@@ -280,17 +293,17 @@ defmodule HerdrServer.Pane.Server do
     end
   end
 
-  defp apply_host_colors(vt) do
-    case Facts.host_colors() do
-      nil ->
-        nil
+  # the colours applied (nil when none are stored or the vt refused them)
+  defp apply_host_colors(id, vt) do
+    hc = Facts.host_colors() || %{}
+    colors = hc[:colors]
 
-      hc ->
-        colors = hc[:colors]
-        if colors, do: :ok = Kernel.vt().set_colors(vt, colors)
-        if Map.has_key?(hc, :scheme), do: :ok = Kernel.vt().set_color_scheme(vt, hc.scheme)
-        colors
-    end
+    if Map.has_key?(hc, :scheme),
+      do: kernel(id, :set_color_scheme, fn -> Kernel.vt().set_color_scheme(vt, hc.scheme) end)
+
+    if colors != nil and
+         kernel(id, :set_colors, fn -> Kernel.vt().set_colors(vt, colors) end) == :ok,
+       do: colors
   end
 
   # -- scrolling ------------------------------------------------------------
@@ -307,14 +320,20 @@ defmodule HerdrServer.Pane.Server do
     |> min(bottom)
   end
 
-  defp keep_from_bottom(_vt, from_bottom) when from_bottom <= 0, do: :ok
+  defp keep_from_bottom(_state, from_bottom) when from_bottom <= 0, do: :ok
 
-  defp keep_from_bottom(vt, from_bottom) do
-    sb = Kernel.vt().scrollbar(vt)
+  defp keep_from_bottom(state, from_bottom) do
+    sb = Kernel.vt().scrollbar(state.vt)
     target = max(sb.total - sb.viewport - from_bottom, 0)
-    if target != sb.offset, do: :ok = Kernel.vt().scroll_to(vt, target)
-    :ok
+
+    if target != sb.offset,
+      do: kernel(state.id, :scroll_to, fn -> Kernel.vt().scroll_to(state.vt, target) end),
+      else: :ok
   end
+
+  # a hidden pane scrolls but does not publish; unhiding reloads it
+  defp repaint(%{hidden: true} = state), do: state
+  defp repaint(state), do: reload(state)
 
   defp put_row({n, b}, t) when n < tuple_size(t), do: put_elem(t, n, b)
   defp put_row(_row, t), do: t

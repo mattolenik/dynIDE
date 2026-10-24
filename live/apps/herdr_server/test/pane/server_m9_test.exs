@@ -139,6 +139,27 @@ defmodule HerdrServer.Pane.ServerM9Test do
       refute_receive {:pane_facts, 1}, 100
     end
 
+    test "a hidden pane scrolls and updates facts but does not publish" do
+      :ok = Server.set_hidden(1, true)
+      drain()
+      Server.scroll(1, {:delta, -5})
+      assert_receive {:pane_facts, 1}, 500
+      assert Facts.scrolled?(1)
+      refute_receive {:pane_damage, 1, _}, 100
+    end
+
+    test "a raising scroll_to is logged and the pane keeps running" do
+      pid = pane_pid(1)
+      :ok = Fake.Vt.fail_next_scroll(vt(1))
+      Server.scroll(1, {:delta, -5})
+      sync(1)
+      assert pane_pid(1) == pid
+      refute Facts.scrolled?(1)
+      Server.scroll(1, {:delta, -5})
+      assert_receive {:pane_facts, 1}, 500
+      assert Facts.scrolled?(1)
+    end
+
     test "resize keeps the distance from the bottom" do
       Server.scroll(1, {:delta, -5})
       assert_receive {:pane_facts, 1}, 500
@@ -157,10 +178,30 @@ defmodule HerdrServer.Pane.ServerM9Test do
     refute_receive {:pane_bell, _}
   end
 
-  test "mark writes only on change and send drops when the client is gone" do
-    a = spawn(fn -> :ok end)
+  test "mark stores the foreground pid; marking it again keeps it, another replaces it" do
+    a = listener()
+    b = listener()
+    :ok = Foreground.mark(a)
     :ok = Foreground.mark(a)
     assert :ets.lookup(:herdr_pane_facts, :foreground) == [{:foreground, a}]
+    :ok = Foreground.mark(b)
+    assert :ets.lookup(:herdr_pane_facts, :foreground) == [{:foreground, b}]
+  end
+
+  test "a dead foreground client gets nothing and the old one is not used" do
+    a = listener()
+    :ok = Foreground.mark(a)
+    {dead, ref} = spawn_monitor(fn -> :ok end)
+    assert_receive {:DOWN, ^ref, _, _, _}
+    :ok = Foreground.mark(dead)
+    assert Foreground.send(:hello) == :ok
+    Fake.Pty.emit(pty(1), {:bell})
+    sync(1)
+    refute_receive {^a, _}, 100
+  end
+
+  test "send drops a non-pid foreground value" do
+    :ok = Facts.put(:foreground, :garbage)
     assert Foreground.send(:hello) == :ok
   end
 
@@ -214,6 +255,49 @@ defmodule HerdrServer.Pane.ServerM9Test do
     :ok = Fake.Vt.set_cursor_shape(vt(1), :block, true)
     Fake.Pty.output(pty(1), "c")
     assert eventually(fn -> match?({_, _, %{shape: :block, blinking: true}}, Rows.fetch(1)) end)
+  end
+
+  test "an unscrolled pane's growing scrollback does not rewrite its facts" do
+    before = Facts.get(1)
+    :ok = Fake.Vt.set_history(vt(1), ["a", "b"])
+    Fake.Pty.output(pty(1), "x")
+    assert_receive {:pane_damage, 1, _}, 500
+    sync(1)
+    assert Facts.get(1) == before
+    assert sync(1).scroll.total == before.scroll.total + 2
+  end
+
+  test "put_host_colors rejects malformed colours" do
+    assert Facts.put_host_colors(%{colors: %{fg: {256, 0, 0}}}) == {:error, :invalid}
+    assert Facts.put_host_colors(%{colors: %{palette: %{300 => {0, 0, 0}}}}) == {:error, :invalid}
+    assert Facts.put_host_colors(%{colors: %{fg: "red"}}) == {:error, :invalid}
+    assert Facts.put_host_colors(%{colors: :nope}) == {:error, :invalid}
+    assert Facts.put_host_colors(%{scheme: :blue}) == {:error, :invalid}
+    assert Facts.host_colors() == nil
+    assert Facts.put_host_colors(%{colors: %{fg: nil, cursor: {0, 0, 0}}}) == :ok
+  end
+
+  test "malformed stored host colours do not crash pane init" do
+    :ok = Facts.put(:host_colors, %{colors: %{fg: :bad}, scheme: :dark})
+    restart_pane(1)
+    assert sync(1).colors == nil
+    assert Fake.Vt.colors(vt(1)) == %{colors: nil, scheme: :dark}
+  end
+
+  test "a missing facts table is skipped, recreated, and the pane survives damage" do
+    pid = pane_pid(1)
+    :ets.delete(:herdr_pane_facts)
+    assert Facts.get(1) == nil
+    refute Facts.scrolled?(1)
+    Fake.Pty.output(pty(1), "x")
+    :ok = Fake.Vt.set_history(vt(1), ["a"])
+    Server.scroll(1, {:delta, -1})
+    sync(1)
+    assert pane_pid(1) == pid
+    assert eventually(fn -> :ets.whereis(:herdr_pane_facts) != :undefined end)
+    Server.scroll(1, :bottom)
+    Server.scroll(1, {:delta, -1})
+    assert eventually(fn -> Facts.scrolled?(1) end)
   end
 
   test "init applies the host colours" do

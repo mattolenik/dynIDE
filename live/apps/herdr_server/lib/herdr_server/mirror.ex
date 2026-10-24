@@ -21,6 +21,7 @@ defmodule HerdrServer.Mirror do
   """
 
   @mirror :herdr_mirror
+  @tables [:herdr_pane_rows, :herdr_pane_kernel, :herdr_pane_facts, @mirror]
 
   def child_spec(arg), do: %{id: __MODULE__, start: {__MODULE__, :start_link, [arg]}}
 
@@ -31,21 +32,30 @@ defmodule HerdrServer.Mirror do
   def init do
     true = Process.register(self(), __MODULE__)
 
-    for t <- [:herdr_pane_rows, :herdr_pane_kernel, :herdr_pane_facts, @mirror],
-        do: :ets.new(t, [:named_table, :public, :set, read_concurrency: true])
-
+    ensure_tables()
     :proc_lib.init_ack({:ok, self()})
     :proc_lib.hibernate(__MODULE__, :wake, [])
   end
 
   @doc false
-  # woken by a message: drop it and sleep again
+  # Woken by a message: drop it, create any table this code knows and the running owner
+  # lacks (a table added by a hot reload), and sleep again. `Pane.Facts` sends one when its
+  # table is missing.
   def wake do
     receive do
       _ -> :ok
     end
 
+    ensure_tables()
     :proc_lib.hibernate(__MODULE__, :wake, [])
+  end
+
+  defp ensure_tables do
+    for t <- @tables,
+        :ets.whereis(t) == :undefined,
+        do: :ets.new(t, [:named_table, :public, :set, read_concurrency: true])
+
+    :ok
   end
 
   @doc "The mirrored app (`%{session, focus, ui}`), or nil when any part is missing."

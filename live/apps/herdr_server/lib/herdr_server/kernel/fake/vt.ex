@@ -31,7 +31,8 @@ defmodule HerdrServer.Kernel.Fake.Vt do
             history: [],
             offset: nil,
             colors: nil,
-            scheme: nil
+            scheme: nil,
+            fail_scroll: false
 
   @impl HerdrServer.Kernel.Vt
   def new(cols, rows, _max_scrollback), do: GenServer.start_link(__MODULE__, {cols, rows})
@@ -62,7 +63,26 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   def colors(vt), do: GenServer.call(vt, :colors)
 
   @impl HerdrServer.Kernel.Vt
-  def set_colors(vt, colors), do: GenServer.call(vt, {:colors, colors})
+  # like the NIF: a malformed map raises
+  def set_colors(vt, colors) do
+    unless is_map(colors) and Enum.all?(colors, &colour?/1),
+      do: raise(ArgumentError, "malformed colours: #{inspect(colors)}")
+
+    GenServer.call(vt, {:colors, colors})
+  end
+
+  defp colour?({k, v}) when k in [:fg, :bg, :cursor], do: v == nil or rgb?(v)
+
+  defp colour?({:palette, p}) when is_map(p),
+    do: Enum.all?(p, fn {i, v} -> i in 0..255 and rgb?(v) end)
+
+  defp colour?(_), do: false
+
+  defp rgb?({r, g, b}), do: Enum.all?([r, g, b], &(&1 in 0..255))
+  defp rgb?(_), do: false
+
+  @doc "Test hook: the next `scroll_to/2` raises `ErlangError` (as a ghostty error does)."
+  def fail_next_scroll(vt), do: GenServer.call(vt, :fail_scroll)
 
   @impl HerdrServer.Kernel.Vt
   def set_color_scheme(vt, scheme), do: GenServer.call(vt, {:scheme, scheme})
@@ -98,7 +118,10 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   def scrollbar(vt), do: GenServer.call(vt, :scrollbar)
 
   @impl HerdrServer.Kernel.Vt
-  def scroll_to(vt, offset), do: GenServer.call(vt, {:scroll_to, offset})
+  def scroll_to(vt, offset) do
+    with :raise <- GenServer.call(vt, {:scroll_to, offset}),
+         do: :erlang.error({:ghostty, :scroll_to})
+  end
 
   @impl HerdrServer.Kernel.Vt
   def mode(vt, id), do: GenServer.call(vt, {:mode, id})
@@ -235,6 +258,11 @@ defmodule HerdrServer.Kernel.Fake.Vt do
     {:reply, %{total: total(state), viewport: state.rows, offset: offset(state)}, state}
   end
 
+  def handle_call({:scroll_to, _n}, _from, %{fail_scroll: true} = state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :raise, %{state | fail_scroll: false}}
+  end
+
   def handle_call({:scroll_to, n}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     h = length(state.history)
@@ -243,6 +271,11 @@ defmodule HerdrServer.Kernel.Fake.Vt do
     if new == state.offset,
       do: {:reply, :ok, state},
       else: {:reply, :ok, %{state | offset: new, dirty: all_rows(state), gen: state.gen + 1}}
+  end
+
+  def handle_call(:fail_scroll, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, %{state | fail_scroll: true}}
   end
 
   def handle_call({:history, lines}, _from, state) do
@@ -309,7 +342,9 @@ defmodule HerdrServer.Kernel.Fake.Vt do
         rows: rows,
         grid: grid,
         cx: min(state.cx, cols - 1),
-        cy: min(state.cy, rows - 1)
+        cy: min(state.cy, rows - 1),
+        # like ghostty may: a resize snaps the viewport to the bottom
+        offset: nil
     }
 
     {:reply, :ok, %{state | dirty: all_rows(state)}}

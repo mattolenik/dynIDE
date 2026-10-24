@@ -9,8 +9,12 @@ defmodule HerdrServer.Pane.Facts do
   foreground client session pid (`Client.Foreground`).
 
   `scroll` is the vt's scrollbar (`total`, `viewport`, `offset` = top row of the
-  viewport); `scrolled` is true while the viewport is above the bottom. Plain ETS API,
-  no process.
+  viewport); `scrolled` is true while the viewport is above the bottom. `scroll` is
+  kept current only while scrolled (an unscrolled pane's growing scrollback is not
+  rewritten on every damage). Plain ETS API, no process.
+
+  A VM that hot-loads this module before `Mirror` has created the table reads nil and
+  skips writes; the first skipped write wakes `Mirror`, which creates it.
   """
 
   @table :herdr_pane_facts
@@ -27,7 +31,7 @@ defmodule HerdrServer.Pane.Facts do
 
   @spec get(pos_integer | atom) :: term | nil
   def get(key) do
-    case :ets.lookup(@table, key) do
+    case lookup(key) do
       [{^key, v}] -> v
       [] -> nil
     end
@@ -35,26 +39,64 @@ defmodule HerdrServer.Pane.Facts do
 
   @spec put(pos_integer | atom, term) :: :ok
   def put(key, value) do
-    :ets.insert(@table, {key, value})
+    if :ets.whereis(@table) == :undefined,
+      do: wake_owner(),
+      else: :ets.insert(@table, {key, value})
+
     :ok
   end
 
   @spec delete(pos_integer) :: :ok
   def delete(id) do
-    :ets.delete(@table, id)
+    if :ets.whereis(@table) != :undefined, do: :ets.delete(@table, id)
     :ok
   end
 
   @doc "Whether pane `id` is scrolled back (one ETS lookup; the input fast path uses it)."
   @spec scrolled?(pos_integer) :: boolean
-  def scrolled?(id), do: match?([{_, %{scrolled: true}}], :ets.lookup(@table, id))
+  def scrolled?(id), do: match?([{_, %{scrolled: true}}], lookup(id))
+
+  defp lookup(key) do
+    :ets.lookup(@table, key)
+  rescue
+    # no table yet (see moduledoc)
+    ArgumentError -> []
+  end
+
+  defp wake_owner do
+    case Process.whereis(HerdrServer.Mirror) do
+      nil -> :ok
+      pid -> send(pid, :ensure_tables)
+    end
+  end
 
   @spec host_colors() :: map | nil
   def host_colors, do: get(:host_colors)
 
-  @doc "Merges `caps`' `:colors` and `:scheme` (whichever are present) into the host colours."
-  @spec put_host_colors(map) :: :ok
+  @doc """
+  Merges `caps`' `:colors` and `:scheme` (whichever are present) into the host colours.
+  `colors` is `Kernel.Vt.colors()` (`fg`/`bg`/`cursor` rgb or nil, `palette` index 0..255
+  -> rgb), `scheme` `:dark | :light | nil`; anything else is rejected and nothing stored.
+  """
+  @spec put_host_colors(map) :: :ok | {:error, :invalid}
   def put_host_colors(caps) do
-    put(:host_colors, Map.merge(host_colors() || %{}, Map.take(caps, [:colors, :scheme])))
+    new = Map.take(caps, [:colors, :scheme])
+
+    if valid_colors?(Map.get(new, :colors, %{})) and Map.get(new, :scheme) in [:dark, :light, nil],
+      do: put(:host_colors, Map.merge(host_colors() || %{}, new)),
+      else: {:error, :invalid}
   end
+
+  defp valid_colors?(c) when is_map(c) do
+    Enum.all?(c, fn
+      {k, v} when k in [:fg, :bg, :cursor] -> v == nil or rgb?(v)
+      {:palette, p} when is_map(p) -> Enum.all?(p, fn {i, v} -> i in 0..255 and rgb?(v) end)
+      _ -> false
+    end)
+  end
+
+  defp valid_colors?(_), do: false
+
+  defp rgb?({r, g, b}), do: Enum.all?([r, g, b], &(&1 in 0..255))
+  defp rgb?(_), do: false
 end
