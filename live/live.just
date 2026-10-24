@@ -49,6 +49,10 @@ live-bench-glass:
     python3 '{{live_dir}}/bench/gate/glass.py' herdr --n 500
     python3 '{{live_dir}}/bench/gate/glass.py' herdr-live --n 500
 
+# OS-only scheduler-stall floor (M6 gate): BEAM probe next to 15 pty cats, no herdr code
+live-bench-os-floor:
+    '{{live_dir}}/bench/gate/os_floor.sh'
+
 # Reload benchmarks (M4): phase 1 latency and guard overhead, then every slice-1
 # reload metric script (bench/reload/*.sh; each prints a RESULT line)
 live-bench-reload:

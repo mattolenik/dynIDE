@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # M6 gate: one measurement round of every slice-1 metric, logs under OUT (default
 # .superpowers/sdd/m6/runs/<os>-<tag>). Usage: live/bench/gate_round.sh <tag> [suite...]
-# Suites: env m3fake m3real m3real120 reload handoff glass herdrref (default: all).
+# Suites: env m3fake m3real m3real120 osfloor reload handoff glass herdrref (default: all).
 # Runs suites one after another; never in parallel with another bench.
 set -uo pipefail
 live=$(cd "$(dirname "$0")/.." && pwd)
@@ -10,7 +10,7 @@ tag=${1:?tag}; shift
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 out=${OUT:-$root/.superpowers/sdd/m6/runs/$os-$tag}
 mkdir -p "$out"
-suites=${*:-env m3fake m3real m3real120 reload handoff glass herdrref}
+suites=${*:-env m3fake m3real m3real120 osfloor reload handoff glass herdrref}
 
 envinfo() {
   echo "commit=${GATE_COMMIT:-$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo none)} dirty=$(git -C "$root" status --porcelain -- live 2>/dev/null | wc -l | tr -d ' ')"
@@ -41,6 +41,7 @@ for s in $suites; do
     m3fake) run m3fake env MIX_ENV=test mix herdr.bench ;;
     m3real) run m3real env MIX_ENV=test mix herdr.bench --kernel real ;;
     m3real120) run m3real120 env MIX_ENV=test mix herdr.bench --kernel real --size 120x40 ;;
+    osfloor) run osfloor "$live/bench/gate/os_floor.sh" ;;
     reload) run reload just --justfile "$root/justfile" live-bench-reload ;;
     handoff) run handoff just --justfile "$root/justfile" live-bench-handoff ;;
     glass) run glass just --justfile "$root/justfile" live-bench-glass ;;
