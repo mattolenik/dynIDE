@@ -47,10 +47,25 @@ defmodule HerdrTerm.Cells do
     |> Cell.encode_row()
   end
 
+  @doc """
+  `n` copies of `glyph`, same bytes as `text(String.duplicate(glyph, n), style)`;
+  a narrow inline glyph is encoded once and its record repeated.
+  """
+  @spec repeat(binary, non_neg_integer, Cell.t()) :: Cell.row()
+  def repeat(glyph, n, %Cell{} = style) do
+    one = text(glyph, style)
+
+    if Cell.plain?(one) and Cell.cols(one) == 1,
+      do: :binary.copy(Cell.records(one), n) <> <<0::32-little>>,
+      else: text(String.duplicate(glyph, n), style)
+  end
+
   @doc "`n` blank cells carrying the style's colours and attributes."
   @spec blank(non_neg_integer, Cell.t()) :: Cell.row()
   def blank(n, %Cell{} = style),
-    do: Cell.encode_row(List.duplicate(%{style | glyph: "", width: 1}, n))
+    do:
+      :binary.copy(Cell.records(Cell.encode_row([%{style | glyph: "", width: 1}])), n) <>
+        <<0::32>>
 
   @doc "Columns `x..x+w-1`, blank-padded past the end, never splitting a wide char."
   @spec fit(Cell.row(), non_neg_integer, non_neg_integer) :: Cell.row()

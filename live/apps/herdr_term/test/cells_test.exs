@@ -14,6 +14,17 @@ defmodule HerdrTerm.CellsTest do
     assert Cell.cols(Cells.text("日本", @s)) == 4
   end
 
+  test "repeat and blank match per-cell encoding" do
+    s = Cells.style(fg: {:palette, 4}, attrs: [:bold])
+
+    for g <- ["─", "x", "日", @family], n <- [0, 1, 7] do
+      assert Cells.repeat(g, n, s) == Cells.text(String.duplicate(g, n), s)
+    end
+
+    for n <- [0, 1, 7],
+        do: assert(Cells.blank(n, s) == Cell.encode_row(List.duplicate(%{s | width: 1}, n)))
+  end
+
   test "style builds a template" do
     s = Cells.style(fg: {:palette, 1}, bg: {:rgb, 1, 2, 3}, attrs: [:bold], underline: :curly)
     assert %Cell{glyph: "", fg: {:palette, 1}, bg: {:rgb, 1, 2, 3}, attrs: [:bold]} = s

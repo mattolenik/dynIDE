@@ -118,7 +118,7 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
     t = if title in [nil, ""], do: nil, else: Cells.text(title, style)
     t = t && Cells.fit(t, 0, min(Cell.cols(t), mid))
     used = if t, do: Cell.cols(t), else: 0
-    fill = Cells.text(String.duplicate(h, mid - used), style)
+    fill = Cells.repeat(h, mid - used, style)
 
     Cells.concat(
       Enum.map(lc, &Cells.text(&1, style)) ++
