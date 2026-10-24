@@ -1,11 +1,48 @@
 defmodule HerdrServer.App.Ui do
-  @moduledoc "UI configuration carried in app state."
+  @moduledoc """
+  UI configuration carried in app state, with herdr's defaults: sidebar geometry
+  (`width` clamped to `min..max` while expanded, `split` the spaces/agents ratio), tab bar
+  position, theme names, agent state indicators, confirmations, toast and sound delivery.
+  Older apps get the new keys from `App.Upgrade.app/1`.
+  """
 
-  defstruct [:keybinds, status: %{show_hints: true}, theme: :default]
+  defstruct [
+    :keybinds,
+    status: %{show_hints: true},
+    theme: %{
+      name: "catppuccin",
+      auto_switch: false,
+      light: "catppuccin-latte",
+      dark: "catppuccin"
+    },
+    sidebar: %{visible: true, collapsed: false, width: 26, min: 18, max: 36, split: 0.5},
+    tab_bar: %{position: :top},
+    indicators: :dots,
+    confirm_close: true,
+    onboarding: false,
+    toast: %{delivery: :herdr, delay_ms: 1000},
+    sound: %{enabled: true, command: nil},
+    prompt_new_tab_name: true
+  ]
 
   @type t :: %__MODULE__{
           keybinds: HerdrServer.App.Keybinds.t(),
           status: %{show_hints: boolean()},
-          theme: atom()
+          theme: %{name: binary(), auto_switch: boolean(), light: binary(), dark: binary()},
+          sidebar: %{
+            visible: boolean(),
+            collapsed: boolean(),
+            width: pos_integer(),
+            min: pos_integer(),
+            max: pos_integer(),
+            split: float()
+          },
+          tab_bar: %{position: :top | :bottom},
+          indicators: :dots | :symbols,
+          confirm_close: boolean(),
+          onboarding: boolean(),
+          toast: %{delivery: atom(), delay_ms: non_neg_integer()},
+          sound: %{enabled: boolean(), command: binary() | nil},
+          prompt_new_tab_name: boolean()
         }
 end

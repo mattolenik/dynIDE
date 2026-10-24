@@ -199,10 +199,17 @@ if Mix.env() == :test do
     defp scenario("ui_field", client, cfg) do
       panes = Driver.grow(client, 15).panes
       Enum.each(panes, &start_feeder(&1.id))
-      ui_old = "defstruct [:keybinds, status: %{show_hints: true}, theme: :default]"
+      # the whole (formatted, multi-line) defstruct of App.Ui; fields go after the last one
+      ui_old = Regex.run(~r/  defstruct \[\n.*?\n  \]\n/s, File.read!(Path.join(cfg.root, @ui)))
+      ui_old = if ui_old, do: hd(ui_old), else: Mix.raise("bench: no App.Ui defstruct block")
 
       ui = fn i ->
-        {ui_old, String.trim_trailing(ui_old, "]") <> ~s|, marker: "umk#{i}z", bench_#{i}: nil]|}
+        {ui_old,
+         String.replace_suffix(
+           ui_old,
+           "\n  ]\n",
+           ~s|,\n    marker: "umk#{i}z",\n    bench_#{i}: nil\n  ]\n|
+         )}
       end
 
       # View renders the marker read from the new struct's default: app state built
@@ -222,7 +229,7 @@ if Mix.env() == :test do
     end
 
     defp scenario("session_field", client, cfg) do
-      old = "area: %{x: 0, y: 0, w: 80, h: 23}\n"
+      old = "area: %{x: 26, y: 1, w: 54, h: 22}\n"
 
       r =
         edit_loop(

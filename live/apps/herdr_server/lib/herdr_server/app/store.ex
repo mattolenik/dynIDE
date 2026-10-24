@@ -44,7 +44,7 @@ defmodule HerdrServer.App.Store do
 
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
-  alias HerdrServer.App.{Actions, Keybinds, Reconcile, Restore}
+  alias HerdrServer.App.{Actions, Keybinds, Reconcile, Restore, Upgrade}
   alias HerdrServer.App.Store.{Carry, Mirror}
   alias HerdrServer.Handoff.Link
   alias HerdrServer.{Kernel, Layout}
@@ -165,18 +165,26 @@ defmodule HerdrServer.App.Store do
     end
   end
 
+  # mirrored and rolled-back apps may predate the current structs: upgraded first
   defp reconcile(state, app) do
-    case Guard.run_twice(Reconcile, :run, [app, Restore.live()], server: reload_server()) do
-      {:ok, {app, effects}} ->
-        {:ok, Enum.reduce(effects, %{state | app: app}, &effect(&2, &1, nil))}
+    g = [server: reload_server()]
 
-      {:failed, _} ->
-        :failed
+    with {:ok, app} <- Guard.run_twice(Upgrade, :app, [app], g),
+         {:ok, {app, effects}} <- Guard.run_twice(Reconcile, :run, [app, Restore.live()], g) do
+      {:ok, Enum.reduce(effects, %{state | app: app}, &effect(&2, &1, nil))}
+    else
+      {:failed, _} -> :failed
     end
   end
 
   @impl true
   def terminate(_reason, state), do: Mirror.flush(Map.merge(%__MODULE__{}, state))
+
+  @impl true
+  def code_change(_old, state, _extra) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:ok, %{state | app: state.app && Upgrade.app(state.app)}}
+  end
 
   @impl true
   def handle_call({:event, ev, size}, {origin, _}, state) do

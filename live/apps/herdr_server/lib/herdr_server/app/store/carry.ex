@@ -19,6 +19,7 @@ defmodule HerdrServer.App.Store.Carry do
   alias HerdrReload.Guard
   alias HerdrServer.App.Actions
   alias HerdrServer.App.Store
+  alias HerdrServer.App.Upgrade
   alias HerdrServer.Handoff.Link
   alias HerdrServer.Kernel
   alias HerdrServer.Pane.Rows
@@ -73,15 +74,16 @@ defmodule HerdrServer.App.Store.Carry do
   end
 
   @doc false
-  # The pure part of an adoption: the carried app and `[{pane_id, kernel_id | nil}]` for
-  # its panes. Raises on an entry of the wrong shape.
+  # The pure part of an adoption: the carried app (upgraded to the current structs: the
+  # entry may come from an older VM) and `[{pane_id, kernel_id | nil}]` for its panes.
+  # Raises on an entry of the wrong shape.
   @spec adoption(binary) :: {Actions.app(), [{pos_integer, pos_integer | nil}]}
   def adoption(blob) do
     %{v: 1, app: %{session: %{panes: %{} = panes}} = app, kernel_ids: kids} =
       :erlang.binary_to_term(blob, [:safe])
 
     kids = Map.new(kids)
-    {app, Enum.map(Map.keys(panes), &{&1, Map.get(kids, &1)})}
+    {Upgrade.app(app), Enum.map(Map.keys(panes), &{&1, Map.get(kids, &1)})}
   end
 
   @doc false
