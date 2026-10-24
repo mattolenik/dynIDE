@@ -257,10 +257,13 @@ defmodule HerdrServer.ServerTest do
   test "the driving client's cell_px reaches the pty" do
     {c, s} = client()
     scene(c)
+    [{pane, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
+    :erlang.trace_pattern({Fake.Pty, :resize, 4}, true, [:local])
+    :erlang.trace(pane, true, [:call])
     input(s, c, 1, {:resize, %{cols: 100, rows: 30, cell_px: {9, 18}}})
     assert_receive {^c, {:ack, 1}}
-    assert eventually(fn -> :sys.get_state(Store).driver.cell_px == {9, 18} end)
-    assert vt_size(1) == {100, 29}
+    assert_receive {:trace, ^pane, :call, {Fake.Pty, :resize, [_, 100, 29, {9, 18}]}}, 500
+    :erlang.trace(pane, false, [:call])
   end
 
   test "a failed spawn warns the client and closes the pane again" do
