@@ -69,7 +69,8 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   def modify_other_keys(_vt), do: false
 
   @impl HerdrServer.Kernel.Vt
-  def screen_rows(vt, first, last), do: GenServer.call(vt, {:screen_rows, first, last})
+  def screen_rows(vt, first, last) when first >= 0 and last >= 0,
+    do: GenServer.call(vt, {:screen_rows, first, last})
 
   @impl HerdrServer.Kernel.Vt
   def resize(vt, cols, rows, _cell_px), do: GenServer.call(vt, {:resize, cols, rows})
@@ -81,7 +82,12 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   def full_rows(vt), do: GenServer.call(vt, :full_rows)
 
   @impl HerdrServer.Kernel.Vt
-  def read_text(vt, what), do: GenServer.call(vt, {:read_text, what})
+  def read_text(vt, {:selection, {x1, y1}, {x2, y2}} = what)
+      when x1 >= 0 and y1 >= 0 and x2 >= 0 and y2 >= 0,
+      do: GenServer.call(vt, {:read_text, what})
+
+  def read_text(vt, what) when what in [:viewport, :screen] or elem(what, 0) == :rows,
+    do: GenServer.call(vt, {:read_text, what})
 
   @impl HerdrServer.Kernel.Vt
   def tail_ansi(vt, n) when is_integer(n) and n >= 0, do: GenServer.call(vt, {:tail, n})

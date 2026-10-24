@@ -54,19 +54,19 @@ defmodule HerdrServer.Native do
   @doc false
   @spec vt_read_selection(term, term, term, term, term) :: binary
   def vt_read_selection(_vt, _x1, _y1, _x2, _y2), do: err()
-
+  @doc false
   @spec vt_screen_rows(term, term, term) :: [{non_neg_integer, binary, boolean}]
   def vt_screen_rows(_vt, _first, _last), do: err()
-
+  @doc false
   @spec vt_set_colors(term, term) :: :ok
   def vt_set_colors(_vt, _colors), do: err()
-
+  @doc false
   @spec vt_set_color_scheme(term, term) :: :ok
   def vt_set_color_scheme(_vt, _scheme), do: err()
-
+  @doc false
   @spec vt_modify_other_keys(term) :: boolean | {:stale, boolean}
   def vt_modify_other_keys(_vt), do: err()
-
+  @doc false
   @spec vt_scrollbar(term) :: map
   def vt_scrollbar(_vt), do: err()
   @doc false

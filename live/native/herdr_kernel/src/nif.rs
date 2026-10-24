@@ -433,7 +433,8 @@ fn decode_colors(m: Term) -> NifResult<Colors> {
 }
 
 /// Sets ghostty's default colours (options only, no snapshot rebuild).
-#[rustler::nif]
+// Takes the blocking core lock, so DirtyCpu like vt_scroll_to.
+#[rustler::nif(schedule = "DirtyCpu")]
 fn vt_set_colors(vt: ResourceArc<VtRes>, colors: Term) -> NifResult<Atom> {
     if !colors.is_map() {
         return Err(Error::BadArg);
@@ -443,7 +444,8 @@ fn vt_set_colors(vt: ResourceArc<VtRes>, colors: Term) -> NifResult<Atom> {
     Ok(atoms::ok())
 }
 
-#[rustler::nif]
+// Takes the blocking core lock, so DirtyCpu like vt_scroll_to.
+#[rustler::nif(schedule = "DirtyCpu")]
 fn vt_set_color_scheme(vt: ResourceArc<VtRes>, scheme: Atom) -> NifResult<Atom> {
     let s = match scheme {
         a if a == atoms::dark() => Some(ColorScheme::Dark),

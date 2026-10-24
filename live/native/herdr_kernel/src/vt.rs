@@ -641,7 +641,7 @@ impl Vt {
                 break;
             }
             let mut enc = RowEncoder::with_cols(cols);
-            t.for_each_screen_row_cell(y, |wide, cps| {
+            let wrapped = t.for_each_screen_row_cell(y, |wide, cps| {
                 glyph.clear();
                 let width = match wide {
                     CellWide::Wide => 2,
@@ -653,7 +653,7 @@ impl Vt {
                 }
                 enc.push(glyph.as_bytes(), 0, 0, 0, 0, width, 0);
             })?;
-            out.push((y, enc.finish(), t.screen_row_wrapped(y)?));
+            out.push((y, enc.finish(), wrapped));
         }
         Ok(out)
     }

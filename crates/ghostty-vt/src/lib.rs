@@ -1190,12 +1190,6 @@ impl Terminal {
         unsafe { ffi::ghostty_terminal_set(self.raw, option, value).into_result() }
     }
 
-    /// Whether screen row `row` soft-wraps into the next one.
-    pub fn screen_row_wrapped(&self, row: u32) -> Result<bool, Error> {
-        let grid_ref = self.grid_ref(ghostty_screen_point(0, row))?;
-        Ok(grid_ref_wrap_state(&grid_ref)?.0)
-    }
-
     pub fn default_palette(&self) -> Result<[RgbColor; 256], Error> {
         let mut out = [ffi::GhosttyColorRgb::default(); 256];
         // SAFETY: self.raw is a live terminal handle, and out is exactly the
@@ -1463,16 +1457,18 @@ impl Terminal {
     /// Visit a screen row without allocating an owned grapheme vector for each cell.
     /// The borrowed graphemes are valid only for the duration of each callback.
     /// Like `screen_text_rows_range`, rows outside the active screen/history are empty.
+    /// Returns whether the row soft-wraps into the next one (false for rows outside).
     pub fn for_each_screen_row_cell(
         &self,
         row: u32,
         mut visit: impl FnMut(CellWide, &[u32]),
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         if row as usize >= self.total_rows()? {
-            return Ok(());
+            return Ok(false);
         }
         let cols = self.cols()?;
         let mut grid_ref = self.grid_ref(ghostty_screen_point(0, row))?;
+        let (soft_wrapped, _) = grid_ref_wrap_state(&grid_ref)?;
         let mut graphemes = Vec::new();
         for x in 0..cols {
             grid_ref.x = x;
@@ -1480,7 +1476,7 @@ impl Terminal {
             grid_ref_graphemes_into(&grid_ref, &mut graphemes)?;
             visit(wide, &graphemes);
         }
-        Ok(())
+        Ok(soft_wrapped)
     }
 
     pub fn screen_text_rows_range(
