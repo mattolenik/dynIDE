@@ -117,11 +117,14 @@ defmodule HerdrServer.Api.ConnTest do
       capture_log(fn ->
         s = start(p, router: Boom)
         assert code(ApiClient.call(s, "no.such")) == "unknown_method"
+        assert code(ApiClient.call(s, String.duplicate("x", 300))) == "unknown_method"
         assert code(ApiClient.call(s, "ping")) == "internal"
       end)
 
     assert log =~ ~r/herdr-event api_connect ts=\d+ conns=1/
     assert log =~ ~r/herdr-event api_denied ts=\d+ method=no.such code=unknown_method/
+    assert log =~ ~r/method=x{100} code=unknown_method/
+    refute log =~ String.duplicate("x", 101)
     assert log =~ ~r/herdr-event api_error ts=\d+ method=ping code=internal msg=/
   end
 end

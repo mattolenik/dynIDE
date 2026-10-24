@@ -128,7 +128,7 @@ defmodule HerdrServer.Api.Conn do
   end
 
   defp log(method, code, _msg) when code in @denied,
-    do: Telemetry.event(:api_denied, method: method, code: code)
+    do: Telemetry.event(:api_denied, method: String.slice(method, 0, 100), code: code)
 
   defp log(method, code, msg) when code in @errors,
     do: Telemetry.event(:api_error, method: method, code: code, msg: msg)

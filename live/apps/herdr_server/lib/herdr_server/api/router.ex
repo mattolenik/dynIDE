@@ -32,5 +32,11 @@ defmodule HerdrServer.Api.Router do
                         pane.layout pane.process_info),
       do: Handlers.Topology.handle(method, params)
 
+  def handle(method, params, _ctx)
+      when method in ~w(pane.send_text pane.send_keys pane.run pane.read pane.wait_for_output),
+      do: Handlers.PaneIo.handle(method, params)
+
+  def handle("agent." <> _ = method, params, _ctx), do: Handlers.Agents.handle(method, params)
+
   def handle(method, _params, _ctx), do: {:error, :not_available, "#{method} is not served yet"}
 end
