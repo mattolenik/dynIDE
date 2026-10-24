@@ -941,9 +941,14 @@ defmodule HerdrServer.ServerTest do
   test "a hollow block cursor is stored as a block" do
     {c, _s} = client()
     scene(c)
-    :ok = Fake.Vt.set_cursor_shape(vt(1), :block_hollow)
+    :ok = Fake.Vt.set_cursor_shape(vt(1), :block_hollow, true)
     Fake.Pty.output(pty(1), "z")
     assert eventually(fn -> match?({_, _, %{x: 1, shape: :block}}, Rows.fetch(1)) end)
+
+    # a steady one is the default style: the host keeps its own cursor
+    :ok = Fake.Vt.set_cursor_shape(vt(1), :block_hollow)
+    Fake.Pty.output(pty(1), "z")
+    assert eventually(fn -> match?({_, _, %{x: 2, shape: :default}}, Rows.fetch(1)) end)
   end
 
   defp eventually(fun, tries \\ 50) do

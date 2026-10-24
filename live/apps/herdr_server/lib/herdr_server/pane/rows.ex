@@ -12,6 +12,8 @@ defmodule HerdrServer.Pane.Rows do
   `HerdrServer.Mirror`; this module is a plain API with no process.
   """
 
+  alias HerdrServer.Pane.Facts
+
   @table :herdr_pane_rows
   @kernel :herdr_pane_kernel
 
@@ -40,6 +42,7 @@ defmodule HerdrServer.Pane.Rows do
   def delete(pane_id) do
     :ets.delete(@table, pane_id)
     :ets.delete(@kernel, pane_id)
+    Facts.delete(pane_id)
     HerdrServer.Mirror.delete({:pane, pane_id})
   end
 

@@ -9,6 +9,8 @@ defmodule HerdrServer.Mirror do
 
     * `:herdr_pane_rows`, `:herdr_pane_kernel`: the row cache and pane -> kernel id map
       (API in `Pane.Rows`).
+    * `:herdr_pane_facts`: per-pane terminal facts, host colours and the foreground
+      client (API in `Pane.Facts`).
     * `:herdr_mirror`: state a restarted process reads back. Keys:
       `{:app, :session | :focus | :ui}` and `{:store, key}` (written by `App.Store`,
       debounced), `{:pane, id}` (`Pane.Server`, `%{hidden: boolean}`),
@@ -29,7 +31,7 @@ defmodule HerdrServer.Mirror do
   def init do
     true = Process.register(self(), __MODULE__)
 
-    for t <- [:herdr_pane_rows, :herdr_pane_kernel, @mirror],
+    for t <- [:herdr_pane_rows, :herdr_pane_kernel, :herdr_pane_facts, @mirror],
         do: :ets.new(t, [:named_table, :public, :set, read_concurrency: true])
 
     :proc_lib.init_ack({:ok, self()})

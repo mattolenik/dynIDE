@@ -27,6 +27,7 @@ defmodule HerdrServer.Kernel.Fake.Vt do
             modes: %{},
             kitty: 0,
             shape: :block,
+            blinking: false,
             history: [],
             offset: nil,
             colors: nil,
@@ -47,8 +48,9 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   @doc "Test hook: `mode` is an M1 mode atom (e.g. `:bracketed_paste`)."
   def set_mode(vt, mode, on?), do: GenServer.call(vt, {:set_mode, mode, on?})
 
-  @doc "Test hook: the cursor shape `cursor/1` reports (M1's shapes)."
-  def set_cursor_shape(vt, shape), do: GenServer.call(vt, {:shape, shape})
+  @doc "Test hook: the cursor shape (M1's shapes) and blinking `cursor/1` reports."
+  def set_cursor_shape(vt, shape, blinking \\ false),
+    do: GenServer.call(vt, {:shape, shape, blinking})
 
   @doc "Test hook."
   def set_kitty_flags(vt, n), do: GenServer.call(vt, {:kitty, n})
@@ -283,15 +285,16 @@ defmodule HerdrServer.Kernel.Fake.Vt do
     {:reply, state.kitty, state}
   end
 
-  def handle_call({:shape, shape}, _from, state) do
+  def handle_call({:shape, shape, blinking}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:reply, :ok, %{state | shape: shape}}
+    {:reply, :ok, %{state | shape: shape, blinking: blinking}}
   end
 
   def handle_call(:cursor, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
 
-    {:reply, %{x: state.cx, y: state.cy, shape: state.shape, visible: true, blinking: false},
+    {:reply,
+     %{x: state.cx, y: state.cy, shape: state.shape, visible: true, blinking: state.blinking},
      state}
   end
 

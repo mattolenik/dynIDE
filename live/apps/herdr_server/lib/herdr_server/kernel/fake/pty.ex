@@ -37,6 +37,12 @@ defmodule HerdrServer.Kernel.Fake.Pty do
   @doc "Test/bench hook: feed bytes as program output. Never blocks on the vt."
   def output(pty, bin), do: GenServer.cast(pty, {:output, bin})
 
+  @doc """
+  Test hook: sends a kernel event to the subscribers with this pty's id inserted after
+  the tag (`{:title, raw}` -> `{:title, id, raw}`, `{:bell}` -> `{:bell, id}`).
+  """
+  def emit(pty, event) when is_tuple(event), do: GenServer.cast(pty, {:emit, event})
+
   @impl HerdrServer.Kernel.Pty
   def write(pty, data) do
     if IO.iodata_length(data) > @max_write,
@@ -92,6 +98,12 @@ defmodule HerdrServer.Kernel.Fake.Pty do
     gen = state.gen + 1
     Vt.write(state.vt, bin, gen)
     {:noreply, damage(%{state | gen: gen})}
+  end
+
+  def handle_cast({:emit, event}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    notify(state, Tuple.insert_at(event, 1, state.id))
+    {:noreply, state}
   end
 
   def handle_cast({:kill, _signal}, %{closed: true} = state),
