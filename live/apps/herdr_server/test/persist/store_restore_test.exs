@@ -6,7 +6,7 @@ defmodule HerdrServer.Persist.StoreRestoreTest do
   alias HerdrServer.App.{Actions, Store}
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Pane.Rows
-  alias HerdrServer.Persist.{Disk, Schema}
+  alias HerdrServer.Persist.{Disk, Load, Schema}
 
   @moduletag :tmp_dir
   @moduletag :capture_log
@@ -131,6 +131,48 @@ defmodule HerdrServer.Persist.StoreRestoreTest do
     assert Store.snapshot() == nil
     assert Fake.Keeper.ids() == []
     assert log =~ ~r/persist_error .*op=read reason=/
+    assert length(Regex.scan(~r/persist_error/, log)) == 1
+
+    # set aside, so the Writer cannot overwrite the only copy
+    refute File.exists?(Disk.session_path(cfg))
+    assert [moved] = File.ls!(cfg.dir)
+    assert moved =~ ~r/^session\.default\.etf\.bad-\d+$/
+  end
+
+  test "a restored pane whose open fails is retried once in the Store's cwd", %{
+    cfg: cfg,
+    tmp: tmp
+  } do
+    a = Path.join(tmp, "a")
+    File.mkdir_p!(a)
+    write!(cfg, app(), %{1 => fact(a), 2 => fact(a), 3 => fact(a)})
+    :ok = Fake.Keeper.fail_next_open(:enoent)
+    log = capture_log([level: :info], fn -> restart_store() end)
+
+    assert Map.keys(Store.snapshot().session.panes) == [1, 2, 3]
+    assert Enum.map([1, 2, 3], &Fake.Pty.cwd(res(&1).pty)) == [File.cwd!(), a, a]
+    assert log =~ ~r/persist_restore .*panes=3 /
+  end
+
+  test "persist_restore counts the panes that spawned, not the planned ones", %{cfg: cfg} do
+    # no recorded cwd: no retry, the pane is dropped
+    write!(cfg, app(), %{1 => fact(nil)})
+    :ok = Fake.Keeper.fail_next_open(:enoent)
+    log = capture_log([level: :info], fn -> restart_store() end)
+    assert log =~ ~r/persist_restore .*source=disk .*panes=2 /
+  end
+
+  test "a raise while reading the file takes the error path" do
+    state = %{app: nil, sizes: %{}}
+    # a dir that is not a path: Disk.read (and set_aside) raise
+    cfg = %{dir: 123, name: "t"}
+
+    log =
+      capture_log([level: :info], fn ->
+        assert Load.run(state, cfg, fn _, _ -> flunk("no spawn") end) == state
+      end)
+
+    assert length(Regex.scan(~r/persist_error .*op=read reason=/, log)) == 1
   end
 
   defp eventually(fun, n \\ 50) do

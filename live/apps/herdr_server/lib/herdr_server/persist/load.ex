@@ -5,12 +5,17 @@ defmodule HerdrServer.Persist.Load do
   state as a plain map, as `Store.Carry` and `Store.Mirror` do.
 
   `Disk.read/1`, then the pure parts through `HerdrReload.Guard`: `Schema.restore/1`,
-  `App.Upgrade.app/1` (before the app is adopted, as for mirror and rollback restores), `RestorePlan.spawns/4`. The spawns run
-  through the Store's own effect handler. Telemetry: `persist_restore source=disk
-  reason=.. panes=N scrollback=K ms=T` after a restore, `persist_restore source=none
-  reason=..` without a file, `persist_error op=read reason=..` when the snapshot cannot be
-  restored (a file that does not decode is logged by `Disk.read/1`). On any failure the
-  app stays nil, and the first client event initialises it at that client's size.
+  `App.Upgrade.app/1` (before the app is adopted, as for mirror and rollback restores),
+  `RestorePlan.spawns/4`; `Disk.read/1` itself runs under `Guard.run/4`, so a raise there
+  cannot crash-loop the Store. The spawns run through the Store's own effect handler.
+
+  Telemetry: `persist_restore source=disk reason=.. panes=N scrollback=K ms=T` after a
+  restore (N and K count the panes that actually spawned), `persist_restore source=none
+  reason=..` without a file, one `persist_error op=read reason=..` when the snapshot
+  cannot be restored. A file that decodes but cannot be restored is set aside
+  (`Disk.set_aside/2`) so the Writer does not overwrite the only copy; one that does not
+  decode is set aside and logged by `Disk.read/1`. On any failure the app stays nil, and
+  the first client event initialises it at that client's size.
   """
 
   alias HerdrReload.{Guard, Telemetry}
@@ -23,37 +28,52 @@ defmodule HerdrServer.Persist.Load do
   def run(%{app: nil} = state, cfg, effect) do
     t0 = System.monotonic_time(:millisecond)
 
-    case Disk.read(cfg) do
-      {:ok, snap, _saved_at} ->
-        case plan(cfg, snap) do
-          {:ok, app, spawns} ->
-            state = Enum.reduce(spawns, %{state | app: app}, &effect.(&2, &1))
+    case Guard.run(Disk, :read, [cfg], server: Store.reload_server()) do
+      {:ok, {:ok, snap, _saved_at}} ->
+        restore(state, cfg, snap, effect, t0)
 
-            Telemetry.event(:persist_restore,
-              source: :disk,
-              reason: fresh_reason(),
-              panes: length(spawns),
-              scrollback: Enum.count(spawns, fn {:spawn, _, _, o} -> o.replay != nil end),
-              ms: System.monotonic_time(:millisecond) - t0
-            )
-
-            state
-
-          {:error, reason} ->
-            Telemetry.event(:persist_error, op: :read, reason: reason)
-            state
-        end
-
-      :none ->
+      {:ok, :none} ->
         Telemetry.event(:persist_restore, source: :none, reason: fresh_reason())
         state
 
-      {:error, _logged_by_disk} ->
+      {:ok, {:error, _set_aside_and_logged_by_disk}} ->
+        state
+
+      {:failed, failure} ->
+        set_aside(cfg, Guard.message(failure))
         state
     end
   end
 
+  # one persist_error line either way, even when setting the file aside raises too
+  defp set_aside(cfg, reason) do
+    with {:failed, _} <- Guard.run(Disk, :set_aside, [cfg, reason], server: Store.reload_server()),
+         do: Telemetry.event(:persist_error, op: :read, reason: reason)
+  end
+
   def run(state, _cfg, _effect), do: state
+
+  defp restore(state, cfg, snap, effect, t0) do
+    case plan(cfg, snap) do
+      {:ok, app, spawns} ->
+        state = Enum.reduce(spawns, %{state | app: app}, &effect.(&2, &1))
+        spawned = Enum.filter(spawns, fn {:spawn, id, _, _} -> state.sizes[id] end)
+
+        Telemetry.event(:persist_restore,
+          source: :disk,
+          reason: fresh_reason(),
+          panes: length(spawned),
+          scrollback: Enum.count(spawned, fn {:spawn, _, _, o} -> o.replay != nil end),
+          ms: System.monotonic_time(:millisecond) - t0
+        )
+
+        state
+
+      {:error, reason} ->
+        set_aside(cfg, reason)
+        state
+    end
+  end
 
   defp plan(cfg, snap) do
     g = [server: Store.reload_server()]

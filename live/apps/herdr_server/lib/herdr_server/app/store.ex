@@ -35,9 +35,10 @@ defmodule HerdrServer.App.Store do
     * Handoff (M5): the latest app is held with the broker and a new VM's `init/1` adopts
       it before looking at the mirror (`Store.Carry`). The adopted app is mirrored at once,
       so a later Store restart in this VM restarts from the mirror as above.
-    * Persistence (M8): a fresh Store (no carry, an empty mirror) with persistence enabled
-      restores the app last written to disk (`Persist.Load`) in `handle_continue/2`,
-      spawning each pane's `$SHELL` in its recorded cwd over its saved scrollback. The
+    * Persistence (M8): a fresh Store (no carry, no mirrored app: `Mirror.app()` nil) with
+      persistence enabled restores the app last written to disk (`Persist.Load`) in
+      `handle_continue/2`, spawning each pane's `$SHELL` in its recorded cwd (retried once
+      in the Store's cwd if that open fails) over its saved scrollback. The
       precedence is carry > mirror > disk: a carried or mirrored app never reads the disk.
       Without a usable file the app stays nil and the first event initialises it.
     * In a VM that adopted panes (`Link.adopt_reason/0` not nil) no restart or restore
@@ -422,7 +423,7 @@ defmodule HerdrServer.App.Store do
       subscriber: nil
     }
 
-    with {:ok, kid} <- Kernel.keeper().open(spec),
+    with {:ok, kid} <- open(spec, opts.cwd),
          :ok <- Rows.put_kernel_id(id, kid),
          {:ok, _} <- Panes.start_pane(id) do
       put_in(state.sizes[id], {c, r})
@@ -434,6 +435,14 @@ defmodule HerdrServer.App.Store do
         event_async({:pane_exited, id})
         state
     end
+  end
+
+  # a restored pane whose recorded cwd cannot be used gets one retry in the Store's cwd
+  defp open(spec, nil), do: Kernel.keeper().open(spec)
+
+  defp open(spec, _cwd) do
+    with {:error, _} <- Kernel.keeper().open(spec),
+         do: Kernel.keeper().open(%{spec | cwd: File.cwd!()})
   end
 
   # a reconciled pane already in the keeper and mapped; {0, 0} makes settle/1 size it

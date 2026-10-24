@@ -139,6 +139,26 @@ defmodule HerdrServer.Persist.Disk do
   defp session({:ok, _other}), do: {:error, :bad_envelope}
   defp session({:error, _} = err), do: err
 
+  @doc """
+  Moves the snapshot file aside (`.bad-<ms>`, the 5 newest kept) after it decoded but
+  could not be restored, so a later write does not replace the only copy. Logs one
+  `persist_error op=read` line (`moved=none` when there is no file).
+  """
+  @spec set_aside(cfg, term) :: :ok
+  def set_aside(cfg, reason) do
+    path = session_path(cfg)
+
+    if File.exists?(path) do
+      {:error, _} = quarantine(cfg, path, reason)
+      :ok
+    else
+      HerdrReload.Telemetry.event(:persist_error, op: :read, reason: text(reason), moved: :none)
+    end
+  end
+
+  defp text(reason) when is_binary(reason), do: reason
+  defp text(reason), do: inspect(reason)
+
   defp quarantine(cfg, path, reason) do
     tag =
       case reason do
@@ -152,7 +172,7 @@ defmodule HerdrServer.Persist.Disk do
 
     HerdrReload.Telemetry.event(:persist_error,
       op: :read,
-      reason: inspect(reason),
+      reason: text(reason),
       moved: if(moved == :ok, do: Path.basename(to), else: inspect(moved))
     )
 
