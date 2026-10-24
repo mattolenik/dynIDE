@@ -1,0 +1,129 @@
+defmodule HerdrServer.Native.PtyTest do
+  use ExUnit.Case, async: false
+
+  alias HerdrScene.Cell
+  alias HerdrServer.Native
+  alias HerdrServer.Native.{Pty, Vt}
+
+  @env [{"PS1", "$ "}, {"ENV", ""}]
+
+  defp text(row),
+    do: row |> Cell.decode_row() |> Enum.map_join(&if(&1.glyph == "", do: " ", else: &1.glyph))
+
+  defp spawn_sh(id, args \\ []) do
+    {:ok, vt} = Vt.new(80, 24, 1000)
+    {:ok, pty, os_pid} = Pty.spawn(vt, id, "/bin/sh", args, @env, nil, 80, 24)
+    assert is_integer(os_pid) and os_pid > 0
+    {vt, pty}
+  end
+
+  defp poll_rows(vt, pred, deadline) do
+    {_, rows} = Vt.dirty_rows(vt)
+
+    cond do
+      Enum.any?(rows, fn {_, r} -> pred.(text(r)) end) ->
+        true
+
+      System.monotonic_time(:millisecond) > deadline ->
+        false
+
+      true ->
+        Process.sleep(20)
+        poll_rows(vt, pred, deadline)
+    end
+  end
+
+  test "exit criterion 1: echo then exit" do
+    {vt, pty} = spawn_sh(1)
+    assert Pty.subscribe(pty, self()) == :ok
+    assert Pty.write(pty, "echo hi\n") == :ok
+    assert_receive {:damage, 1, _}, 2000
+    deadline = System.monotonic_time(:millisecond) + 2000
+    assert poll_rows(vt, &String.starts_with?(&1, "hi"), deadline)
+    assert Pty.write(pty, ["ex", ~c"it", ?\n]) == :ok
+    assert_receive {:exit, 1, 0}, 5000
+    assert Pty.write(pty, "x") == {:error, :closed}
+  end
+
+  test "resubscribe after the subscriber dies gets full damage" do
+    {vt, pty} = spawn_sh(2)
+    test = self()
+
+    first =
+      spawn(fn ->
+        :ok = Pty.subscribe(pty, self())
+        receive do: ({:damage, 2, _} -> :ok)
+        Vt.dirty_rows(vt)
+        {_, []} = Vt.dirty_rows(vt)
+        send(test, :drained)
+        Process.sleep(:infinity)
+      end)
+
+    assert_receive :drained, 2000
+    Process.exit(first, :kill)
+
+    second =
+      spawn(fn ->
+        :ok = Pty.subscribe(pty, self())
+        receive do: ({:damage, 2, _} -> send(test, {:rows, Vt.dirty_rows(vt)}))
+      end)
+
+    assert_receive {:rows, {_, rows}}, 2000
+    assert length(rows) == 24
+    Process.exit(second, :kill)
+    Pty.kill(pty, :kill)
+  end
+
+  test "exit before subscribe is still delivered" do
+    {_vt, pty} = spawn_sh(3, ["-c", "exit 5"])
+    Process.sleep(300)
+    assert Pty.subscribe(pty, self()) == :ok
+    assert_receive {:damage, 3, _}
+    assert_receive {:exit, 3, 5}, 2000
+  end
+
+  test "kill reports the signal, resize and set_hidden work" do
+    {_vt, pty} = spawn_sh(4)
+    :ok = Pty.subscribe(pty, self())
+    assert Pty.resize(pty, 100, 30, {8, 16}) == :ok
+    assert Pty.resize(pty, 100, 30, nil) == :ok
+    assert Pty.set_hidden(pty, true) == :ok
+    assert Pty.set_hidden(pty, false) == :ok
+    assert Pty.kill(pty, :kill) == :ok
+    assert_receive {:exit, 4, {:signal, 9}}, 2000
+  end
+
+  test "reader panic reports exit and leaves the vm up" do
+    {vt, pty} = spawn_sh(5)
+    :ok = Pty.subscribe(pty, self())
+    assert Native.test_inject_reader_panic(pty) == :ok
+    Pty.write(pty, "echo boom\n")
+    assert_receive {:exit, 5, {:panic, reason}}, 2000
+    assert is_binary(reason)
+    assert {_, rows} = Vt.full_rows(vt)
+    assert length(rows) == 24
+    assert Process.alive?(Process.whereis(HerdrServer.Supervisor))
+  end
+
+  test "backpressure for a child that is not reading" do
+    {_vt, pty} = spawn_sh(6, ["-c", "sleep 30"])
+    chunk = :binary.copy("x", 64 * 1024)
+
+    result =
+      Enum.reduce_while(1..200, :ok, fn _, _ ->
+        case Pty.write(pty, chunk) do
+          :ok -> {:cont, :ok}
+          err -> {:halt, err}
+        end
+      end)
+
+    assert result == {:error, :backpressure}
+    Pty.kill(pty, :kill)
+  end
+
+  test "invalid arguments raise" do
+    {_vt, pty} = spawn_sh(7)
+    assert_raise ArgumentError, fn -> Pty.kill(pty, :bogus) end
+    Pty.kill(pty, :kill)
+  end
+end

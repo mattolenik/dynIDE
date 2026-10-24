@@ -13,7 +13,7 @@ libc = "0.2"
 portable-pty = "=0.9.0"
 
 [features]
-# Test-only NIF hooks (e.g. `Pty::inject_reader_panic`). Filled in by Task 6.
+# Test-only NIF hooks (`HerdrServer.Native.test_inject_reader_panic/1`); on under `mix test`.
 test-nifs = []
 
 # The repo-root `[patch.crates-io]` is not inherited by this independent workspace.
