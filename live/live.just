@@ -9,7 +9,7 @@ live-test:
     cd '{{live_dir}}/apps/herdr_integration' && mix test --only real_kernel
     for c in {{live_crates}}; do (cd '{{live_dir}}/native'/$c && cargo test --locked) || exit 1; done
 
-# Milestone gate: lint, types, tests, launcher and attached smokes, tty harness
+# Milestone gate: lint, types, tests, launcher, handoff and attached smokes, tty harness
 # (M2 destructor and demo; herdr-live attached on the real kernels, then 15 panes + cat flood)
 live-check:
     cd '{{live_dir}}' && mix deps.get
@@ -19,6 +19,7 @@ live-check:
     for c in {{live_crates}}; do (cd '{{live_dir}}/native'/$c && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings) || exit 1; done
     just --justfile '{{justfile()}}' live-test
     '{{live_dir}}/scripts/launcher_smoke.sh'
+    elixir '{{live_dir}}/bench/handoff/smoke.exs'
     '{{live_dir}}/scripts/attached_smoke.sh'
     python3 '{{live_dir}}/scripts/tty_harness.py' destructor
     python3 '{{live_dir}}/scripts/tty_harness.py' demo
@@ -46,3 +47,8 @@ live-bench:
 live-bench-reload:
     cd '{{live_dir}}' && mix run bench/reload/reload_bench.exs && mix run bench/reload/guard_bench.exs
     for s in render view ui_field session_field scene_field view_loop closure pane_in_window cat15; do '{{live_dir}}'/bench/reload/$s.sh || exit 1; done
+
+# M5 handoff benches (headless): kill -9 with 15 panes, typing through kernel-restart
+live-bench-handoff:
+    elixir '{{live_dir}}/bench/handoff/kill9.exs'
+    elixir '{{live_dir}}/bench/handoff/typing.exs'

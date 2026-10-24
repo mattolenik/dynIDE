@@ -1,12 +1,17 @@
 #!/bin/sh
-# herdr-live launcher (dev build). The VM never touches stdio: stdin is
-# /dev/null and stdout/stderr go to the log, including first-compile output.
-# HERDR_LIVE_HEADLESS=1 starts no terminal client (server only) and never
-# touches the tty; otherwise the local terminal client paints /dev/tty in the
-# same VM and scripts/tty_guard.sh restores the tty after the VM exits, even on kill -9.
+# herdr-live launcher (dev build). Usage: herdr-live [kernel-restart | status | rollback [n]]
+# With no argument it builds native/herdr_broker and execs `herdr_broker run`,
+# which supervises the VMs (warm standby, fd holding, handoff on kill -9 or
+# kernel-restart) and restores the host tty at exit (it replaces
+# scripts/tty_guard.sh here). The VMs never touch stdio: stdin is /dev/null
+# and stdout/stderr (broker log lines, first-compile output) go to the log.
+# HERDR_LIVE_HEADLESS=1 (inherited by the VMs) starts no terminal client.
+# HERDR_LIVE_RUNTIME_DIR picks the broker socket dir (read by the broker).
+# kernel-restart and status talk to the running broker on this terminal.
 #
 # herdr-live rollback [n]: roll back the newest n live reload batches (default 1)
-# through the control socket of the running instance (HerdrServer.Control).
+# through the control socket of the running instance (HerdrServer.Control, served
+# by the current primary VM; a promoted VM takes the socket over).
 # A rolled-back source is reloaded again only when its content changes: re-saving
 # or touching the same bytes does nothing (edit it, or revert it, to reload).
 if [ "${1:-}" = rollback ]; then
@@ -25,6 +30,7 @@ if [ "${1:-}" = rollback ]; then
 fi
 log=${HERDR_LIVE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/herdr-live.log}
 case $log in /*) ;; *) log=$PWD/$log ;; esac
+case ${HERDR_LIVE_RUNTIME_DIR:-} in /* | '') ;; *) HERDR_LIVE_RUNTIME_DIR=$PWD/$HERDR_LIVE_RUNTIME_DIR ;; esac
 # 0700 when created here: the control socket (HerdrServer.Control) lives beside the log
 (umask 077 && mkdir -p "$(dirname "$log")") || exit 1
 # resolve symlinks (portable: no readlink -f on macOS)
@@ -34,7 +40,22 @@ while [ -L "$self" ]; do
   case $link in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
 done
 cd "$(dirname "$self")/.." || exit 1
+broker=$PWD/native/herdr_broker/target/release/herdr_broker
+build() { cargo build --release --locked --quiet --manifest-path native/herdr_broker/Cargo.toml; }
+case ${1:-} in
+  kernel-restart | status)
+    [ -x "$broker" ] || build >&2 || exit 1
+    exec "$broker" "$1"
+    ;;
+  '') ;;
+  *)
+    echo "usage: herdr-live [kernel-restart | status | rollback [n]]" >&2
+    exit 2
+    ;;
+esac
 export MIX_ENV="${MIX_ENV:-dev}"
 exec </dev/null >>"$log" 2>&1
-[ "${HERDR_LIVE_HEADLESS:-}" = 1 ] && exec elixir --erl "-noshell -noinput" -S mix run --no-halt
-exec "$PWD/scripts/tty_guard.sh" elixir --erl "-noshell -noinput" -S mix run --no-halt
+build || exit 1
+# +Bi: the VMs share the broker's process group, so a terminal ^C must not
+# open the BEAM break menu (the broker turns SIGINT into a clean stop).
+exec "$broker" run -- elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt

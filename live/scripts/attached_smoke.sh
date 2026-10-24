@@ -4,8 +4,10 @@
 # Run 1: logs 'terminal client started', paints a frame (alt screen entered,
 # TERMINAL status), stops on SIGTERM with status 0 and 'herdr-live stopped',
 # the transcript ends with the restore (alt screen left, modes reset) and the
-# tty settings are unchanged. Run 2: kill -9 of the VM; scripts/tty_guard.sh
-# restores the tty settings and writes the restore sequence.
+# tty settings are unchanged. Run 2: kill -9 of the primary VM; the broker
+# hands off to a new VM whose client repaints, then SIGTERM stops it with status
+# 0, the tty settings unchanged and the restore at the end. Run 3: tty_guard.sh
+# (still used by live-demo) on an early non-zero exit.
 # Usage: attached_smoke.sh [-v]    (SMOKE_TIMEOUT seconds to boot, default 600)
 set -u
 verbose=0
@@ -14,9 +16,12 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
 timeout=${SMOKE_TIMEOUT:-600}
 
+# VM pids from the broker's 'started vm' log lines
+vm_pids() { sed -n 's/.*herdr-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$@" 2>/dev/null; }
 # shellcheck disable=SC2329 # invoked via trap
 cleanup() {
   for f in "$tmp"/pid.*; do [ -s "$f" ] && kill -KILL "$(cat "$f")" 2>/dev/null; done
+  vm_pids "$tmp"/log.* | while read -r p; do kill -KILL "$p" 2>/dev/null; done
   rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -49,7 +54,7 @@ alive() { st=\$(ps -o stat= -p "\$1" 2>/dev/null); [ -n "\$st" ] && [ "\${st#Z}"
 stty cols 120 rows 40
 stty -a >"$tmp/before.\$run"
 log="$tmp/log.\$run"
-HERDR_LIVE_LOG="\$log" "$root/bin/herdr-live" &
+HERDR_LIVE_RUNTIME_DIR="$tmp/rt.\$run" HERDR_LIVE_LOG="\$log" "$root/bin/herdr-live" &
 pid=\$!
 echo "\$pid" >"$tmp/pid.\$run"
 i=0
@@ -65,13 +70,20 @@ until ready; do
 done
 sleep 1
 if [ "\$2" = KILL ]; then
-  # the VM is the guard's child (bin/herdr-live execs scripts/tty_guard.sh)
-  vm=\$(pgrep -P "\$pid")
+  # bin/herdr-live execs the broker; kill -9 its primary VM, wait for the
+  # handoff and the new VM's client, then stop the broker like run 1
+  vm=\$(HERDR_LIVE_RUNTIME_DIR="$tmp/rt.\$run" "$root/bin/herdr-live" status | sed -n 's/^primary_pid=//p')
   echo "\$vm" >"$tmp/vm.\$run"
-  kill -KILL \$vm
-else
-  kill -TERM "\$pid"
+  kill -KILL "\$vm"
+  i=0
+  until grep -qs 'herdr-broker: handoff crash' "\$log" && [ "\$(grep -c 'terminal client started' "\$log")" -ge 2 ]; do
+    i=\$((i + 1))
+    [ "\$i" -gt 120 ] && break
+    sleep 0.5
+  done
+  sleep 1
 fi
+kill -TERM "\$pid"
 i=0
 while alive "\$pid" && [ "\$i" -lt 80 ]; do
   i=\$((i + 1))
@@ -117,12 +129,18 @@ cmp -s "$tmp/before.term" "$tmp/after.term" || fail "term: stty changed: $(diff 
 echo "PASS: SIGTERM: tty settings unchanged"
 
 in_pty kill KILL
-[ -s "$tmp/vm.kill" ] || fail "kill: no VM pid found under the guard"
-[ "$(cat "$tmp/status.kill")" = 137 ] || fail "kill: exit status $(cat "$tmp/status.kill") (wanted 137)"
-echo "PASS: kill -9 of the VM: guard exits with the VM's status 137"
+log="$tmp/log.kill"
+[ -n "$(cat "$tmp/vm.kill" 2>/dev/null)" ] || fail "kill: no primary_pid in the broker status"
+grep -q 'herdr-broker: handoff crash' "$log" || fail "kill: log lacks 'herdr-broker: handoff crash'"
+[ "$(grep -c 'terminal client started' "$log")" -ge 2 ] || fail "kill: the new VM started no terminal client"
+[ "$(cat "$tmp/status.kill")" = 0 ] || fail "kill: exit status $(cat "$tmp/status.kill") (wanted 0); log: $(tail -n 20 "$log" 2>&1)"
+echo "PASS: kill -9 of the VM: broker handed off, the new VM's client started, SIGTERM exit status 0"
 cmp -s "$tmp/before.kill" "$tmp/after.kill" || fail "kill: stty changed: $(diff "$tmp/before.kill" "$tmp/after.kill")"
-ends_restored kill || fail "kill: transcript does not end with the guard's restore"
-echo "PASS: kill -9 of the VM: guard restored the tty settings and wrote the restore sequence"
+ends_restored kill || fail "kill: transcript does not end with the restore"
+echo "PASS: kill -9 of the VM: tty settings unchanged, transcript ends with the restore"
+left=$(vm_pids "$log" | while read -r p; do kill -0 "$p" 2>/dev/null && echo "$p"; done)
+[ -z "$left" ] || fail "kill: vm pids still running: $left"
+echo "PASS: kill -9 of the VM: no vm left"
 
 in_pty early EARLY
 [ "$(cat "$tmp/status.early")" = 3 ] || fail "early: exit status $(cat "$tmp/status.early") (wanted 3)"
