@@ -85,6 +85,11 @@ throw and exit is allowed. It:
 - scans results that become state for local funs and rejects them (`{:rejected, ...}`).
 
 Do not add your own `rescue` around editable code; call it through the Guard instead.
+
+`HerdrReload.Telemetry` is called outside the guard (Store init, the client Endpoint,
+`HerdrServer.Application`, `Handoff.Notice`, and the Guard's own failure path), so a raise
+there is not rolled back and can take those processes down. Keep edits to it trivially
+safe.
 Hangs inside `Actions.apply` or the Store have no budget (a known gap): a loop there
 wedges that process until its callers time out.
 
@@ -179,7 +184,7 @@ Off by default. It adds about a second per save, so it is for risky edits.
   Off: `... test-on-save off`. `... test-on-save` or `status` prints `ok gate` or `ok off`.
 - Mapping: `apps/<app>/lib/x.ex` (or `lib/<app>/x.ex`) runs `apps/<app>/test/x_test.exs`
   when it exists; a saved test file maps to itself. No mapped test: reload as usual
-  (`tests result=none`).
+  (`tests result=none`; the status line drops its tests node, no notice).
 - The tests run in a separate `mix test` OS process (`MIX_ENV=test`, broker and control
   env removed, 120 s timeout) before compile. Only a pass loads.
 - A failing or erroring run blocks the load and keeps the path blocked. Every later gated
@@ -259,6 +264,7 @@ grep -E 'herdr-event (session_lost|crash|broker_handoff_failed)' "$L"
 | edits missing after a crash | `herdr-event sync` (what was loaded), and `herdr-event broker_handoff` `kind=crash` |
 | screen or layout reset | `herdr-event crash proc=store` and `session_lost` |
 | tty left raw | broker restores it at exit; if a VM died early, run `stty sane` |
+| screen frozen, VM still running (log has `crash proc=local_client action=gave_up`: the terminal client crashed past its restart limit and the VM runs headless) | from another terminal, `live/bin/herdr-live rollback` (undo the edit that broke the client), then `live/bin/herdr-live kernel-restart` (the new VM starts a fresh client on the tty) |
 | `herdr-live: not running` from `rollback` or `test-on-save` | the control socket moves with the primary and is gone for a few ms during a graceful handoff; retry |
 
 `live/bin/herdr-live status` prints the broker state (`primary_gen`, `primary_pid`,

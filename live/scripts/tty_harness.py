@@ -31,8 +31,9 @@ then quits.
 selfhost: the self-hosting loop through the real launcher. The same launch
 (120x40), prefix v, then writes a new module file
 apps/herdr_server/lib/herdr_server/selfhost_probe.ex and waits for the
-status row to show `r<n> 1m` (rewritten every 2 s until a batch shows: no
-log line marks the status bridge subscribed); `bin/herdr-live rollback` shows
+status row to show `r<n> 1m` (rewritten every 2 s until a batch shows, as a
+defense: since b30f3505 the status bridge subscribes at once and seeds from
+the newest batch, so the first write normally shows); `bin/herdr-live rollback` shows
 `r<n> rolled back: manual`; `bin/herdr-live kernel-restart` shows
 `handoff graceful g<gen>` and both panes still answer an `echo` (clicked to
 focus), and a pane shell has HERDR_BROKER_SOCK set; the probe file is deleted (the status settles), prefix q exits 0, and
@@ -714,9 +715,9 @@ def selfhost():
             h.send(b"\x02v")
             h.until(lambda: h.prompts() >= 2, "second prompt after prefix v")
             ok(True, "selfhost: prefix v split (two prompts)")
-            # the reload pipeline starts after the fresh start, but ReloadNotices (the status
-            # line's bridge) subscribes up to 500 ms later and no log line marks it: a batch
-            # loaded before that never shows, so rewrite the probe (new value) every 2 s
+            # ReloadNotices (the status line's bridge) subscribes right after the reload
+            # pipeline starts and seeds from the newest batch (b30f3505), so the first write
+            # normally shows; rewriting the probe (new value) every 2 s stays as a defense
             h.until(lambda: "herdr-event vm_start" in open(h.log).read(), "vm_start in the log")
             n = int(time.time() * 1000) % 1_000_000_000
             loaded = lambda: re.search(r"\br(\d+) 1m\b", h.screen.text())

@@ -3,7 +3,7 @@ ExUnit.start()
 defmodule HerdrServer.ViewHelpers do
   @moduledoc false
   alias HerdrScene.Event
-  alias HerdrServer.App.{Actions, Keybinds}
+  alias HerdrServer.App.Actions
   alias HerdrServer.Client.Keys
   alias HerdrServer.Layout
 
