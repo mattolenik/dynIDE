@@ -351,8 +351,8 @@ safety-check abort in libghostty takes the VM) are handled by the handoff
 path: the new VM starts, receives PTY and tty fds over SCM_RIGHTS from the
 dying one plus serialized per-pane state (herdr's `HandoffRuntimeState`), and
 replays scrollback into fresh ghostty terminals. Target under one second with
-children alive. Until this lands, a kernel restart means session restore from
-disk and lost children, which is why it is slice 2 and not "later".
+children alive. It is part of slice 1 because without it a kernel restart
+means session restore from disk and lost children.
 
 ## Protocols and remote
 
@@ -367,8 +367,10 @@ disk and lost children, which is why it is slice 2 and not "later".
 
 ## Windows
 
-BEAM runs on Windows. ConPTY is a `Native.Pty` backend; console input is a
-`Native.Tty` backend. Defer until the Unix slices are proven.
+Deferred and unscheduled. BEAM runs on Windows; ConPTY would be a
+`Native.Pty` backend and console input a `Native.Tty` backend. Kernel restart
+needs a non-SCM_RIGHTS mechanism there. Keep platform code behind the
+`Native.*` contracts so nothing makes it harder later.
 
 ## Slices and go/no-go
 
@@ -377,7 +379,9 @@ BEAM runs on Windows. ConPTY is a `Native.Pty` backend; console input is a
 Build: `Native.Vt` (with `dirty_rows`, encoders), `Native.Pty` (reader +
 writer threads, splitter), `Native.Tty`, `Native.Blit`; `App.Session` with a
 tile layout; `Input.Parse` for CSI u, legacy keys, SGR mouse; `View.compute`
-and `Render.compose` with a status bar; `Reload` with Guard and rollback.
+and `Render.compose` with a status bar; `Reload` with Guard and rollback;
+and kernel restart under live children (SCM_RIGHTS handoff), because that
+is the mechanism behind "never lose terminals" and the gate should prove it.
 
 | metric | target |
 |---|---|
@@ -391,14 +395,9 @@ and `Render.compose` with a status bar; `Reload` with Guard and rollback.
 | second reload of a module whose closure was placed in state | rejected at dev time with a message, not a killed process |
 | rollback after a pane was spawned inside the window | state reconciled, pane adopted, nothing orphaned |
 | reload while `cat` runs in 15 panes | compile competes for cores; measure save → visible |
+| `kill -9` the VM with 15 shells running | new VM attached, all children alive, scrollback restored, < 1s p95 |
 
-### Slice 2: kernel restart under live children
-
-Port SCM_RIGHTS handoff. Metric: kill the VM with `kill -9` while 15 shells
-run; new VM attached with all children alive and scrollback restored in
-under one second.
-
-### Slice 3: breadth
+### Slice 2: breadth
 
 Copy mode and selection across pane boundaries, kitty graphics in composed
 frames, detection and OSC trackers in Elixir, plugins, persistence, API,
@@ -413,8 +412,8 @@ remote.
   it fine; if 15-pane full repaints miss the metric, the fallback is a
   compose-helper NIF that takes the layout and overlay list but still holds no
   policy.
-- **Kernel abort takes the VM** until slice 2 lands, and remains a
-  one-second hiccup after it.
+- **Kernel abort takes the VM** until handoff lands within slice 1, and
+  remains a one-second hiccup after it.
 - **PCRE on manifest regexes.** Backtracking on 2000-char lines with `.*`
   can go superlinear. Vet manifests and set `match_limit`; if it bites, match
   in the kernel with the `regex` crate.

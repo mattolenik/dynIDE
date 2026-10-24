@@ -22,36 +22,40 @@ M0 skeleton
 ├── M2 kernel: tty + blit ┤
 └── M3 brain core ────────┼── (M3 runs against a fake kernel until M1/M2 land)
                           ▼
-                     M4 live reload + rollback
+            ┌─────────────┴─────────────┐
+            ▼                           ▼
+   M4 live reload + rollback   M5 kernel restart under live children
+            └─────────────┬─────────────┘
                           ▼
-                     M5 slice-1 gate ──── go / no-go
+                     M6 slice-1 gate ──── go / no-go
                           ▼
-                     M6 self-hosting loop          (from here on, herdr-live is built from inside herdr-live)
+                     M7 self-hosting loop          (from here on, herdr-live is built from inside herdr-live)
                           ▼
-            ┌─────────────┼─────────────────┐
-            ▼             ▼                 ▼
-    M7 kernel restart  M8 persistence   M9 terminal fidelity
-    under live children                     │
-            │                               ▼
-            │                        M10 kitty graphics
-            └──────────┬────────────────────┘
-                       ▼
-      ┌────────────────┼──────────────────┐
-      ▼                ▼                  ▼
-M11 detection     M12 API + CLI      M13 chrome + UX
-+ agent runtime        │
-                       ▼
-                 M14 plugins
-                       ▼
-      ┌────────────────┼────────────────┐
-      ▼                ▼                ▼
-M15 remote attach  M16 long tail    M17 windows
-                       ▼
-                 M18 release + distribution
+                 ┌────────┴────────┐
+                 ▼                 ▼
+          M8 persistence    M9 terminal fidelity
+                 │                 ▼
+                 │          M10 kitty graphics
+                 └────────┬────────┘
+                          ▼
+      ┌───────────────────┼──────────────────┐
+      ▼                   ▼                  ▼
+M11 detection        M12 API + CLI      M13 chrome + UX
++ agent runtime           │
+                          ▼
+                    M14 plugins
+                          ▼
+            ┌─────────────┴─────────────┐
+            ▼                           ▼
+     M15 remote attach           M16 long tail
+            └─────────────┬─────────────┘
+                          ▼
+                M17 release + distribution
 ```
 
-M7–M10 are independent of each other and can be owned by separate agents at
-the same time. Likewise M11–M13, and M15–M17.
+M4 and M5 are independent and can be owned by separate agents. After M7,
+M8/M9 are independent, as are M11–M13 and M15–M16. Windows is deferred; see
+the end of this document.
 
 ---
 
@@ -66,8 +70,8 @@ have somewhere to land and a CI gate from day one.
 **Scope.**
 - Decide and record repo layout: Elixir app at `live/` with the Rustler crate
   at `live/native/herdr_kernel`, depending on `crates/ghostty-vt` and
-  `vendor/` in place. The Rust `src/` tree stays as reference until the M5
-  gate passes, then is pruned in M6.
+  `vendor/` in place. The Rust `src/` tree stays as reference until the M6
+  gate passes, then is pruned in M7.
 - Mix project with `consolidate_protocols: false` in dev, `-noshell -noinput`
   boot via a `herdr-live` launcher script, file logger, no stdout writes.
 - Rustler crate compiling with `panic = "unwind"`, a hello NIF, and
@@ -262,7 +266,7 @@ second, and a bad edit rolls back automatically with state intact.
 - `herdr-live rollback [n]` command and status-line notices for compile
   error, loaded, rolled back, rejected.
 
-**Out of scope.** NIF reload (never), handoff (M7).
+**Out of scope.** NIF reload (never), handoff (M5).
 
 **Exit criteria.**
 - Each row of the design.md slice-1 metrics table that concerns reload has
@@ -278,12 +282,46 @@ second, and a bad edit rolls back automatically with state intact.
 
 ---
 
-## M5: slice-1 gate
+## M5: kernel restart under live children
+
+**Goal.** A kernel change or a VM crash is a sub-second restart with every
+PTY and child process preserved, so "never lose terminals" holds even when
+the brain cannot help.
+
+**Depends on.** M1, M2, M3 (a session to preserve).
+**Parallel with.** M4. In the gate because it, not supervision, is what
+makes "never lose terminals" true.
+
+**Scope.**
+- Port SCM_RIGHTS fd transfer from `src/server/handoff.rs` into the kernel.
+- `HandoffState` per pane (child pid, size, keyboard flags, input state,
+  title, serialized scrollback or ANSI history) over a unix socket.
+- Supervisor process outside the VM (tiny Rust or shell launcher) that
+  starts the new VM, brokers the handoff, and only then lets the old VM
+  exit; falls back to disk restore if handoff fails.
+- `herdr-live kernel-restart` command used after kernel builds.
+- Crash path: a dying VM (where possible) and the launcher's watchdog both
+  initiate handoff; `kill -9` relies on the launcher holding duplicate fds.
+
+**Out of scope.** Windows.
+
+**Exit criteria.**
+- `kill -9` of the VM with 15 shells running (some mid-`htop`) → new VM
+  attached, all children alive, scrollback restored, under one second p95,
+  recorded in `results/m5.md`.
+- Kernel rebuild + `kernel-restart` during active typing loses no keystrokes
+  after the restart completes.
+
+**Design refs.** What hot reload does not cover.
+
+---
+
+## M6: slice-1 gate
 
 **Goal.** Decide, with numbers, whether the architecture holds before the
 breadth work is paid for.
 
-**Depends on.** M1, M2, M3, M4.
+**Depends on.** M1, M2, M3, M4, M5.
 
 **Scope.**
 - Run the full slice-1 metrics table from design.md on Linux and macOS,
@@ -292,23 +330,25 @@ breadth work is paid for.
 - For every miss: root cause and one of (a) a bounded fix inside the slice,
   (b) an accepted architecture change written back into design.md, or
   (c) a no-go recommendation.
+- Include the M5 kernel-restart metric (`kill -9` with 15 shells, children
+  alive, under one second p95) in the table.
 - Specifically test the composition-cost fallback question: if 15-pane full
   repaints miss, prototype the policy-free compose-helper NIF and re-measure.
 - Decision record (ADR): go / no-go / go-with-changes.
 
 **Exit criteria.**
-- ADR committed. If go: design.md updated for any changes, and M6 unblocked.
+- ADR committed. If go: design.md updated for any changes, and M7 unblocked.
 
 **Design refs.** Slices and go/no-go.
 
 ---
 
-## M6: self-hosting loop
+## M7: self-hosting loop
 
 **Goal.** herdr-live is developed from inside herdr-live. An agent in one pane
 edits the source; the IDE around it reloads; the human watches and steers.
 
-**Depends on.** M5 (go).
+**Depends on.** M6 (go).
 
 **Scope.**
 - `herdr-live` runs standalone as the daily driver for the team working on
@@ -337,46 +377,13 @@ edits the source; the IDE around it reloads; the human watches and steers.
 
 ---
 
-## M7: kernel restart under live children
-
-**Goal.** A kernel change or a VM crash is a sub-second restart with every
-PTY and child process preserved, so "never lose terminals" holds even when
-the brain cannot help.
-
-**Depends on.** M6.
-**Parallel with.** M8, M9.
-
-**Scope.**
-- Port SCM_RIGHTS fd transfer from `src/server/handoff.rs` into the kernel.
-- `HandoffState` per pane (child pid, size, keyboard flags, input state,
-  title, serialized scrollback or ANSI history) over a unix socket.
-- Supervisor process outside the VM (tiny Rust or shell launcher) that
-  starts the new VM, brokers the handoff, and only then lets the old VM
-  exit; falls back to disk restore if handoff fails.
-- `herdr-live kernel-restart` command used after kernel builds.
-- Crash path: a dying VM (where possible) and the launcher's watchdog both
-  initiate handoff; `kill -9` relies on the launcher holding duplicate fds.
-
-**Out of scope.** Windows.
-
-**Exit criteria.**
-- `kill -9` of the VM with 15 shells running (some mid-`htop`) → new VM
-  attached, all children alive, scrollback restored, under one second p95,
-  recorded in `results/m7.md`.
-- Kernel rebuild + `kernel-restart` during active typing loses no keystrokes
-  after the restart completes.
-
-**Design refs.** What hot reload does not cover.
-
----
-
 ## M8: persistence and session restore
 
 **Goal.** Layout, tabs, workspaces, and per-pane metadata survive a full
 stop/start; scrollback restore follows a stated policy.
 
-**Depends on.** M6.
-**Parallel with.** M7, M9.
+**Depends on.** M7.
+**Parallel with.** M9.
 
 **Scope.**
 - `Persist.Writer`: debounced snapshots of `App.Session`/`App.Ui`/pane
@@ -385,7 +392,7 @@ stop/start; scrollback restore follows a stated policy.
   layout and focus.
 - Scrollback persistence policy decision (none / last N rows / full) and
   implementation.
-- Interaction with M7: handoff state takes precedence when present.
+- Interaction with M5: handoff state takes precedence when present.
 
 **Exit criteria.**
 - Stop, start, identical layout and cwds; property test that snapshot →
@@ -399,8 +406,8 @@ stop/start; scrollback restore follows a stated policy.
 selection and copy across pane boundaries, links, paste, queries, OSC side
 channels.
 
-**Depends on.** M6.
-**Parallel with.** M7, M8.
+**Depends on.** M7.
+**Parallel with.** M8.
 
 **Scope.**
 - Scrollback scrolling via `scroll_to`, scrollbar overlay in
@@ -469,7 +476,7 @@ blocked), using herdr's manifests, and exposes it the same way.
 **Goal.** A JSON socket API and CLI equivalent to herdr's for panes, agents,
 workspaces, and events, so automation and agents can drive herdr-live.
 
-**Depends on.** M6.
+**Depends on.** M7.
 **Parallel with.** M11, M13.
 
 **Scope.**
@@ -491,7 +498,7 @@ workspaces, and events, so automation and agents can drive herdr-live.
 **Goal.** The mouse-first TUI herdr users know: sidebar, tabs, workspaces,
 modals, settings, onboarding, consistent affordances.
 
-**Depends on.** M6.
+**Depends on.** M7.
 **Parallel with.** M11, M12.
 
 **Scope.**
@@ -532,7 +539,7 @@ plugins too.
 a client of a different size, over SSH, using the same packed-row render path.
 
 **Depends on.** M13.
-**Parallel with.** M16, M17.
+**Parallel with.** M16.
 
 **Scope.**
 - Client node: `Tty.Owner`, `Input.Reader`, `Render.Loop`, `Native.Blit`
@@ -554,56 +561,46 @@ a client of a different size, over SSH, using the same packed-row render path.
 **Goal.** The remaining herdr features users rely on.
 
 **Depends on.** M13.
-**Parallel with.** M15, M17.
+**Parallel with.** M15.
 
 **Scope.** Inventory from herdr `src/`, each as its own task: git worktree
 management, agent resume, product announcements and release notes display,
 copy-mode search, popup sizing, metadata tokens, sound, update notifications
-for the new channel, anything found missing during M6 dogfooding.
+for the new channel, anything found missing during M7 dogfooding.
 
 **Exit criteria.** Inventory closed with each item done or explicitly
 dropped with a reason.
 
 ---
 
-## M17: Windows
-
-**Goal.** herdr-live runs natively on Windows.
-
-**Depends on.** M7 (kernel restart story must be settled first; SCM_RIGHTS
-does not exist there).
-**Parallel with.** M15, M16.
-
-**Scope.**
-- `Native.Pty` ConPTY backend; `Native.Tty` console backend (VT input mode,
-  resize events, the Windows Terminal cursor-anchor quirk from
-  `render_ansi.rs`).
-- Kernel restart on Windows: handle duplication into the new process in
-  place of fd passing, or documented fallback to disk restore.
-- Packaging with the app-local ConPTY runtime.
-- CI on Windows for `just live-check`.
-
-**Exit criteria.** Slice-1 metrics table rerun on Windows and recorded; a
-Windows user on the team runs it daily for a week.
-
----
-
-## M18: release and distribution
+## M17: release and distribution
 
 **Goal.** Installable builds and an update channel.
 
-**Depends on.** M15, M16 (M17 for the Windows asset).
+**Depends on.** M15, M16.
 
 **Scope.**
 - Self-contained release per platform (Mix release with bundled ERTS plus
-  the kernel `.so`/`.dll`), single-command install.
-- Update command and channel manifest; kernel restart (M7) used for
+  the kernel `.so`), single-command install.
+- Update command and channel manifest; kernel restart (M5) used for
   in-place updates so sessions survive.
 - Homebrew/Nix packaging; docs site content for herdr-live.
 - Signing and notarization where required.
 
 **Exit criteria.** Fresh-machine install on each platform from the published
 artifact; in-place update of a running session with no session loss.
+
+---
+
+## Deferred: Windows
+
+Not scheduled. When it is picked up it needs: a ConPTY backend for
+`Native.Pty`, a console backend for `Native.Tty` (VT input mode, resize
+events, the Windows Terminal cursor-anchor quirk from `render_ansi.rs`), a
+kernel-restart story without SCM_RIGHTS (handle duplication into the new
+process, or a documented fallback to disk restore), packaging with the
+app-local ConPTY runtime, and a Windows CI job. Nothing before M17 should
+make it harder: keep platform code behind the `Native.*` contracts.
 
 ---
 
@@ -618,5 +615,6 @@ Four agents can start as soon as M0 lands:
 | C | M3 | brain core against `Kernel.Fake`; swaps to real NIFs as A/B land |
 | D | M4 prep | `Reload.Compiler` and `Reload.Guard` can be built and unit-tested against toy modules before M3 exists |
 
-M5 is a single-owner gate. After M6, the parallel groups in the dependency
-graph apply.
+Second wave, as soon as M1 and M2 land: agent E on M5 (kernel restart), in
+parallel with D finishing M4. M6 is a single-owner gate. After M7, the
+parallel groups in the dependency graph apply.
