@@ -61,6 +61,9 @@ the recovery map for the coordinating session: trust this file and
 - 2026-10-23: wave 1 dispatched: M1, M2, M3, M4-prep owners on live/m1..m4 from 179cd23e.
 - 2026-10-23: M1 SPEC_PUBLISHED at 03846db6 (HerdrScene.Cell: 32-byte LE records, per-row trailer for long clusters, 15 golden vectors from an independent Python encoder, docs/herdr-live/packed-cells.md). Merged into herdr-live; herdr_scene 21 tests pass. M1 resumed for phase 2; M2 and M3 told to rebase.
 - 2026-10-23: M4 phase 1 DONE_WITH_CONCERNS at 94d87b18; merged (no conflicts) as 54093015. Guard signature `Reload.Guard.run(mod, fun, args, opts) :: {:ok, term} | {:failed, failure}`; failures `{:raise|:throw|:exit, _, st}`, `{:timeout, ms, st}`, `{:local_fun, mod, path}`; opts `budget_ms`, `server`, `scan`. Guard cost: 0.13µs inline, 4µs with a budget on small args; local-fun scan is O(state) (349µs on 1.6MB) so phase 2 must scope it. Concerns carried to phase 2: (a) a rolled-back module's bad beam stays on disk and would autoload later — rollback must restore the previous beam on disk too; (b) receive loops on old code block reloads — fully-qualified loop calls or allowlist; (c) Watcher untested on Linux (needs inotify-tools). A stray erl_crash.dump ("device does not exist" during boot, stderr closed) appeared at the herdr-live root at 17:52 during a live-check run; cause unconfirmed, likely a smoke child; verify when M3 lands.
+- 2026-10-23: coordinator's live-check on the merged tree (M0 + M1 spec + M4 phase 1) green; no crash dump produced.
+- 2026-10-23: M2 handed back early and incomplete (no results, no final review, two Linux failures: ttyname static buffer in a test helper; tty not cooked while suspended on Linux). Resumed with a finish-list. Not merged.
+- 2026-10-23: M1, M2, M3 owners all terminated by an API rate limit; resumed from their saved state once lifted. M3 told to rebase onto 33a8a6b4 (M4 phase 1 present).
 
 ## Rulings
 
