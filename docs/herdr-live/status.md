@@ -38,7 +38,7 @@ the recovery map for the coordinating session: trust this file and
 | M1 kernel vt+pty | in progress | live/m1 | agent | | wave 1; two-phase: packed cell spec first (SPEC_PUBLISHED), then rest |
 | M2 term kernel tty+blit | in progress | live/m2 | agent | | wave 1; waits on packed cell spec for decode |
 | M3 server core + term client | in progress | live/m3 | agent | | wave 1; against Kernel.Fake; owns scene contract |
-| M4 reload + rollback | in progress (phase 1) | live/m4 | agent | | wave 1 prep: Reload.* against toy modules; phase 2 after M3 |
+| M4 reload + rollback | phase 1 merged; phase 2 pending M3 | live/m4 | agent | 54093015 | phase 1: Reload.Watcher/Compiler/Ring/Guard, 65 tests; save→loaded ~90ms one module, ~95ms for 21-module fan-out |
 | M5 kernel restart | not started | | | | wave 2 |
 | M6 gate | not started | | | | human decision |
 | M7 self-hosting | not started | | | | human dogfood week |
@@ -60,6 +60,7 @@ the recovery map for the coordinating session: trust this file and
 - 2026-10-23: M0 DONE_WITH_CONCERNS at 179cd23e; coordinator re-ran `just live-check` on merged tree: exit 0. Fast-forwarded into herdr-live. Concerns carried: Linux CI never executed (no push); the M0 owner's Linux subagent added a 6 GiB swapfile at /var/tmp/swapf inside the podman VM and left a `herdr-linux-check` image.
 - 2026-10-23: wave 1 dispatched: M1, M2, M3, M4-prep owners on live/m1..m4 from 179cd23e.
 - 2026-10-23: M1 SPEC_PUBLISHED at 03846db6 (HerdrScene.Cell: 32-byte LE records, per-row trailer for long clusters, 15 golden vectors from an independent Python encoder, docs/herdr-live/packed-cells.md). Merged into herdr-live; herdr_scene 21 tests pass. M1 resumed for phase 2; M2 and M3 told to rebase.
+- 2026-10-23: M4 phase 1 DONE_WITH_CONCERNS at 94d87b18; merged (no conflicts) as 54093015. Guard signature `Reload.Guard.run(mod, fun, args, opts) :: {:ok, term} | {:failed, failure}`; failures `{:raise|:throw|:exit, _, st}`, `{:timeout, ms, st}`, `{:local_fun, mod, path}`; opts `budget_ms`, `server`, `scan`. Guard cost: 0.13µs inline, 4µs with a budget on small args; local-fun scan is O(state) (349µs on 1.6MB) so phase 2 must scope it. Concerns carried to phase 2: (a) a rolled-back module's bad beam stays on disk and would autoload later — rollback must restore the previous beam on disk too; (b) receive loops on old code block reloads — fully-qualified loop calls or allowlist; (c) Watcher untested on Linux (needs inotify-tools). A stray erl_crash.dump ("device does not exist" during boot, stderr closed) appeared at the herdr-live root at 17:52 during a live-check run; cause unconfirmed, likely a smoke child; verify when M3 lands.
 
 ## Rulings
 
