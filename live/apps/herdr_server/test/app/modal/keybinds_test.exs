@@ -126,6 +126,16 @@ defmodule HerdrServer.App.Modal.KeybindsTest do
     assert MapSet.member?(Keybinds.intercept_set(app.ui.keybinds), {"t", [:ctrl]})
   end
 
+  test "capture onto another action's key writes the displaced action as unbound" do
+    {app, effects} = open() |> capture("rename_tab") |> key("n")
+
+    assert effects == [
+             {:config_write, ["keys"], %{"rename_tab" => ["prefix+n"], "next_tab" => []}}
+           ]
+
+    assert Keybinds.lookup(app.ui.keybinds, :prefix, {"n", []}) == {Prompt, :rename_tab, []}
+  end
+
   test "capture Esc cancels and leaves the bindings unchanged; releases are ignored" do
     app = capture(open(), "rename_tab")
     before = app.ui.keybinds

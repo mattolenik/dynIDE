@@ -15,7 +15,8 @@ defmodule HerdrServer.App.Modal.Keybinds do
   the action through `Keybinds.rebind/3`: after the prefix key it is `prefix+<key>`;
   a ctrl / alt / super chord is a direct bind; any other key is a prefix bind. Esc
   cancels. Success updates `ui.keybinds` (the Store republishes the fast path) and emits
-  `{:config_write, ["keys"], %{action => [spec]}}`; a refused spec shows its error.
+  `{:config_write, ["keys"], kv}` with every action whose bindings changed (the action's
+  `[spec]`, `[]` for one that lost its key); a refused spec shows its error.
   """
 
   @behaviour HerdrServer.App.Modal.Kind
@@ -143,8 +144,10 @@ defmodule HerdrServer.App.Modal.Keybinds do
 
     case KB.rebind(app.ui.keybinds, m.capturing, spec) do
       {:ok, kb} ->
-        {:keep, stop(m, nil), put_in(app.ui.keybinds, kb),
-         [{:config_write, ["keys"], %{m.capturing => [spec]}}]}
+        # every changed action, so a displaced one is written as [] too
+        old = KB.to_config(app.ui.keybinds)
+        kv = kb |> KB.to_config() |> Map.reject(fn {a, v} -> old[a] == v end)
+        {:keep, stop(m, nil), put_in(app.ui.keybinds, kb), [{:config_write, ["keys"], kv}]}
 
       {:error, msg} ->
         {:keep, stop(m, msg)}
