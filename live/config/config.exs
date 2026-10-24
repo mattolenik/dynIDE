@@ -29,6 +29,16 @@ config :herdr_reload, HerdrReload,
 # Handoff (M5): with a broker, changed panes are snapshotted to it this often.
 config :herdr_server, HerdrServer.Handoff, snapshot_ms: 1000
 
+# Persistence (M8): snapshot polling and scrollback cadence. runtime.exs sets `enabled`
+# and the raw `dir`/`name` env values; HerdrServer.Persist.Disk.config/0 resolves them.
+config :herdr_server, HerdrServer.Persist,
+  enabled: false,
+  dir: nil,
+  name: nil,
+  poll_ms: 1000,
+  scrollback_ms: 60_000,
+  scrollback_rows: 1000
+
 # Kernel modules used by herdr_server (see HerdrServer.Kernel): M1's NIF-backed
 # HerdrServer.Native.* in dev and prod, the in-memory fakes (the test double) in
 # test. Read once when herdr_server starts; restart the app after changing them.

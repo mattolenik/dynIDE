@@ -15,6 +15,16 @@ end
 if config_env() != :test and System.get_env("HERDR_BROKER_SOCK") not in [nil, ""],
   do: config(:herdr_reload, HerdrReload, defer: true)
 
+# M8: persistence only in a bin/herdr-live VM (broker socket set), never in test, and not
+# with HERDR_LIVE_PERSIST=0. dir and name are raw env values (nil when unset);
+# HerdrServer.Persist.Disk.config/0 applies the XDG fallback and validates the name.
+config :herdr_server, HerdrServer.Persist,
+  enabled:
+    config_env() != :test and System.get_env("HERDR_BROKER_SOCK") not in [nil, ""] and
+      System.get_env("HERDR_LIVE_PERSIST") != "0",
+  dir: System.get_env("HERDR_LIVE_STATE_DIR"),
+  name: System.get_env("HERDR_LIVE_SESSION")
+
 # M7: run the changed module's tests before each reload (adds seconds per save).
 # `herdr-live test-on-save on|off` flips it at runtime.
 if System.get_env("HERDR_LIVE_TEST_ON_SAVE") == "1" do

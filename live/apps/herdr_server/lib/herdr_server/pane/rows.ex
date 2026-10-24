@@ -23,6 +23,13 @@ defmodule HerdrServer.Pane.Rows do
     end
   end
 
+  @doc """
+  Pane `pane_id`'s content generation, or nil. Never copies the rows. Hidden panes
+  publish no damage, so their gen moves only once visible.
+  """
+  @spec gen(pos_integer) :: non_neg_integer | nil
+  def gen(pane_id), do: :ets.lookup_element(@table, pane_id, 2, nil)
+
   @spec put(pos_integer, non_neg_integer, tuple, map | nil) :: :ok
   def put(pane_id, gen, rows, cursor) do
     :ets.insert(@table, {pane_id, gen, rows, cursor})
