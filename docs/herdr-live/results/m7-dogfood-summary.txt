@@ -1,0 +1,20 @@
+period: 2026-10-24T20:21:03Z .. 2026-10-24T20:50:13Z
+vm_starts: 6
+reloads: 4
+modules_reloaded: 4
+fanout_max: 1
+compile_errors: 1
+rollbacks: manual 1, auto 2
+rollback_reasons: manual 1, raise 1, timeout 1
+guard_failures: attributed 2, unattributed 0
+tests: passed 1, failed 1, stale 0
+syncs: 0 modules
+handoffs: crash 1, graceful 1, failed 0
+handoff_ms_p50: 27
+handoff_ms_p95: 28
+handoff_ms_max: 28
+crashes: none
+store_restarts: 0
+session_losses: 2
+unparsed: 0
+exit_criterion: session_losses=0 -> FAIL (2)
