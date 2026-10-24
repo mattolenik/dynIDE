@@ -37,8 +37,8 @@ the recovery map for the coordinating session: trust this file and
 | M0 skeleton | merged | (deleted) | agent | 179cd23e | 15 commits; results/m0.md; live-check verified green by coordinator |
 | M1 kernel vt+pty | merged | live/m1 | agent | 95ace52e | 25 commits; results/m1.md; 56 cargo + 26 ExUnit; mode/2 p999 1µs under cat 100MB; live-check verified green |
 | M2 term kernel tty+blit | merged | live/m2 | agent | 4ce76654 | 16 commits; results/m2.md; green on macOS and Linux (podman); manual GUI-terminal check owed by human (steps in results/m2.md) |
-| M3 server core + term client | in progress | live/m3 | agent | | wave 1; against Kernel.Fake; owns scene contract |
-| M4 reload + rollback | phase 1 merged; phase 2 pending M3 | live/m4 | agent | 54093015 | phase 1: Reload.Watcher/Compiler/Ring/Guard, 65 tests; save→loaded ~90ms one module, ~95ms for 21-module fan-out |
+| M3 server core + term client | merged | live/m3 | agent | 1474b6df | 43 commits; results/m3.md; 181/78/51 tests + integration + real_kernel; both kernel swaps done; follow-up live/m3-prefix in flight |
+| M4 reload + rollback | phase 2 in progress | live/m4 | agent | 54093015 (ph1) | phase 1: Reload.Watcher/Compiler/Ring/Guard, 65 tests; save→loaded ~90ms one module, ~95ms for 21-module fan-out |
 | M5 kernel restart | in progress | live/m5 | agent | | wave 2; dispatched from 95ace52e; rebases when M2/M3 land |
 | M6 gate | not started | | | | human decision |
 | M7 self-hosting | not started | | | | human dogfood week |
@@ -67,6 +67,7 @@ the recovery map for the coordinating session: trust this file and
 - 2026-10-23: M1 DONE_WITH_CONCERNS at 7a32cf4c; merged as 95ace52e with one conflict (application.ex: Keeper first, then Reload.Supervisor). live-check green. Carried: SIGCHLD reset to default at NIF load is process-wide (M5/M18 informed); x86_64 Linux unrun; final drain after exit can drop background-job output on Linux; hyperlink id table grows for pane lifetime; Keeper crash during the 2s close window leaves a child with only HUP. M3 informed of the real kernel API and told to rebase.
 - 2026-10-23: M5 dispatched (kernel restart under live children) from 95ace52e.
 - 2026-10-23: M2 DONE_WITH_CONCERNS at 6f7e05e3; merged as 4ce76654 (conflict: live/mix.exs dialyzer plt_add_apps, kept :mix and :ex_unit). Linux root causes fixed: ttyname -> ttyname_r in the test helper; Linux-only raise(SIGSTOP) after kill(0, SIGSTOP) returns early. Owed to human: manual live-demo check in a real GUI terminal. Leftovers outside repo: podman image localhost/herdr-m2-check. M3 and M5 informed (Tty/Blit API; stty wrapper belongs in the broker).
+- 2026-10-23: M3 DONE_WITH_CONCERNS at 1474b6df; fast-forwarded. Bench (real kernel, bench client on fake tty): keystroke→glass p95 361µs fast / 424µs slow; frame 80µs @1 pane, 638µs @15 (7.9×); 15×100MiB cat: probe stall max 95ms (target 10ms — gate item), typing p95 12.8ms. Owed to human: GUI-terminal run (procedure in results/m3.md). Known gaps: local client crash not restarted; Pane.Rows restart loses id map (→ M4 ph2). Deviations for M1: pastes >1MiB truncate (needs per-pane retrying write queue); encoders reject some mods; fallback key tables unported. M4 phase 2 started; M5 informed (tty_guard.sh, Client.Session as handoff consumer).
 
 ## Rulings
 
@@ -92,3 +93,13 @@ what it costs if wrong.
   dependency-rule test. Cost if wrong: one app to delete.
 - 2026-10-23: M2's live-demo runs against a fake row source; real M1 wiring
   happens after both land. Cost if wrong: a demo to rewire.
+- 2026-10-23: Prefix mode and pending-key state are per-client (Client.State),
+  like tmux per-client key tables; the modal stack stays shared until M13
+  decides. Implemented as follow-up branch live/m3-prefix. Cost if wrong: a
+  field to move back.
+- 2026-10-23: Reload machinery shared by server and client moves to a new
+  umbrella app `herdr_reload` (depends only on herdr_scene); the dependency
+  rule becomes "herdr_scene plus optionally herdr_reload". Cost if wrong: an
+  app to fold back into herdr_server.
+- 2026-10-23: Rollback restores the previous .beam on disk as well as in
+  memory, keeping the bad beam inspectable. Cost if wrong: disk churn.
