@@ -21,7 +21,8 @@ use crate::link::{Frame, Link, LinkSink, SEND_TIMEOUT};
 use crate::pty::{
     AdoptOptions, Event, EventSink, ExitStatus, Pty, SpawnOptions, ThawError, WriteError,
 };
-use crate::vt::{lock, LinkKind, Mode, RowBatch, Tail, TextRange, Vt};
+use crate::vt::{lock, Colors, LinkKind, Mode, RowBatch, Tail, TextRange, Vt};
+use ghostty_vt::{ColorScheme, RgbColor};
 
 mod atoms {
     rustler::atoms! {
@@ -32,7 +33,7 @@ mod atoms {
         key, mods, event, kind, button, x, y, px, disabled, consumed, not_frozen, released,
         os_pid, adopted, hidden, exited, start_time, alt_screen,
         herdr_link, herdr_link_closed, eof, timeout, noproc, econnrefused, einval,
-        connect_failed,
+        connect_failed, fg, bg, cursor, palette, dark, light,
     }
 }
 
@@ -363,6 +364,97 @@ fn vt_read_text(vt: ResourceArc<VtRes>, range: Atom, first: u32, last: u32) -> N
     vt.0.read_text(r).map_err(|e| raise(format!("{e:?}")))
 }
 
+/// `{x1, y1, x2, y2}` screen points; see `Vt::read_selection`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn vt_read_selection(
+    vt: ResourceArc<VtRes>,
+    x1: u16,
+    y1: u32,
+    x2: u16,
+    y2: u32,
+) -> NifResult<String> {
+    vt.0.read_selection((x1, y1), (x2, y2))
+        .map_err(|e| raise(format!("{e:?}")))
+}
+
+/// `[{row, packed_row, wrapped}]`; see `Vt::screen_rows`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn vt_screen_rows(env: Env, vt: ResourceArc<VtRes>, first: u32, last: u32) -> NifResult<Term> {
+    let rows =
+        vt.0.screen_rows(first, last)
+            .map_err(|e| raise(format!("{e:?}")))?;
+    let rows: Vec<Term> = rows
+        .iter()
+        .map(|(y, packed, wrapped)| (*y, bin(env, packed), *wrapped).encode(env))
+        .collect();
+    Ok(rows.encode(env))
+}
+
+fn rgb(t: Term) -> NifResult<Option<RgbColor>> {
+    if t.is_atom() && t.decode::<Atom>()? == atoms::nil() {
+        return Ok(None);
+    }
+    Ok(Some(decode_rgb(t.decode()?)?))
+}
+
+/// Range-checked: rustler's integer decoders truncate rather than reject.
+fn decode_rgb((r, g, b): (u32, u32, u32)) -> NifResult<RgbColor> {
+    let c = |v: u32| u8::try_from(v).map_err(|_| Error::BadArg);
+    Ok(RgbColor {
+        r: c(r)?,
+        g: c(g)?,
+        b: c(b)?,
+    })
+}
+
+fn color_field<'a>(m: Term<'a>, key: Atom) -> NifResult<Option<RgbColor>> {
+    m.map_get(key).ok().map_or(Ok(None), rgb)
+}
+
+fn decode_colors(m: Term) -> NifResult<Colors> {
+    let palette = match m.map_get(atoms::palette()) {
+        Err(_) => Vec::new(),
+        Ok(p) => {
+            let entries: std::collections::HashMap<u32, (u32, u32, u32)> = p.decode()?;
+            let mut v = entries
+                .into_iter()
+                .map(|(i, c)| Ok((u8::try_from(i).map_err(|_| Error::BadArg)?, decode_rgb(c)?)))
+                .collect::<NifResult<Vec<(u8, RgbColor)>>>()?;
+            v.sort_by_key(|(i, _)| *i);
+            v
+        }
+    };
+    Ok(Colors {
+        fg: color_field(m, atoms::fg())?,
+        bg: color_field(m, atoms::bg())?,
+        cursor: color_field(m, atoms::cursor())?,
+        palette,
+    })
+}
+
+/// Sets ghostty's default colours (options only, no snapshot rebuild).
+#[rustler::nif]
+fn vt_set_colors(vt: ResourceArc<VtRes>, colors: Term) -> NifResult<Atom> {
+    if !colors.is_map() {
+        return Err(Error::BadArg);
+    }
+    vt.0.set_colors(&decode_colors(colors)?)
+        .map_err(|e| raise(format!("{e:?}")))?;
+    Ok(atoms::ok())
+}
+
+#[rustler::nif]
+fn vt_set_color_scheme(vt: ResourceArc<VtRes>, scheme: Atom) -> NifResult<Atom> {
+    let s = match scheme {
+        a if a == atoms::dark() => Some(ColorScheme::Dark),
+        a if a == atoms::light() => Some(ColorScheme::Light),
+        a if a == atoms::nil() => None,
+        _ => return Err(Error::BadArg),
+    };
+    vt.0.set_color_scheme(s);
+    Ok(atoms::ok())
+}
+
 #[derive(NifMap)]
 struct ScrollbarMap {
     total: usize,
@@ -407,6 +499,12 @@ fn vt_mode<'a>(env: Env<'a>, vt: ResourceArc<VtRes>, mode: Term<'a>) -> NifResul
     let m = Mode::from_name(&name(mode)?).ok_or(Error::BadArg)?;
     let (v, stale) = vt.0.mode(m);
     Ok(maybe_stale(env, v, stale))
+}
+
+#[rustler::nif]
+fn vt_modify_other_keys(env: Env, vt: ResourceArc<VtRes>) -> Term {
+    let (v, stale) = vt.0.modify_other_keys();
+    maybe_stale(env, v, stale)
 }
 
 #[rustler::nif]

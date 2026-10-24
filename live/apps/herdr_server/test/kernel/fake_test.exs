@@ -177,6 +177,68 @@ defmodule HerdrServer.Kernel.FakeTest do
     Keeper.close(id)
   end
 
+  test "colours and scheme are recorded", %{vt: vt} do
+    assert Vt.colors(vt) == %{colors: nil, scheme: nil}
+    assert :ok = Vt.set_colors(vt, %{fg: {1, 2, 3}, palette: %{1 => {255, 0, 0}}})
+    assert :ok = Vt.set_color_scheme(vt, :dark)
+
+    assert Vt.colors(vt) == %{
+             colors: %{fg: {1, 2, 3}, palette: %{1 => {255, 0, 0}}},
+             scheme: :dark
+           }
+
+    assert Vt.modify_other_keys(vt) == false
+  end
+
+  test "no history: offset 0, total = viewport = rows, scroll_to is a no-op", %{vt: vt, pty: pty} do
+    :ok = Pty.write(pty, "hi")
+    assert_receive {:damage, _, _}, 50
+    assert Vt.scrollbar(vt) == %{total: 5, viewport: 5, offset: 0}
+    assert :ok = Vt.scroll_to(vt, 3)
+    assert Vt.scrollbar(vt) == %{total: 5, viewport: 5, offset: 0}
+    {_, [{0, row} | _]} = Vt.full_rows(vt)
+    assert String.starts_with?(text(row), "hi")
+  end
+
+  test "history: scroll_to moves the viewport over history rows", %{vt: vt, pty: pty} do
+    :ok = Pty.write(pty, "live")
+    assert_receive {:damage, _, _}, 50
+    Vt.dirty_rows(vt)
+    :ok = Vt.set_history(vt, ["h0", "h1", "h2"])
+    assert Vt.scrollbar(vt) == %{total: 8, viewport: 5, offset: 3}
+    assert :ok = Vt.scroll_to(vt, 1)
+    assert Vt.scrollbar(vt) == %{total: 8, viewport: 5, offset: 1}
+    {_, rows} = Vt.dirty_rows(vt)
+    assert length(rows) == 5
+
+    assert Enum.map(rows, fn {_, r} -> String.trim_trailing(text(r)) end) ==
+             ["h1", "h2", "live", "", ""]
+
+    {_, [{0, r0} | _]} = Vt.full_rows(vt)
+    assert String.trim_trailing(text(r0)) == "h1"
+    assert Vt.read_text(vt, :viewport) |> String.split("\n") |> hd() == "h1"
+    assert Vt.read_text(vt, {:rows, 0..0}) == "h0"
+    # past the end clamps to the bottom
+    :ok = Vt.scroll_to(vt, 99)
+    assert Vt.scrollbar(vt).offset == 3
+  end
+
+  test "selection text and screen rows slice the screen lines", %{vt: vt, pty: pty} do
+    :ok = Vt.set_history(vt, ["hello world"])
+    :ok = Pty.write(pty, "abc")
+    assert_receive {:damage, _, _}, 50
+    assert Vt.read_text(vt, {:selection, {6, 0}, {10, 0}}) == "world"
+    assert Vt.read_text(vt, {:selection, {1, 1}, {6, 0}}) == "world\nab"
+    assert Vt.read_text(vt, {:selection, {0, 0}, {99, 99}}) == "hello world\nabc"
+    rows = Vt.screen_rows(vt, 0, 100)
+    assert Enum.map(rows, &elem(&1, 0)) == [0, 1, 2, 3, 4, 5]
+    assert [{0, r0, false}, {1, r1, false} | _] = rows
+    assert Cell.cols(r0) == 20
+    assert String.trim_trailing(text(r0)) == "hello world"
+    assert String.trim_trailing(text(r1)) == "abc"
+    assert Vt.screen_rows(vt, 50, 60) == []
+  end
+
   test "close removes the pane", %{id: id} do
     assert {:ok, _} = Keeper.lookup(id)
     {:ok, id2} = Keeper.open(Map.put(@opts, :subscriber, nil))

@@ -34,12 +34,29 @@ defmodule HerdrServer.Kernel.Vt do
           blinking: boolean,
           shape: :block | :bar | :underline | :block_hollow
         }
+  @type rgb :: {0..255, 0..255, 0..255}
+  @type colors :: %{
+          optional(:fg) => rgb | nil,
+          optional(:bg) => rgb | nil,
+          optional(:cursor) => rgb | nil,
+          optional(:palette) => %{optional(0..255) => rgb}
+        }
+  @type point :: {non_neg_integer, non_neg_integer}
 
   @callback new(pos_integer, pos_integer, non_neg_integer) :: {:ok, vt}
   @callback resize(vt, pos_integer, pos_integer, cell_px) :: :ok
   @callback dirty_rows(vt) :: rows
   @callback full_rows(vt) :: rows
-  @callback read_text(vt, :viewport | :screen | {:rows, Range.t()}) :: binary
+  @callback read_text(
+              vt,
+              :viewport | :screen | {:rows, Range.t()} | {:selection, point, point}
+            ) :: binary
+  @callback screen_rows(vt, non_neg_integer, non_neg_integer) :: [
+              {non_neg_integer, row, boolean}
+            ]
+  @callback set_colors(vt, colors) :: :ok
+  @callback set_color_scheme(vt, :dark | :light | nil) :: :ok
+  @callback modify_other_keys(vt) :: boolean | {:stale, boolean}
   @callback scrollbar(vt) :: %{
               total: non_neg_integer,
               viewport: non_neg_integer,

@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 
 use ghostty_vt::{
-    ActiveScreen, CellColor, CellStyle, CellWide, CursorVisualStyle, Dirty, LinkTarget,
-    RenderState, RowCells, RowIterator, Terminal,
+    ActiveScreen, CellColor, CellStyle, CellWide, ColorScheme, CursorVisualStyle, DefaultColor,
+    Dirty, LinkTarget, RenderState, RgbColor, RowCells, RowIterator, Terminal,
 };
 
 use crate::cell::RowEncoder;
@@ -135,6 +135,7 @@ pub struct Snapshot {
     pub cursor: Option<Cursor>,
     pub modes: [bool; Mode::COUNT],
     pub kitty_flags: u8,
+    pub modify_other_keys: bool,
     pub scrollbar: Scrollbar,
 }
 
@@ -162,6 +163,22 @@ pub enum TextRange {
     /// Inclusive screen rows.
     Rows(u32, u32),
 }
+
+/// Default colours for ghostty to report and render with; None unsets. `palette`
+/// entries overlay ghostty's built-in palette.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Colors {
+    pub fg: Option<RgbColor>,
+    pub bg: Option<RgbColor>,
+    pub cursor: Option<RgbColor>,
+    pub palette: Vec<(u8, RgbColor)>,
+}
+
+/// Most rows one `screen_rows` call returns.
+pub const SCREEN_ROWS_MAX: u32 = 1000;
+
+/// `(screen_row, packed_row, soft_wraps_into_next)`.
+pub type ScreenRow = (u32, Vec<u8>, bool);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkKind {
@@ -375,6 +392,7 @@ impl VtCore {
             cursor,
             modes,
             kitty_flags: self.terminal.kitty_keyboard_flags().unwrap_or(0),
+            modify_other_keys: self.terminal.modify_other_keys_enabled().unwrap_or(false),
             scrollbar: Scrollbar {
                 total: sb.total,
                 viewport: sb.len,
@@ -409,6 +427,7 @@ impl Vt {
             cursor: None,
             modes: [false; Mode::COUNT],
             kitty_flags: 0,
+            modify_other_keys: false,
             scrollbar: Scrollbar::default(),
         });
         let vt = Arc::new(Vt {
@@ -589,6 +608,77 @@ impl Vt {
         Ok(Tail::Ansi(s))
     }
 
+    /// Plain text between two screen points (inclusive, either order), soft wraps
+    /// joined and trailing whitespace trimmed. Points past the screen clamp to it.
+    pub fn read_selection(&self, a: (u16, u32), b: (u16, u32)) -> Result<String, VtError> {
+        let core = lock(&self.core);
+        let t = &core.terminal;
+        let right = t.cols()?.saturating_sub(1);
+        let bottom = u32::try_from(t.total_rows()?.saturating_sub(1)).unwrap_or(u32::MAX);
+        let clamp = |(x, y): (u16, u32)| (x.min(right), y.min(bottom));
+        let (a, b) = (clamp(a), clamp(b));
+        let (start, end) = match (a.1, a.0) <= (b.1, b.0) {
+            true => (a, b),
+            false => (b, a),
+        };
+        Ok(t.read_text_screen(start, end, false)?)
+    }
+
+    /// Inclusive screen rows `first..=last` (at most `SCREEN_ROWS_MAX`, rows past the end
+    /// omitted), packed with glyph and width only.
+    pub fn screen_rows(&self, first: u32, last: u32) -> Result<Vec<ScreenRow>, VtError> {
+        let core = lock(&self.core);
+        let t = &core.terminal;
+        let total = u32::try_from(t.total_rows()?).unwrap_or(u32::MAX);
+        let last = last
+            .min(first.saturating_add(SCREEN_ROWS_MAX - 1))
+            .min(total.saturating_sub(1));
+        let cols = t.cols()? as usize;
+        let mut out = Vec::new();
+        let mut glyph = String::new();
+        for y in first..=last {
+            if y >= total {
+                break;
+            }
+            let mut enc = RowEncoder::with_cols(cols);
+            t.for_each_screen_row_cell(y, |wide, cps| {
+                glyph.clear();
+                let width = match wide {
+                    CellWide::Wide => 2,
+                    CellWide::SpacerTail => 0,
+                    CellWide::Narrow | CellWide::SpacerHead => 1,
+                };
+                if matches!(wide, CellWide::Narrow | CellWide::Wide) {
+                    glyph.extend(cps.iter().filter_map(|&c| char::from_u32(c)));
+                }
+                enc.push(glyph.as_bytes(), 0, 0, 0, 0, width, 0);
+            })?;
+            out.push((y, enc.finish(), t.screen_row_wrapped(y)?));
+        }
+        Ok(out)
+    }
+
+    pub fn set_colors(&self, c: &Colors) -> Result<(), VtError> {
+        let mut core = lock(&self.core);
+        let t = &mut core.terminal;
+        t.set_default_color(DefaultColor::Foreground, c.fg)?;
+        t.set_default_color(DefaultColor::Background, c.bg)?;
+        t.set_default_color(DefaultColor::Cursor, c.cursor)?;
+        t.reset_default_palette()?;
+        if !c.palette.is_empty() {
+            let mut palette = t.default_palette()?;
+            for &(i, rgb) in &c.palette {
+                palette[i as usize] = rgb;
+            }
+            t.set_default_palette(&palette)?;
+        }
+        Ok(())
+    }
+
+    pub fn set_color_scheme(&self, scheme: Option<ColorScheme>) {
+        lock(&self.core).terminal.set_color_scheme(scheme);
+    }
+
     pub fn scrollbar(&self) -> Scrollbar {
         self.snapshot().scrollbar
     }
@@ -624,6 +714,13 @@ impl Vt {
         self.live_or_snapshot(
             |c| c.terminal.kitty_keyboard_flags().unwrap_or(0),
             |s| s.kitty_flags,
+        )
+    }
+
+    pub fn modify_other_keys(&self) -> (bool, bool) {
+        self.live_or_snapshot(
+            |c| c.terminal.modify_other_keys_enabled().unwrap_or(false),
+            |s| s.modify_other_keys,
         )
     }
 
@@ -674,6 +771,7 @@ impl Vt {
 mod tests {
     use super::*;
     use crate::cell::{decode_row, Cell, Color};
+    use ghostty_vt::{ColorScheme, RgbColor};
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
@@ -907,6 +1005,125 @@ mod tests {
         assert_eq!(fx.bells, 2);
         assert_eq!(fx.pwd, vec![b"file://h/tmp".to_vec()]);
         assert_eq!(rx.try_recv().expect("dsr reply"), b"\x1b[1;1R".to_vec());
+    }
+
+    fn replies(vt: &Vt) -> mpsc::Receiver<Vec<u8>> {
+        let (tx, rx) = mpsc::channel();
+        vt.set_write_pty(move |b| {
+            let _ = tx.send(b.to_vec());
+        });
+        rx
+    }
+
+    fn drain(rx: &mpsc::Receiver<Vec<u8>>) -> Vec<u8> {
+        rx.try_iter().flatten().collect()
+    }
+
+    #[test]
+    fn set_colors_answers_osc_queries() {
+        let vt = vt();
+        let rx = replies(&vt);
+        vt.write(b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\");
+        assert_eq!(drain(&rx), b"", "unset fg/bg get no reply");
+        let red = RgbColor { r: 255, g: 0, b: 0 };
+        vt.set_colors(&Colors {
+            fg: Some(RgbColor { r: 1, g: 2, b: 3 }),
+            bg: None,
+            cursor: None,
+            palette: vec![(1, red)],
+        })
+        .expect("set_colors");
+        vt.write(b"\x1b]10;?\x1b\\");
+        assert_eq!(drain(&rx), b"\x1b]10;rgb:0101/0202/0303\x1b\\".to_vec());
+        vt.write(b"\x1b]11;?\x1b\\\x1b[c");
+        assert_eq!(drain(&rx), b"\x1b[?62;22c".to_vec(), "bg unset: only DA1");
+        vt.write(b"\x1b]4;1;?\x1b\\");
+        assert_eq!(drain(&rx), b"\x1b]4;1;rgb:ffff/0000/0000\x1b\\".to_vec());
+        // Entries not given keep ghostty's built-in default.
+        let mut default = Vec::new();
+        {
+            let fresh = Vt::new(20, 5, 0).expect("vt");
+            let frx = replies(&fresh);
+            fresh.write(b"\x1b]4;2;?\x1b\\");
+            default.extend(drain(&frx));
+        }
+        vt.write(b"\x1b]4;2;?\x1b\\");
+        assert_eq!(drain(&rx), default);
+        // None unsets again.
+        vt.set_colors(&Colors::default()).expect("unset");
+        vt.write(b"\x1b]10;?\x1b\\");
+        assert_eq!(drain(&rx), b"");
+    }
+
+    #[test]
+    fn color_scheme_answers_996() {
+        let vt = vt();
+        let rx = replies(&vt);
+        vt.write(b"\x1b[?996n");
+        assert_eq!(drain(&rx), b"");
+        vt.set_color_scheme(Some(ColorScheme::Dark));
+        vt.write(b"\x1b[?996n");
+        assert_eq!(drain(&rx), b"\x1b[?997;1n".to_vec());
+        vt.set_color_scheme(Some(ColorScheme::Light));
+        vt.write(b"\x1b[?996n");
+        assert_eq!(drain(&rx), b"\x1b[?997;2n".to_vec());
+    }
+
+    #[test]
+    fn read_selection_joins_soft_wraps_and_clamps() {
+        let vt = vt();
+        // 25 chars on a 20-col vt soft-wraps into a second row.
+        vt.write(b"abcdefghijklmnopqrstuvwxy\r\nnext  ");
+        assert_eq!(
+            vt.read_selection((0, 0), (19, 1)).expect("read"),
+            "abcdefghijklmnopqrstuvwxy"
+        );
+        assert_eq!(vt.read_selection((2, 0), (4, 0)).expect("read"), "cde");
+        // Reversed points and out-of-range points clamp.
+        assert_eq!(vt.read_selection((999, 999), (0, 2)).expect("read"), "next");
+    }
+
+    #[test]
+    fn screen_rows_glyphs_widths_and_wrap() {
+        let vt = vt();
+        vt.write("ab\u{4e16}\r\n".as_bytes());
+        vt.write(b"abcdefghijklmnopqrstuvwxy");
+        let rows = vt.screen_rows(0, 100).expect("rows");
+        assert_eq!(rows.len(), 5, "rows past the end are omitted");
+        let (y, packed, wrapped) = &rows[0];
+        assert_eq!((*y, *wrapped), (0, false));
+        let cells = decode_row(packed).expect("decode");
+        assert_eq!(cells.len(), 20);
+        let widths: Vec<u8> = cells.iter().map(|c| c.width).collect();
+        assert_eq!(&widths[..5], &[1, 1, 2, 0, 1]);
+        assert_eq!(cells[2].glyph, "\u{4e16}");
+        assert!(cells
+            .iter()
+            .all(|c| c.fg == Color::Default && c.attrs == 0 && c.link == 0));
+        assert!(rows[1].2, "row 1 soft-wraps into row 2");
+        assert!(!rows[2].2);
+        assert_eq!(text(&decode_row(&rows[2].1).expect("decode")), "uvwxy");
+        assert_eq!(vt.screen_rows(3, 3).expect("rows").len(), 1);
+        assert!(vt.screen_rows(50, 60).expect("rows").is_empty());
+    }
+
+    #[test]
+    fn screen_rows_capped_at_1000() {
+        let vt = Vt::new(10, 5, 1_000_000).expect("vt");
+        for i in 0..1100 {
+            vt.write(format!("{i}\r\n").as_bytes());
+        }
+        let rows = vt.screen_rows(0, 5000).expect("rows");
+        assert_eq!(rows.len(), 1000);
+        assert_eq!(rows[999].0, 999);
+    }
+
+    #[test]
+    fn modify_other_keys_mode() {
+        let vt = vt();
+        assert_eq!(vt.modify_other_keys(), (false, false));
+        vt.write(b"\x1b[>4;2m");
+        assert_eq!(vt.modify_other_keys(), (true, false));
     }
 
     #[test]

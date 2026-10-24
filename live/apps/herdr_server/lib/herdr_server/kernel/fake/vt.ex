@@ -4,6 +4,10 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   interpreter (printable UTF-8, CR, LF, BS, HT, `ESC [ 2 J`, `ESC [ r;c H`;
   other escapes ignored; no styles, every glyph one column wide). Rows are
   packed only when read, so a flood costs only the cells it touches.
+
+  Screen lines are `history` (test hook `set_history/2`, oldest first) followed
+  by the grid; `offset` is the screen line at the viewport top (nil = bottom).
+  With no history it behaves as a plain grid: offset 0, total = viewport = rows.
   """
   use GenServer
 
@@ -22,7 +26,11 @@ defmodule HerdrServer.Kernel.Fake.Vt do
             gen: 0,
             modes: %{},
             kitty: 0,
-            shape: :block
+            shape: :block,
+            history: [],
+            offset: nil,
+            colors: nil,
+            scheme: nil
 
   @impl HerdrServer.Kernel.Vt
   def new(cols, rows, _max_scrollback), do: GenServer.start_link(__MODULE__, {cols, rows})
@@ -45,6 +53,24 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   @doc "Test hook."
   def set_kitty_flags(vt, n), do: GenServer.call(vt, {:kitty, n})
 
+  @doc "Test hook: appends `lines` (text) to the scrollback above the grid."
+  def set_history(vt, lines), do: GenServer.call(vt, {:history, lines})
+
+  @doc "Test hook: the last `set_colors/2` map (nil before any) and `set_color_scheme/2` value."
+  def colors(vt), do: GenServer.call(vt, :colors)
+
+  @impl HerdrServer.Kernel.Vt
+  def set_colors(vt, colors), do: GenServer.call(vt, {:colors, colors})
+
+  @impl HerdrServer.Kernel.Vt
+  def set_color_scheme(vt, scheme), do: GenServer.call(vt, {:scheme, scheme})
+
+  @impl HerdrServer.Kernel.Vt
+  def modify_other_keys(_vt), do: false
+
+  @impl HerdrServer.Kernel.Vt
+  def screen_rows(vt, first, last), do: GenServer.call(vt, {:screen_rows, first, last})
+
   @impl HerdrServer.Kernel.Vt
   def resize(vt, cols, rows, _cell_px), do: GenServer.call(vt, {:resize, cols, rows})
 
@@ -64,7 +90,7 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   def scrollbar(vt), do: GenServer.call(vt, :scrollbar)
 
   @impl HerdrServer.Kernel.Vt
-  def scroll_to(_vt, _offset), do: :ok
+  def scroll_to(vt, offset), do: GenServer.call(vt, {:scroll_to, offset})
 
   @impl HerdrServer.Kernel.Vt
   def mode(vt, id), do: GenServer.call(vt, {:mode, id})
@@ -142,13 +168,19 @@ defmodule HerdrServer.Kernel.Fake.Vt do
     {:reply, {state.gen, Enum.map(0..(state.rows - 1), &{&1, pack(state, &1)})}, state}
   end
 
+  def handle_call({:read_text, {:selection, a, b}}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, selection_text(state, a, b), state}
+  end
+
   def handle_call({:read_text, what}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
 
     range =
       case what do
         {:rows, r} -> r
-        _ -> 0..(state.rows - 1)
+        :screen -> 0..(total(state) - 1)
+        :viewport -> offset(state)..(offset(state) + state.rows - 1)
       end
 
     text = Enum.map_join(range, "\n", &(state |> text_row(&1) |> String.trim_trailing()))
@@ -180,9 +212,49 @@ defmodule HerdrServer.Kernel.Fake.Vt do
     {:reply, reply, state}
   end
 
+  def handle_call({:screen_rows, first, last}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    last = Enum.min([last, first + 999, total(state) - 1])
+
+    rows =
+      if first > last, do: [], else: Enum.map(first..last, &{&1, pack_line(state, &1), false})
+
+    {:reply, rows, state}
+  end
+
   def handle_call(:scrollbar, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:reply, %{total: state.rows, viewport: state.rows, offset: 0}, state}
+    {:reply, %{total: total(state), viewport: state.rows, offset: offset(state)}, state}
+  end
+
+  def handle_call({:scroll_to, n}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    h = length(state.history)
+    new = if min(n, h) == h, do: nil, else: n
+
+    if new == state.offset,
+      do: {:reply, :ok, state},
+      else: {:reply, :ok, %{state | offset: new, dirty: all_rows(state), gen: state.gen + 1}}
+  end
+
+  def handle_call({:history, lines}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, %{state | history: state.history ++ lines}}
+  end
+
+  def handle_call({:colors, colors}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, %{state | colors: colors}}
+  end
+
+  def handle_call({:scheme, scheme}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, %{state | scheme: scheme}}
+  end
+
+  def handle_call(:colors, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, %{colors: state.colors, scheme: state.scheme}, state}
   end
 
   def handle_call({:mode, id}, _from, state) do
@@ -249,15 +321,49 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   defp blank_grid(cols, rows), do: Tuple.duplicate(Tuple.duplicate("", cols), rows)
   defp all_rows(state), do: MapSet.new(0..(state.rows - 1))
 
-  defp pack(state, y) do
-    state.grid |> elem(y) |> Tuple.to_list() |> Enum.map(&%Cell{glyph: &1}) |> Cell.encode_row()
+  # -- screen lines (history ++ grid) ----------------------------------------
+
+  defp total(state), do: length(state.history) + state.rows
+  defp offset(state), do: state.offset || length(state.history)
+
+  # viewport row y
+  defp pack(state, y), do: pack_line(state, offset(state) + y)
+
+  defp pack_line(state, sy),
+    do: state |> line(sy) |> Enum.map(&%Cell{glyph: &1}) |> Cell.encode_row()
+
+  # glyphs of screen line sy, cols wide ("" = blank)
+  defp line(state, sy) do
+    h = length(state.history)
+
+    cond do
+      sy < h -> state.history |> Enum.at(sy) |> String.graphemes() |> fit(state.cols)
+      sy < h + state.rows -> state.grid |> elem(sy - h) |> Tuple.to_list()
+      true -> List.duplicate("", state.cols)
+    end
   end
 
-  defp text_row(state, y) when y >= 0 and y < state.rows do
-    state.grid |> elem(y) |> Tuple.to_list() |> Enum.map_join(&if(&1 == "", do: " ", else: &1))
-  end
+  defp fit(list, n), do: list |> Enum.take(n) |> pad(n)
+
+  defp text_row(state, y) when y >= 0,
+    do: state |> line(y) |> Enum.map_join(&if(&1 == "", do: " ", else: &1))
 
   defp text_row(_state, _y), do: ""
+
+  defp selection_text(state, {x1, y1}, {x2, y2}) do
+    clamp = fn {x, y} -> {min(x, state.cols - 1), min(y, total(state) - 1)} end
+
+    [{sx, sy}, {ex, ey}] =
+      Enum.sort_by([clamp.({x1, y1}), clamp.({x2, y2})], fn {x, y} -> {y, x} end)
+
+    Enum.map_join(sy..ey, "\n", fn y ->
+      from = if y == sy, do: sx, else: 0
+      to = if y == ey, do: ex, else: state.cols - 1
+      text = text_row(state, y)
+      text |> String.slice(from..to//1) |> String.trim_trailing()
+    end)
+    |> String.trim_trailing()
+  end
 
   # drop continuation bytes left at the front by a mid-character cut
   defp trim(<<b, rest::binary>>) when b >>> 6 == 0b10, do: trim(rest)

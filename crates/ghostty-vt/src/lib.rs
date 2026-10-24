@@ -135,6 +135,14 @@ impl FocusEvent {
     }
 }
 
+/// The default colours `Terminal::set_default_color` configures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultColor {
+    Foreground,
+    Background,
+    Cursor,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorScheme {
     Light,
@@ -1138,6 +1146,54 @@ impl Terminal {
             )
             .into_result()
         }
+    }
+
+    /// Resets the default palette to ghostty's built-in one (per-index OSC overrides stay).
+    pub fn reset_default_palette(&mut self) -> Result<(), Error> {
+        // SAFETY: self.raw is a live terminal handle; NULL resets this option.
+        unsafe {
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_COLOR_PALETTE,
+                ptr::null(),
+            )
+            .into_result()
+        }
+    }
+
+    /// Sets (Some) or unsets (None) ghostty's default foreground, background or cursor
+    /// colour, which it reports for OSC 10/11/12 queries when no OSC override is active.
+    pub fn set_default_color(
+        &mut self,
+        which: DefaultColor,
+        color: Option<RgbColor>,
+    ) -> Result<(), Error> {
+        let option = match which {
+            DefaultColor::Foreground => {
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND
+            }
+            DefaultColor::Background => {
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND
+            }
+            DefaultColor::Cursor => ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_COLOR_CURSOR,
+        };
+        let rgb = color.map(|c| ffi::GhosttyColorRgb {
+            r: c.r,
+            g: c.g,
+            b: c.b,
+        });
+        let value = rgb
+            .as_ref()
+            .map_or(ptr::null(), |c| (c as *const ffi::GhosttyColorRgb).cast());
+        // SAFETY: self.raw is a live terminal handle; value is NULL (unset) or points to
+        // an RGB struct that outlives the call.
+        unsafe { ffi::ghostty_terminal_set(self.raw, option, value).into_result() }
+    }
+
+    /// Whether screen row `row` soft-wraps into the next one.
+    pub fn screen_row_wrapped(&self, row: u32) -> Result<bool, Error> {
+        let grid_ref = self.grid_ref(ghostty_screen_point(0, row))?;
+        Ok(grid_ref_wrap_state(&grid_ref)?.0)
     }
 
     pub fn default_palette(&self) -> Result<[RgbColor; 256], Error> {

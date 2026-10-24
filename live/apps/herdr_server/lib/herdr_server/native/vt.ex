@@ -8,6 +8,9 @@ defmodule HerdrServer.Native.Vt do
 
   alias HerdrServer.Native
 
+  @max_x 65_535
+  @max_y 4_294_967_295
+
   @opaque vt :: reference
   @type gen :: non_neg_integer
   @type rows :: {gen, [{non_neg_integer, HerdrScene.Cell.row()}]}
@@ -55,6 +58,14 @@ defmodule HerdrServer.Native.Vt do
           blinking: boolean,
           shape: :block | :bar | :underline | :block_hollow
         }
+  @type rgb :: {0..255, 0..255, 0..255}
+  @type colors :: %{
+          optional(:fg) => rgb | nil,
+          optional(:bg) => rgb | nil,
+          optional(:cursor) => rgb | nil,
+          optional(:palette) => %{optional(0..255) => rgb}
+        }
+  @type point :: {non_neg_integer, non_neg_integer}
 
   @doc "True for a valid column or row count: an integer in 1..65535."
   defguard is_size(n) when is_integer(n) and n >= 1 and n <= 65_535
@@ -119,8 +130,16 @@ defmodule HerdrServer.Native.Vt do
   @spec full_rows(vt) :: rows
   def full_rows(vt), do: Native.vt_full_rows(vt)
 
-  @doc "Plain text of the viewport, the whole screen with scrollback, or inclusive screen rows."
-  @spec read_text(vt, :viewport | :screen | {:rows, Range.t()}) :: binary
+  @doc """
+  Plain text of the viewport, the whole screen with scrollback, inclusive screen
+  rows, or a selection between two inclusive screen points `{x, y}` (y counts rows
+  from the top of history; either order; points past the screen clamp to it).
+  Soft-wrapped lines are joined and trailing whitespace is trimmed.
+  """
+  @spec read_text(
+          vt,
+          :viewport | :screen | {:rows, Range.t()} | {:selection, point, point}
+        ) :: binary
   def read_text(vt, range) when range in [:viewport, :screen],
     do: Native.vt_read_text(vt, range, 0, 0)
 
@@ -135,6 +154,46 @@ defmodule HerdrServer.Native.Vt do
   """
   @spec tail_ansi(vt, non_neg_integer) :: binary | :alt_screen
   def tail_ansi(vt, n) when is_integer(n) and n >= 0, do: Native.vt_tail_ansi(vt, n)
+
+  def read_text(vt, {:selection, {x1, y1}, {x2, y2}})
+      when x1 >= 0 and y1 >= 0 and x2 >= 0 and y2 >= 0 do
+    Native.vt_read_selection(
+      vt,
+      min(x1, @max_x),
+      min(y1, @max_y),
+      min(x2, @max_x),
+      min(y2, @max_y)
+    )
+  end
+
+  @doc """
+  Inclusive screen rows `first..last` as `{row, packed_row, wrapped}`: at most
+  1000 rows per call, rows past the end omitted. Packed cells carry glyph and
+  width only (default colours, no attrs, no links); `wrapped` is true when the row
+  soft-wraps into the next.
+  """
+  @spec screen_rows(vt, non_neg_integer, non_neg_integer) :: [
+          {non_neg_integer, HerdrScene.Cell.row(), boolean}
+        ]
+  def screen_rows(vt, first, last) when first >= 0 and last >= 0,
+    do: Native.vt_screen_rows(vt, min(first, @max_y), min(last, @max_y))
+
+  @doc """
+  Sets ghostty's default fg, bg and cursor colours (nil or missing unsets) and
+  overlays `palette` entries on its built-in palette, so ghostty answers OSC
+  10/11/12/4 queries itself. Raises `ArgumentError` on a malformed map.
+  """
+  @spec set_colors(vt, colors) :: :ok
+  def set_colors(vt, colors) when is_map(colors), do: Native.vt_set_colors(vt, colors)
+
+  @doc "The colour scheme ghostty reports for `CSI ? 996 n`; nil leaves it unanswered."
+  @spec set_color_scheme(vt, :dark | :light | nil) :: :ok
+  def set_color_scheme(vt, scheme) when scheme in [:dark, :light, nil],
+    do: Native.vt_set_color_scheme(vt, scheme)
+
+  @doc "Whether the child enabled xterm modifyOtherKeys; `{:stale, v}` as in `mode/2`."
+  @spec modify_other_keys(vt) :: boolean | {:stale, boolean}
+  def modify_other_keys(vt), do: Native.vt_modify_other_keys(vt)
 
   @doc "Scrollback position, in rows."
   @spec scrollbar(vt) :: %{
