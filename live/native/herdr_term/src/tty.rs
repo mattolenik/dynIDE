@@ -96,8 +96,11 @@ pub struct Inner {
     shutdown: AtomicBool,
     sub: Mutex<Subscription>,
     pub output: Output,
-    /// Held for each write syscall on `file` (never across a wait), so a
-    /// restore never interleaves with a half-written output item.
+    /// Orders writes on `file`. The output thread holds it per write
+    /// syscall (never across its poll), so a restore never interleaves with
+    /// a half-written output item. `restore` and `suspend` hold it for their
+    /// whole bounded sequence (restore's `WRITE_BUDGET` poll; suspend's
+    /// writes and the stop), always on dirty schedulers.
     write_lock: Mutex<()>,
 }
 
@@ -440,23 +443,10 @@ impl Inner {
     /// once continued, re-enters raw mode and the alternate screen. Returns
     /// `Ok(true)` after SIGCONT, and exactly then `Event::Resumed` follows.
     /// `Ok(false)` after the final `restore` (nothing done). `Err` when the
-    /// terminal could not be reset; the process is then not stopped.
+    /// terminal could not be reset or the event thread could not start; the
+    /// process is then not stopped.
     pub fn suspend(self: &Arc<Self>) -> io::Result<bool> {
-        self.suspend_with(|| {
-            // SAFETY: plain syscall; signals our own process group.
-            unsafe { libc::kill(0, libc::SIGSTOP) };
-            // Linux hands a process-wide signal to the main thread, so this
-            // (scheduler) thread returns from kill before the group stop
-            // reaches it and would re-raw the tty first. A thread-directed
-            // stop holds it here; SIGCONT flushes the extra one on Linux.
-            // XNU stops the caller inside kill and keeps a thread-pending
-            // stop across SIGCONT, so this would stop macOS twice.
-            #[cfg(target_os = "linux")]
-            // SAFETY: plain syscall; signals the calling thread.
-            unsafe {
-                libc::raise(libc::SIGSTOP)
-            };
-        })
+        self.suspend_with(stop_process_group)
     }
 
     /// `suspend` with the stop injected, so tests can run it in-process.
@@ -467,6 +457,19 @@ impl Inner {
         if self.restored.load(Ordering::Acquire) {
             return Ok(false);
         }
+        // The caller is a dirty scheduler, where the NIF sink cannot send, so
+        // a thread delivers the event. It starts before anything is undone, so
+        // failing to start it fails the suspend cleanly; it delivers only
+        // once told, and exits silently when the sender drops on `Err`.
+        let (resumed, wait) = mpsc::channel::<()>();
+        let inner = Arc::clone(self);
+        std::thread::Builder::new()
+            .name("herdr-tty-resumed".into())
+            .spawn(move || {
+                if wait.recv().is_ok() {
+                    inner.run_guarded(|i| lock(&i.sub).deliver(Event::Resumed));
+                }
+            })?;
         reset(&self.file, &self.saved, self.kitty_push.is_some(), true)?;
         stop();
         // Best effort: the resumed caller repaints either way; nothing else to undo.
@@ -476,12 +479,8 @@ impl Inner {
         // Best effort, like open: a host that continued us is reading.
         let _ = write_by(&self.file, &enter, Instant::now() + WRITE_BUDGET);
         self.output.reset_frame();
-        // The caller is a dirty scheduler, where the NIF sink cannot send, so
-        // a short-lived thread delivers the event.
-        let inner = Arc::clone(self);
-        let _ = std::thread::Builder::new()
-            .name("herdr-tty-resumed".into())
-            .spawn(move || inner.run_guarded(|i| lock(&i.sub).deliver(Event::Resumed)));
+        // The thread holds `wait` until it receives, so this cannot fail.
+        let _ = resumed.send(());
         Ok(true)
     }
 
@@ -496,6 +495,45 @@ impl Inner {
             let _ = reset(&self.file, &self.saved, self.kitty_push.is_some(), false);
         }
     }
+}
+
+/// A Linux `kill` that returned sooner than this did not wait for SIGCONT.
+#[cfg(target_os = "linux")]
+const STOPPED_IN_KILL: Duration = Duration::from_millis(10);
+
+/// Stops the whole process group (wrapper sh, erl_child_setup, the VM) and
+/// returns once continued.
+///
+/// Linux hands a process-wide signal to the main thread, so this
+/// (scheduler) thread usually returns from `kill` before the group stop
+/// reaches it and would re-raw the tty first; a thread-directed stop holds
+/// it, and SIGCONT flushes that extra stop on Linux. But if the group stop
+/// did catch this thread inside `kill`, `kill` returns only after SIGCONT
+/// and a `raise` then would stop the VM a second time (the user's `fg`
+/// answered by "Stopped"). So `raise` only when `kill` returned within
+/// `STOPPED_IN_KILL`: a stop plus a human `fg` takes far longer.
+/// ponytail: timing guard; a SIGCONT sent by a program under 10 ms after the
+/// stop, or the group stop landing in the instructions between the clock
+/// check and `raise`, still double-stops. Upgrade path: a SIGCONT
+/// generation counter, which needs a signal handler (ruled out in M2).
+#[cfg(target_os = "linux")]
+fn stop_process_group() {
+    let start = Instant::now();
+    // SAFETY: plain syscall; signals our own process group.
+    unsafe { libc::kill(0, libc::SIGSTOP) };
+    if start.elapsed() < STOPPED_IN_KILL {
+        // SAFETY: plain syscall; signals the calling thread.
+        unsafe { libc::raise(libc::SIGSTOP) };
+    }
+}
+
+/// Stops the whole process group and returns once continued. XNU stops the
+/// caller inside `kill` (and would keep a thread-pending stop across
+/// SIGCONT, so the Linux `raise` would stop macOS twice).
+#[cfg(not(target_os = "linux"))]
+fn stop_process_group() {
+    // SAFETY: plain syscall; signals our own process group.
+    unsafe { libc::kill(0, libc::SIGSTOP) };
 }
 
 /// Puts `fd` in raw mode derived from `saved` (`cfmakeraw`, `VMIN=1 VTIME=0`).

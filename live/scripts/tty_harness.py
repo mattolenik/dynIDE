@@ -146,6 +146,9 @@ def destructor():
                 answered += 1
             pid, st = os.waitpid(child, os.WNOHANG | os.WUNTRACED)
             if pid and os.WIFSTOPPED(st):
+                # One suspend is exactly one stop; a second means the resumed VM stopped again.
+                if stop_at is not None:
+                    fail("suspend: VM stopped a second time after SIGCONT")
                 drain(master, 0.1)
                 stop_at = len(transcript)
                 ok(lflag(master) & COOKED == COOKED, "suspend: tty cooked while stopped")
