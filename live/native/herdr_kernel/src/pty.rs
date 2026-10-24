@@ -953,6 +953,14 @@ impl Pty {
         }
     }
 
+    /// The child's working directory from the OS, else the last OSC 7 pwd as a path.
+    /// Only absolute paths. One syscall, so fine on a normal scheduler.
+    pub fn cwd(&self) -> Option<String> {
+        os_cwd(self.inner.pid as u32)
+            .filter(|p| p.starts_with('/'))
+            .or_else(|| lock(&self.inner.pwd).as_deref().and_then(osc7_path))
+    }
+
     pub fn id(&self) -> u64 {
         self.inner.id
     }
@@ -1013,6 +1021,83 @@ impl Drop for Pty {
     fn drop(&mut self) {
         let _ = self.inner.signal(libc::SIGHUP);
     }
+}
+
+/// `proc_pidinfo(PROC_PIDVNODEPATHINFO)`: the process's current directory.
+#[cfg(target_os = "macos")]
+fn os_cwd(pid: u32) -> Option<String> {
+    // SAFETY: zeroed proc_vnodepathinfo is a valid out-buffer for proc_pidinfo.
+    let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_vnodepathinfo>() as libc::c_int;
+    // SAFETY: the buffer is valid and exactly `size` bytes.
+    let r = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            (&mut info as *mut libc::proc_vnodepathinfo).cast(),
+            size,
+        )
+    };
+    if r != size {
+        return None;
+    }
+    // SAFETY: `vip_path` is MAXPATHLEN contiguous c_chars (declared as [[c_char; 32]; 32]).
+    let raw: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            info.pvi_cdir.vip_path.as_ptr().cast::<u8>(),
+            std::mem::size_of_val(&info.pvi_cdir.vip_path),
+        )
+    };
+    let len = raw.iter().position(|&b| b == 0)?;
+    String::from_utf8(raw[..len].to_vec()).ok()
+}
+
+#[cfg(target_os = "linux")]
+fn os_cwd(pid: u32) -> Option<String> {
+    std::fs::read_link(format!("/proc/{pid}/cwd"))
+        .ok()?
+        .into_os_string()
+        .into_string()
+        .ok()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn os_cwd(_pid: u32) -> Option<String> {
+    None
+}
+
+/// An OSC 7 payload as an absolute path: `file://host/p` percent-decoded to `/p`, a bare
+/// absolute path as is, anything else None.
+fn osc7_path(pwd: &[u8]) -> Option<String> {
+    let path = match pwd.strip_prefix(b"file://") {
+        Some(rest) => &rest[rest.iter().position(|&b| b == b'/')?..],
+        None => pwd,
+    };
+    if path.first() != Some(&b'/') {
+        return None;
+    }
+    let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
+    let mut out = Vec::with_capacity(path.len());
+    let mut i = 0;
+    while i < path.len() {
+        let pair = path
+            .get(i + 1)
+            .copied()
+            .and_then(hex)
+            .zip(path.get(i + 2).copied().and_then(hex));
+        match (path[i], pair) {
+            (b'%', Some((h, l))) => {
+                out.push(h << 4 | l);
+                i += 3;
+            }
+            (b, _) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 #[cfg(test)]
@@ -1613,5 +1698,60 @@ mod tests {
         assert_eq!(info.title.as_deref(), Some(&b"tt"[..]));
         assert_eq!(info.pwd.as_deref(), Some(&b"file://h/tmp"[..]));
         assert!(!info.adopted && info.exited.is_none() && info.pid == pty.os_pid());
+    }
+
+    fn wait_cwd(pty: &Pty, want: &str) -> Option<String> {
+        let end = Instant::now() + Duration::from_secs(2);
+        loop {
+            let got = pty.cwd();
+            if got.as_deref() == Some(want) || Instant::now() > end {
+                return got;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn cwd_reports_spawn_dir() {
+        let dir = std::env::temp_dir().join(format!("herdr-cwd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let canon = std::fs::canonicalize(&dir).expect("canon");
+        let canon = canon.to_str().expect("utf8").to_string();
+        let vt = Vt::new(80, 24, 1000).expect("vt");
+        let (tx, _rx) = mpsc::channel();
+        let opts = SpawnOptions {
+            id: 1,
+            cmd: "/bin/sh".into(),
+            args: vec!["-c".into(), "sleep 5".into()],
+            env: vec![],
+            cwd: Some(dir.to_str().expect("utf8").into()),
+            cols: 80,
+            rows: 24,
+        };
+        let pty = Pty::spawn(vt, opts, Arc::new(ChanSink(Mutex::new(tx)))).expect("spawn");
+        assert_eq!(wait_cwd(&pty, &canon).as_deref(), Some(canon.as_str()));
+        let _ = pty.kill(libc::SIGKILL);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn cwd_follows_cd() {
+        let (_vt, pty, _rx) = spawn("/bin/sh", &[]);
+        pty.write(b"cd /\n").expect("write");
+        assert_eq!(wait_cwd(&pty, "/").as_deref(), Some("/"));
+        let _ = pty.kill(libc::SIGKILL);
+    }
+
+    #[test]
+    fn cwd_falls_back_to_osc7() {
+        assert_eq!(
+            osc7_path(b"file://h/tmp/a%20b").as_deref(),
+            Some("/tmp/a b")
+        );
+        assert_eq!(osc7_path(b"file:///tmp").as_deref(), Some("/tmp"));
+        assert_eq!(osc7_path(b"/var/x").as_deref(), Some("/var/x"));
+        assert_eq!(osc7_path(b"relative"), None);
+        assert_eq!(osc7_path(b"file://h"), None);
+        assert_eq!(osc7_path(b"file://h/bad%zz").as_deref(), Some("/bad%zz"));
     }
 }

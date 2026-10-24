@@ -145,6 +145,13 @@ pub struct WriteEffects {
     pub clipboard: Vec<Vec<u8>>,
 }
 
+/// The primary screen's last rows as VT, or AltScreen when a full-screen app owns it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Tail {
+    Ansi(String),
+    AltScreen,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextRange {
     Viewport,
@@ -548,6 +555,33 @@ impl Vt {
             }
             TextRange::Rows(a, b) => t.read_text_screen((0, a), (right, b), false)?,
         })
+    }
+
+    /// The last `n` non-blank-trailing rows of history plus screen as VT (unwrapped,
+    /// trimmed). Trailing blank rows below the last content row are skipped.
+    pub fn tail_ansi(&self, n: usize) -> Result<Tail, VtError> {
+        let core = lock(&self.core);
+        let t = &core.terminal;
+        if t.active_screen()? == ActiveScreen::Alternate {
+            return Ok(Tail::AltScreen);
+        }
+        let right = t.cols()?.saturating_sub(1);
+        let mut end = t.total_rows()?;
+        // Only the screen's bottom rows can be blank padding; bound the walk by its height.
+        let floor = end.saturating_sub(t.rows()? as usize);
+        while end > floor
+            && t.read_text_screen((0, end as u32 - 1), (right, end as u32 - 1), false)?
+                .trim()
+                .is_empty()
+        {
+            end -= 1;
+        }
+        if n == 0 || end == 0 {
+            return Ok(Tail::Ansi(String::new()));
+        }
+        let start = end.saturating_sub(n) as u32;
+        let s = t.read_ansi_screen((0, start), (right, end as u32 - 1), false, true)?;
+        Ok(Tail::Ansi(s))
     }
 
     pub fn scrollbar(&self) -> Scrollbar {
@@ -1023,5 +1057,70 @@ mod tests {
             vt2.read_text(TextRange::Screen).expect("read"),
             vt.read_text(TextRange::Screen).expect("read")
         );
+    }
+
+    fn strip_sgr(s: &str) -> String {
+        let mut out = String::new();
+        let mut it = s.chars().peekable();
+        while let Some(c) = it.next() {
+            if c == '\x1b' {
+                for d in it.by_ref() {
+                    if d.is_ascii_alphabetic() && d != '[' {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn tail_ansi_last_rows() {
+        let vt = vt();
+        let lines: Vec<String> = (1..=50).map(|i| i.to_string()).collect();
+        vt.write(lines.join("\r\n").as_bytes());
+        let Ok(Tail::Ansi(t)) = vt.tail_ansi(10) else {
+            panic!("not ansi")
+        };
+        let got: Vec<String> = strip_sgr(&t)
+            .replace('\r', "")
+            .lines()
+            .map(|l| l.trim_end().to_string())
+            .collect();
+        assert_eq!(got, lines[40..].to_vec(), "{t:?}");
+        assert_eq!(vt.tail_ansi(0), Ok(Tail::Ansi(String::new())));
+        assert_eq!(
+            Vt::new(20, 5, 100).expect("vt").tail_ansi(5),
+            Ok(Tail::Ansi(String::new()))
+        );
+    }
+
+    #[test]
+    fn tail_ansi_skips_trailing_blank_rows() {
+        let vt = vt();
+        vt.write(b"a\r\nb\r\n");
+        let Ok(Tail::Ansi(t)) = vt.tail_ansi(1) else {
+            panic!("not ansi")
+        };
+        assert_eq!(strip_sgr(&t).trim(), "b", "{t:?}");
+    }
+
+    #[test]
+    fn tail_ansi_keeps_sgr() {
+        let vt = vt();
+        vt.write(b"\x1b[31mred\x1b[0m");
+        let Ok(Tail::Ansi(t)) = vt.tail_ansi(3) else {
+            panic!("not ansi")
+        };
+        assert!(t.contains("\x1b[") && t.contains("red"), "{t:?}");
+    }
+
+    #[test]
+    fn tail_ansi_alt_screen() {
+        let vt = vt();
+        vt.write(b"x\x1b[?1049h");
+        assert_eq!(vt.tail_ansi(3), Ok(Tail::AltScreen));
     }
 }

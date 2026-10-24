@@ -55,6 +55,9 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   def read_text(vt, what), do: GenServer.call(vt, {:read_text, what})
 
   @impl HerdrServer.Kernel.Vt
+  def tail_ansi(vt, n) when is_integer(n) and n >= 0, do: GenServer.call(vt, {:tail, n})
+
+  @impl HerdrServer.Kernel.Vt
   def scrollbar(vt), do: GenServer.call(vt, :scrollbar)
 
   @impl HerdrServer.Kernel.Vt
@@ -147,6 +150,25 @@ defmodule HerdrServer.Kernel.Fake.Vt do
 
     text = Enum.map_join(range, "\n", &(state |> text_row(&1) |> String.trim_trailing()))
     {:reply, text, state}
+  end
+
+  def handle_call({:tail, n}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+
+    reply =
+      if Map.get(state.modes, :alt_screen, false) do
+        :alt_screen
+      else
+        0..(state.rows - 1)
+        |> Enum.map(&(state |> text_row(&1) |> String.trim_trailing()))
+        |> Enum.reverse()
+        |> Enum.drop_while(&(&1 == ""))
+        |> Enum.take(n)
+        |> Enum.reverse()
+        |> Enum.join("\r\n")
+      end
+
+    {:reply, reply, state}
   end
 
   def handle_call(:scrollbar, _from, state) do

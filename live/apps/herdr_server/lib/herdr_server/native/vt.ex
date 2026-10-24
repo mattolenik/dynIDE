@@ -127,6 +127,14 @@ defmodule HerdrServer.Native.Vt do
   def read_text(vt, {:rows, first..last//_}) when first >= 0 and last >= 0,
     do: Native.vt_read_text(vt, :rows, min(first, last), max(first, last))
 
+  @doc """
+  The last `n` rows of the primary screen's history plus screen as VT (SGR kept,
+  soft wraps joined, trimmed; blank rows below the last content row skipped), `""`
+  for `n = 0` or an empty screen, `:alt_screen` while the alternate screen is active.
+  """
+  @spec tail_ansi(vt, non_neg_integer) :: binary | :alt_screen
+  def tail_ansi(vt, n) when is_integer(n) and n >= 0, do: Native.vt_tail_ansi(vt, n)
+
   @doc "Scrollback position, in rows."
   @spec scrollbar(vt) :: %{
           total: non_neg_integer,

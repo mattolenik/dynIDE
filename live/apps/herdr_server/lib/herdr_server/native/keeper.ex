@@ -35,6 +35,7 @@ defmodule HerdrServer.Native.Keeper do
   @type id :: pos_integer
   @typedoc "`max_scrollback` is in bytes (e.g. 10_000_000); cols and rows are in 1..65535."
   @type spec :: %{
+          optional(:replay) => binary,
           cmd: binary,
           args: [binary],
           env: [{binary, binary}],
@@ -48,7 +49,8 @@ defmodule HerdrServer.Native.Keeper do
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @doc """
-  Creates the vt and pty for `spec` and returns the new pane id.
+  Creates the vt and pty for `spec` and returns the new pane id. An optional
+  `replay` binary is fed to the new vt before the child starts (restored history).
   `{:error, {:invalid_spec, key}}` for a missing or ill-typed key,
   `{:error, Pty.spawn_error()}` when the spawn fails, `{:error, {:raise, message}}`
   when a NIF raises (a pane already started is closed again), `{:error, :handoff}`
@@ -61,7 +63,13 @@ defmodule HerdrServer.Native.Keeper do
 
   @spec lookup(id) ::
           {:ok,
-           %{vt: Vt.vt(), pty: Pty.pty(), os_pid: pos_integer, max_scrollback: non_neg_integer}}
+           %{
+             vt: Vt.vt(),
+             pty: Pty.pty(),
+             os_pid: pos_integer,
+             max_scrollback: non_neg_integer,
+             cmd: [binary] | nil
+           }}
           | :error
   def lookup(id) do
     case :ets.lookup(@table, id) do
@@ -298,10 +306,15 @@ defmodule HerdrServer.Native.Keeper do
     start = Map.get(st, :start_time)
 
     with {:ok, pty} <- Pty.adopt(vt, id, fd, st.os_pid, exited, st.title, st.pwd, start) do
-      :ets.insert(
-        @table,
-        {id, %{vt: vt, pty: pty, os_pid: st.os_pid, max_scrollback: st.max_scrollback}}
-      )
+      row = %{
+        vt: vt,
+        pty: pty,
+        os_pid: st.os_pid,
+        max_scrollback: st.max_scrollback,
+        cmd: Map.get(st, :cmd)
+      }
+
+      :ets.insert(@table, {id, row})
 
       if st.hidden, do: Pty.set_hidden(pty, true)
       if reason == :crash and st.exited == nil, do: nudge(vt, pty, st.cell_px)
@@ -345,12 +358,18 @@ defmodule HerdrServer.Native.Keeper do
 
   defp start(id, spec) do
     with {:ok, vt} <- Vt.new(spec.cols, spec.rows, spec.max_scrollback),
+         _ <- replay(vt, spec),
          {:ok, pty, os_pid} <-
            Pty.spawn(vt, id, spec.cmd, spec.args, spec.env, spec.cwd, spec.cols, spec.rows) do
-      :ets.insert(
-        @table,
-        {id, %{vt: vt, pty: pty, os_pid: os_pid, max_scrollback: spec.max_scrollback}}
-      )
+      row = %{
+        vt: vt,
+        pty: pty,
+        os_pid: os_pid,
+        max_scrollback: spec.max_scrollback,
+        cmd: [spec.cmd | spec.args]
+      }
+
+      :ets.insert(@table, {id, row})
 
       if spec.subscriber, do: Pty.subscribe(pty, spec.subscriber)
       :ok
@@ -364,10 +383,19 @@ defmodule HerdrServer.Native.Keeper do
       {:error, {:raise, Exception.message(e)}}
   end
 
+  defp replay(vt, %{replay: bytes}) when bytes != "", do: Vt.feed(vt, bytes)
+  defp replay(_vt, _spec), do: :ok
+
   defp check(spec) when is_map(spec) do
-    case Enum.find(@keys, &(not (is_map_key(spec, &1) and valid?(&1, spec[&1])))) do
-      nil -> :ok
-      key -> {:error, {:invalid_spec, key}}
+    cond do
+      key = Enum.find(@keys, &(not (is_map_key(spec, &1) and valid?(&1, spec[&1])))) ->
+        {:error, {:invalid_spec, key}}
+
+      not is_binary(Map.get(spec, :replay, "")) ->
+        {:error, {:invalid_spec, :replay}}
+
+      true ->
+        :ok
     end
   end
 

@@ -91,6 +91,20 @@ defmodule HerdrServer.Handoff.KeeperAdoptTest do
     refute alive?(os_pid)
   end
 
+  test "the blob carries cmd into the adopted row; an older blob adopts with cmd nil" do
+    {:ok, id} = Keeper.open(spec(%{cmd: "/bin/sleep", args: ["30"]}))
+    {:ok, %{os_pid: os_pid} = row} = Keeper.lookup(id)
+    assert %{cmd: ["/bin/sleep", "30"]} = State.build(id, row, vt: false)
+
+    hand_over(id, 430)
+    assert {:ok, %{os_pid: ^os_pid, cmd: ["/bin/sleep", "30"]}} = Keeper.lookup(430)
+
+    hand_over(430, 431, &Map.delete(&1, :cmd))
+    assert {:ok, %{os_pid: ^os_pid, cmd: nil}} = Keeper.lookup(431)
+    System.cmd("kill", ["-9", "#{os_pid}"])
+    Keeper.close(431)
+  end
+
   test "open and close are refused while frozen, and work again after thaw" do
     {:ok, id} = Keeper.open(spec(%{cmd: "/bin/sleep", args: ["30"]}))
     {:ok, %{os_pid: os_pid}} = Keeper.lookup(id)

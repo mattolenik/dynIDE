@@ -55,4 +55,6 @@ defmodule HerdrServer.Kernel.Vt do
   @callback encode_key(vt, key_event) :: binary
   @callback encode_mouse(vt, mouse_event) :: binary | nil
   @callback encode_focus(vt, boolean) :: binary
+  @doc "The primary screen's last `n` rows as VT, or `:alt_screen` while it is active."
+  @callback tail_ansi(vt, non_neg_integer) :: binary | :alt_screen
 end

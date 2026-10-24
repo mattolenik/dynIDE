@@ -41,9 +41,10 @@ defmodule HerdrServer.Kernel.Fake.Keeper do
     state = Map.merge(%__MODULE__{}, state)
     id = state.next_id
     {:ok, vt} = Vt.new(o.cols, o.rows, o.max_scrollback)
+    if replay = Map.get(o, :replay), do: Vt.write(vt, replay)
     {:ok, pty, os_pid} = Pty.spawn(vt, id, o.cmd, o.args, o.env, o.cwd, o.cols, o.rows)
     if o.subscriber, do: Pty.subscribe(pty, o.subscriber)
-    res = %{vt: vt, pty: pty, os_pid: os_pid}
+    res = %{vt: vt, pty: pty, os_pid: os_pid, cmd: [o.cmd | o.args]}
     {:reply, {:ok, id}, %{state | panes: Map.put(state.panes, id, res), next_id: id + 1}}
   end
 

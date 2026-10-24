@@ -142,6 +142,39 @@ defmodule HerdrServer.Kernel.FakeTest do
     assert Vt.encode_focus(vt, false) == "\e[O"
   end
 
+  test "cwd is the spawn cwd until set_cwd", %{pty: pty} do
+    assert Pty.cwd(pty) == "/"
+    :ok = Pty.set_cwd(pty, "/tmp")
+    assert Pty.cwd(pty) == "/tmp"
+    :ok = Pty.set_cwd(pty, nil)
+    assert Pty.cwd(pty) == nil
+  end
+
+  test "tail_ansi returns the last text rows, :alt_screen in alt mode", %{
+    id: id,
+    vt: vt,
+    pty: pty
+  } do
+    assert Vt.tail_ansi(vt, 3) == ""
+    Pty.output(pty, "a\r\nb\r\nc")
+    assert_receive {:damage, ^id, _}, 50
+    assert Vt.tail_ansi(vt, 2) == "b\r\nc"
+    assert Vt.tail_ansi(vt, 10) == "a\r\nb\r\nc"
+    assert Vt.tail_ansi(vt, 0) == ""
+    :ok = Vt.set_mode(vt, :alt_screen, true)
+    assert Vt.tail_ansi(vt, 2) == :alt_screen
+  end
+
+  test "keeper replays into the new vt and records cmd" do
+    {:ok, id} =
+      Keeper.open(Map.merge(@opts, %{replay: "hello\r\n", args: ["-l"], subscriber: nil}))
+
+    {:ok, %{vt: vt, cmd: cmd}} = Keeper.lookup(id)
+    assert cmd == ["sh", "-l"]
+    assert Vt.read_text(vt, :screen) =~ "hello"
+    Keeper.close(id)
+  end
+
   test "close removes the pane", %{id: id} do
     assert {:ok, _} = Keeper.lookup(id)
     {:ok, id2} = Keeper.open(Map.put(@opts, :subscriber, nil))

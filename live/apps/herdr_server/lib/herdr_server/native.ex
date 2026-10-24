@@ -49,6 +49,9 @@ defmodule HerdrServer.Native do
   @spec vt_read_text(term, term, term, term) :: binary
   def vt_read_text(_vt, _range, _first, _last), do: err()
   @doc false
+  @spec vt_tail_ansi(term, term) :: binary | :alt_screen
+  def vt_tail_ansi(_vt, _n), do: err()
+  @doc false
   @spec vt_scrollbar(term) :: map
   def vt_scrollbar(_vt), do: err()
   @doc false
@@ -123,6 +126,9 @@ defmodule HerdrServer.Native do
   @doc false
   @spec pty_info(term) :: map
   def pty_info(_pty), do: err()
+  @doc false
+  @spec pty_cwd(term) :: binary | nil
+  def pty_cwd(_pty), do: err()
 
   @doc false
   @spec link_connect(term, term) :: {:ok, reference} | {:error, atom}

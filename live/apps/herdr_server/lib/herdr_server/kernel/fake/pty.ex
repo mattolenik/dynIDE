@@ -24,11 +24,12 @@ defmodule HerdrServer.Kernel.Fake.Pty do
             backpressure: false,
             reject_after: nil,
             writes: [],
-            closed: false
+            closed: false,
+            cwd: nil
 
   @impl HerdrServer.Kernel.Pty
-  def spawn(vt, id, _cmd, _args, _env, _cwd, _cols, _rows) do
-    {:ok, pty} = GenServer.start_link(__MODULE__, {id, vt})
+  def spawn(vt, id, _cmd, _args, _env, cwd, _cols, _rows) do
+    {:ok, pty} = GenServer.start_link(__MODULE__, {id, vt, cwd})
     {:ok, pty, System.unique_integer([:positive])}
   end
 
@@ -66,9 +67,16 @@ defmodule HerdrServer.Kernel.Fake.Pty do
   @impl HerdrServer.Kernel.Pty
   def set_hidden(pty, hidden), do: GenServer.call(pty, {:hidden, hidden})
 
+  @impl HerdrServer.Kernel.Pty
+  def cwd(pty), do: GenServer.call(pty, :cwd)
+
+  @doc "Test hook: what `cwd/1` reports from now on (the spawn cwd until set)."
+  def set_cwd(pty, cwd) when is_binary(cwd) or is_nil(cwd),
+    do: GenServer.call(pty, {:set_cwd, cwd})
+
   @impl GenServer
-  def init({id, vt}) do
-    {:ok, %__MODULE__{id: id, vt: vt, last_sent: now() - 1000}}
+  def init({id, vt, cwd}) do
+    {:ok, %__MODULE__{id: id, vt: vt, cwd: cwd, last_sent: now() - 1000}}
   end
 
   @impl GenServer
@@ -116,6 +124,16 @@ defmodule HerdrServer.Kernel.Fake.Pty do
   def handle_call({:reject_after, k}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:reply, :ok, %{state | reject_after: k}}
+  end
+
+  def handle_call(:cwd, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, state.cwd, state}
+  end
+
+  def handle_call({:set_cwd, cwd}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, %{state | cwd: cwd}}
   end
 
   def handle_call(:writes, _from, state) do

@@ -33,4 +33,6 @@ defmodule HerdrServer.Kernel.Pty do
   @callback kill(pty, signal) :: :ok
   @callback subscribe(pty, pid) :: :ok
   @callback set_hidden(pty, boolean) :: :ok
+  @doc "The child's working directory (absolute), or nil when unknown."
+  @callback cwd(pty) :: binary | nil
 end

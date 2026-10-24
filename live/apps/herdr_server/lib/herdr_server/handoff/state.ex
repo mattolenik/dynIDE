@@ -8,6 +8,7 @@ defmodule HerdrServer.Handoff.State do
   alias HerdrServer.Native.{Pty, Vt}
 
   @type t :: %{
+          optional(:cmd) => [binary] | nil,
           v: 1,
           id: pos_integer,
           os_pid: pos_integer,
@@ -51,6 +52,8 @@ defmodule HerdrServer.Handoff.State do
       exited: info.exited,
       # optional key (v stays 1): absent in older blobs, then adopt skips the check
       start_time: info.start_time,
+      # optional key (v stays 1): the spawn command, metadata only; absent -> row cmd nil
+      cmd: Map.get(row, :cmd),
       pending_input: Keyword.get(opts, :pending_input, ""),
       vt: if(Keyword.get(opts, :vt, true), do: Vt.encode_snapshot(vt)),
       taken_at: System.system_time(:millisecond)

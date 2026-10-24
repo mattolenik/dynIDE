@@ -113,6 +113,19 @@ defmodule HerdrServer.Native.KeeperTest do
     assert Keeper.ids() == before
   end
 
+  test "replay is fed to the new vt before the spawn; the row records cmd" do
+    {:ok, id} =
+      Keeper.open(spec(%{cmd: "/bin/sh", args: ["-c", "sleep 30"], replay: "hello\r\n"}))
+
+    assert {:ok, %{vt: vt, cmd: ["/bin/sh", "-c", "sleep 30"]}} = Keeper.lookup(id)
+    assert Vt.read_text(vt, :screen) =~ "hello"
+    Keeper.close(id)
+  end
+
+  test "an ill-typed replay is an invalid spec" do
+    assert Keeper.open(spec(%{replay: 1})) == {:error, {:invalid_spec, :replay}}
+  end
+
   test "lookup of unknown id is :error" do
     assert Keeper.lookup(999) == :error
   end

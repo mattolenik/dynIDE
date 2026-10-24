@@ -21,7 +21,7 @@ use crate::link::{Frame, Link, LinkSink, SEND_TIMEOUT};
 use crate::pty::{
     AdoptOptions, Event, EventSink, ExitStatus, Pty, SpawnOptions, ThawError, WriteError,
 };
-use crate::vt::{lock, LinkKind, Mode, RowBatch, TextRange, Vt};
+use crate::vt::{lock, LinkKind, Mode, RowBatch, Tail, TextRange, Vt};
 
 mod atoms {
     rustler::atoms! {
@@ -30,7 +30,7 @@ mod atoms {
         os, spawn, hyperlink, text, viewport, screen, rows,
         block, bar, underline, block_hollow, hup, term, kill, int,
         key, mods, event, kind, button, x, y, px, disabled, consumed, not_frozen, released,
-        os_pid, adopted, hidden, exited, start_time,
+        os_pid, adopted, hidden, exited, start_time, alt_screen,
         herdr_link, herdr_link_closed, eof, timeout, noproc, econnrefused, einval,
         connect_failed,
     }
@@ -343,6 +343,15 @@ fn vt_full_rows(env: Env, vt: ResourceArc<VtRes>) -> Term {
     encode_batch(env, vt.0.full_rows())
 }
 
+/// The primary screen's last `n` rows as VT, or `:alt_screen`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn vt_tail_ansi(env: Env, vt: ResourceArc<VtRes>, n: usize) -> NifResult<Term> {
+    match vt.0.tail_ansi(n).map_err(|e| raise(format!("{e:?}")))? {
+        Tail::Ansi(s) => Ok(bin(env, s.as_bytes())),
+        Tail::AltScreen => Ok(atoms::alt_screen().encode(env)),
+    }
+}
+
 #[rustler::nif(schedule = "DirtyCpu")]
 fn vt_read_text(vt: ResourceArc<VtRes>, range: Atom, first: u32, last: u32) -> NifResult<String> {
     let r = match range {
@@ -640,6 +649,15 @@ fn pty_info(env: Env, pty: ResourceArc<PtyRes>) -> NifResult<Term> {
             (atoms::start_time().encode(env), i.start_time.encode(env)),
         ],
     )
+}
+
+/// The child's working directory (OS, else OSC 7), or nil. One syscall.
+#[rustler::nif]
+fn pty_cwd(env: Env, pty: ResourceArc<PtyRes>) -> Term {
+    match pty.pty.cwd() {
+        Some(p) => bin(env, p.as_bytes()),
+        None => atoms::nil().encode(env),
+    }
 }
 
 fn spawn_error<'a>(env: Env<'a>, e: &std::io::Error) -> Term<'a> {

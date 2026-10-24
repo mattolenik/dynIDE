@@ -10,8 +10,10 @@ defmodule HerdrServer.Kernel.Keeper do
   """
 
   @type id :: pos_integer
-  @type resources :: %{vt: term, pty: term, os_pid: integer}
+  @typedoc "`cmd` is `[spec.cmd | spec.args]`; nil for a pane adopted from a blob without it."
+  @type resources :: %{vt: term, pty: term, os_pid: integer, cmd: [binary] | nil}
   @type spec :: %{
+          optional(:replay) => binary,
           cmd: binary,
           args: [binary],
           env: [{binary, binary}],

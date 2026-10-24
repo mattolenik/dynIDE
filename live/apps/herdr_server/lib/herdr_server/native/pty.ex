@@ -156,4 +156,11 @@ defmodule HerdrServer.Native.Pty do
           start_time: non_neg_integer | nil
         }
   def info(pty), do: Native.pty_info(pty)
+
+  @doc """
+  The child's (shell pid's) working directory from the OS, else the last OSC 7 pwd
+  as a path (`file://host/p` percent-decoded to `/p`), else nil. Only absolute paths.
+  """
+  @spec cwd(pty) :: binary | nil
+  def cwd(pty), do: Native.pty_cwd(pty)
 end
