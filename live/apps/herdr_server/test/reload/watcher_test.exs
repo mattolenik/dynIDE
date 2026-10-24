@@ -15,10 +15,12 @@ defmodule HerdrServer.Reload.WatcherTest do
   defp start(dir, extra \\ []) do
     test = self()
 
-    start_supervised!({Watcher, [dirs: [dir], on_batch: &send(test, {:batch, &1})] ++ extra})
+    pid =
+      start_supervised!({Watcher, [dirs: [dir], on_batch: &send(test, {:batch, &1})] ++ extra})
 
     # let the OS backend arm before the first write
     Process.sleep(300)
+    pid
   end
 
   defp names(paths), do: Enum.map(paths, &Path.basename/1)
@@ -46,6 +48,14 @@ defmodule HerdrServer.Reload.WatcherTest do
     start(dir)
     File.write!(Path.join(dir, "a.ex.swp"), "1")
     refute_receive {:batch, _}, 500
+  end
+
+  test "a stale fire message does not call on_batch", %{dir: dir} do
+    pid = start(dir)
+    # pre-fix and current fire shapes, neither from the live timer
+    send(pid, :fire)
+    send(pid, {:timeout, make_ref(), :fire})
+    refute_receive {:batch, _}, 300
   end
 
   test "backend failure returns :ignore with a warning", %{dir: dir} do

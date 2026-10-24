@@ -54,13 +54,24 @@ defmodule HerdrServer.Reload.Loader do
     |> normalize()
   end
 
+  # Mix often already deleted the current code, leaving the old slot free:
+  # purge only when the load says the old slot is taken.
   def load(module, binary, opts) do
-    with :ok <- purge_old(module, opts),
-         {:module, ^module} <- :code.load_binary(module, path(module, opts), binary) do
-      :code.soft_purge(module)
-      :ok
+    path = path(module, opts)
+
+    result =
+      with {:error, :not_purged} <- :code.load_binary(module, path, binary),
+           :ok <- purge_old(module, opts),
+           do: :code.load_binary(module, path, binary)
+
+    case result do
+      {:module, ^module} ->
+        :code.soft_purge(module)
+        :ok
+
+      other ->
+        normalize(other)
     end
-    |> normalize()
   end
 
   defp normalize(:ok), do: :ok

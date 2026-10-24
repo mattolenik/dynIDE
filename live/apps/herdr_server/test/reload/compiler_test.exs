@@ -1,3 +1,12 @@
+# a toy project compiler that raises on demand, after the Elixir compiler ran
+defmodule Mix.Tasks.Compile.ToyBoom do
+  @moduledoc false
+  use Mix.Task.Compiler
+
+  @impl true
+  def run(_args), do: if(Process.get(:toy_boom), do: raise("boom"), else: {:noop, []})
+end
+
 defmodule HerdrServer.Reload.CompilerTest do
   use HerdrServer.ReloadCase, async: false
 
@@ -36,9 +45,9 @@ defmodule HerdrServer.Reload.CompilerTest do
     end)
   end
 
-  defp toy!(app) do
+  defp toy!(app, extra \\ "") do
     dir =
-      toy_project!(app, %{"lib/s.ex" => @s, "lib/u.ex" => @u, "lib/v.ex" => v_src(1)})
+      toy_project!(app, %{"lib/s.ex" => @s, "lib/u.ex" => @u, "lib/v.ex" => v_src(1)}, extra)
 
     opts = [project_dir: dir, app: app]
     paths = for f <- ~w(s u v), do: Path.join(dir, "lib/#{f}.ex")
@@ -99,6 +108,32 @@ defmodule HerdrServer.Reload.CompilerTest do
     {res, _} = with_io(:stderr, fn -> Compiler.compile(snap, [path(dir, "v")], mtimes, opts) end)
     assert {:error, diags, _mtimes} = res
     assert Enum.any?(diags, &(&1.severity == :error))
+    assert v() == 1
+  end
+
+  test "compile error restores cached modules that were never loaded" do
+    {dir, opts, mtimes} = toy!(:toy_c_err_cold)
+    refute :code.is_loaded(ToyC.V)
+    snap = Compiler.snapshot(opts)
+    write_source!(dir, "lib/v.ex", "defmodule ToyC.V do\n  def v, do: (\nend\n")
+
+    {res, _} = with_io(:stderr, fn -> Compiler.compile(snap, [path(dir, "v")], mtimes, opts) end)
+    assert {:error, _, _} = res
+    assert v() == 1
+  end
+
+  test "a raising compile restores unloaded modules and re-raises" do
+    {dir, opts, mtimes} = toy!(:toy_c_raise, ", compilers: Mix.compilers() ++ [:toy_boom]")
+    assert v() == 1
+    snap = Compiler.snapshot(opts)
+    write_source!(dir, "lib/v.ex", v_src(2))
+    Process.put(:toy_boom, true)
+
+    assert_raise RuntimeError, "boom", fn ->
+      Compiler.compile(snap, [path(dir, "v")], mtimes, opts)
+    end
+
+    Process.delete(:toy_boom)
     assert v() == 1
   end
 

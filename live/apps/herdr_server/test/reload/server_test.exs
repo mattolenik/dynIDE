@@ -15,7 +15,7 @@ defmodule HerdrServer.Reload.ServerTest do
   end
   """
 
-  @mods [Toy.V, Toy.W, Toy.Counter]
+  @mods [Toy.V, Toy.W, Toy.X, Toy.Counter]
 
   setup do
     on_exit(fn ->
@@ -27,7 +27,10 @@ defmodule HerdrServer.Reload.ServerTest do
     end)
   end
 
-  defp v_src(n), do: "defmodule Toy.V do\n  def v, do: #{n}\nend\n"
+  defp v_src(n) do
+    "defmodule Toy.V do\n  def v, do: #{n}\n  def loop, do: receive(do: (:stop -> :ok))\nend\n"
+  end
+
   defp w_src(n), do: "defmodule Toy.W do\n  def w, do: #{n}\nend\n"
   defp path(dir, f), do: Path.join(dir, "lib/#{f}.ex")
 
@@ -108,6 +111,52 @@ defmodule HerdrServer.Reload.ServerTest do
     assert b2.rolled_back and b2.failures == 1
     refute b3.rolled_back
     assert Server.fail([Elixir.Nope], :boom) == :unattributed
+  end
+
+  test "a batch whose modules are never guarded closes after floor and total" do
+    {dir, _} = toy!(:toy_s_close, exercise_n: 2, exercise_floor_ms: 0)
+    HerdrServer.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "v")])
+    :ets.update_counter(Server, :total, 2, {:total, 0})
+    assert Server.fail([Toy.V], :boom) == :unattributed
+  end
+
+  test "overlapping rollback loads each module once, from the oldest batch" do
+    start_supervised!(Notices)
+    {dir, _} = toy!(:toy_s_overlap)
+    HerdrServer.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    HerdrServer.ReloadCase.write_source!(dir, "lib/w.ex", w_src(2))
+    assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "v"), path(dir, "w")])
+    HerdrServer.ReloadCase.write_source!(dir, "lib/v.ex", v_src(3))
+    HerdrServer.ReloadCase.write_source!(dir, "lib/x.ex", "defmodule Toy.X do\nend\n")
+    assert {:ok, %Batch{id: 3}} = Server.reload([path(dir, "v"), path(dir, "x")])
+
+    # holds batch-3 V code: a second load of V would block on its purge
+    pid = spawn(Module.concat([Toy.V]), :loop, [])
+    Process.sleep(20)
+    Notices.subscribe()
+
+    assert Server.fail([Toy.W], :boom) == {:rolled_back, 2}
+    refute_received {:herdr_reload, {:purge_blocked, _, _}}
+    assert v() == 1
+    assert w() == 1
+    refute :code.is_loaded(Toy.X)
+
+    assert [%Batch{id: 3, rolled_back: true}, %Batch{id: 2, rolled_back: true}, _] =
+             Server.batches()
+
+    assert Process.alive?(pid)
+  end
+
+  test "an unrelated reload right after a rollback keeps the rolled-back code" do
+    {dir, _} = toy!(:toy_s_after_rb)
+    HerdrServer.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "v")])
+    assert Server.rollback(1) == {:ok, [2]}
+
+    HerdrServer.ReloadCase.write_source!(dir, "lib/w.ex", w_src(2))
+    assert {:ok, %Batch{id: 3, modules: [Toy.W]}} = Server.reload([path(dir, "w")])
+    assert v() == 1
   end
 
   test "compile error broadcasts and records no batch" do

@@ -8,11 +8,18 @@ defmodule HerdrServer.Reload.Server do
 
   A public ETS table named like the server holds Guard counters, `{mod, count}`
   and `{:total, count}`, which decide whether a batch is still live.
+
+  The optional `state_at_load` provider (a 0-arity fun or `{m, f, a}`) runs
+  inside the Server's reload call. It must not raise, and it must not
+  `GenServer.call` a process that may itself be blocked in a guarded call
+  waiting on `fail/3` (that deadlocks); read an ETS mirror instead.
   """
 
   use GenServer
 
   alias HerdrServer.Reload.{Batch, Compiler, Loader, Notices, Ring}
+
+  require Logger
 
   @type server :: GenServer.server()
 
@@ -96,7 +103,7 @@ defmodule HerdrServer.Reload.Server do
 
   def handle_call({:rollback, n}, _from, s) do
     targets = s.ring |> Ring.batches() |> Enum.reject(& &1.rolled_back) |> Enum.take(n)
-    s = Enum.reduce(targets, s, &undo(&1, :manual, &2))
+    s = undo(targets, :manual, s)
     {:reply, {:ok, Enum.map(targets, & &1.id)}, s}
   end
 
@@ -104,8 +111,9 @@ defmodule HerdrServer.Reload.Server do
     now = System.monotonic_time(:millisecond)
     total = count(s.table, :total)
 
+    # only modules a guarded call has entered: the rest must not hold a batch open
     live? = fn b ->
-      counters = Map.new(b.modules, &{&1, count(s.table, &1)})
+      counters = for m <- b.modules, [{^m, c}] <- [:ets.lookup(s.table, m)], into: %{}, do: {m, c}
       Ring.live?(b, counters, total, now, s.live_opts)
     end
 
@@ -116,7 +124,7 @@ defmodule HerdrServer.Reload.Server do
       %Batch{id: id} ->
         ring = Ring.update(s.ring, id, &%{&1 | failures: &1.failures + 1})
         set = ring |> Ring.rollback_set(id) |> Enum.reject(& &1.rolled_back)
-        s = Enum.reduce(set, %{s | ring: ring}, &undo(&1, reason, &2))
+        s = undo(set, reason, %{s | ring: ring})
         {:reply, {:rolled_back, id}, s}
     end
   end
@@ -139,19 +147,31 @@ defmodule HerdrServer.Reload.Server do
 
     {ring, _evicted} = Ring.push(s.ring, batch)
     beams = Map.merge(res.changed, Map.new(res.removed, &{&1, nil}))
-    _errors = load_all(beams, s.loader_opts)
+
+    for {mod, e} <- load_all(beams, s.loader_opts),
+        do: Logger.warning("reload load of #{inspect(mod)} failed: #{inspect(e)}")
+
     Notices.broadcast({:loaded, batch.id, modules})
     {batch, %{s | ring: ring, next_id: s.next_id + 1, cache: apply_cache(s.cache, beams, [])}}
   end
 
+  # `batches` newest first. Each module is loaded once, with its beam from the
+  # oldest batch holding it: loading it per batch would leave the intermediate
+  # code as old code, blocking the next purge while a caller still runs it.
   # Loader failures already broadcast purge_blocked; keep going for the rest.
-  defp undo(batch, reason, s) do
-    errors = load_all(batch.previous_beams, s.loader_opts)
-    failed = Enum.map(errors, &elem(&1, 0))
-    reason = if errors == [], do: reason, else: {reason, errors}
-    Notices.broadcast({:rolled_back, batch.id, batch.modules, reason})
-    ring = Ring.update(s.ring, batch.id, &%{&1 | rolled_back: true})
-    %{s | ring: ring, cache: apply_cache(s.cache, batch.previous_beams, failed)}
+  defp undo(batches, reason, s) do
+    beams = Enum.reduce(batches, %{}, &Map.merge(&2, &1.previous_beams))
+    errors = load_all(beams, s.loader_opts)
+
+    ring =
+      Enum.reduce(batches, s.ring, fn batch, ring ->
+        errs = for {m, _} = e <- errors, m in batch.modules, do: e
+        reason = if errs == [], do: reason, else: {reason, errs}
+        Notices.broadcast({:rolled_back, batch.id, batch.modules, reason})
+        Ring.update(ring, batch.id, &%{&1 | rolled_back: true})
+      end)
+
+    %{s | ring: ring, cache: apply_cache(s.cache, beams, Enum.map(errors, &elem(&1, 0)))}
   end
 
   defp load_all(beams, opts) do

@@ -14,6 +14,8 @@ defmodule HerdrServer.Reload.Compiler do
   alias HerdrServer.Reload.Loader
   alias Mix.Task.Compiler, as: MixCompiler
 
+  require Logger
+
   @type cache :: %{module() => binary()}
   @type result :: %{
           changed: cache(),
@@ -61,18 +63,27 @@ defmodule HerdrServer.Reload.Compiler do
     # the mtime it had when last compiled so a same-second edit is seen.
     for p <- paths, {:ok, m} <- [mtime(p)], m == mtimes[p], do: File.touch!(p, m - 1)
 
-    loaded_before = for {m, _} <- cache, :code.is_loaded(m), into: %{}, do: {m, :code.which(m)}
-    t0 = System.os_time(:second)
-    {status, diags} = mix_compile()
+    loaded_before = for {m, _} <- cache, :code.is_loaded(m), into: MapSet.new(), do: m
+    disk = disk_state(current_ebin_dirs())
+    {status, diags} = compile_or_restore(cache, loaded_before, disk)
     mtimes = Enum.reduce(paths, mtimes, &update_mtime/2)
 
     case status do
-      :error ->
-        restore(cache, loaded_before)
-        {:error, diags, mtimes}
+      :error -> {:error, diags, mtimes}
+      _ -> {:ok, diff(cache, disk) |> Map.merge(%{diagnostics: diags, mtimes: mtimes})}
+    end
+  end
 
-      _ ->
-        {:ok, diff(cache, t0) |> Map.merge(%{diagnostics: diags, mtimes: mtimes})}
+  # try/after rather than a catch: a raise or exit inside Mix must restore too.
+  defp compile_or_restore(cache, loaded_before, disk) do
+    Process.put(:herdr_reload_compiled, false)
+
+    try do
+      res = mix_compile()
+      Process.put(:herdr_reload_compiled, elem(res, 0) != :error)
+      res
+    after
+      if !Process.delete(:herdr_reload_compiled), do: restore(cache, loaded_before, disk)
     end
   end
 
@@ -110,20 +121,47 @@ defmodule HerdrServer.Reload.Compiler do
     {status, acc_diags ++ diags}
   end
 
-  # Mix deleted stale modules before failing; put back what was loaded.
-  defp restore(cache, loaded_before) do
-    for {m, path} <- loaded_before, !:code.is_loaded(m) do
-      :code.load_binary(m, path, cache[m])
+  # Mix deleted stale modules (and their beams) before failing: load the cached
+  # code of everything that was loaded or whose beam is gone.
+  defp restore(cache, loaded_before, disk) do
+    for {m, {p, _, _}} <- disk,
+        bin = cache[m],
+        bin != nil and :code.is_loaded(m) == false,
+        m in loaded_before or not File.exists?(p),
+        {:error, e} <- [:code.load_binary(m, String.to_charlist(p), bin)],
+        do: Logger.warning("reload restore of #{inspect(m)} failed: #{inspect(e)}")
+  end
+
+  # Beams on disk before Mix runs. A beam rolled back in memory stays on disk
+  # with its bad code, so only beams Mix rewrote count, never "recent" ones.
+  # A same-second same-size rewrite can keep the stat (ext4 reuses inodes), so
+  # recently written beams are also kept by content.
+  defp disk_state(dirs) do
+    recent = System.os_time(:second) - 2
+
+    for {m, p} <- beam_paths(dirs), {:ok, st} <- [File.stat(p, time: :posix)], into: %{} do
+      {m, {p, {st.mtime, st.size, st.inode}, if(st.mtime >= recent, do: File.read!(p))}}
     end
   end
 
-  defp diff(cache, t0) do
+  defp rewritten?(nil, _p), do: true
+
+  defp rewritten?({_, key, bytes}, p) do
+    case File.stat(p, time: :posix) do
+      {:ok, st} ->
+        {st.mtime, st.size, st.inode} != key or (bytes != nil and File.read!(p) != bytes)
+
+      _ ->
+        true
+    end
+  end
+
+  defp diff(cache, disk) do
     beams = beam_paths(current_ebin_dirs())
 
     changed =
       for {m, p} <- beams,
-          {:ok, mt} <- [mtime(p)],
-          mt >= t0 - 1,
+          rewritten?(disk[m], p),
           bin = File.read!(p),
           bin != cache[m],
           into: %{},

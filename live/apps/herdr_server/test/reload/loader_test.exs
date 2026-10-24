@@ -85,6 +85,20 @@ defmodule HerdrServer.Reload.LoaderTest do
     assert_receive {:DOWN, ^ref, _, _, _}
   end
 
+  test "load over deleted current code leaves the old code holder alone" do
+    {b1, b2} = {bin(1), bin(2)}
+    assert :ok = Loader.load(@mod, b1, [])
+    pid = fixture().start(:loader_fixture_old)
+    on_exit(fn -> Process.exit(pid, :kill) end)
+    # what Mix does to a module it recompiles: current code becomes old
+    true = :code.delete(@mod)
+
+    assert :ok = Loader.load(@mod, b2, retries: 1, retry_ms: 1)
+    assert fixture().v() == 2
+    refute_received {:herdr_reload, {:purge_blocked, _, _}}
+    assert Process.alive?(pid)
+  end
+
   test "purge_old with no old code is ok" do
     assert :ok = Loader.purge_old(@mod, [])
   end

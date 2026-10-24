@@ -48,17 +48,18 @@ defmodule HerdrServer.Reload.Watcher do
   def handle_info({:file_event, _, {path, _events}}, s) do
     if Path.extname(path) in @exts do
       if s.timer, do: Process.cancel_timer(s.timer)
-      timer = Process.send_after(self(), :fire, s.debounce)
+      # the message carries the timer ref: a fire sent before cancel_timer took effect is stale
+      timer = :erlang.start_timer(s.debounce, self(), :fire)
       {:noreply, %{s | paths: MapSet.put(s.paths, path), timer: timer}}
     else
       {:noreply, s}
     end
   end
 
-  def handle_info(:fire, s) do
+  def handle_info({:timeout, ref, :fire}, %{timer: ref} = s) do
     paths = s.paths |> MapSet.to_list() |> Enum.sort()
     on_batch = s.on_batch
-    spawn(fn -> on_batch.(paths) end)
+    if paths != [], do: spawn(fn -> on_batch.(paths) end)
     {:noreply, %{s | paths: MapSet.new(), timer: nil}}
   end
 
