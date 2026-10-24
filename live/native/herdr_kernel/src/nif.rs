@@ -1,0 +1,642 @@
+//! BEAM boundary: `HerdrServer.Native` NIFs over `Vt` and `Pty`. Facades live in
+//! `HerdrServer.Native.Vt` and `HerdrServer.Native.Pty`; term shapes are in
+//! `docs/herdr-live/results/m1.md` ("Events").
+
+use std::cell::Cell;
+use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+use rustler::sys::ErlNifEnv;
+use rustler::thread::is_scheduler_thread;
+use rustler::{
+    Atom, Binary, Encoder, Env, Error, LocalPid, Monitor, NewBinary, NifMap, NifResult, OwnedEnv,
+    Resource, ResourceArc, Term,
+};
+
+use crate::input::{Key, KeyAction, KeyInput, Mods, MouseButton, MouseInput, MouseKind, NamedKey};
+use crate::pty::{Event, EventSink, ExitStatus, Pty, SpawnOptions, WriteError};
+use crate::vt::{lock, LinkKind, Mode, RowBatch, TextRange, Vt};
+
+mod atoms {
+    rustler::atoms! {
+        ok, error, nil, stale, damage, exit, osc, dcs, bell, title, pwd, signal, panic, unknown,
+        truncated, backpressure, closed, too_large, enoent, eacces, enotdir, enoexec, e2big,
+        os, spawn, hyperlink, text, viewport, screen, rows,
+        block, bar, underline, block_hollow, hup, term, kill, int,
+        key, mods, event, kind, button, x, y, px, disabled,
+    }
+}
+
+pub struct VtRes(Arc<Vt>);
+
+#[rustler::resource_impl]
+impl Resource for VtRes {}
+
+pub struct PtyRes {
+    pty: Arc<Pty>,
+    sink: Arc<BeamSink>,
+}
+
+#[rustler::resource_impl]
+impl Resource for PtyRes {
+    const IMPLEMENTS_DOWN: bool = true;
+
+    fn down<'a>(&'a self, _env: Env<'a>, _pid: LocalPid, mon: Monitor) {
+        lock(&self.sink.subs).retain(|(_, m)| *m != mon);
+    }
+}
+
+/// Keeps a row's `Arc<[u8]>` alive for as long as the BEAM references its binary.
+pub struct RowBytes(Arc<[u8]>);
+
+#[rustler::resource_impl]
+impl Resource for RowBytes {}
+
+thread_local! {
+    /// The calling process's env while a NIF that may emit events runs on a scheduler
+    /// thread; `enif_send` from a managed thread needs it.
+    static CALLER: Cell<*mut ErlNifEnv> = const { Cell::new(ptr::null_mut()) };
+}
+
+struct CallerGuard(*mut ErlNifEnv);
+
+impl Drop for CallerGuard {
+    fn drop(&mut self) {
+        CALLER.with(|c| c.set(self.0));
+    }
+}
+
+fn with_caller<R>(env: Env, f: impl FnOnce() -> R) -> R {
+    let _guard = CallerGuard(CALLER.with(|c| c.replace(env.as_c_arg())));
+    f()
+}
+
+/// Sends `msg(env)` to each pid, from either a kernel thread or a NIF under `with_caller`.
+fn deliver(pids: &[LocalPid], msg: impl for<'a> Fn(Env<'a>) -> Term<'a>) {
+    if pids.is_empty() {
+        return;
+    }
+    if is_scheduler_thread() {
+        let raw = CALLER.with(Cell::get);
+        // A scheduler thread (normal or dirty) can only send through the calling NIF's env;
+        // events emitted outside `with_caller` are dropped. Wrap any emitting NIF in it.
+        debug_assert!(
+            !raw.is_null(),
+            "event sent from a scheduler outside with_caller"
+        );
+        if raw.is_null() {
+            return;
+        }
+        let marker = ();
+        // SAFETY: `raw` is the live env of the NIF call currently running on this thread
+        // (set by `with_caller`, cleared when it returns); this Env does not outlive it.
+        let env = unsafe { Env::new(&marker, raw) };
+        for p in pids {
+            let _ = env.send(p, msg(env));
+        }
+    } else {
+        let mut owned = OwnedEnv::new();
+        for p in pids {
+            let _ = owned.send_and_clear(p, &msg);
+        }
+    }
+}
+
+pub struct BeamSink {
+    id: u64,
+    subs: Mutex<Vec<(LocalPid, Monitor)>>,
+    exit: Mutex<Option<ExitStatus>>,
+}
+
+impl EventSink for BeamSink {
+    fn send(&self, ev: Event) {
+        // Held across the send so `subscribe` sees either the exit or the broadcast, never
+        // both and never neither.
+        let subs = lock(&self.subs);
+        if let Event::Exit(s) = &ev {
+            *lock(&self.exit) = Some(s.clone());
+        }
+        let pids: Vec<LocalPid> = subs.iter().map(|(p, _)| *p).collect();
+        deliver(&pids, |env| encode_event(env, self.id, &ev));
+    }
+}
+
+fn bin<'a>(env: Env<'a>, bytes: &[u8]) -> Term<'a> {
+    let mut b = NewBinary::new(env, bytes.len());
+    b.as_mut_slice().copy_from_slice(bytes);
+    Binary::from(b).to_term(env)
+}
+
+fn payload<'a>(env: Env<'a>, bytes: &[u8], cut: bool) -> Term<'a> {
+    match cut {
+        false => bin(env, bytes),
+        true => (atoms::truncated(), bin(env, bytes)).encode(env),
+    }
+}
+
+fn encode_status<'a>(env: Env<'a>, s: &ExitStatus) -> Term<'a> {
+    match s {
+        ExitStatus::Code(c) => c.encode(env),
+        ExitStatus::Signal(n) => (atoms::signal(), *n).encode(env),
+        ExitStatus::Panic(m) => (atoms::panic(), m.as_str()).encode(env),
+        ExitStatus::Unknown => atoms::unknown().encode(env),
+    }
+}
+
+fn encode_event<'a>(env: Env<'a>, id: u64, ev: &Event) -> Term<'a> {
+    match ev {
+        Event::Damage(g) => (atoms::damage(), id, *g).encode(env),
+        Event::Exit(s) => (atoms::exit(), id, encode_status(env, s)).encode(env),
+        Event::Osc {
+            code,
+            payload: p,
+            truncated,
+        } => (atoms::osc(), id, *code, payload(env, p, *truncated)).encode(env),
+        Event::Dcs {
+            payload: p,
+            truncated,
+        } => (atoms::dcs(), id, payload(env, p, *truncated)).encode(env),
+        Event::Bell => (atoms::bell(), id).encode(env),
+        Event::Title(t) => (atoms::title(), id, bin(env, t)).encode(env),
+        Event::Pwd(p) => (atoms::pwd(), id, bin(env, p)).encode(env),
+    }
+}
+
+fn raise(msg: impl std::fmt::Display) -> Error {
+    Error::RaiseTerm(Box::new(msg.to_string()))
+}
+
+/// `{gen, [{n, row}]}` with each row a zero-copy resource binary over the snapshot's Arc.
+fn encode_batch<'a>(env: Env<'a>, (gen, rows): RowBatch) -> Term<'a> {
+    let rows: Vec<(u16, Binary<'a>)> = rows
+        .into_iter()
+        .map(|(y, bytes)| {
+            (
+                y,
+                ResourceArc::new(RowBytes(bytes)).make_binary(env, |r| &r.0),
+            )
+        })
+        .collect();
+    (gen, rows).encode(env)
+}
+
+fn name(t: Term) -> NifResult<String> {
+    t.atom_to_string()
+}
+
+fn num(t: Term) -> NifResult<f32> {
+    t.decode::<f64>()
+        .or_else(|_| t.decode::<i64>().map(|i| i as f64))
+        .map(|f| f as f32)
+}
+
+fn decode_mods(t: Term) -> NifResult<Mods> {
+    let mut m = Mods::default();
+    for a in t.decode::<Vec<Term>>()? {
+        match name(a)?.as_str() {
+            "shift" => m.shift = true,
+            "ctrl" => m.ctrl = true,
+            "alt" => m.alt = true,
+            "super" => m.super_ = true,
+            _ => return Err(Error::BadArg),
+        }
+    }
+    Ok(m)
+}
+
+fn decode_key(t: Term) -> NifResult<KeyInput> {
+    let k = t.map_get(atoms::key())?;
+    let key = match k.is_binary() {
+        true => Key::Char(k.decode()?),
+        false => Key::Named(NamedKey::from_name(&name(k)?).ok_or(Error::BadArg)?),
+    };
+    let event = match name(t.map_get(atoms::event())?)?.as_str() {
+        "press" => KeyAction::Press,
+        "release" => KeyAction::Release,
+        "repeat" => KeyAction::Repeat,
+        _ => return Err(Error::BadArg),
+    };
+    Ok(KeyInput {
+        key,
+        mods: decode_mods(t.map_get(atoms::mods())?)?,
+        event,
+        text: t.map_get(atoms::text())?.decode()?,
+    })
+}
+
+fn decode_mouse(t: Term) -> NifResult<MouseInput> {
+    let kind = match name(t.map_get(atoms::kind())?)?.as_str() {
+        "press" => MouseKind::Press,
+        "release" => MouseKind::Release,
+        "move" => MouseKind::Move,
+        "drag" => MouseKind::Drag,
+        "scroll" => MouseKind::Scroll,
+        _ => return Err(Error::BadArg),
+    };
+    let b = t.map_get(atoms::button())?;
+    let button = match name(b)?.as_str() {
+        "nil" => None,
+        "left" => Some(MouseButton::Left),
+        "middle" => Some(MouseButton::Middle),
+        "right" => Some(MouseButton::Right),
+        "wheel_up" => Some(MouseButton::WheelUp),
+        "wheel_down" => Some(MouseButton::WheelDown),
+        "wheel_left" => Some(MouseButton::WheelLeft),
+        "wheel_right" => Some(MouseButton::WheelRight),
+        _ => return Err(Error::BadArg),
+    };
+    let p = t.map_get(atoms::px())?;
+    let px = match p.decode::<Atom>() {
+        Ok(a) if a == atoms::nil() => None,
+        _ => {
+            let (a, b) = p.decode::<(Term, Term)>()?;
+            Some((num(a)?, num(b)?))
+        }
+    };
+    Ok(MouseInput {
+        kind,
+        button,
+        x: t.map_get(atoms::x())?.decode()?,
+        y: t.map_get(atoms::y())?.decode()?,
+        mods: decode_mods(t.map_get(atoms::mods())?)?,
+        px,
+    })
+}
+
+// ---- Vt ----
+
+#[rustler::nif]
+fn vt_new(cols: u16, rows: u16, max_scrollback: usize) -> NifResult<(Atom, ResourceArc<VtRes>)> {
+    let vt = Vt::new(cols, rows, max_scrollback).map_err(|e| raise(format!("{e:?}")))?;
+    Ok((atoms::ok(), ResourceArc::new(VtRes(vt))))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn vt_feed(vt: ResourceArc<VtRes>, bytes: Binary) -> u64 {
+    vt.0.write(bytes.as_slice());
+    vt.0.refresh()
+}
+
+// ponytail: takes the blocking core lock and rebuilds the snapshot, so DirtyCpu; upgrade path is applying it on the reader thread between chunks.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn vt_resize(
+    vt: ResourceArc<VtRes>,
+    cols: u16,
+    rows: u16,
+    px: Option<(u32, u32)>,
+) -> NifResult<Atom> {
+    vt.0.resize(cols, rows, px)
+        .map_err(|e| raise(format!("{e:?}")))?;
+    Ok(atoms::ok())
+}
+
+#[rustler::nif]
+fn vt_dirty_rows(env: Env, vt: ResourceArc<VtRes>) -> Term {
+    encode_batch(env, vt.0.dirty_rows())
+}
+
+#[rustler::nif]
+fn vt_rows_since(env: Env, vt: ResourceArc<VtRes>, gen: u64) -> Term {
+    encode_batch(env, vt.0.rows_since(gen))
+}
+
+#[rustler::nif]
+fn vt_full_rows(env: Env, vt: ResourceArc<VtRes>) -> Term {
+    encode_batch(env, vt.0.full_rows())
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn vt_read_text(vt: ResourceArc<VtRes>, range: Atom, first: u32, last: u32) -> NifResult<String> {
+    let r = match range {
+        a if a == atoms::viewport() => TextRange::Viewport,
+        a if a == atoms::screen() => TextRange::Screen,
+        a if a == atoms::rows() => TextRange::Rows(first, last),
+        _ => return Err(Error::BadArg),
+    };
+    vt.0.read_text(r).map_err(|e| raise(format!("{e:?}")))
+}
+
+#[derive(NifMap)]
+struct ScrollbarMap {
+    total: usize,
+    viewport: usize,
+    offset: usize,
+}
+
+#[rustler::nif]
+fn vt_scrollbar(vt: ResourceArc<VtRes>) -> ScrollbarMap {
+    let s = vt.0.scrollbar();
+    ScrollbarMap {
+        total: s.total,
+        viewport: s.viewport,
+        offset: s.offset,
+    }
+}
+
+// ponytail: takes the blocking core lock and rebuilds the snapshot, so DirtyCpu; upgrade path is applying it on the reader thread between chunks.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn vt_scroll_to(vt: ResourceArc<VtRes>, offset: usize) -> NifResult<Atom> {
+    vt.0.scroll_to(offset)
+        .map_err(|e| raise(format!("{e:?}")))?;
+    Ok(atoms::ok())
+}
+
+fn maybe_stale<'a>(env: Env<'a>, v: impl Encoder, stale: bool) -> Term<'a> {
+    match stale {
+        false => v.encode(env),
+        true => (atoms::stale(), v).encode(env),
+    }
+}
+
+#[rustler::nif]
+fn vt_mode<'a>(env: Env<'a>, vt: ResourceArc<VtRes>, mode: Term<'a>) -> NifResult<Term<'a>> {
+    let m = Mode::from_name(&name(mode)?).ok_or(Error::BadArg)?;
+    let (v, stale) = vt.0.mode(m);
+    Ok(maybe_stale(env, v, stale))
+}
+
+#[rustler::nif]
+fn vt_kitty_keyboard_flags(env: Env, vt: ResourceArc<VtRes>) -> Term {
+    let (v, stale) = vt.0.kitty_keyboard_flags();
+    maybe_stale(env, v, stale)
+}
+
+#[derive(NifMap)]
+struct LinkMap {
+    uri: String,
+    kind: Atom,
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn vt_link_at(vt: ResourceArc<VtRes>, x: u16, y: u16) -> Option<LinkMap> {
+    vt.0.link_at(x, y).map(|(uri, k)| LinkMap {
+        uri,
+        kind: match k {
+            LinkKind::Hyperlink => atoms::hyperlink(),
+            LinkKind::Text => atoms::text(),
+        },
+    })
+}
+
+#[derive(NifMap)]
+struct PlacementMap {
+    image_id: u32,
+    placement_id: u32,
+    z: i32,
+    viewport_col: i32,
+    viewport_row: i32,
+    grid_cols: u32,
+    grid_rows: u32,
+    pixel_width: u32,
+    pixel_height: u32,
+    source_x: u32,
+    source_y: u32,
+    source_width: u32,
+    source_height: u32,
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn vt_graphics_placements(vt: ResourceArc<VtRes>) -> Vec<PlacementMap> {
+    vt.0.graphics_placements()
+        .into_iter()
+        .map(|p| PlacementMap {
+            image_id: p.image_id,
+            placement_id: p.placement_id,
+            z: p.z,
+            viewport_col: p.viewport_col,
+            viewport_row: p.viewport_row,
+            grid_cols: p.grid_cols,
+            grid_rows: p.grid_rows,
+            pixel_width: p.pixel_width,
+            pixel_height: p.pixel_height,
+            source_x: p.source_x,
+            source_y: p.source_y,
+            source_width: p.source_width,
+            source_height: p.source_height,
+        })
+        .collect()
+}
+
+#[derive(NifMap)]
+struct CursorMap {
+    x: u16,
+    y: u16,
+    visible: bool,
+    blinking: bool,
+    shape: Atom,
+}
+
+#[rustler::nif]
+fn vt_cursor(vt: ResourceArc<VtRes>) -> Option<CursorMap> {
+    use crate::vt::CursorShape::*;
+    vt.0.cursor().map(|c| CursorMap {
+        x: c.x,
+        y: c.y,
+        visible: c.visible,
+        blinking: c.blinking,
+        shape: match c.shape {
+            Block => atoms::block(),
+            Bar => atoms::bar(),
+            Underline => atoms::underline(),
+            BlockHollow => atoms::block_hollow(),
+        },
+    })
+}
+
+#[rustler::nif]
+fn vt_encode_key<'a>(env: Env<'a>, vt: ResourceArc<VtRes>, ev: Term<'a>) -> NifResult<Term<'a>> {
+    Ok(bin(env, &vt.0.encode_key(&decode_key(ev)?)))
+}
+
+#[rustler::nif]
+fn vt_encode_mouse<'a>(env: Env<'a>, vt: ResourceArc<VtRes>, ev: Term<'a>) -> NifResult<Term<'a>> {
+    Ok(match vt.0.encode_mouse(&decode_mouse(ev)?) {
+        Some(b) => bin(env, &b),
+        None => atoms::nil().encode(env),
+    })
+}
+
+#[rustler::nif]
+fn vt_encode_focus(env: Env, vt: ResourceArc<VtRes>, focused: bool) -> Term {
+    bin(env, &vt.0.encode_focus(focused))
+}
+
+// ---- Pty ----
+
+#[allow(clippy::too_many_arguments)] // mirrors the facade's `spawn/8`
+#[rustler::nif(schedule = "DirtyIo")]
+fn pty_spawn<'a>(
+    env: Env<'a>,
+    vt: ResourceArc<VtRes>,
+    id: u64,
+    cmd: String,
+    argv: Vec<String>,
+    envs: Vec<(String, String)>,
+    cwd: Option<String>,
+    cols: u16,
+    rows: u16,
+) -> Term<'a> {
+    let sink = Arc::new(BeamSink {
+        id,
+        subs: Mutex::new(Vec::new()),
+        exit: Mutex::new(None),
+    });
+    let opts = SpawnOptions {
+        id,
+        cmd,
+        args: argv,
+        env: envs,
+        cwd,
+        cols,
+        rows,
+    };
+    match Pty::spawn(Arc::clone(&vt.0), opts, sink.clone()) {
+        Ok(pty) => {
+            let pid = pty.os_pid();
+            (atoms::ok(), ResourceArc::new(PtyRes { pty, sink }), pid).encode(env)
+        }
+        Err(e) => (atoms::error(), spawn_error(env, &e)).encode(env),
+    }
+}
+
+fn spawn_error<'a>(env: Env<'a>, e: &std::io::Error) -> Term<'a> {
+    match e.raw_os_error() {
+        Some(libc::ENOENT) => atoms::enoent().encode(env),
+        Some(libc::EACCES) => atoms::eacces().encode(env),
+        Some(libc::ENOTDIR) => atoms::enotdir().encode(env),
+        Some(libc::ENOEXEC) => atoms::enoexec().encode(env),
+        Some(libc::E2BIG) => atoms::e2big().encode(env),
+        Some(n) => (atoms::os(), n).encode(env),
+        None => (atoms::spawn(), e.to_string()).encode(env),
+    }
+}
+
+#[rustler::nif]
+fn pty_write<'a>(env: Env<'a>, pty: ResourceArc<PtyRes>, data: Term<'a>) -> NifResult<Term<'a>> {
+    let bytes = Binary::from_iolist(data)?;
+    Ok(match pty.pty.write(bytes.as_slice()) {
+        Ok(()) => atoms::ok().encode(env),
+        Err(WriteError::Backpressure) => (atoms::error(), atoms::backpressure()).encode(env),
+        Err(WriteError::Closed) => (atoms::error(), atoms::closed()).encode(env),
+        Err(WriteError::TooLarge) => (atoms::error(), atoms::too_large()).encode(env),
+    })
+}
+
+#[rustler::nif]
+fn pty_resize(
+    pty: ResourceArc<PtyRes>,
+    cols: u16,
+    rows: u16,
+    cell_px: Option<(u32, u32)>,
+) -> NifResult<Atom> {
+    // Per-cell px (as in `vt_resize`) to the winsize's total px.
+    let total =
+        |cell: u32, n: u16| u16::try_from(cell.saturating_mul(n as u32)).unwrap_or(u16::MAX);
+    let px = cell_px.map(|(w, h)| (total(w, cols), total(h, rows)));
+    pty.pty.resize(cols, rows, px).map_err(raise)?;
+    Ok(atoms::ok())
+}
+
+#[rustler::nif]
+fn pty_kill(pty: ResourceArc<PtyRes>, sig: Term) -> NifResult<Atom> {
+    let signo = match sig.decode::<Atom>() {
+        Ok(a) if a == atoms::hup() => libc::SIGHUP,
+        Ok(a) if a == atoms::term() => libc::SIGTERM,
+        Ok(a) if a == atoms::kill() => libc::SIGKILL,
+        Ok(a) if a == atoms::int() => libc::SIGINT,
+        Ok(_) => return Err(Error::BadArg),
+        Err(_) => match sig.decode::<i32>()? {
+            n if n > 0 => n,
+            _ => return Err(Error::BadArg),
+        },
+    };
+    pty.pty.kill(signo).map_err(|e| match e.raw_os_error() {
+        Some(libc::EINVAL) => Error::BadArg,
+        _ => raise(e),
+    })?;
+    Ok(atoms::ok())
+}
+
+#[rustler::nif]
+fn pty_subscribe(env: Env, pty: ResourceArc<PtyRes>, pid: LocalPid) -> Atom {
+    // Some(exit) only when this call added the pid: a pid already subscribed got the exit
+    // through the broadcast (or an earlier subscribe).
+    let exited = {
+        let mut subs = lock(&pty.sink.subs);
+        match subs.iter().any(|(p, _)| *p == pid) {
+            true => None,
+            false => match env.monitor(&pty, &pid) {
+                Some(m) => {
+                    subs.push((pid, m));
+                    lock(&pty.sink.exit).clone()
+                }
+                // Already dead: nothing to deliver to.
+                None => return atoms::ok(),
+            },
+        }
+    };
+    with_caller(env, || pty.pty.request_full_damage());
+    // An exit captured above was broadcast before this pid joined; a later one reaches
+    // it through the broadcast.
+    if let Some(s) = exited {
+        let _ = env.send(&pid, (atoms::exit(), pty.sink.id, encode_status(env, &s)));
+    }
+    atoms::ok()
+}
+
+// ponytail: takes the blocking core lock and rebuilds the snapshot, so DirtyCpu; upgrade path is applying it on the reader thread between chunks.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn pty_set_hidden(env: Env, pty: ResourceArc<PtyRes>, hidden: bool) -> Atom {
+    with_caller(env, || pty.pty.set_hidden(hidden));
+    atoms::ok()
+}
+
+/// Set at load from `load_data` (`Mix.env() == :test`). One .so serves every Mix env, so
+/// test hooks are always compiled in and are inert (`{:error, :disabled}`) outside test.
+static TEST_HOOKS: AtomicBool = AtomicBool::new(false);
+
+#[rustler::nif]
+fn test_inject_reader_panic(env: Env, pty: ResourceArc<PtyRes>) -> Term {
+    if !TEST_HOOKS.load(Ordering::Acquire) {
+        return (atoms::error(), atoms::disabled()).encode(env);
+    }
+    pty.pty.inject_reader_panic();
+    atoms::ok().encode(env)
+}
+
+/// True when SIGCHLD is ignored or SA_NOCLDWAIT is set: the kernel would auto-reap our
+/// children and the per-pid waiter would lose their exit status.
+fn sigchld_auto_reaps() -> bool {
+    // SAFETY: a zeroed sigaction is a valid out-parameter; a null `act` only queries.
+    let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
+    let r = unsafe { libc::sigaction(libc::SIGCHLD, ptr::null(), &mut old) };
+    r != 0 || old.sa_sigaction == libc::SIG_IGN || old.sa_flags & libc::SA_NOCLDWAIT != 0
+}
+
+/// ERTS itself sets SIGCHLD to SIG_IGN with SA_NOCLDWAIT (its children are reaped by
+/// erl_child_setup, so it never waits). Restore the default disposition, which is not a
+/// handler; ERTS never waits on a child of its own, so it is unaffected.
+fn restore_default_sigchld() {
+    // SAFETY: a zeroed sigaction with SIG_DFL, no flags and an empty mask is valid.
+    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+    act.sa_sigaction = libc::SIG_DFL;
+    unsafe {
+        libc::sigemptyset(&mut act.sa_mask);
+        libc::sigaction(libc::SIGCHLD, &act, ptr::null_mut());
+    }
+}
+
+// Covered by the ExUnit exit-status tests: ERTS starts with auto-reaping SIGCHLD, so
+// `{:exit, id, 0}` arriving proves the restore. (A cargo test would race the pty tests.)
+pub fn load(_env: Env, info: Term) -> bool {
+    TEST_HOOKS.store(info.decode::<bool>().unwrap_or(false), Ordering::Release);
+    // Kernel panics surface as exit events and NIF raises; never print them (no stderr).
+    std::panic::set_hook(Box::new(|_| {}));
+    if sigchld_auto_reaps() {
+        restore_default_sigchld();
+    }
+    // Refuse to load if SIGCHLD still auto-reaps: exit statuses would be lost. ERTS reports
+    // this only as "Library load-call unsuccessful (1)".
+    !sigchld_auto_reaps()
+}

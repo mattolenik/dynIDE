@@ -37,9 +37,9 @@ defmodule HerdrScene.Cell do
   column order with no separators or dedup. Rows without overflow end in
   `<<0::32>>`. Encoding is canonical: a cluster of 12 bytes or fewer is
   always inline, so two rows are equal iff their binaries are equal.
-  Slicing records that carry overflow refs needs `slice/3` / `concat/1`,
-  which rebuild the trailer; rows without overflow slice and concatenate as
-  plain binaries.
+  `slice/3` and `concat/1` are the only sanctioned way to cut and join rows:
+  they rebuild the trailer when overflow refs are present and take a
+  plain-binary fast path otherwise.
   """
 
   import Bitwise
