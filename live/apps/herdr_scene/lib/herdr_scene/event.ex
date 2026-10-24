@@ -8,7 +8,7 @@ defmodule HerdrScene.Event do
       {:paste, binary}
       {:focus, boolean}
       {:resize, %{cols: n, rows: n, cell_px: {w, h} | nil}}
-      {:chrome, path, action}
+      {:chrome, path, {kind, %{x: n, y: n}}}
 
   Maps are open: required keys must be valid, unknown extra keys are accepted.
   Mouse `x`/`y` are scene cell coordinates (0-based, the host screen grid,
@@ -16,7 +16,15 @@ defmodule HerdrScene.Event do
 
   `mods` is a sorted, deduplicated subset of `mods/0`. `key` is a named key
   (`named_keys/0`) or a binary of exactly one grapheme.
+
+  Chrome events name a chrome node by path: a list of node ids from the
+  scene root's children down (the root id is not part of a path), e.g.
+  `[:tabs, {:tab, 2}]`. The action is `{kind, %{x, y}}` with scene-cell
+  coordinates and `kind` in `HerdrScene.Chrome.action_kinds/0`; bare-atom
+  actions are rejected.
   """
+
+  alias HerdrScene.Chrome
 
   @type t :: tuple
 
@@ -78,9 +86,24 @@ defmodule HerdrScene.Event do
     end
   end
 
-  def validate({:chrome, path, _action}) when is_list(path), do: :ok
+  def validate({:chrome, path, action}) when is_list(path), do: chrome_action(action)
   def validate({:chrome, _, _}), do: {:error, "chrome: path must be a list"}
   def validate(other), do: {:error, "unknown event #{inspect(other)}"}
+
+  defp chrome_action({kind, %{x: x, y: y}}) do
+    cond do
+      kind not in Chrome.action_kinds() ->
+        {:error, "chrome.action: unknown kind #{inspect(kind)}"}
+
+      not (nat?(x) and nat?(y)) ->
+        {:error, "chrome.action: x/y must be non-negative integers"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp chrome_action(_), do: {:error, "chrome.action: expected {kind, %{x, y}}"}
 
   defp valid_key?(k) when is_atom(k), do: k in @named
   defp valid_key?(k) when is_binary(k), do: String.valid?(k) and length(String.graphemes(k)) == 1

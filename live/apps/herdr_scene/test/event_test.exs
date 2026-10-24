@@ -21,7 +21,8 @@ defmodule HerdrScene.EventTest do
           {:focus, true},
           {:resize, %{cols: 80, rows: 24, cell_px: {8, 16}}},
           {:resize, %{cols: 80, rows: 24, cell_px: nil}},
-          {:chrome, [:tabs, 1], :click}
+          {:chrome, [:tabs, {:tab, 1}], {:click, %{x: 3, y: 0}}},
+          {:chrome, [:sidebar], {:scroll_down, %{x: 0, y: 0, extra: 1}}}
         ] do
       assert Event.validate(e) == :ok, inspect(e)
     end
@@ -42,12 +43,27 @@ defmodule HerdrScene.EventTest do
           {:paste, 1},
           {:focus, :yes},
           {:resize, %{cols: 0, rows: 24, cell_px: nil}},
-          {:chrome, :notalist, :click},
+          {:chrome, :notalist, {:click, %{x: 0, y: 0}}},
+          {:chrome, [:tabs], {:click, %{x: -1, y: 0}}},
+          {:chrome, [:tabs], {:click, %{x: 0}}},
           :junk
         ] do
       assert {:error, msg} = Event.validate(e), inspect(e)
       assert is_binary(msg)
     end
+  end
+
+  test "chrome actions" do
+    for k <-
+          [:click, :double_click, :right_click, :middle_click, :drag, :drop] ++
+            [:scroll_up, :scroll_down],
+        do: assert(Event.validate({:chrome, [:a], {k, %{x: 0, y: 0}}}) == :ok)
+
+    assert Event.validate({:chrome, [:tabs], :click}) ==
+             {:error, "chrome.action: expected {kind, %{x, y}}"}
+
+    assert {:error, msg} = Event.validate({:chrome, [:tabs], {:hover, %{x: 0, y: 0}}})
+    assert msg =~ "chrome.action: unknown kind :hover"
   end
 
   test "key/3 normalizes" do

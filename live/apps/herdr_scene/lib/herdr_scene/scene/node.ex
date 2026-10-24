@@ -2,7 +2,8 @@ defmodule HerdrScene.Scene.Node do
   @moduledoc """
   A chrome node: role, text, props and theme token only. Never glyphs, colours
   or escape sequences; each client maps roles and tokens to its own look.
-  `props` is open and is not policed by `HerdrScene.Scene.validate/1`.
+  `props` is open: `HerdrScene.Scene.validate/1` checks only the role's
+  required props (`HerdrScene.Chrome.required_props/1`) and accepts extras.
   """
 
   @type rect :: HerdrScene.Scene.rect()

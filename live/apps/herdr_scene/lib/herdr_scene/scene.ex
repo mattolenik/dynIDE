@@ -14,11 +14,21 @@ defmodule HerdrScene.Scene do
     * Cursor, selection, dim and link hover are semantic overlays.
     * Pane contents are either a ref (`{:ref, pane_id, gen}`, resolved by the
       client) or inline rows. `Pane.rect` is the content rect.
+    * Region rule: a chrome node with a `rect` is a region; children without
+      rects are laid out by the client inside their nearest region. Roles in
+      `HerdrScene.Chrome.region_roles/0` must carry a rect unless an ancestor
+      carries one.
+    * Chrome paths (`focus.chrome`, `{:chrome, path, action}` events) are
+      lists of node ids from the root's children down; the root id is not
+      part of a path.
 
   `validate/1` checks the whole scene and returns path-named errors such as
-  `"panes[1].rect: outside scene size"`. Node `props` are open and not checked.
+  `"panes[1].rect: outside scene size"`. Node `props` are open: each role's
+  required props (`HerdrScene.Chrome.required_props/1`) must be present and
+  valid, extra props are accepted.
   """
 
+  alias HerdrScene.Chrome
   alias HerdrScene.Scene.{Node, Overlay, Pane}
 
   @roles [
@@ -32,9 +42,18 @@ defmodule HerdrScene.Scene do
     :group,
     :spacer,
     :sidebar,
-    :modal
+    :modal,
+    :section,
+    :list,
+    :item,
+    :badge,
+    :input,
+    :keycap,
+    :menu,
+    :toast
   ]
-  @tokens [:default, :accent, :muted, :focus, :warning, :error, :inverse]
+  @tokens [:default, :accent, :muted, :focus, :warning, :error, :inverse] ++
+            [:success, :info, :selected, :surface, :strong]
   @shapes [:block, :underline, :bar, :default]
   @edges [:top, :bottom, :left, :right]
 
@@ -50,7 +69,27 @@ defmodule HerdrScene.Scene do
           | :spacer
           | :sidebar
           | :modal
-  @type token :: :default | :accent | :muted | :focus | :warning | :error | :inverse
+          | :section
+          | :list
+          | :item
+          | :badge
+          | :input
+          | :keycap
+          | :menu
+          | :toast
+  @type token ::
+          :default
+          | :accent
+          | :muted
+          | :focus
+          | :warning
+          | :error
+          | :inverse
+          | :success
+          | :info
+          | :selected
+          | :surface
+          | :strong
   @type shape :: :block | :underline | :bar | :default
   @type rect :: %{x: non_neg_integer, y: non_neg_integer, w: non_neg_integer, h: non_neg_integer}
   @type t :: %__MODULE__{
@@ -234,10 +273,13 @@ defmodule HerdrScene.Scene do
   # chrome
 
   defp chrome_errors(%{chrome: nil}), do: []
-  defp chrome_errors(%{chrome: %Node{} = n, size: size}), do: node_errors("chrome", n, size)
+
+  defp chrome_errors(%{chrome: %Node{} = n, size: size}),
+    do: node_errors("chrome", n, size, false)
+
   defp chrome_errors(_), do: ["chrome: expected %Node{} or nil"]
 
-  defp node_errors(path, %Node{} = n, size) do
+  defp node_errors(path, %Node{} = n, size, in_region) do
     role = if n.role in @roles, do: [], else: ["#{path}.role: unknown #{inspect(n.role)}"]
 
     token =
@@ -253,22 +295,28 @@ defmodule HerdrScene.Scene do
     props = if is_map(n.props), do: [], else: ["#{path}.props: expected map"]
     rect = if n.rect == nil, do: [], else: rect_errors("#{path}.rect", n.rect, size)
 
-    role ++ token ++ text ++ props ++ rect ++ children_errors(path, n.children, size)
+    role ++
+      token ++
+      text ++
+      props ++
+      rect ++
+      Chrome.errors(path, n, in_region: in_region) ++
+      children_errors(path, n.children, size, in_region or n.rect != nil)
   end
 
-  defp node_errors(path, _, _), do: ["#{path}: not a %Node{}"]
+  defp node_errors(path, _, _, _), do: ["#{path}: not a %Node{}"]
 
-  defp children_errors(path, children, size) when is_list(children) do
+  defp children_errors(path, children, size, in_region) when is_list(children) do
     children
     |> Enum.with_index()
     |> Enum.flat_map(fn {c, i} ->
       cpath = "#{path}.children[#{i}]"
       dup = if sibling_dup?(children, i), do: ["#{cpath}.id: duplicate sibling id"], else: []
-      dup ++ node_errors(cpath, c, size)
+      dup ++ node_errors(cpath, c, size, in_region)
     end)
   end
 
-  defp children_errors(path, _, _), do: ["#{path}.children: not a list"]
+  defp children_errors(path, _, _, _), do: ["#{path}.children: not a list"]
 
   defp sibling_dup?(children, i) do
     case Enum.at(children, i) do

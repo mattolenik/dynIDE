@@ -46,6 +46,29 @@ defmodule HerdrScene.ProtocolTest do
     end
   end
 
+  @alert %{kind: :notification, level: :done, title: "build", body: nil, pane: 3, sound: :done}
+
+  test "alert messages" do
+    assert Protocol.validate_server_msg({:alert, @alert}) == :ok
+
+    bare = %{kind: :notification, level: :attention, title: nil, body: nil, pane: nil, sound: nil}
+    assert Protocol.validate_server_msg({:alert, Map.put(bare, :extra, 1)}) == :ok
+
+    for bad <- [
+          %{@alert | level: :loud},
+          %{@alert | kind: :popup},
+          %{@alert | kind: :bell},
+          %{@alert | title: :x},
+          %{@alert | body: 1},
+          %{@alert | pane: 0},
+          %{@alert | sound: :beep},
+          Map.delete(@alert, :sound)
+        ] do
+      assert {:error, msg} = Protocol.validate_server_msg({:alert, bad}), inspect(bad)
+      assert msg =~ "alert"
+    end
+  end
+
   test "server messages" do
     scene = HerdrScene.SceneSample.build()
 

@@ -20,6 +20,11 @@ defmodule HerdrScene.Protocol do
     * `{:scene, %HerdrScene.Scene{}}`
     * `{:damage, pane_id, gen}` (ref transport) / `{:rows, pane_id, gen, [{n, binary}]}` (inline)
     * `{:notice, %{level: :info | :warning | :error, text: binary}}`
+    * `{:alert, %{kind: :notification, level: :info | :attention | :done,
+      title: binary | nil, body: binary | nil, pane: pos_integer | nil,
+      sound: :done | :request | nil}}`: an agent notification for the client to surface
+      (toast, sound, desktop notification) as it chooses; all keys required. `kind` is
+      required so the alert vocabulary can grow; pane bells are not alerts
     * `{:ack, seq}`
     * `{:handoff, map}`
     * `{:clipboard, %{text: binary, source: :selection | :pane}}`: text for the client to put
@@ -54,6 +59,7 @@ defmodule HerdrScene.Protocol do
   alias HerdrScene.{Event, Scene}
 
   @attach_keys [:kind, :transport, :size, :cell_px, :caps, :client]
+  @alert_keys [:kind, :level, :title, :body, :pane, :sound]
 
   @spec endpoint() :: :herdr_client_endpoint
   def endpoint, do: :herdr_client_endpoint
@@ -103,6 +109,12 @@ defmodule HerdrScene.Protocol do
   def validate_server_msg({:notice, %{level: l, text: t}})
       when l in [:info, :warning, :error] and is_binary(t),
       do: :ok
+
+  def validate_server_msg({:alert, %{} = a}) do
+    if Enum.all?(@alert_keys, &Map.has_key?(a, &1)),
+      do: validate_alert(a),
+      else: {:error, "alert: missing required keys #{inspect(@alert_keys)}"}
+  end
 
   def validate_server_msg({:ack, seq}) do
     if nat?(seq), do: :ok, else: {:error, "ack.seq: expected non_neg_integer"}
@@ -168,6 +180,40 @@ defmodule HerdrScene.Protocol do
         :ok
     end
   end
+
+  defp validate_alert(a) do
+    cond do
+      a.kind != :notification ->
+        {:error, "alert.kind: expected :notification"}
+
+      a.level not in [:info, :attention, :done] ->
+        {:error, "alert.level: unknown #{inspect(a.level)}"}
+
+      true ->
+        validate_alert_fields(a)
+    end
+  end
+
+  defp validate_alert_fields(a) do
+    cond do
+      not opt_binary?(a.title) ->
+        {:error, "alert.title: expected binary or nil"}
+
+      not opt_binary?(a.body) ->
+        {:error, "alert.body: expected binary or nil"}
+
+      not (is_nil(a.pane) or (is_integer(a.pane) and a.pane > 0)) ->
+        {:error, "alert.pane: expected pos_integer or nil"}
+
+      a.sound not in [:done, :request, nil] ->
+        {:error, "alert.sound: expected :done, :request or nil"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp opt_binary?(v), do: is_nil(v) or is_binary(v)
 
   defp size?(%{cols: c, rows: r}), do: is_integer(c) and c > 0 and is_integer(r) and r > 0
   defp size?(_), do: false
