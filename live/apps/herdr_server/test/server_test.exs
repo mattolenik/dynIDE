@@ -1052,6 +1052,16 @@ defmodule HerdrServer.ServerTest do
     refute :sys.get_state(pty(2)).hidden
   end
 
+  test "panes of an inactive workspace are hidden" do
+    {c, s} = client()
+    scene(c)
+    input(s, c, 1, Event.key("b", [:ctrl]))
+    input(s, c, 2, Event.key("N"))
+    scene_until(c, &match?([%{id: 2}], &1.panes))
+    assert eventually(fn -> :sys.get_state(pty(1)).hidden end)
+    refute :sys.get_state(pty(2)).hidden
+  end
+
   test "output floods are coalesced: session queues drain" do
     {c, s} = client()
     {c2, s2} = client(%{cols: 100, rows: 30})

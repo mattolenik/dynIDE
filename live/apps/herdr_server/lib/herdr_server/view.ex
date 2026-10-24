@@ -58,7 +58,7 @@ defmodule HerdrServer.View do
     %Pane{
       id: id,
       rect: rect,
-      border: border && %{border | title: meta.title},
+      border: border && %{border | title: meta.title || Map.get(meta, :name)},
       rows: if(transport == :inline, do: {:inline, []}, else: {:ref, id, meta.layout_gen})
     }
   end

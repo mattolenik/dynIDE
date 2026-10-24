@@ -17,7 +17,7 @@ defmodule HerdrServer.App.Actions do
   Ponytail: panes' `layout_gen` is not bumped here; the Store owns resize bookkeeping.
   """
 
-  alias HerdrServer.App.{Commands, Focus, Keybinds, Session, Ui}
+  alias HerdrServer.App.{Commands, Focus, Keybinds, Session, Ui, Workspaces}
   alias HerdrServer.Layout
   alias HerdrServer.View.Frame
 
@@ -215,6 +215,17 @@ defmodule HerdrServer.App.Actions do
   @spec toggle_sidebar(app()) :: {app(), [effect()]}
   def toggle_sidebar(app),
     do: {reframe(update_in(app.ui.sidebar.collapsed, &(not &1))), []}
+
+  defdelegate new_workspace(app), to: Workspaces
+  defdelegate switch_workspace(app, n), to: Workspaces
+  defdelegate switch_workspace_id(app, id), to: Workspaces
+  defdelegate close_workspace(app), to: Workspaces
+  defdelegate next_workspace(app), to: Workspaces
+  defdelegate previous_workspace(app), to: Workspaces
+  defdelegate focus_pane(app, id), to: Workspaces
+  defdelegate rename_tab(app, tab_id, name), to: Workspaces
+  defdelegate rename_workspace(app, ws_id, name), to: Workspaces
+  defdelegate rename_pane(app, id, name), to: Workspaces
 
   # --- helpers ---
 

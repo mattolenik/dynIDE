@@ -121,6 +121,15 @@ defmodule HerdrServer.ViewTest do
     assert Enum.at(s.panes, 1).border.title == "vim"
   end
 
+  test "renamed pane shows as border title unless the program set one" do
+    {app, _} = Actions.rename_pane(pfx(fresh(80, 24), "v"), 2, "build")
+    assert Enum.at(View.compute(app, client(80, 24)).panes, 1).border.title == "build"
+    {app, _} = Actions.apply(app, {:pane_title, 2, "vim"})
+    assert Enum.at(View.compute(app, client(80, 24)).panes, 1).border.title == "vim"
+    legacy = update_in(app.session.panes[2], &Map.delete(&1, :name))
+    assert Enum.at(View.compute(legacy, client(80, 24)).panes, 1).border.title == "vim"
+  end
+
   test "chrome carries no colours or long binaries" do
     s = View.compute(pfx(pfx(fresh(100, 30), "v"), "-"), client(100, 30))
     assert Enum.all?(walk(s.chrome), &plain?/1)
