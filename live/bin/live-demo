@@ -1,8 +1,8 @@
 #!/bin/sh
 # Throwaway tty/blit demo (mix herdr_term.demo). The VM never touches stdio:
 # stdin is /dev/null and stdout/stderr go to the log; it paints /dev/tty via
-# the NIF. The tty is restored here after the VM exits, whatever the cause
-# (including kill -9, which no destructor survives).
+# the NIF. scripts/tty_guard.sh restores the tty after the VM exits, whatever
+# the cause (including kill -9, which no destructor survives).
 set -u
 log=${LIVE_DEMO_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/live-demo.log}
 case $log in /*) ;; *) log=$PWD/$log ;; esac
@@ -16,15 +16,4 @@ done
 cd "$(dirname "$self")/.." || exit 1
 export MIX_ENV="${MIX_ENV:-dev}"
 mix compile </dev/null >>"$log" 2>&1 || { echo "live-demo: mix compile failed, see $log" >&2; exit 1; }
-saved=$(stty -g </dev/tty) || exit 1
-# Signals to the job (e.g. `kill %1`) reach the VM too; catch them here so sh
-# waits for the VM and still restores. Not `trap ''`: the VM would inherit it.
-sig=0
-trap 'sig=1' HUP INT QUIT TERM
-elixir --erl "-noshell -noinput" -S mix herdr_term.demo </dev/null >>"$log" 2>&1
-status=$?
-[ "$sig" = 1 ] && [ "$status" = 0 ] && status=1
-stty "$saved" </dev/tty
-# Ruling 5 restore sequence; no kitty pop, the demo pushes no kitty flags.
-printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1016l\033[?2004l\033[?1004l\033]8;;\033\\\033[0m\033[0 q\033[?25h\033[?7h\033[?1049l' >/dev/tty
-exit "$status"
+exec "$PWD/scripts/tty_guard.sh" -s elixir --erl "-noshell -noinput" -S mix herdr_term.demo </dev/null >>"$log" 2>&1

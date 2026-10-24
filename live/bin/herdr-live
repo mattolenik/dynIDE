@@ -1,8 +1,9 @@
 #!/bin/sh
-# Headless herdr-live launcher (dev build). The VM never touches the terminal:
-# stdin is /dev/null and stdout/stderr go to the log, including first-compile output.
-# HERDR_LIVE_HEADLESS=1 starts no terminal client (server only); otherwise the
-# local terminal client is started in the same VM.
+# herdr-live launcher (dev build). The VM never touches stdio: stdin is
+# /dev/null and stdout/stderr go to the log, including first-compile output.
+# HERDR_LIVE_HEADLESS=1 starts no terminal client (server only) and never
+# touches the tty; otherwise the local terminal client paints /dev/tty in the
+# same VM and scripts/tty_guard.sh restores the tty after the VM exits, even on kill -9.
 log=${HERDR_LIVE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/herdr-live.log}
 case $log in /*) ;; *) log=$PWD/$log ;; esac
 mkdir -p "$(dirname "$log")" || exit 1
@@ -15,4 +16,5 @@ done
 cd "$(dirname "$self")/.." || exit 1
 export MIX_ENV="${MIX_ENV:-dev}"
 exec </dev/null >>"$log" 2>&1
-exec elixir --erl "-noshell -noinput" -S mix run --no-halt
+[ "${HERDR_LIVE_HEADLESS:-}" = 1 ] && exec elixir --erl "-noshell -noinput" -S mix run --no-halt
+exec "$PWD/scripts/tty_guard.sh" elixir --erl "-noshell -noinput" -S mix run --no-halt
