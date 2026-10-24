@@ -549,8 +549,8 @@ mechanism behind "never lose terminals" and the gate should prove it.
 | metric | target |
 |---|---|
 | keystroke → glass, local echo, idle | ≤ herdr + 1ms p95 (includes the client-protocol hop) |
-| frame cost, 1 vs 15 full panes, fixed geometry | within 2× herdr's ratio |
-| `cat` 100MB in 15 panes | no scheduler stall > 10ms; typing in another pane stays ≤ 20ms |
+| frame cost, 1 vs 15 full panes, fixed geometry | 15-pane full repaint ≤ herdr's at the same geometry; record the 1 vs 15 ratio (M6 gate change: was "within 2× herdr's ratio") |
+| `cat` 100MB in 15 panes | typing in another pane stays ≤ 20ms p95; scheduler stall no worse than the host's OS-only floor (a BEAM probe next to 15 pty floods with no herdr code), and ≤ 10ms where that floor allows (M6 gate change: was "no scheduler stall > 10ms") |
 | edit `Client.Term.Render`, save → visible | < 500ms p95 |
 | edit `View.compute` (chrome tree change), save → visible | < 500ms p95 |
 | add a field to `App.Ui` under load → visible | < 1s p95; record the fan-out module count |
@@ -577,7 +577,17 @@ remote, GUI client.
 - **Composition cost in Elixir.** Packed binaries and dirty rows should make
   it fine; if 15-pane full repaints miss the metric, the fallback is a
   compose-helper NIF in `herdr_term` that takes rows and an overlay list but
-  still holds no policy.
+  still holds no policy. (M6 gate change: measured. The cost that scales with
+  panes is Elixir building one term per pane row segment, not byte copying, so
+  a row-assembly NIF saved nothing at 15 panes; the next lever, if per-segment
+  work grows, is a NIF that places whole pane rectangles. See
+  `results/m6-gate.md`.)
+- **PTY floods starve the schedulers (M6 gate change).** Parallel PTY floods
+  cost the OS kernel super-linear sys CPU (macOS) or plain CPU contention
+  (Linux) and preempt BEAM scheduler threads; no process on the host escapes
+  it. The kernel demotes a reader that floods (macOS utility QoS, Linux nice
+  10) and promotes it on the first read after an idle window; on Linux the
+  nice is sticky without `CAP_SYS_NICE`.
 - **Scene abstraction leaking terminal assumptions.** The chrome tree will be
   designed with only a terminal renderer to test it against. Mitigation: a
   throwaway HTML renderer for the scene (a few hundred lines, dev-only) in
