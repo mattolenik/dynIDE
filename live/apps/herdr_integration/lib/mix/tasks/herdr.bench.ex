@@ -10,11 +10,14 @@ if Mix.env() == :test do
     until M2). Targets are judged at M6.
 
       1. keystroke -> glass, idle, fast path and forced slow path
-      2. frame cost (`Compose.frame/3` + `Fake.Blit.frame/3`) at 200x50, 1 vs 15 full panes
-      3. scheduler stall and typing latency while 15 panes each get 100MiB of output
+      2. second client: a key typed in client A, timed until client B (80x24) shows it
+      3. frame cost (`Compose.frame/3` + `Fake.Blit.frame/3`) at `--size`, 1 vs 15 full panes
+      4. scheduler stall and typing latency while 15 panes each get 100MiB of output
 
     Prints a markdown table and writes `_build/bench/m3.json` (`m3-real.json` with
-    `--kernel real`, `-quick` suffix for quick runs). `--quick` (or `HERDR_BENCH_QUICK=1`)
+    `--kernel real`, `-COLSxROWS` with a non-default `--size`, `-quick` suffix for quick
+    runs). `--size COLSxROWS` (default 200x50, at least 60x20 for 16 panes) is client A's
+    terminal and the frame-cost geometry. `--quick` (or `HERDR_BENCH_QUICK=1`)
     shrinks every metric 10x. `--flood-mb N` sets the bytes per flooded pane (MiB,
     default 100). `--compose raw|inline|budget` picks how frame cost calls Compose:
     `raw` (default) is M3's direct `Compose.frame/3`; `inline` and `budget` go through
@@ -37,6 +40,9 @@ if Mix.env() == :test do
     alias HerdrTerm.Kernel.Fake.{Blit, Tty}
 
     @size {200, 50}
+    @min_size {60, 20}
+    @second_size {80, 24}
+    @second_keys 200
     @chunk 65_536
     @key_timeout_ms 5000
     @mailbox_limit 100
@@ -49,7 +55,13 @@ if Mix.env() == :test do
 
       {opts, _, _} =
         OptionParser.parse(args,
-          strict: [quick: :boolean, kernel: :string, flood_mb: :integer, compose: :string]
+          strict: [
+            quick: :boolean,
+            kernel: :string,
+            flood_mb: :integer,
+            compose: :string,
+            size: :string
+          ]
         )
 
       quick? = opts[:quick] == true or System.get_env("HERDR_BENCH_QUICK") == "1"
@@ -65,12 +77,13 @@ if Mix.env() == :test do
         flood_bytes: div(Keyword.get(opts, :flood_mb, 100) * 1024 * 1024, s),
         flood_min_keys: div(200, s),
         compose: Keyword.get(opts, :compose, "raw"),
+        size: size(opts[:size]),
         file: nil
       }
 
       cfg = if kernel == :real, do: real_kernel(cfg), else: cfg
       Driver.reset()
-      client = start_client(@size)
+      client = start_client(cfg.size)
       if kernel == :real, do: exec_cat(client)
 
       result =
@@ -83,6 +96,25 @@ if Mix.env() == :test do
         end
 
       report(result, cfg)
+    end
+
+    defp size(nil), do: @size
+
+    defp size(arg) do
+      {min_cols, min_rows} = @min_size
+
+      case Regex.run(~r/^(\d+)x(\d+)$/, arg) do
+        [_, c, r] ->
+          {cols, rows} = {String.to_integer(c), String.to_integer(r)}
+
+          if cols < min_cols or rows < min_rows,
+            do: Mix.raise("bench: --size too small (min #{min_cols}x#{min_rows})")
+
+          {cols, rows}
+
+        nil ->
+          Mix.raise("bench: --size must be COLSxROWS, got #{inspect(arg)}")
+      end
     end
 
     # Restarts herdr_server on the real kernel (Kernel.load reads the env at app start).
@@ -137,6 +169,7 @@ if Mix.env() == :test do
       fast = keystrokes(client, pane, cfg.keys)
       slow = slow_path(fn -> keystrokes(client, pane, cfg.keys) end)
       paced = type_loop(client, pane, &(&1 >= cfg.keys), :paced)
+      second = second_client(client, pane, cfg)
       frame_1 = frame_cost(Driver.scene(client), cfg)
       frame_15 = frame_cost(Driver.grow(client, 15), cfg)
 
@@ -144,6 +177,7 @@ if Mix.env() == :test do
         fast: fast,
         slow: slow,
         paced: paced,
+        second: second,
         frame_1: frame_1,
         frame_15: frame_15,
         stall: stall(client, cfg)
@@ -204,25 +238,29 @@ if Mix.env() == :test do
     # `stop?.(count)`. Each sample waits for its frame; `:idle` then waits until no frame
     # came for longer than the client's frame pacing (a keystroke makes one frame: rows
     # and cursor travel together), `:paced` does not; both sleep 2ms.
-    defp type_loop(client, pane, stop?, mode),
-      do: type_loop(client, pane, {stop?, mode}, [], 0)
+    # `view` is where samples are read: a tty, the pane's rect on it, and the cursor bounds
+    # (default: client A's own frames and rect).
+    defp type_loop(client, pane, stop?, mode, view \\ nil) do
+      view = view || %{tty: Driver.tty(client), rect: pane.rect, w: pane.rect.w, h: pane.rect.h}
+      loop(client, pane, {stop?, mode, view}, [], 0)
+    end
 
-    defp type_loop(client, pane, {stop?, mode} = how, acc, done) do
+    defp loop(client, pane, {stop?, mode, view} = how, acc, done) do
       {x, y} = at = cursor(pane)
 
       cond do
         stop?.(done) ->
           summarize(acc)
 
-        x >= pane.rect.w - 1 or y >= pane.rect.h ->
+        x >= view.w - 1 or y >= view.h ->
           clear(client, pane, at)
-          type_loop(client, pane, how, acc, done)
+          loop(client, pane, how, acc, done)
 
         true ->
-          sample = keystroke(client, pane, at, <<?a + rem(done, 26)>>)
-          if mode == :idle, do: quiet(Driver.tty(client))
+          sample = keystroke(client, view, at, <<?a + rem(done, 26)>>)
+          if mode == :idle, do: quiet(view.tty)
           Process.sleep(2)
-          type_loop(client, pane, how, [sample | acc], done + 1)
+          loop(client, pane, how, [sample | acc], done + 1)
       end
     end
 
@@ -233,8 +271,8 @@ if Mix.env() == :test do
       end
     end
 
-    defp keystroke(client, %{rect: r}, {x, y}, ch) do
-      tty = Driver.tty(client)
+    defp keystroke(client, %{tty: tty, rect: r}, {x, y}, ch) do
+      drain(Driver.tty(client))
       drain(tty)
       before_key()
       t0 = :erlang.monotonic_time(:nanosecond)
@@ -307,10 +345,28 @@ if Mix.env() == :test do
 
     defp deadline, do: System.monotonic_time(:millisecond) + @key_timeout_ms
 
+    # Attaches client B at @second_size and types into A's focused pane (B's view of it:
+    # its own rect, cursor kept inside both rects), timing until B's cell shows the key.
+    # B is stopped after, so A drives the size again; A then waits until quiet.
+    defp second_client(client, pane, cfg) do
+      b = start_client(@second_size)
+      tty = Driver.tty(b)
+
+      try do
+        %{rect: rb} = Enum.find(Driver.scene(b).panes, &(&1.id == pane.id))
+        view = %{tty: tty, rect: rb, w: min(rb.w, pane.rect.w), h: min(rb.h, pane.rect.h)}
+        type_loop(client, pane, &(&1 >= div(@second_keys * cfg.keys, 1000)), :idle, view)
+      after
+        Supervisor.stop(b)
+        drain(tty)
+        :ok = Driver.quiesce(client)
+      end
+    end
+
     # -- frame cost ---------------------------------------------------------
 
     defp frame_cost(scene, cfg) do
-      {cols, rows} = @size
+      {cols, rows} = cfg.size
       {:ok, tty} = Tty.open(%{size: {cols, rows, 0, 0}})
       theme = Theme.default()
       full = full_rows(scene, "x")
@@ -546,6 +602,7 @@ if Mix.env() == :test do
         keystroke_fast: r.fast,
         keystroke_slow: r.slow,
         keystroke_paced: r.paced,
+        second_client: r.second,
         frame_1: f1,
         frame_15: f15,
         stall: st,
@@ -553,7 +610,7 @@ if Mix.env() == :test do
       }
 
       name =
-        "bench/m3#{if cfg.kernel == :real, do: "-real"}#{if cfg.quick, do: "-quick"}.json"
+        "bench/m3#{if cfg.kernel == :real, do: "-real"}#{size_suffix(cfg)}#{if cfg.quick, do: "-quick"}.json"
 
       path = Mix.Project.build_path() |> Path.dirname() |> Path.join(name)
       File.mkdir_p!(Path.dirname(path))
@@ -562,9 +619,15 @@ if Mix.env() == :test do
       Mix.shell().info("\nwrote #{Path.relative_to_cwd(path)}")
     end
 
+    defp size_suffix(%{size: @size}), do: ""
+    defp size_suffix(%{size: {c, r}}), do: "-#{c}x#{r}"
+
     defp table(r, ratio, cfg) do
       %{frame_1: f1, frame_15: f15, stall: st} = r
       env = environment()
+      {cols, rows} = cfg.size
+      geo = "#{cols}x#{rows}"
+      {bc, br} = @second_size
 
       """
       ## herdr-live M3 bench: #{title(cfg)}; targets judged at M6
@@ -575,10 +638,11 @@ if Mix.env() == :test do
       | keystroke -> glass idle, fast path (n=#{r.fast.n}) | #{keys(r.fast)} | <= herdr + 1ms p95 |
       | keystroke -> glass idle, slow path (n=#{r.slow.n}) | #{keys(r.slow)} | <= herdr + 1ms p95 |
       | keystroke -> glass, 2ms after each frame, fast path (n=#{r.paced.n}) | #{keys(r.paced)} | reference |
-      | frame cost 200x50, 1 full pane (repaint) | #{frame(f1.repaint)} | |
-      | frame cost 200x50, #{f15.panes} full panes (repaint) | #{frame(f15.repaint)} | |
+      | second client: key in A -> visible in B (n=#{r.second.n}) | #{keys(r.second)} | reference |
+      | frame cost #{geo}, 1 full pane (repaint) | #{frame(f1.repaint)} | |
+      | frame cost #{geo}, #{f15.panes} full panes (repaint) | #{frame(f15.repaint)} | |
       | frame cost ratio #{f15.panes}/1 (mean) | #{fmt(ratio)}x | within 2x herdr's ratio |
-      | frame cost 200x50, #{f15.panes} panes, 1 pane dirty (full compose, no repaint) | #{frame(f15.dirty)} | reference |
+      | frame cost #{geo}, #{f15.panes} panes, 1 pane dirty (full compose, no repaint) | #{frame(f15.dirty)} | reference |
       | flood: #{st.panes} panes x #{div(st.bytes_per_pane, 1024 * 1024)}MiB, wall time | #{st.wall_ms} ms | |
       | flood: Process.sleep(1) probe max overshoot | #{fmt(st.probe_max_ms)} ms | no stall > 10ms |
       | flood: long_schedule >= 5ms events (max) | #{st.monitor.long_schedule.count} (#{st.monitor.long_schedule.max_ms} ms, #{st.monitor.long_schedule.max_who}, in #{st.monitor.long_schedule.max_in}, out #{st.monitor.long_schedule.max_out}) | |
@@ -591,7 +655,10 @@ if Mix.env() == :test do
       One keystroke at a time, waiting for its frame. Idle rows then wait until no frame for
       min_frame_interval_ms + 2ms (each keystroke yields one frame: the cursor comes from
       the row cache with the rows), then 2ms; the "2ms after each frame" row and flood
-      typing only sleep 2ms, so frame pacing can delay the next key's frame. Slow path = fast-path
+      typing only sleep 2ms, so frame pacing can delay the next key's frame. Second client:
+      client B (#{bc}x#{br}) attached to A's (#{geo}) session; keys are typed into A on the
+      fast path, idle mode, timed until B's own cell for the pane cursor shows the char
+      (cursor kept inside both rects; B detaches afterwards). Slow path = fast-path
       `:persistent_term` republished with `passthrough: false` (re-asserted before each key),
       so keys go client Input -> Client.Session -> App.Store. Client frames are paced at
       min_frame_interval_ms. Frame cost = `Compose.frame/3` + `Fake.Blit.frame/3`,

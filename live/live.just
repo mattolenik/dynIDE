@@ -42,6 +42,13 @@ live-demo:
 live-bench:
     cd '{{live_dir}}' && MIX_ENV=test mix herdr.bench
 
+# M6 gate: keystroke -> glass in a real pty, herdr (reference) then herdr-live (GLASS lines)
+live-bench-glass:
+    cd '{{live_dir}}/..' && cargo build --release --locked
+    cd '{{live_dir}}' && mix compile
+    python3 '{{live_dir}}/bench/gate/glass.py' herdr --n 500
+    python3 '{{live_dir}}/bench/gate/glass.py' herdr-live --n 500
+
 # Reload benchmarks (M4): phase 1 latency and guard overhead, then every slice-1
 # reload metric script (bench/reload/*.sh; each prints a RESULT line)
 live-bench-reload:
