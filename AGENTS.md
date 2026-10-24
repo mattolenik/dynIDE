@@ -65,13 +65,22 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   0.16.0) and `live/native/herdr_term` (NIF module `HerdrTerm.Native`).
   Rustler `~> 0.38.0`, crate `=0.38.0`. One NIF module per crate; the
   design's `Native.*` modules are Elixir facades over it.
+- Other crates: `live/native/herdr_fdpass` (SCM_RIGHTS frame codec shared by
+  kernel and broker) and `live/native/herdr_broker` (the broker binary: VM
+  supervisor, fd and blob holder, warm standby, handoff state machine, host
+  tty guard). `live/live.just` lists every crate in `live_crates`.
 - Each crate is its own Cargo workspace (empty `[workspace]`), so the root
   `[patch.crates-io] portable-pty` is not inherited: repeat it with
   `path = "../../../vendor/portable-pty"` when a crate needs portable-pty.
-- `live/bin/herdr-live`: dev launcher (`mix run --no-halt` under
-  `-noshell -noinput`), stdio sent to `$HERDR_LIVE_LOG` (default
+- `live/bin/herdr-live`: dev launcher. It runs the broker, which spawns the
+  VM (`mix run --no-halt` under `-noshell -noinput`) plus one warm standby;
+  stdio goes to `$HERDR_LIVE_LOG` (default
   `${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/herdr-live.log`).
-  SIGTERM stops it cleanly. Smoke test: `live/scripts/launcher_smoke.sh`.
+  SIGTERM stops it cleanly with no handoff. Subcommands: `kernel-restart`
+  (graceful handoff), `status`, `rollback [n]`. Smoke tests:
+  `live/scripts/launcher_smoke.sh`, `attached_smoke.sh`,
+  `live/bench/handoff/smoke.exs`. A VM learns its role over the link when
+  `HERDR_BROKER_SOCK` is set; without it (tests, iex) it starts standalone.
 - Rust `src/` is herdr, kept as reference until the M6 gate, pruned in M7.
 
 Adding an app: from `live/`, `mix new apps/<name>`; depend only on
@@ -132,7 +141,11 @@ Elixir NIF module, and a facade function in the `Native.*` module it belongs to.
 - Calls from thin GenServers into editable code go through `safe_apply` /
   `Reload.Guard.run`. That boundary is the only place a blanket
   `rescue`/`catch` of raise, throw, and exit is allowed.
-- NIF modules are not hot reloaded; kernel changes go through handoff.
+- NIF modules are not hot reloaded; kernel changes go through handoff
+  (`herdr-live kernel-restart`). Clients get
+  `{:handoff, %{phase: :begin | :aborted | :released | :adopted, ...}}`;
+  hold input on `:begin`, replay on `:aborted`, re-attach on `:released`.
+  The reload pipeline runs only in the primary VM.
 
 ## Kernel (Rust NIFs)
 
