@@ -264,7 +264,7 @@ fn vt_new(cols: u16, rows: u16, max_scrollback: usize) -> NifResult<(Atom, Resou
     Ok((atoms::ok(), ResourceArc::new(VtRes(vt))))
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyCpu")]
 fn vt_feed(vt: ResourceArc<VtRes>, bytes: Binary) -> u64 {
     vt.0.write(bytes.as_slice());
     vt.0.refresh()
@@ -537,16 +537,21 @@ fn pty_kill(pty: ResourceArc<PtyRes>, sig: Term) -> NifResult<Atom> {
 
 #[rustler::nif]
 fn pty_subscribe(env: Env, pty: ResourceArc<PtyRes>, pid: LocalPid) -> Atom {
+    // Some(exit) only when this call added the pid: a pid already subscribed got the exit
+    // through the broadcast (or an earlier subscribe).
     let exited = {
         let mut subs = lock(&pty.sink.subs);
-        if !subs.iter().any(|(p, _)| *p == pid) {
-            match env.monitor(&pty, &pid) {
-                Some(m) => subs.push((pid, m)),
+        match subs.iter().any(|(p, _)| *p == pid) {
+            true => None,
+            false => match env.monitor(&pty, &pid) {
+                Some(m) => {
+                    subs.push((pid, m));
+                    lock(&pty.sink.exit).clone()
+                }
                 // Already dead: nothing to deliver to.
                 None => return atoms::ok(),
-            }
+            },
         }
-        lock(&pty.sink.exit).clone()
     };
     with_caller(env, || pty.pty.request_full_damage());
     // An exit captured above was broadcast before this pid joined; a later one reaches

@@ -80,6 +80,16 @@ defmodule HerdrServer.Native.PtyTest do
     assert Pty.subscribe(pty, self()) == :ok
     assert_receive {:damage, 3, _}
     assert_receive {:exit, 3, 5}, 2000
+    refute_receive {:exit, 3, _}, 200
+  end
+
+  test "resubscribing after exit does not resend the exit" do
+    {_vt, pty} = spawn_sh(8, ["-c", "exit 0"])
+    :ok = Pty.subscribe(pty, self())
+    assert_receive {:exit, 8, 0}, 2000
+    assert Pty.subscribe(pty, self()) == :ok
+    assert_receive {:damage, 8, _}
+    refute_receive {:exit, 8, _}, 200
   end
 
   test "kill reports the signal, resize and set_hidden work" do
@@ -100,6 +110,7 @@ defmodule HerdrServer.Native.PtyTest do
     Pty.write(pty, "echo boom\n")
     assert_receive {:exit, 5, {:panic, reason}}, 2000
     assert is_binary(reason)
+    refute_receive {:exit, 5, _}, 200
     assert {_, rows} = Vt.full_rows(vt)
     assert length(rows) == 24
     assert Process.alive?(Process.whereis(HerdrServer.Supervisor))

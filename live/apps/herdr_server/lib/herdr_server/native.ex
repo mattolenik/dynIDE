@@ -3,8 +3,10 @@ defmodule HerdrServer.Native do
   Rustler NIF module backed by the `herdr_kernel` crate. Call it through the
   `HerdrServer.Native.Vt` and `HerdrServer.Native.Pty` facades.
 
-  Loading fails if SIGCHLD is ignored or has `SA_NOCLDWAIT` (auto-reaping would
-  lose child exit statuses); ERTS reports that as "Library load-call unsuccessful".
+  ERTS runs with SIGCHLD ignored and `SA_NOCLDWAIT` set, which auto-reaps children
+  and would lose their exit statuses, so loading resets SIGCHLD to `SIG_DFL`. Loading
+  fails only if auto-reaping persists after that; ERTS reports it as "Library
+  load-call unsuccessful".
   """
   use Rustler,
     otp_app: :herdr_server,
