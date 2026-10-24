@@ -20,7 +20,8 @@ defmodule HerdrServer.Persist.Writer do
   `opts`) has `enabled: true`.
   """
 
-  use GenServer
+  # terminate's final write and scrollback round must fit before the supervisor kills it
+  use GenServer, shutdown: 10_000
 
   alias HerdrReload.{Guard, Telemetry}
   alias HerdrScene.Protocol
@@ -48,7 +49,11 @@ defmodule HerdrServer.Persist.Writer do
   @spec start_link(keyword) :: GenServer.on_start()
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  @doc "Writes the snapshot and changed scrollback now."
+  @doc """
+  Writes the snapshot (when it changed) and changed scrollback now, captured from the
+  mirror (`Mirror.app/0`, debounced), not from the Store: a Store change made just before
+  may not be in it yet.
+  """
   @spec flush() :: :ok
   def flush, do: GenServer.call(__MODULE__, :flush, 30_000)
 
@@ -73,7 +78,8 @@ defmodule HerdrServer.Persist.Writer do
   @impl true
   def handle_call(:flush, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    state = state |> write_layout(Mirror.app()) |> write_scrollback(Mirror.app(), :changed)
+    app = Mirror.app()
+    state = state |> write_layout(app) |> write_scrollback(app, :changed)
     {:reply, :ok, state}
   end
 
@@ -105,7 +111,8 @@ defmodule HerdrServer.Persist.Writer do
   def terminate(_reason, state) do
     state = Map.merge(%__MODULE__{}, state)
     app = store_app() || Mirror.app()
-    state |> write_layout(app) |> write_scrollback(app, :all)
+    # unconditional: another VM's writer may have written since our last write
+    state |> write_layout(app, true) |> write_scrollback(app, :all)
     :ok
   end
 
@@ -117,26 +124,38 @@ defmodule HerdrServer.Persist.Writer do
 
   # --- snapshot ---
 
-  defp write_layout(state, app) do
-    if capturable?(app), do: capture_and_write(state, app), else: skipped(state)
+  defp write_layout(state, app, force \\ false) do
+    cond do
+      handing_off?() -> state |> forget() |> skipped()
+      has_panes?(app) -> capture_and_write(state, app, force)
+      true -> skipped(state)
+    end
   end
 
-  defp capturable?(app) do
-    :persistent_term.get(Protocol.handoff_key(), nil) not in [:begin, :released] and
-      is_map(app) and map_size(app.session.panes) > 0
-  end
+  # during a handoff the target VM's writer may write: once it ends (`:aborted`), the
+  # files on disk are no longer known to be ours, so the next round writes everything again
+  defp handing_off?, do: :persistent_term.get(Protocol.handoff_key(), nil) in [:begin, :released]
 
-  defp capture_and_write(state, app) do
+  defp forget(state), do: %{state | last_written: nil, sb_gens: %{}}
+
+  defp has_panes?(app), do: is_map(app) and map_size(app.session.panes) > 0
+
+  defp capture_and_write(state, app, force) do
     with {:ok, facts} <- guard(Facts, :collect, [app, state.last_facts]),
          {:ok, snap} <- guard(Schema, :capture, [app, facts]) do
       state = %{state | last_facts: facts}
-      if snap == state.last_written, do: skipped(state), else: write(state, snap)
+      if snap == state.last_written and not force, do: skipped(state), else: write(state, snap)
     else
       {:failed, failure} -> state |> error(:capture, Guard.message(failure)) |> skipped()
     end
   end
 
+  # the phase is checked again right before the write to narrow the race with PREPARE
   defp write(state, snap) do
+    if handing_off?(), do: state |> forget() |> skipped(), else: do_write(state, snap)
+  end
+
+  defp do_write(state, snap) do
     t0 = System.monotonic_time(:microsecond)
 
     case Disk.write(state.cfg, snap) do
@@ -171,9 +190,11 @@ defmodule HerdrServer.Persist.Writer do
   # --- scrollback ---
 
   defp write_scrollback(state, app, which) do
-    if capturable?(app) and state.cfg.scrollback_rows > 0,
-      do: scrollback_round(state, app, which),
-      else: state
+    cond do
+      handing_off?() -> forget(state)
+      has_panes?(app) and state.cfg.scrollback_rows > 0 -> scrollback_round(state, app, which)
+      true -> state
+    end
   end
 
   defp scrollback_round(state, app, which) do
@@ -217,10 +238,14 @@ defmodule HerdrServer.Persist.Writer do
     end
   end
 
-  defp store_tail({:ok, bin}, {state, written}, id, gen, w) when is_binary(bin) do
-    case Disk.write_scrollback(state.cfg, id, bin, w) do
-      :ok -> {put_gen(state, id, gen), [byte_size(bin) | written]}
-      {:error, reason} -> {error(state, :write, reason), written}
+  defp store_tail({:ok, bin}, {state, written} = acc, id, gen, w) when is_binary(bin) do
+    if handing_off?() do
+      acc
+    else
+      case Disk.write_scrollback(state.cfg, id, bin, w) do
+        :ok -> {put_gen(state, id, gen), [byte_size(bin) | written]}
+        {:error, reason} -> {error(state, :write, reason), written}
+      end
     end
   end
 

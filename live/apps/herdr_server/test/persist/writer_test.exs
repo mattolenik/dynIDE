@@ -121,6 +121,25 @@ defmodule HerdrServer.Persist.WriterTest do
     end)
   end
 
+  test "after an aborted handoff the unchanged app is written again", %{cfg: cfg} do
+    quiet(fn ->
+      start(cfg)
+      wait_until(fn -> pane_count(cfg) == 1 end)
+      # settle: no more writes for an unchanged app
+      Process.sleep(60)
+      %{writes: w, skipped: s} = Writer.stats()
+      :persistent_term.put(Protocol.handoff_key(), :begin)
+      wait_until(fn -> Writer.stats().skipped >= s + 2 end)
+      assert %{writes: ^w} = Writer.stats()
+      :persistent_term.put(Protocol.handoff_key(), :aborted)
+      wait_until(fn -> Writer.stats().writes == w + 1 end)
+    end)
+  end
+
+  test "the child spec gives terminate time to write" do
+    assert %{shutdown: 10_000} = Writer.child_spec([])
+  end
+
   test "a normal stop writes the latest app", %{cfg: cfg} do
     quiet(fn ->
       start(cfg, poll_ms: 60_000, scrollback_ms: 60_000)
