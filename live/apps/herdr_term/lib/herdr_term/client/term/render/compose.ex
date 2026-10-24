@@ -32,24 +32,25 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
     {panes, _cache} =
       Enum.map_reduce(scene.panes, %{}, &prep_pane(&1, &2, scene, rows_by_pane, theme))
 
-    by_row = segs_by_row(panes, status_rows(scene.chrome, theme), rows)
-
-    for y <- 0..(rows - 1)//1, do: {y, assemble(Map.get(by_row, y, []), cols)}
+    panes
+    |> segs_by_row(status_rows(scene.chrome, theme), rows)
+    |> Enum.map(&assemble(&1, cols))
+    |> Enum.with_index(fn row, y -> {y, row} end)
   end
 
-  # y => segments in pane order, then status; each pane visits only the rows it spans
+  # per screen row, its segments in pane order then status; a pane is visited only
+  # for the rows its rect or border spans
   defp segs_by_row(panes, status, rows) do
-    pane_segs =
-      for p <- panes, y <- span(p, rows), seg <- pane_segs(p, y), do: {y, seg}
+    spans = for p <- panes, do: {span(p), p}
 
-    status_segs = for {y, segs} <- status, seg <- segs, do: {y, seg}
-    Enum.group_by(pane_segs ++ status_segs, &elem(&1, 0), &elem(&1, 1))
+    for y <- 0..(rows - 1)//1 do
+      segs = for {{lo, hi}, p} <- spans, y >= lo and y < hi, seg <- pane_segs(p, y), do: seg
+      segs ++ Map.get(status, y, [])
+    end
   end
 
-  defp span(%{cy: cy, ch: ch, border: b}, rows) do
-    {lo, hi} = if b, do: {min(cy, b.oy), max(cy + ch, b.oy + b.oh)}, else: {cy, cy + ch}
-    max(lo, 0)..(min(hi, rows) - 1)//1
-  end
+  defp span(%{cy: cy, ch: ch, border: nil}), do: {cy, cy + ch}
+  defp span(%{cy: cy, ch: ch, border: b}), do: {min(cy, b.oy), max(cy + ch, b.oy + b.oh)}
 
   @doc """
   Host cursor `{{x, y}, shape}` in screen cells, or nil: the focused pane's cursor from
