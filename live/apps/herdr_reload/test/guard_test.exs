@@ -173,6 +173,20 @@ defmodule HerdrReload.GuardTest do
     assert length(String.split(log, "Toy.A.f/1 failed")) == 3
   end
 
+  test "run_twice_attributed names the batch the first run rolled back" do
+    dir = toy!(:toy_g_twice_attr, %{"lib/a.ex" => a_src(1)})
+    HerdrReload.ReloadCase.write_source!(dir, "lib/a.ex", a_src(2))
+    assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "a")])
+
+    capture_log(fn ->
+      assert {:failed, {:raise, %RuntimeError{message: "boom 1"}, _}, 2} =
+               Guard.run_twice_attributed(Toy.A, :f, [:boom])
+
+      assert {:failed, {:raise, _, _}, nil} =
+               Guard.run_twice_attributed(Toy.A, :f, [:boom], @nosrv)
+    end)
+  end
+
   test "an exit nested stack attributes to the modules inside it" do
     assert {:failed, {:exit, {:inner, _}, _}} = Guard.run(Fixture, :f, [:nested_exit], @nosrv)
 

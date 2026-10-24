@@ -48,10 +48,13 @@ defmodule HerdrServer.Mirror do
   @doc "The mirrored app (`%{session, focus, ui}`), or nil when any part is missing."
   @spec app() :: map | nil
   def app do
-    with s when s != nil <- get({:app, :session}),
+    # also the reload server's state_at_load provider, which may run before the table exists
+    with true <- :ets.whereis(@mirror) != :undefined,
+         s when s != nil <- get({:app, :session}),
          f when f != nil <- get({:app, :focus}),
          u when u != nil <- get({:app, :ui}),
-         do: %{session: s, focus: f, ui: u}
+         do: %{session: s, focus: f, ui: u},
+         else: (_ -> nil)
   end
 
   @spec pane(pos_integer) :: map | nil

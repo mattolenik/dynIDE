@@ -33,6 +33,16 @@ defmodule HerdrServer.Application do
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: HerdrServer.Supervisor]
 
+    # the reload server (herdr_reload, started first) snapshots the app at each batch
+    reload = Application.get_env(:herdr_reload, HerdrReload, [])
+    state_at_load = {HerdrServer.Mirror, :app, []}
+
+    Application.put_env(
+      :herdr_reload,
+      HerdrReload,
+      Keyword.put(reload, :state_at_load, state_at_load)
+    )
+
     with {:ok, pid} <- Supervisor.start_link(children, opts) do
       Logger.info("herdr-live started")
       {:ok, pid}

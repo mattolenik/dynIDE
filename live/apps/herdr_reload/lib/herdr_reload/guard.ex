@@ -51,9 +51,32 @@ defmodule HerdrReload.Guard do
   """
   @spec run_twice(module(), atom(), [term()], keyword()) :: {:ok, term()} | {:failed, failure()}
   def run_twice(mod, fun, args, opts \\ []) do
+    case run_twice_attributed(mod, fun, args, opts) do
+      {:failed, failure, _} -> {:failed, failure}
+      ok -> ok
+    end
+  end
+
+  @doc """
+  `run_twice/4`, but a failure also says which batch the first run rolled back:
+  a batch id means the old code failed on the same call too (a repeat failure),
+  `nil` that the failure was unattributed.
+  """
+  @spec run_twice_attributed(module(), atom(), [term()], keyword()) ::
+          {:ok, term()} | {:failed, failure(), pos_integer() | nil}
+  def run_twice_attributed(mod, fun, args, opts \\ []) do
     case logged_run(mod, fun, args, opts) do
-      {:failed, _, {:rolled_back, _}} -> mod |> logged_run(fun, args, opts) |> plain()
-      other -> plain(other)
+      {:failed, _, {:rolled_back, id}} ->
+        case logged_run(mod, fun, args, opts) do
+          {:failed, failure, _} -> {:failed, failure, id}
+          ok -> ok
+        end
+
+      {:failed, failure, _} ->
+        {:failed, failure, nil}
+
+      ok ->
+        ok
     end
   end
 

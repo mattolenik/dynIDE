@@ -259,4 +259,36 @@ defmodule HerdrReload.ServerTest do
     assert Server.counters_table(srv) == Server
     assert :ets.info(Server, :protection) == :public
   end
+
+  test "last_rolled_back: the oldest batch of the newest rollback; provider from app env" do
+    n = :counters.new(1, [])
+    env = Application.get_env(:herdr_reload, HerdrReload, [])
+    on_exit(fn -> Application.put_env(:herdr_reload, HerdrReload, env) end)
+
+    Application.put_env(
+      :herdr_reload,
+      HerdrReload,
+      Keyword.put(env, :state_at_load, {__MODULE__, :snap, [n]})
+    )
+
+    {dir, _} = toy!(:toy_s_last_rb)
+    assert Server.last_rolled_back() == :none
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    HerdrReload.ReloadCase.write_source!(dir, "lib/w.ex", w_src(2))
+    assert {:ok, %Batch{id: 2, state_at_load: 2}} = Server.reload([path(dir, "v"), path(dir, "w")])
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(3))
+    assert {:ok, %Batch{id: 3, state_at_load: 3}} = Server.reload([path(dir, "v")])
+
+    # failing W rolls back 2 and 3 (3 shares V with 2): the state before both is batch 2's
+    assert Server.fail([Toy.W], :boom) == {:rolled_back, 2}
+    assert Server.last_rolled_back() == {:ok, 2, 2}
+    assert Server.rollback(1) == {:ok, [1]}
+    assert Server.last_rolled_back() == {:ok, 1, 1}
+  end
+
+  @doc false
+  def snap(n) do
+    :counters.add(n, 1, 1)
+    :counters.get(n, 1)
+  end
 end

@@ -287,6 +287,13 @@ defmodule HerdrServer.ServerTest do
     Process.sleep(50)
   end
 
+  defp split(c, s) do
+    input(s, c, 1, Event.key("b", [:ctrl]))
+    input(s, c, 2, Event.key("v"))
+    scene_until(c, &(length(&1.panes) == 2))
+    Process.sleep(50)
+  end
+
   defp kill_store do
     old = Process.whereis(Store)
     Process.exit(old, :kill)
@@ -334,6 +341,119 @@ defmodule HerdrServer.ServerTest do
     assert Fake.Keeper.lookup(kid) == :error
     assert [_] = Fake.Keeper.ids()
     assert eventually(fn -> Registry.lookup(HerdrServer.Pane.Registry, 2) == [] end)
+  end
+
+  defp tab_ids(app, name) do
+    ws = hd(app.session.workspaces)
+    HerdrServer.Layout.pane_ids(Enum.find(ws.tabs, &(&1.name == name)).layout)
+  end
+
+  # nothing orphaned: every keeper pane is mapped to a pane of the app, and back
+  defp consistent!(app) do
+    mapped = Rows.kernel_ids()
+    assert Enum.sort(Fake.Keeper.ids()) == Enum.sort(Enum.map(mapped, &elem(&1, 1)))
+    assert Enum.sort(Enum.map(mapped, &elem(&1, 0))) == Enum.sort(Map.keys(app.session.panes))
+
+    for id <- Map.keys(app.session.panes),
+        do: assert(eventually(fn -> Registry.lookup(HerdrServer.Pane.Registry, id) != [] end))
+  end
+
+  test "a Store restart adopts a mapped pane the mirror lost into a scratch tab" do
+    {c, s} = client()
+    assert_receive {^c, {:scene, _}}, 500
+    Process.sleep(50)
+    lost = Map.new([:session, :focus], &{&1, HerdrServer.Mirror.get({:app, &1})})
+    split(c, s)
+    [{pane2, _}] = Registry.lookup(HerdrServer.Pane.Registry, 2)
+
+    # as if the last app write before a kill never reached the mirror (the Store does
+    # not trap exits: no flush on stop); a supervised stop and restart does not count
+    # towards the supervisor's restart intensity
+    for {k, v} <- lost, do: HerdrServer.Mirror.put({:app, k}, v)
+    :ok = Supervisor.terminate_child(HerdrServer.Supervisor, Store)
+    {:ok, _} = Supervisor.restart_child(HerdrServer.Supervisor, Store)
+
+    app = Store.snapshot()
+    assert tab_ids(app, "1") == [1]
+    assert tab_ids(app, "scratch") == [2]
+    assert app.session.next_id == 3 and app.focus.pane == 1
+    assert Registry.lookup(HerdrServer.Pane.Registry, 2) == [{pane2, nil}]
+    consistent!(app)
+  end
+
+  # stands in for HerdrReload.Server: blames batch 7 for every failure
+  defp fake_reload(last) do
+    pid = spawn(fn -> fake_reload_loop(last) end)
+    Process.register(pid, :p5_fake_reload)
+    Application.put_env(:herdr_server, :reload_server, :p5_fake_reload)
+
+    on_exit(fn ->
+      Application.delete_env(:herdr_server, :reload_server)
+      Process.exit(pid, :kill)
+    end)
+  end
+
+  defp fake_reload_loop(last) do
+    receive do
+      {:"$gen_call", from, {:fail, _, _}} -> GenServer.reply(from, {:rolled_back, 7})
+      {:"$gen_call", from, :last_rolled_back} -> GenServer.reply(from, last)
+    end
+
+    fake_reload_loop(last)
+  end
+
+  defp boom_on_z do
+    :sys.replace_state(Process.whereis(Store), fn st ->
+      put_in(st.app.ui.keybinds.prefix_binds[{"z", []}], {HerdrServer.ServerTest.Boom, :boom, []})
+    end)
+  end
+
+  test "a repeat Actions failure restores state_at_load and adopts panes spawned since" do
+    {c, s} = client()
+    assert_receive {^c, {:scene, _}}, 500
+    Process.sleep(50)
+    at_load = HerdrServer.Mirror.app()
+    split(c, s)
+    fake_reload({:ok, 7, at_load})
+    boom_on_z()
+
+    input(s, c, 3, Event.key("b", [:ctrl]))
+    input(s, c, 4, Event.key("z"))
+
+    assert_receive {^c,
+                    {:notice,
+                     %{
+                       level: :warning,
+                       text: "state restored to batch 7; actions since were lost"
+                     }}},
+                   500
+
+    assert %Scene{panes: [%{id: 1}]} = scene_until(c, &(length(&1.panes) == 1))
+    app = Store.snapshot()
+    assert app.ui == at_load.ui
+    assert tab_ids(app, "1") == [1]
+    assert tab_ids(app, "scratch") == [2]
+    assert app.focus.pane == 1
+    consistent!(app)
+
+    # the restored app takes input
+    input(s, c, 5, Event.key("b", [:ctrl]))
+    input(s, c, 6, Event.key("v"))
+    assert %Scene{panes: [_, _]} = scene_until(c, &(length(&1.panes) == 2))
+    assert Map.has_key?(Store.snapshot().session.panes, 3)
+  end
+
+  test "a repeat Actions failure with no state to restore discards the event" do
+    {c, s} = client()
+    two_panes(c, s)
+    fake_reload(:none)
+    boom_on_z()
+    before = Store.snapshot()
+    input(s, c, 3, Event.key("b", [:ctrl]))
+    input(s, c, 4, Event.key("z"))
+    assert_receive {^c, {:notice, %{level: :error, text: "action failed: " <> _}}}, 500
+    assert_receive {^c, {:ack, 4}}
+    assert Store.snapshot().session == before.session
   end
 
   test "a restarted pane server of a hidden pane starts hidden" do

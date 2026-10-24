@@ -1,7 +1,7 @@
 defmodule HerdrServer.App.Restore do
   @moduledoc """
-  Pane bookkeeping for `App.Store` across its restarts: closing panes, and adopting the
-  panes a mirrored app (`HerdrServer.Mirror.app/0`) still has.
+  Pane bookkeeping for `App.Store` across its restarts and state restores: the live pane
+  set `App.Reconcile` works against, starting missing `Pane.Server`s, closing panes.
   """
 
   alias HerdrServer.Kernel
@@ -9,28 +9,26 @@ defmodule HerdrServer.App.Restore do
   alias HerdrServer.Pane.Supervisor, as: Panes
 
   @doc """
-  Adopts the live panes of `app` and returns the ids of the panes to drop (the Store
-  closes them as `{:pane_exited, id}`). A pane is live when its kernel id is mapped in
-  `Pane.Rows` and still held by the keeper; its `Pane.Server` is restarted if missing.
-  Keeper panes no app pane maps, and mapped ids the app does not know, are closed.
+  The live panes, `%{pane_id => kernel_id}`: mapped in `Pane.Rows` and still held by the
+  keeper. Mappings whose kernel is gone are closed, and so are keeper panes no pane maps
+  (a spawn interrupted between open and mapping): nothing can reach them.
   """
-  # ponytail: placeholder until P5's Reconcile.run/2 replaces it
-  @spec adopt(%{session: %{panes: map}}) :: [pos_integer]
-  def adopt(app) do
+  @spec live() :: %{pos_integer => pos_integer}
+  def live do
     keeper = Kernel.keeper()
-    live = MapSet.new(keeper.ids())
-    mapped = Map.new(Rows.kernel_ids())
+    kids = MapSet.new(keeper.ids())
+    {live, stale} = Enum.split_with(Rows.kernel_ids(), &MapSet.member?(kids, elem(&1, 1)))
+    Enum.each(stale, &close(elem(&1, 0)))
+    owned = MapSet.new(live, &elem(&1, 1))
+    for kid <- kids, not MapSet.member?(owned, kid), do: keeper.close(kid)
+    Map.new(live)
+  end
 
-    {kept, dropped} =
-      app.session.panes |> Map.keys() |> Enum.split_with(&MapSet.member?(live, mapped[&1]))
-
-    for {id, _} <- mapped, not Map.has_key?(app.session.panes, id), do: close(id)
-    owned = MapSet.new(kept, &mapped[&1])
-    for kid <- live, not MapSet.member?(owned, kid), do: keeper.close(kid)
-
-    for id <- kept, Registry.lookup(HerdrServer.Pane.Registry, id) == [], do: Panes.start_pane(id)
-
-    dropped
+  @doc "Starts pane `id`'s `Pane.Server` unless it runs."
+  @spec ensure_server(pos_integer) :: :ok
+  def ensure_server(id) do
+    if Registry.lookup(HerdrServer.Pane.Registry, id) == [], do: Panes.start_pane(id)
+    :ok
   end
 
   @doc "Closes pane `id`: its server, its kernel pane and its rows. Idempotent."

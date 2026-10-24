@@ -9,7 +9,9 @@ defmodule HerdrReload.Server do
   A public ETS table named like the server holds Guard counters, `{mod, count}`
   and `{:total, count}`, which decide whether a batch is still live.
 
-  The optional `state_at_load` provider (a 0-arity fun or `{m, f, a}`) runs
+  The optional `state_at_load` provider (a 0-arity fun or `{m, f, a}`; the
+  `:state_at_load` opt, else the `config :herdr_reload, HerdrReload, state_at_load:`
+  value read at each batch, which the app owning the state sets at its start) runs
   inside the Server's reload call. It must not raise, and it must not
   `GenServer.call` a process that may itself be blocked in a guarded call
   waiting on `fail/3` (that deadlocks); read an ETS mirror instead.
@@ -48,6 +50,14 @@ defmodule HerdrReload.Server do
   def fail(server \\ __MODULE__, stack_modules, reason),
     do: GenServer.call(server, {:fail, stack_modules, reason}, :infinity)
 
+  @doc """
+  The batch whose `state_at_load` precedes the newest rollback that had one: the
+  oldest batch of that rollback with a non-nil `state_at_load`.
+  """
+  @spec last_rolled_back(server()) :: {:ok, pos_integer(), term()} | :none
+  def last_rolled_back(server \\ __MODULE__),
+    do: GenServer.call(server, :last_rolled_back, :infinity)
+
   @doc "Recorded batches, newest first."
   @spec batches(server()) :: [Batch.t()]
   def batches(server \\ __MODULE__), do: GenServer.call(server, :batches, :infinity)
@@ -81,6 +91,7 @@ defmodule HerdrReload.Server do
        vm_stamp: System.os_time(:millisecond),
        mtimes: Compiler.source_mtimes(compile_opts),
        ring: Ring.new(Keyword.get(opts, :ring_depth, 8)),
+       last_rolled_back: :none,
        next_id: 1
      }}
   end
@@ -133,6 +144,7 @@ defmodule HerdrReload.Server do
   end
 
   def handle_call(:batches, _from, s), do: {:reply, Ring.batches(s.ring), s}
+  def handle_call(:last_rolled_back, _from, s), do: {:reply, s.last_rolled_back, s}
   def handle_call(:counters_table, _from, s), do: {:reply, s.table, s}
 
   defp record(res, s) do
@@ -177,7 +189,18 @@ defmodule HerdrReload.Server do
         Ring.update(ring, batch.id, &%{&1 | rolled_back: true})
       end)
 
-    %{s | ring: ring, cache: apply_cache(s.cache, beams, Enum.map(errors, &elem(&1, 0)))}
+    last =
+      case batches |> Enum.reject(&is_nil(&1.state_at_load)) |> List.last() do
+        nil -> s.last_rolled_back
+        b -> {:ok, b.id, b.state_at_load}
+      end
+
+    %{
+      s
+      | ring: ring,
+        last_rolled_back: last,
+        cache: apply_cache(s.cache, beams, Enum.map(errors, &elem(&1, 0)))
+    }
   end
 
   # The bad beam moves to `rejected/<vm stamp>-<newest batch id>/`, so Mix and autoload
@@ -225,7 +248,10 @@ defmodule HerdrReload.Server do
     end
   end
 
-  defp state_at_load(nil), do: nil
+  defp state_at_load(nil),
+    do: state_at_load(Application.get_env(:herdr_reload, HerdrReload, [])[:state_at_load] || :none)
+
+  defp state_at_load(:none), do: nil
   defp state_at_load(fun) when is_function(fun, 0), do: fun.()
   defp state_at_load({m, f, a}), do: apply(m, f, a)
 end

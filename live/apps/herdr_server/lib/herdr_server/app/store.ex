@@ -19,11 +19,21 @@ defmodule HerdrServer.App.Store do
       notice and closes the pane again, as `{:pane_exited, id}`.
     * `app.session`, `app.focus`, `app.ui` and the bookkeeping below (`@book`) are
       mirrored to `HerdrServer.Mirror`, debounced (one 20 ms timer; only changed entries
-      are written; flushed on `terminate/2`). A restarted Store adopts the mirrored app
-      (`App.Restore.adopt/1`: dead panes are dropped as `{:pane_exited, id}`, missing
-      `Pane.Server`s restarted), re-monitors the mirrored sessions and republishes the
-      fast path; sessions re-subscribe and push full scenes. Only an empty mirror starts
-      fresh (closing whatever the keeper still holds).
+      are written; flushed on `terminate/2`). A restarted Store reconciles the mirrored
+      app with the keeper (`App.Reconcile`: panes whose kernel is gone are dropped, live
+      mapped panes the mirror lost, e.g. spawned within the debounce window, are adopted
+      into a "scratch" tab; missing `Pane.Server`s restarted), re-monitors the mirrored
+      sessions and republishes the fast path; sessions re-subscribe and push full scenes.
+      Only an empty mirror (or a failing reconcile) starts fresh, closing whatever the
+      keeper still holds. Other app writes inside the window (focus, titles, modes) are
+      lost.
+    * A repeat failure of `Actions.apply` (the guard rolled back batch K and the old code
+      failed on the same event too) restores the `state_at_load` of the reload server's
+      `last_rolled_back/1` batch when it is K or older, reconciled with the keeper as
+      above (keeping the current pane area), and warns every subscriber. Without such a
+      state, or on an unattributed failure, the event is discarded with an error notice.
+      The reload server is `config :herdr_server, :reload_server` (default
+      `HerdrReload.Server`).
   """
   use GenServer
 
@@ -31,7 +41,7 @@ defmodule HerdrServer.App.Store do
 
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
-  alias HerdrServer.App.{Actions, Keybinds, Restore}
+  alias HerdrServer.App.{Actions, Keybinds, Reconcile, Restore}
   alias HerdrServer.{Kernel, Layout, Mirror}
   alias HerdrServer.Pane.{Input, Rows, Server}
   alias HerdrServer.Pane.Supervisor, as: Panes
@@ -104,12 +114,32 @@ defmodule HerdrServer.App.Store do
   end
 
   defp adopt(app) do
-    Enum.each(Restore.adopt(app), &event_async({:pane_exited, &1}))
     book = Map.new(@book, &{&1, Mirror.get({:store, &1})})
-    state = struct(%__MODULE__{app: app}, Enum.reject(book, &(elem(&1, 1) == nil)))
+    state = struct(%__MODULE__{}, Enum.reject(book, &(elem(&1, 1) == nil)))
     subs = Map.new(state.clients, fn {pid, _} -> {pid, Process.monitor(pid)} end)
     fast = :persistent_term.get(Protocol.fast_path_key(), nil)
-    dirty(%{state | subs: subs, fast: fast}) |> settle() |> publish_fast()
+    state = %{state | subs: subs, fast: fast}
+
+    case reconcile(state, app) do
+      {:ok, state} ->
+        Enum.each(Map.keys(state.app.session.panes), &Restore.ensure_server/1)
+        dirty(state) |> settle() |> publish_fast()
+
+      :failed ->
+        Restore.close_all()
+        :persistent_term.erase(Protocol.fast_path_key())
+        %__MODULE__{subs: subs}
+    end
+  end
+
+  defp reconcile(state, app) do
+    case Guard.run_twice(Reconcile, :run, [app, Restore.live()]) do
+      {:ok, {app, effects}} ->
+        {:ok, Enum.reduce(effects, %{state | app: app}, &effect(&2, &1, nil))}
+
+      {:failed, _} ->
+        :failed
+    end
   end
 
   @impl true
@@ -223,26 +253,66 @@ defmodule HerdrServer.App.Store do
   defp commit(state, steps, origin, after_ok \\ & &1) do
     case Enum.reduce_while(steps, {:ok, state}, &step(elem(&2, 1), &1, origin)) do
       {:ok, new} -> after_ok.(new)
+      # the batch is discarded; a driver resize already applied to the restored area
+      {:restored, new} -> new
       :failed -> state
     end
   end
 
   defp step(state, step, origin) do
+    opts = [server: reload_server()]
+
     result =
       case step do
-        {:init, size} -> Guard.run_twice(Actions, :init, [size])
-        {:run, {m, f, a}} -> Guard.run_twice(m, f, [state.app | a])
-        ev -> Guard.run_twice(Actions, :apply, [state.app, ev])
+        {:init, size} -> Guard.run_twice_attributed(Actions, :init, [size], opts)
+        {:run, {m, f, a}} -> Guard.run_twice_attributed(m, f, [state.app | a], opts)
+        ev -> Guard.run_twice_attributed(Actions, :apply, [state.app, ev], opts)
       end
 
     case result do
       {:ok, {app, effects}} ->
         {:cont, {:ok, Enum.reduce(effects, %{state | app: app}, &effect(&2, &1, origin))}}
 
-      {:failed, reason} ->
-        notice(origin, %{level: :error, text: "action failed: #{Guard.message(reason)}"})
-        {:halt, :failed}
+      {:failed, reason, batch} ->
+        case restore(state, batch) do
+          {:ok, state} ->
+            {:halt, {:restored, state}}
+
+          :none ->
+            notice(origin, %{level: :error, text: "action failed: #{Guard.message(reason)}"})
+            {:halt, :failed}
+        end
     end
+  end
+
+  defp reload_server, do: Application.get_env(:herdr_server, :reload_server, HerdrReload.Server)
+
+  # Batch `k`'s new code corrupted state the old code then failed on: go back to a state
+  # from before `k` was loaded (`k`'s own, or an older batch's when the re-run rolled
+  # that back too), reconciled with the keeper.
+  defp restore(%{app: app} = state, k) when is_integer(k) and app != nil do
+    with {:ok, id, at_load} when id <= k and at_load != nil <- last_rolled_back(),
+         at_load = put_in(at_load.session.area, app.session.area),
+         {:ok, state} <- reconcile(state, at_load) do
+      n = %{level: :warning, text: "state restored to batch #{id}; actions since were lost"}
+
+      if state.subs == %{},
+        do: notice(nil, n),
+        else: Enum.each(Map.keys(state.subs), &notice(&1, n))
+
+      {:ok, state}
+    else
+      _ -> :none
+    end
+  end
+
+  defp restore(_state, _k), do: :none
+
+  # ponytail: a reload server dying between whereis and the call crashes the Store,
+  # which then restarts from the mirror
+  defp last_rolled_back do
+    server = reload_server()
+    if GenServer.whereis(server), do: HerdrReload.Server.last_rolled_back(server), else: :none
   end
 
   defp effect(state, {:spawn, id, %{cols: c, rows: r}}, origin) do
@@ -272,6 +342,12 @@ defmodule HerdrServer.App.Store do
         event_async({:pane_exited, id})
         state
     end
+  end
+
+  # a reconciled pane already in the keeper and mapped; {0, 0} makes settle/1 size it
+  defp effect(state, {:adopt, id}, _origin) do
+    Restore.ensure_server(id)
+    %{state | sizes: Map.put_new(state.sizes, id, {0, 0})}
   end
 
   defp effect(state, {:close, id}, _origin) do
