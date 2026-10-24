@@ -17,16 +17,21 @@ defmodule HerdrReload.TestGate do
   in `:gate` mode also runs the blocked paths' tests, reloads only if all pass, and a
   pass clears the set. So fixing the code and saving any file retries the blocked
   tests. The Watcher watches `apps/*/lib` only: saving a test file alone triggers
-  nothing; re-save a lib file. If a tested path changed while its tests ran, that
-  reload is skipped (`tests result=stale` in telemetry) and the newer save's batch,
+  nothing; re-save a lib file. If any source under `apps/*/lib` changed (or appeared or
+  vanished) while the tests ran, that reload is skipped (`tests result=stale` in telemetry) and the newer save's batch,
   queued behind, gates it. `set_mode(:off)` clears the blocked set: `:off` loads
   whatever is on disk at the next save. The runtime mode does not survive a VM handoff
   (the new VM reads the config / `HERDR_LIVE_TEST_ON_SAVE`).
+
+  A crash of this process loses the blocked set (and restarts the Watcher, supervisor
+  `rest_for_one`); a start in `:gate` mode logs a warning so a restart is visible.
 
   Notices: `{:tests, :running | :passed | :failed | :error, %{files, failures, ms}}`.
   """
 
   use GenServer
+
+  require Logger
 
   alias HerdrReload.{Notices, Server, Telemetry}
 
@@ -119,7 +124,11 @@ defmodule HerdrReload.TestGate do
   defstruct blocked: MapSet.new()
 
   @impl true
-  def init(nil), do: {:ok, %__MODULE__{}}
+  def init(nil) do
+    # a crash loses the blocked set (and, under rest_for_one, restarts the Watcher)
+    if mode() == :gate, do: Logger.warning("test gate (re)started: blocked set is empty")
+    {:ok, %__MODULE__{}}
+  end
 
   @impl true
   def handle_call({:reload, paths, opts}, _from, state) do
@@ -147,27 +156,38 @@ defmodule HerdrReload.TestGate do
       Telemetry.event(:tests, result: :none, files: 0, failures: 0, ms: 0)
       {reload_fun.(paths), MapSet.new()}
     else
-      digests = Map.new(all, &{&1, digest(&1)})
+      snapshot = snapshot(root, all)
       n = tests |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
       Notices.broadcast({:tests, :running, %{files: n}})
       {result, info} = run(tests, opts)
-      Notices.broadcast({:tests, result, info})
-      after_run(result, info, paths, all, digests, blocked, reload_fun)
+      after_run(result, info, {paths, all, blocked}, {root, snapshot}, reload_fun)
     end
   end
 
-  defp after_run(:passed, info, paths, all, digests, blocked, reload_fun) do
-    if Map.new(all, &{&1, digest(&1)}) == digests do
-      {reload_fun.(paths), MapSet.new()}
+  # A pass reloads only if no source changed while the tests ran: Server.reload compiles
+  # every stale source, so another file saved meanwhile would be loaded ungated. The
+  # stale outcome broadcasts no result (chrome keeps "tests..." until the queued batch
+  # for that save reports; if that batch has no mapped tests nothing replaces it).
+  defp after_run(:passed, info, {_paths, all, blocked}, {root, snapshot}, reload_fun) do
+    if snapshot(root, all) == snapshot do
+      Notices.broadcast({:tests, :passed, info})
+      {reload_fun.(all), MapSet.new()}
     else
-      # saved again while the tests ran: the newer batch, queued behind, gates it
       Telemetry.event(:tests, result: :stale, files: info.files, failures: 0, ms: info.ms)
       {{:tests, :stale, info}, blocked}
     end
   end
 
-  defp after_run(result, info, paths, _all, _digests, blocked, _reload_fun),
-    do: {{:tests, result, info}, MapSet.union(blocked, MapSet.new(paths))}
+  defp after_run(result, info, {paths, _all, blocked}, _ctx, _reload_fun) do
+    Notices.broadcast({:tests, result, info})
+    {{:tests, result, info}, MapSet.union(blocked, MapSet.new(paths))}
+  end
+
+  # content digests of every source the Server could compile, plus the given paths
+  defp snapshot(root, extra) do
+    sources = Path.wildcard(Path.join(root, "apps/*/lib/**/*.{ex,exs,erl,hrl,eex,heex}"))
+    Map.new(sources ++ extra, &{&1, digest(&1)})
+  end
 
   defp digest(path) do
     case File.read(path) do

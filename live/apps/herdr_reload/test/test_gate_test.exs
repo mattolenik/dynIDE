@@ -139,7 +139,7 @@ defmodule HerdrReload.TestGateTest do
 
       # fixed: the blocked tests pass, the batch reloads, the set is cleared
       assert TestGate.reload([y], opts(root, {"1 test, 0 failures\n", 0}, :gate)) == :reloaded
-      assert_received {:reload, [^y]}
+      assert_received {:reload, [^y, ^x]}
       assert TestGate.reload([y], opts(root, fail, :gate)) == :reloaded
     end
 
@@ -163,6 +163,33 @@ defmodule HerdrReload.TestGateTest do
       runner = fn _, _, _, _ -> File.write!(x, "changed") && {"1 test, 0 failures\n", 0} end
       assert {:tests, :stale, _} = TestGate.reload([x], Keyword.put(o, :runner, runner))
       refute_received {:reload, _}
+      # no passed result is broadcast for a skipped reload
+      assert_received {:herdr_reload, {:tests, :running, _}}
+      refute_received {:herdr_reload, {:tests, :passed, _}}
+    end
+
+    test "another source saved during the run stops the reload; it is then gated", %{root: root} do
+      x = p(root, "apps/a/lib/a/x.ex")
+      z = p(root, "apps/b/lib/z.ex")
+      File.mkdir_p!(Path.join(root, "apps/b/test"))
+      File.write!(Path.join(root, "apps/b/test/z_test.exs"), "")
+      ok = {"1 test, 0 failures\n", 0}
+      slow = fn _, _, _, _ -> File.write!(z, "broken") && ok end
+      assert {:tests, :stale, _} = TestGate.reload([x], Keyword.put(opts(root, ok, :gate), :runner, slow))
+      refute_received {:reload, _}
+
+      # z's queued batch is gated, fails, and nothing is loaded
+      assert {:tests, :failed, _} = TestGate.reload([z], opts(root, {"1 test, 1 failure\n", 2}, :gate))
+      refute_received {:reload, _}
+    end
+
+    test "a blocked path that now passes is reloaded with the batch", %{root: root} do
+      x = p(root, "apps/a/lib/a/x.ex")
+      y = p(root, "apps/a/lib/a/y.ex")
+      TestGate.reload([x], opts(root, {"1 test, 1 failure\n", 2}, :gate))
+      assert TestGate.reload([y], opts(root, {"1 test, 0 failures\n", 0}, :gate)) == :reloaded
+      assert_received {:reload, all}
+      assert Enum.sort(all) == Enum.sort([x, y])
     end
   end
 end
