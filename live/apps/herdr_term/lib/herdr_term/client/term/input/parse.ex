@@ -19,17 +19,27 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
       `\\e[97;2u` and `\\e[97:65;2u` both give `key: "A"`, `mods: []`. A kitty
       shifted-key field also replaces the key for non-letters (`!` for shift+1).
     * `\\0` is ctrl+space (`key: " "`); `\\e[Z` is shift+tab.
-    * Unknown sequences and unmapped kitty functional codes are dropped.
+    * A CSI with more than 64 parameter bytes is malformed and swallowed
+      through its final byte (state `skip`); it is never buffered unboundedly.
+    * `flush/1` of ESC plus a partial UTF-8 character emits `:escape` and drops
+      the partial bytes.
+    * Unknown sequences (including unknown SS3 finals such as `\\eOz`) and unmapped kitty functional codes are dropped.
   """
 
   import Bitwise
 
   alias HerdrScene.Event
 
-  defstruct buffer: "", paste: nil, windows: %{}, kitty: false
+  defstruct buffer: "", paste: nil, windows: %{}, kitty: false, skip: false
 
   @type item :: Event.t() | {:reply, atom, term}
-  @type t :: %__MODULE__{buffer: binary, paste: nil | iodata, windows: map, kitty: boolean}
+  @type t :: %__MODULE__{
+          buffer: binary,
+          paste: nil | iodata,
+          windows: map,
+          kitty: boolean,
+          skip: boolean
+        }
 
   @mod_bits [
     shift: 1,
@@ -111,9 +121,21 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
   def flush(%__MODULE__{buffer: <<"\e", c>>} = t) when c in 0x20..0x7E,
     do: {[Event.key(<<c>>, [:alt])], %{t | buffer: ""}}
 
-  def flush(%__MODULE__{} = t), do: {[], %{t | buffer: ""}}
+  # ESC followed by a partial UTF-8 character: emit :escape, drop the partial bytes.
+  def flush(%__MODULE__{buffer: <<"\e", c, _::binary>>} = t) when c >= 0xC2,
+    do: {[Event.key(:escape)], %{t | buffer: ""}}
+
+  def flush(%__MODULE__{} = t), do: {[], %{t | buffer: "", skip: false}}
 
   defp drain("", acc, t), do: {Enum.reverse(acc), %{t | buffer: ""}}
+
+  # Inside an over-long CSI: swallow parameter bytes up to and including the final byte.
+  defp drain(buf, acc, %__MODULE__{skip: true} = t) do
+    case skip(buf) do
+      {:done, rest} -> drain(rest, acc, %{t | skip: false})
+      :all -> {Enum.reverse(acc), %{t | buffer: ""}}
+    end
+  end
 
   defp drain(buf, acc, t) do
     case next(buf, t) do
@@ -176,8 +198,19 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
   end
 
   # -- CSI ------------------------------------------------------------------
+  defp skip(<<c, r::binary>>) when c in 0x20..0x3F, do: skip(r)
+  defp skip(<<c, r::binary>>) when c in 0x40..0x7E, do: {:done, r}
+  defp skip(""), do: :all
+  defp skip(bin), do: {:done, bin}
+
+  # A CSI longer than this many parameter bytes is malformed: dropped, not buffered.
+  @max_csi 64
+
   defp csi_scan(bin, n, t) do
     case bin do
+      <<_::binary-size(^n), _::binary>> when n >= @max_csi ->
+        {[], binary_part(bin, n, byte_size(bin) - n), %{t | skip: true}}
+
       <<_::binary-size(^n)>> ->
         :more
 

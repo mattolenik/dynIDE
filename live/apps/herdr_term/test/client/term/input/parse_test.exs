@@ -170,4 +170,26 @@ defmodule HerdrTerm.Client.Term.Input.ParseTest do
     assert parse("\e[5~") == [k(:page_up)]
     assert parse("\eOP") == [k(:f1)]
   end
+
+  test "over-long CSI is bounded and swallowed" do
+    junk = "\e[" <> String.duplicate("1", 10_000)
+
+    for chunks <- [[junk], for(<<c::binary-size(100) <- junk>>, do: c)] do
+      p =
+        Enum.reduce(chunks, Parse.new(), fn c, p ->
+          {[], p} = Parse.events(c, p)
+          assert byte_size(p.buffer) <= 64
+          p
+        end)
+
+      assert {[], p} = Parse.events("1m", p)
+      assert {[{:key, %{key: "a"}}], _} = Parse.events("a", p)
+    end
+  end
+
+  test "flush of ESC plus partial UTF-8 emits escape; unknown SS3 is dropped" do
+    {[], p} = Parse.events(<<"\e", 0xC3>>, Parse.new())
+    assert {[{:key, %{key: :escape}}], %{buffer: ""}} = Parse.flush(p)
+    assert parse("\eOz") == []
+  end
 end
