@@ -96,6 +96,7 @@ defmodule HerdrServer.RuntimeStatus do
   @doc "One-line summary of a rollback reason (`:manual`, a Guard failure, `{reason, load_errors}`)."
   @spec reason(term) :: String.t()
   def reason(:manual), do: "manual"
+  def reason(text) when is_binary(text), do: text
   def reason({reason, errs}) when is_list(errs), do: reason(reason) <> " (load errors)"
 
   def reason({k, _, _} = reason) when k in [:raise, :throw, :exit, :timeout, :local_fun],

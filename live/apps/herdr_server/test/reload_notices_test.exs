@@ -278,7 +278,11 @@ defmodule HerdrServer.ReloadNoticesTest do
       start_supervised!({SyncedStub, {[], [batch]}})
       s = fake_session()
       restart_registry()
-      assert %{reload: %{state: :rolled_back, batch: 8}} = next_status(s)
+      st = next_status(s)
+      assert %{reload: %{state: :rolled_back, batch: 8, fanout: 1, reason: "earlier"}} = st
+      text = inspect(RuntimeStatus.nodes(st, 200))
+      assert text =~ "r8 rolled back: earlier"
+      refute text =~ "manual"
     end
 
     test "an existing reload entry is not overwritten on re-subscribe" do

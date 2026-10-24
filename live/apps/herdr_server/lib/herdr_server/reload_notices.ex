@@ -143,18 +143,19 @@ defmodule HerdrServer.ReloadNotices do
 
   # the newest batch (a reload that finished before we subscribed) wins over the sync
   defp seed_reload(state) do
-    case {newest_batch(), synced()} do
-      {%{rolled_back: true} = b, _} ->
-        status(state, {:herdr_reload, {:rolled_back, b.id, b.modules, :manual}})
+    case newest_batch() do
+      # the batch does not record why it was rolled back
+      %{rolled_back: true} = b ->
+        status(state, {:herdr_reload, {:rolled_back, b.id, b.modules, "earlier"}})
 
-      {%{} = b, _} ->
+      %{} = b ->
         status(state, {:herdr_reload, {:loaded, b.id, b.modules}})
 
-      {nil, [_ | _] = mods} ->
-        status(state, {:herdr_reload, {:synced, mods}})
-
-      _ ->
-        state
+      nil ->
+        case synced() do
+          [_ | _] = mods -> status(state, {:herdr_reload, {:synced, mods}})
+          _ -> state
+        end
     end
   end
 
