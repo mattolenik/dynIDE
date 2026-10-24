@@ -14,14 +14,22 @@ defmodule HerdrServer.Persist.Load do
   reason=..` without a file, one `persist_error op=read reason=..` when the snapshot
   cannot be restored. A file that decodes but cannot be restored is set aside
   (`Disk.set_aside/2`) so the Writer does not overwrite the only copy; one that does not
-  decode is set aside and logged by `Disk.read/1`. On any failure the app stays nil, and
-  the first client event initialises it at that client's size.
+  decode or cannot be read is set aside and logged by `Disk.read/1`. On any failure the
+  app stays nil, and the first client event initialises it at that client's size.
+
+  Before the spawns, `:persistent_term` key `#{inspect({__MODULE__, :attempt})}` holds the
+  session path until the Store calls `finish/1` after its mirror flush. A Store that
+  crashes in between (a file that validates but crashes the restore) finds the marker on
+  restart: `crashed?/1` sets the file aside (`reason=restore_crashed`) and the Store
+  starts fresh instead of re-reading the same file in a loop.
   """
 
   alias HerdrReload.{Guard, Telemetry}
   alias HerdrServer.App.{Store, Upgrade}
   alias HerdrServer.Handoff.Link
   alias HerdrServer.Persist.{Disk, RestorePlan, Schema}
+
+  @attempt {__MODULE__, :attempt}
 
   @doc "Restores the app on disk into `state` (`app: nil`), spawning through `effect`."
   @spec run(map, Disk.cfg(), (map, tuple -> map)) :: map
@@ -36,6 +44,7 @@ defmodule HerdrServer.Persist.Load do
         Telemetry.event(:persist_restore, source: :none, reason: fresh_reason())
         state
 
+      # did not decode or could not be read (anything but :enoent): moved aside and logged
       {:ok, {:error, _set_aside_and_logged_by_disk}} ->
         state
 
@@ -45,17 +54,42 @@ defmodule HerdrServer.Persist.Load do
     end
   end
 
+  def run(state, _cfg, _effect), do: state
+
+  @doc """
+  True when a previous Store crashed during a disk restore (the marker is set): erases the
+  marker and sets the session file aside with `reason=restore_crashed`.
+  """
+  @spec crashed?(Disk.cfg()) :: boolean
+  def crashed?(cfg) do
+    case :persistent_term.get(@attempt, nil) do
+      nil ->
+        false
+
+      _path ->
+        :persistent_term.erase(@attempt)
+        set_aside(cfg, "restore_crashed")
+        true
+    end
+  end
+
+  @doc "Ends a disk restore: erases the marker. Returns `state`."
+  @spec finish(map) :: map
+  def finish(state) do
+    :persistent_term.erase(@attempt)
+    state
+  end
+
   # one persist_error line either way, even when setting the file aside raises too
   defp set_aside(cfg, reason) do
     with {:failed, _} <- Guard.run(Disk, :set_aside, [cfg, reason], server: Store.reload_server()),
          do: Telemetry.event(:persist_error, op: :read, reason: reason)
   end
 
-  def run(state, _cfg, _effect), do: state
-
   defp restore(state, cfg, snap, effect, t0) do
     case plan(cfg, snap) do
       {:ok, app, spawns} ->
+        :persistent_term.put(@attempt, Disk.session_path(cfg))
         state = Enum.reduce(spawns, %{state | app: app}, &effect.(&2, &1))
         spawned = Enum.filter(spawns, fn {:spawn, id, _, _} -> state.sizes[id] end)
 

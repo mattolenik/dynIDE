@@ -175,6 +175,37 @@ defmodule HerdrServer.Persist.StoreRestoreTest do
     assert length(Regex.scan(~r/persist_error .*op=read reason=/, log)) == 1
   end
 
+  test "a restore that crashes the Store sets the file aside on the next start", %{cfg: cfg} do
+    on_exit(fn -> :persistent_term.erase({Load, :attempt}) end)
+    write!(cfg, app(), %{})
+    path = Disk.session_path(cfg)
+
+    # a file that validates but whose restore raises: the marker is left behind
+    assert_raise RuntimeError, fn ->
+      Load.run(%{app: nil, sizes: %{}}, cfg, fn _, _ -> raise "boom" end)
+    end
+
+    assert :persistent_term.get({Load, :attempt}) == path
+
+    log = capture_log([level: :info], fn -> restart_store() end)
+    assert Store.snapshot() == nil
+    assert Fake.Keeper.ids() == []
+    assert :persistent_term.get({Load, :attempt}, nil) == nil
+    refute File.exists?(path)
+    assert [moved] = File.ls!(cfg.dir)
+    assert moved =~ ~r/^session\.default\.etf\.bad-\d+$/
+    assert length(Regex.scan(~r/persist_error .*op=read reason=restore_crashed/, log)) == 1
+    # no continue: the file was not read again
+    refute log =~ "persist_restore"
+  end
+
+  test "a completed restore leaves no marker", %{cfg: cfg} do
+    write!(cfg, app(), %{})
+    restart_store()
+    assert Map.keys(Store.snapshot().session.panes) == [1, 2, 3]
+    assert :persistent_term.get({Load, :attempt}, nil) == nil
+  end
+
   defp eventually(fun, n \\ 50) do
     cond do
       fun.() ->

@@ -139,7 +139,8 @@ defmodule HerdrServer.App.Store do
         :persistent_term.erase(Protocol.fast_path_key())
         cfg = Disk.config()
 
-        if cfg.enabled,
+        # a Store that crashed restoring this file must not read it again
+        if not Load.crashed?(cfg) and cfg.enabled,
           do: {:ok, %__MODULE__{}, {:continue, {:disk, cfg}}},
           else: {:ok, %__MODULE__{}}
 
@@ -192,7 +193,8 @@ defmodule HerdrServer.App.Store do
   def handle_continue({:disk, cfg}, state) do
     state = Map.merge(%__MODULE__{}, state)
     state = Load.run(state, cfg, &effect(&1, &2, nil))
-    {:noreply, state |> settle() |> publish_fast() |> Mirror.flush() |> Carry.hold()}
+    state = state |> settle() |> publish_fast() |> Mirror.flush() |> Load.finish()
+    {:noreply, Carry.hold(state)}
   end
 
   @impl true
@@ -437,14 +439,6 @@ defmodule HerdrServer.App.Store do
     end
   end
 
-  # a restored pane whose recorded cwd cannot be used gets one retry in the Store's cwd
-  defp open(spec, nil), do: Kernel.keeper().open(spec)
-
-  defp open(spec, _cwd) do
-    with {:error, _} <- Kernel.keeper().open(spec),
-         do: Kernel.keeper().open(%{spec | cwd: File.cwd!()})
-  end
-
   # a reconciled pane already in the keeper and mapped; {0, 0} makes settle/1 size it
   defp effect(state, {:adopt, id}, _origin) do
     Restore.ensure_server(id)
@@ -459,6 +453,14 @@ defmodule HerdrServer.App.Store do
   defp effect(state, other, origin) do
     io(other, origin)
     state
+  end
+
+  # a restored pane whose recorded cwd cannot be used gets one retry in the Store's cwd
+  defp open(spec, nil), do: Kernel.keeper().open(spec)
+
+  defp open(spec, _cwd) do
+    with {:error, _} <- Kernel.keeper().open(spec),
+         do: Kernel.keeper().open(%{spec | cwd: File.cwd!()})
   end
 
   defp io({:key, id, ev}, _), do: Input.key(ev, id)
