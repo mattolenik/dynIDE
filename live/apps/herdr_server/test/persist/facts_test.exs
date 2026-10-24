@@ -50,6 +50,13 @@ defmodule HerdrServer.Persist.FactsTest do
     assert %{@a => %{cwd: "/spawn/dir"}} = Facts.collect(app([@a]), prev)
   end
 
+  test "a pty without a cwd falls back to the osc cwd", %{res: res} do
+    Fake.Pty.set_cwd(res.pty, nil)
+    HerdrServer.Pane.Facts.put(@a, %{cwd: "/tmp"})
+    on_exit(fn -> HerdrServer.Pane.Facts.delete(@a) end)
+    assert %{@a => %{cwd: "/tmp"}} = Facts.collect(app([@a]))
+  end
+
   test "hidden comes from the mirror" do
     Mirror.put({:pane, @a}, %{hidden: true})
     assert %{@a => %{hidden: true}} = Facts.collect(app([@a]))

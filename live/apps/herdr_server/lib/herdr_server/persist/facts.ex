@@ -1,13 +1,13 @@
 defmodule HerdrServer.Persist.Facts do
   @moduledoc """
   Per-pane runtime facts for a snapshot (the `Persist.Schema.facts` shape): `cwd` from
-  the pty (process cwd, OSC 7 fallback), `command` from the keeper row, `hidden` from
-  the mirror. A fact the kernel no longer reports (pane unmapped, process exited) keeps
-  its value from `prev`.
+  the pty (process cwd), else the pane's OSC-tracked cwd (`Pane.Facts`), `command` from
+  the keeper row, `hidden` from the mirror. A fact the kernel no longer reports (pane
+  unmapped, process exited) keeps its value from `prev`.
   """
 
   alias HerdrServer.{Kernel, Mirror}
-  alias HerdrServer.Pane.Rows
+  alias HerdrServer.Pane.{Facts, Rows}
   alias HerdrServer.Persist.Schema
 
   @doc "Facts for every pane in `app.session.panes`, falling back to `prev` per field."
@@ -20,7 +20,7 @@ defmodule HerdrServer.Persist.Facts do
     row = row(id)
 
     %{
-      cwd: (row && Kernel.pty().cwd(row.pty)) || Map.get(prev, :cwd),
+      cwd: (row && Kernel.pty().cwd(row.pty)) || pane_cwd(id) || Map.get(prev, :cwd),
       command: (row && Map.get(row, :cmd)) || Map.get(prev, :command),
       hidden:
         case Mirror.pane(id) do
@@ -28,6 +28,13 @@ defmodule HerdrServer.Persist.Facts do
           _ -> Map.get(prev, :hidden, false) == true
         end
     }
+  end
+
+  defp pane_cwd(id) do
+    case Facts.get(id) do
+      %{cwd: cwd} -> cwd
+      _ -> nil
+    end
   end
 
   @doc "The last `rows` lines of pane `id`'s history as ANSI, `:alt_screen`, or nil."
