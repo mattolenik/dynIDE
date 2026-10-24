@@ -42,9 +42,8 @@ live-demo:
 live-bench:
     cd '{{live_dir}}' && MIX_ENV=test mix herdr.bench
 
-# M6 gate: keystroke -> glass in a real pty, herdr (reference) then herdr-live (GLASS lines)
+# M6 gate: keystroke -> glass in a real pty, herdr (the herdr-reference tag build, or HERDR_BIN) then herdr-live (GLASS lines)
 live-bench-glass:
-    cd '{{live_dir}}/..' && cargo build --release --locked
     cd '{{live_dir}}' && mix compile
     python3 '{{live_dir}}/bench/gate/glass.py' herdr --n 500
     python3 '{{live_dir}}/bench/gate/glass.py' herdr-live --n 500

@@ -235,9 +235,12 @@ def main():
         sys.exit("glass: --size must be COLSxROWS")
     cols, rows = int(m.group(1)), int(m.group(2))
     launch, default = {
-        "herdr": (herdr, os.path.join(ROOT, "target", "release", "herdr")),
+        "herdr": (herdr, None),
         "herdr-live": (herdr_live, os.path.join(LIVE, "bin", "herdr-live")),
     }[args.impl]
+    if default is None and not args.bin:
+        # HERDR_BIN or the herdr-reference build (herdr_ref.sh)
+        args.bin = subprocess.check_output([os.path.join(LIVE, "bench", "gate", "herdr_ref.sh")], text=True).strip()
     bin_ = os.path.abspath(args.bin or default)
     if not os.access(bin_, os.X_OK):
         sys.exit(f"glass: {bin_} is not executable")

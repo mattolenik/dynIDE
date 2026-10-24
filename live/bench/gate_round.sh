@@ -45,7 +45,13 @@ for s in $suites; do
     reload) run reload just --justfile "$root/justfile" live-bench-reload ;;
     handoff) run handoff just --justfile "$root/justfile" live-bench-handoff ;;
     glass) run glass just --justfile "$root/justfile" live-bench-glass ;;
-    herdrref) run herdrref bash -c "cd '$root' && cargo test --release --locked --bin herdr server::render_scale_benchmark::render_scale_profile -- --exact --ignored --nocapture --test-threads=1" ;;
+    herdrref)
+      if dir=$("$live/bench/gate/herdr_ref.sh" --print-dir 2>/dev/null); then
+        run herdrref bash -c "cd '$dir' && cargo test --release --locked --bin herdr server::render_scale_benchmark::render_scale_profile -- --exact --ignored --nocapture --test-threads=1"
+      else
+        echo "skipped: HERDR_BIN gives no source tree" > "$out/herdrref.log"
+        echo "== herdrref skipped (HERDR_BIN gives no source tree)" | tee -a "$out/summary.txt"
+      fi ;;
     *) echo "unknown suite $s" >&2; exit 2 ;;
   esac
 done
