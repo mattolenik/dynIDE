@@ -279,9 +279,14 @@ grep -E 'herdr-event (session_lost|crash|broker_handoff_failed)' "$L"
   inherited `HERDR_BROKER_SOCK`) they print `SKIP: <mode>: running inside herdr-live ...`
   and exit 0.
 - Gate before committing: `just live-check` (format, credo --strict, dialyzer, cargo
-  fmt/clippy, tests, launcher and attached smokes, tty harness), run outside the dogfood
-  instance (another terminal, or another worktree) so the harness modes run too. Do not
-  run builds in parallel in one worktree.
+  fmt/clippy, tests, launcher and attached smokes, tty harness), run from another
+  worktree, or with the dogfood instance stopped (another terminal is not enough: the
+  harness and smokes compile into the same `_build/dev` and selfhost writes into the
+  watched tree). Do not run builds in parallel in one worktree. Inside a pane,
+  `just live-test` and focused `mix test` are safe: the test VM drops the inherited
+  broker and control env (`config/runtime.exs`).
+- One instance per log file: two brokers writing one log produce false `broker_died`
+  losses in `log_summary`.
 - Self-hosted tty check: `python3 live/scripts/tty_harness.py selfhost` (drives herdr-live
   attached to a pty and edits it from inside; outside a herdr-live pane only).
 - Reload metrics: `just live-bench-reload` (targets: render < 500 ms p95, view < 500 ms,
