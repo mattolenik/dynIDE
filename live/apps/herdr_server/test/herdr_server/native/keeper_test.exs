@@ -122,8 +122,10 @@ defmodule HerdrServer.Native.KeeperTest do
     Keeper.close(id)
   end
 
-  test "an ill-typed replay is an invalid spec" do
+  test "an ill-typed replay is an invalid spec; nil is no replay" do
     assert Keeper.open(spec(%{replay: 1})) == {:error, {:invalid_spec, :replay}}
+    assert {:ok, id} = Keeper.open(spec(%{replay: nil}))
+    Keeper.close(id)
   end
 
   test "lookup of unknown id is :error" do

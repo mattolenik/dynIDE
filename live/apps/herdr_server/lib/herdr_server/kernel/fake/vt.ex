@@ -30,6 +30,9 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   @doc "Test hook: feed bytes; `gen` (the pty's damage generation) defaults to gen + 1."
   def write(vt, bin, gen \\ nil), do: GenServer.cast(vt, {:write, bin, gen})
 
+  @doc "Test hook: like `write/2`, but returns once the bytes are applied."
+  def write_sync(vt, bin), do: GenServer.call(vt, {:write_sync, bin})
+
   @doc "Makes the next `dirty_rows/1` return every row."
   def force_full(vt), do: GenServer.cast(vt, :force_full)
 
@@ -150,6 +153,12 @@ defmodule HerdrServer.Kernel.Fake.Vt do
 
     text = Enum.map_join(range, "\n", &(state |> text_row(&1) |> String.trim_trailing()))
     {:reply, text, state}
+  end
+
+  def handle_call({:write_sync, bin}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, state} = handle_cast({:write, bin, nil}, state)
+    {:reply, :ok, state}
   end
 
   def handle_call({:tail, n}, _from, state) do

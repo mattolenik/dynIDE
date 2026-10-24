@@ -145,6 +145,9 @@ pub struct WriteEffects {
     pub clipboard: Vec<Vec<u8>>,
 }
 
+/// Upper bound on `Vt::tail_ansi` rows; larger requests are clamped.
+pub const MAX_TAIL_ROWS: usize = 10_000;
+
 /// The primary screen's last rows as VT, or AltScreen when a full-screen app owns it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tail {
@@ -558,8 +561,10 @@ impl Vt {
     }
 
     /// The last `n` non-blank-trailing rows of history plus screen as VT (unwrapped,
-    /// trimmed). Trailing blank rows below the last content row are skipped.
+    /// trimmed). Trailing blank rows below the last content row are skipped. `n` is
+    /// clamped to `MAX_TAIL_ROWS`.
     pub fn tail_ansi(&self, n: usize) -> Result<Tail, VtError> {
+        let n = n.min(MAX_TAIL_ROWS);
         let core = lock(&self.core);
         let t = &core.terminal;
         if t.active_screen()? == ActiveScreen::Alternate {
@@ -1091,6 +1096,7 @@ mod tests {
             .collect();
         assert_eq!(got, lines[40..].to_vec(), "{t:?}");
         assert_eq!(vt.tail_ansi(0), Ok(Tail::Ansi(String::new())));
+        assert_eq!(vt.tail_ansi(usize::MAX), vt.tail_ansi(MAX_TAIL_ROWS));
         assert_eq!(
             Vt::new(20, 5, 100).expect("vt").tail_ansi(5),
             Ok(Tail::Ansi(String::new()))

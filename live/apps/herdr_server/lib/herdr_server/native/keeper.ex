@@ -35,7 +35,7 @@ defmodule HerdrServer.Native.Keeper do
   @type id :: pos_integer
   @typedoc "`max_scrollback` is in bytes (e.g. 10_000_000); cols and rows are in 1..65535."
   @type spec :: %{
-          optional(:replay) => binary,
+          optional(:replay) => binary | nil,
           cmd: binary,
           args: [binary],
           env: [{binary, binary}],
@@ -311,7 +311,7 @@ defmodule HerdrServer.Native.Keeper do
         pty: pty,
         os_pid: st.os_pid,
         max_scrollback: st.max_scrollback,
-        cmd: Map.get(st, :cmd)
+        cmd: carried_cmd(Map.get(st, :cmd))
       }
 
       :ets.insert(@table, {id, row})
@@ -322,6 +322,11 @@ defmodule HerdrServer.Native.Keeper do
     end
   rescue
     e in [ArgumentError, ErlangError] -> {:error, {:raise, Exception.message(e)}}
+  end
+
+  # metadata from the blob: only a list of binaries survives, anything else is nil
+  defp carried_cmd(cmd) do
+    if is_list(cmd) and not List.improper?(cmd) and Enum.all?(cmd, &is_binary/1), do: cmd
   end
 
   defp carry(_id, %{pending_input: ""}, state), do: state
@@ -358,7 +363,7 @@ defmodule HerdrServer.Native.Keeper do
 
   defp start(id, spec) do
     with {:ok, vt} <- Vt.new(spec.cols, spec.rows, spec.max_scrollback),
-         _ <- replay(vt, spec),
+         :ok <- replay(vt, spec),
          {:ok, pty, os_pid} <-
            Pty.spawn(vt, id, spec.cmd, spec.args, spec.env, spec.cwd, spec.cols, spec.rows) do
       row = %{
@@ -383,7 +388,11 @@ defmodule HerdrServer.Native.Keeper do
       {:error, {:raise, Exception.message(e)}}
   end
 
-  defp replay(vt, %{replay: bytes}) when bytes != "", do: Vt.feed(vt, bytes)
+  defp replay(vt, %{replay: bytes}) when is_binary(bytes) and bytes != "" do
+    Vt.feed(vt, bytes)
+    :ok
+  end
+
   defp replay(_vt, _spec), do: :ok
 
   defp check(spec) when is_map(spec) do
@@ -391,7 +400,7 @@ defmodule HerdrServer.Native.Keeper do
       key = Enum.find(@keys, &(not (is_map_key(spec, &1) and valid?(&1, spec[&1])))) ->
         {:error, {:invalid_spec, key}}
 
-      not is_binary(Map.get(spec, :replay, "")) ->
+      not (is_binary(Map.get(spec, :replay)) or is_nil(Map.get(spec, :replay))) ->
         {:error, {:invalid_spec, :replay}}
 
       true ->

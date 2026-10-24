@@ -101,8 +101,11 @@ defmodule HerdrServer.Handoff.KeeperAdoptTest do
 
     hand_over(430, 431, &Map.delete(&1, :cmd))
     assert {:ok, %{os_pid: ^os_pid, cmd: nil}} = Keeper.lookup(431)
+
+    hand_over(431, 432, &Map.put(&1, :cmd, ["ok", :not_binary]))
+    assert {:ok, %{os_pid: ^os_pid, cmd: nil}} = Keeper.lookup(432)
     System.cmd("kill", ["-9", "#{os_pid}"])
-    Keeper.close(431)
+    Keeper.close(432)
   end
 
   test "open and close are refused while frozen, and work again after thaw" do

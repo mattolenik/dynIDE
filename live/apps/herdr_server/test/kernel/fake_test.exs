@@ -173,6 +173,8 @@ defmodule HerdrServer.Kernel.FakeTest do
     assert cmd == ["sh", "-l"]
     assert Vt.read_text(vt, :screen) =~ "hello"
     Keeper.close(id)
+    {:ok, id} = Keeper.open(Map.merge(@opts, %{replay: nil, subscriber: nil}))
+    Keeper.close(id)
   end
 
   test "close removes the pane", %{id: id} do

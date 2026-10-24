@@ -954,11 +954,14 @@ impl Pty {
     }
 
     /// The child's working directory from the OS, else the last OSC 7 pwd as a path.
-    /// Only absolute paths. One syscall, so fine on a normal scheduler.
+    /// Only absolute paths. One syscall, so fine on a normal scheduler. Once the child
+    /// exited its pid may be recycled, so only the OSC 7 pwd is used then.
     pub fn cwd(&self) -> Option<String> {
-        os_cwd(self.inner.pid as u32)
-            .filter(|p| p.starts_with('/'))
-            .or_else(|| lock(&self.inner.pwd).as_deref().and_then(osc7_path))
+        let os = match self.exit_status() {
+            Some(_) => None,
+            None => os_cwd(self.inner.pid as u32).filter(|p| p.starts_with('/')),
+        };
+        os.or_else(|| lock(&self.inner.pwd).as_deref().and_then(osc7_path))
     }
 
     pub fn id(&self) -> u64 {
@@ -1740,6 +1743,14 @@ mod tests {
         pty.write(b"cd /\n").expect("write");
         assert_eq!(wait_cwd(&pty, "/").as_deref(), Some("/"));
         let _ = pty.kill(libc::SIGKILL);
+    }
+
+    #[test]
+    fn cwd_after_exit_skips_the_os() {
+        // the pid may be recycled once the child is gone: only OSC 7 is trusted then
+        let (_vt, pty, rx) = sh("exit 0");
+        exit_of(&rx);
+        assert_eq!(pty.cwd(), None);
     }
 
     #[test]
