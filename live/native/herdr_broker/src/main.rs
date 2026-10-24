@@ -79,6 +79,7 @@ fn run(dir: &Path, sock: PathBuf, argv: Vec<OsString>) -> i32 {
         return 1;
     }
     let _ = std::fs::remove_file(&sock);
+    raise_nofile();
     let sig = match install_signals() {
         Ok(s) => s,
         Err(e) => {
@@ -102,6 +103,36 @@ fn run(dir: &Path, sock: PathBuf, argv: Vec<OsString>) -> i32 {
     }
     log!("stopped");
     code
+}
+
+/// Soft RLIMIT_NOFILE up to the hard limit: the broker holds every pane's
+/// master plus one link per VM, and the VMs inherit the limit. macOS rejects
+/// a soft limit above OPEN_MAX (10240) even when the hard limit is unlimited.
+fn raise_nofile() {
+    // SAFETY: zeroed rlimit is a valid out-parameter for getrlimit.
+    let mut rl: libc::rlimit = unsafe { std::mem::zeroed() };
+    // SAFETY: valid resource and pointer.
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) } != 0 {
+        return;
+    }
+    let want = open_max(rl.rlim_max);
+    if want > rl.rlim_cur {
+        rl.rlim_cur = want;
+        // SAFETY: valid resource and pointer; failure leaves the old limit.
+        if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &rl) } != 0 {
+            log!("raise RLIMIT_NOFILE: {}", std::io::Error::last_os_error());
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn open_max(hard: libc::rlim_t) -> libc::rlim_t {
+    hard.min(10240)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_max(hard: libc::rlim_t) -> libc::rlim_t {
+    hard
 }
 
 static SIG_FD: AtomicI32 = AtomicI32::new(-1);

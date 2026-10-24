@@ -48,6 +48,9 @@ pub struct Config {
     pub stop_grace: Duration,
     pub shutdown_grace: Duration,
     pub frame_timeout: Duration,
+    /// After a primary's link EOF, how long to wait for its exit status: 0 is a
+    /// deliberate quit (clean broker stop), anything else or no exit a crash.
+    pub exit_grace: Duration,
 }
 
 impl Config {
@@ -62,6 +65,7 @@ impl Config {
             stop_grace: s(2),
             shutdown_grace: s(15),
             frame_timeout: s(5),
+            exit_grace: Duration::from_millis(1000),
         }
     }
 }
@@ -175,6 +179,8 @@ pub struct Broker<S: Spawner> {
     plan: Plan,
     deadline: Option<Instant>,
     kills: Vec<(Instant, u64)>,
+    /// Primaries whose link closed, waiting for their exit status until the instant.
+    exit_waits: Vec<(Instant, u64)>,
     entries: BTreeMap<Vec<u8>, Entry>,
     /// HOLD/UPDATE/DROP from the adoption target, applied at its RESTORED.
     staged: Vec<Frame>,
@@ -234,6 +240,7 @@ impl<S: Spawner> Broker<S> {
             plan: Plan::Idle,
             deadline: None,
             kills: Vec::new(),
+            exit_waits: Vec::new(),
             entries: BTreeMap::new(),
             staged: Vec::new(),
             next_ref: 1,
@@ -302,7 +309,13 @@ impl<S: Spawner> Broker<S> {
     }
 
     fn wake_ms(&self) -> i32 {
-        let next = self.kills.iter().map(|k| k.0).chain(self.deadline).min();
+        let next = self
+            .kills
+            .iter()
+            .chain(&self.exit_waits)
+            .map(|k| k.0)
+            .chain(self.deadline)
+            .min();
         next.map_or(-1, |at| {
             let ms = at.saturating_duration_since(Instant::now()).as_millis() + 1;
             ms.min(i32::MAX as u128) as i32
@@ -402,6 +415,23 @@ impl<S: Spawner> Broker<S> {
         });
         for gen in due {
             self.kill(gen);
+        }
+        let mut lapsed = Vec::new();
+        self.exit_waits.retain(|&(at, gen)| {
+            let fire = at <= now;
+            if fire {
+                lapsed.push(gen);
+            }
+            !fire
+        });
+        for gen in lapsed {
+            // Link gone but no exit status within exit_grace: a crash.
+            if let Some(v) = self.vms.get_mut(&gen).filter(|v| v.alive) {
+                v.alive = false;
+                let (pid, ready) = (v.pid, v.ready);
+                self.spawner.signal(pid, libc::SIGKILL);
+                self.vm_died(gen, ready, "eof");
+            }
         }
         if self.deadline.is_some_and(|d| d <= now) {
             self.deadline = None;
@@ -980,11 +1010,19 @@ impl<S: Spawner> Broker<S> {
 
     fn link_closed(&mut self, gen: u64) {
         let stopping = matches!(self.plan, Plan::Stopping);
+        let primary = self.primary == Some(gen);
         let Some(v) = self.vms.get_mut(&gen) else {
             return;
         };
         v.conn = None;
         if !v.alive {
+            return;
+        }
+        if primary && !v.released && !stopping {
+            // A quitting VM closes its link long before it exits: let the exit
+            // status decide (reap), or exit_grace lapse into the crash path.
+            self.exit_waits
+                .push((Instant::now() + self.cfg.exit_grace, gen));
             return;
         }
         v.alive = false;
@@ -1019,6 +1057,7 @@ impl<S: Spawner> Broker<S> {
             if self.last_primary == Some(gen) {
                 self.last_primary_status = Some(st);
             }
+            self.exit_waits.retain(|&(_, g)| g != gen);
             let Some(v) = self.vms.remove(&gen) else {
                 continue;
             };
@@ -1049,6 +1088,13 @@ impl<S: Spawner> Broker<S> {
             self.on_reply(r, ERR_CLOSED);
         }
         if matches!(self.plan, Plan::Stopping) {
+            return;
+        }
+        if self.primary == Some(gen) && how == "0" {
+            // The primary quit on purpose (e.g. the local client detached).
+            log!("vm gen={gen} exited cleanly");
+            self.primary = None;
+            self.begin_stop(0);
             return;
         }
         if self.primary == Some(gen) {
@@ -1229,6 +1275,7 @@ mod tests {
         cfg.stop_grace = ms(300);
         cfg.shutdown_grace = ms(300);
         cfg.frame_timeout = WAIT;
+        cfg.exit_grace = ms(300);
         let (vtx, vms) = channel();
         let (stx, sigs) = channel();
         let reaps = Arc::new(Mutex::new(Vec::new()));
@@ -1503,6 +1550,41 @@ mod tests {
         let mut buf = [0u8; 1];
         assert_eq!((&pr).read(&mut buf).unwrap(), 0);
         h.wait_status("entries=0");
+    }
+
+    #[test]
+    fn primary_exit_zero_stops_without_handoff() {
+        let h = start("exit0");
+        let (vm1, vm2) = h.boot();
+        drop(vm1);
+        h.reaps.lock().unwrap().push((pid(1), 0));
+        (&h.sig_w).write_all(b"C").unwrap();
+        let mut got = Vec::new();
+        while got.last() != Some(&(pid(2), libc::SIGTERM)) {
+            got.push(h.sigs.recv_timeout(WAIT).unwrap());
+        }
+        assert!(!got.contains(&(pid(1), libc::SIGKILL)), "{got:?}");
+        assert!(h.status().contains("phase=stopping\n"));
+        assert_silent(&vm2);
+        h.reaps.lock().unwrap().push((pid(2), 0));
+        (&h.sig_w).write_all(b"C").unwrap();
+        let o = h.thread.join().unwrap().unwrap();
+        assert_eq!((o.code, o.crashed), (0, false));
+        assert!(!h.sock.exists());
+    }
+
+    #[test]
+    fn primary_exit_nonzero_crashes() {
+        let h = start("exit1");
+        let (vm1, vm2) = h.boot();
+        drop(vm1);
+        h.reaps.lock().unwrap().push((pid(1), 1));
+        (&h.sig_w).write_all(b"C").unwrap();
+        let end = expect(&vm2, kind::ADOPT_END);
+        assert_eq!(end.body, [0, 0, 0, 0, 1]);
+        send(&vm2, kind::RESTORED, &0u32.to_be_bytes(), &[]);
+        let st = h.wait_status("primary_gen=2");
+        assert!(st.contains("last_handoff_kind=crash\n"));
     }
 
     #[test]
