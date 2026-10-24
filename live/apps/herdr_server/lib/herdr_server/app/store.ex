@@ -330,12 +330,23 @@ defmodule HerdrServer.App.Store do
     state = state |> settle() |> publish_fast()
 
     if state.app != old do
+      focus_reports(old, state.app)
       Enum.each(Map.keys(state.subs), &send(&1, {:app_changed, state.app}))
       Carry.hold(state)
     else
       state
     end
   end
+
+  # focus-out to the pane that lost focus, then focus-in to the one that gained it
+  # (a no-op unless the child enabled mode 1004; unknown or closed panes are skipped)
+  defp focus_reports(%{focus: %{pane: a}}, %{focus: %{pane: b}})
+       when a != nil and b != nil and a != b do
+    Input.focus(false, a)
+    Input.focus(true, b)
+  end
+
+  defp focus_reports(_old, _new), do: :ok
 
   defp batch(state, ev, size) do
     drive =
