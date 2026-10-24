@@ -2,8 +2,8 @@
 //!
 //! `Inner` is shared by the NIF resource and the kernel threads it owns. The
 //! threads hold an `Arc<Inner>`, so teardown is explicit: `TtyResource`'s
-//! `Drop` restores the terminal, raises `shutdown`, and joins the threads,
-//! each of which re-checks `shutdown` at least every `POLL_MS`.
+//! `Drop` restores the terminal without waiting and raises `shutdown`; each
+//! detached thread re-checks it at least every `POLL_MS` and drops its `Arc`.
 
 use crate::probe::{self, ProbeState};
 use std::fs::{File, OpenOptions};
@@ -13,7 +13,6 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 /// Every blocking wait on the fd is bounded by this, so threads notice `shutdown`.
@@ -89,7 +88,6 @@ pub struct Inner {
     restored: AtomicBool,
     shutdown: AtomicBool,
     sub: Mutex<Subscription>,
-    threads: Mutex<Vec<JoinHandle<()>>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -219,8 +217,8 @@ impl Inner {
         let (probe, leftover) = match Self::probe(&file) {
             Ok(found) => found,
             Err(err) => {
-                // SAFETY: valid fd and the termios saved above.
-                unsafe { libc::tcsetattr(fd, libc::TCSANOW, &saved) };
+                // Leaves the alternate screen too; nothing was pushed yet.
+                let _ = reset(&file, &saved, false, true);
                 return Err(err);
             }
         };
@@ -247,14 +245,14 @@ impl Inner {
             restored: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
             sub: Mutex::new(subscription),
-            threads: Mutex::new(Vec::new()),
         });
         let reader = Arc::clone(&inner);
         let spawned = std::thread::Builder::new()
             .name("herdr-tty-reader".into())
             .spawn(move || reader.run_guarded(Inner::read_loop));
         match spawned {
-            Ok(handle) => lock(&inner.threads).push(handle),
+            // Detached: the thread holds its own Arc and exits within POLL_MS of shutdown.
+            Ok(_) => {}
             Err(err) => {
                 let _ = inner.restore();
                 return Err(err);
@@ -374,7 +372,8 @@ impl Inner {
         Ok((ws.ws_col, ws.ws_row, ws.ws_xpixel, ws.ws_ypixel))
     }
 
-    /// Restores the host terminal once; later calls do nothing.
+    /// Restores the host terminal once; later calls do nothing. Waits up to
+    /// `WRITE_BUDGET` for the host to take the sequence.
     pub fn restore(&self) -> io::Result<()> {
         if self.restored.swap(true, Ordering::AcqRel) {
             return Ok(());
@@ -386,27 +385,37 @@ impl Inner {
     /// termios to the saved state. Does not claim `restored`, so suspend can
     /// reuse it.
     pub(crate) fn reset_terminal(&self) -> io::Result<()> {
-        let mut out = Vec::with_capacity(KITTY_POP.len() + RESTORE.len());
-        if self.kitty_pushed {
-            out.extend_from_slice(KITTY_POP);
-        }
-        out.extend_from_slice(RESTORE);
-        // Best effort: a host that stopped reading must not keep us in raw mode.
-        let _ = write_by(&self.file, &out, Instant::now() + WRITE_BUDGET);
-        // SAFETY: valid fd and the termios saved at open.
-        cvt(unsafe { libc::tcsetattr(self.file.as_raw_fd(), libc::TCSANOW, &self.saved) })
+        reset(&self.file, &self.saved, self.kitty_pushed, true)
     }
 
-    /// Restores, stops the kernel threads, and joins them (bounded by `POLL_MS`).
+    /// Destructor path, never waits: one non-blocking restore write attempt
+    /// (if not already restored), then signals the threads, which hold their
+    /// own `Arc` and exit within `POLL_MS`.
     fn shutdown(&self) {
-        let _ = self.restore();
-        self.shutdown.store(true, Ordering::Release);
-        let threads = std::mem::take(&mut *lock(&self.threads));
-        for handle in threads {
-            // Thread bodies run under catch_unwind; a join error cannot carry news.
-            let _ = handle.join();
+        if !self.restored.swap(true, Ordering::AcqRel) {
+            let _ = reset(&self.file, &self.saved, self.kitty_pushed, false);
         }
+        self.shutdown.store(true, Ordering::Release);
     }
+}
+
+/// Writes the restore sequence and resets termios to `saved`. With `wait`,
+/// the write may poll for up to `WRITE_BUDGET`; without, it is a single
+/// non-blocking attempt and a partial write is accepted.
+fn reset(file: &File, saved: &libc::termios, kitty_pushed: bool, wait: bool) -> io::Result<()> {
+    let mut out = Vec::with_capacity(KITTY_POP.len() + RESTORE.len());
+    if kitty_pushed {
+        out.extend_from_slice(KITTY_POP);
+    }
+    out.extend_from_slice(RESTORE);
+    // Best effort: a host that stopped reading must not keep us in raw mode.
+    if wait {
+        let _ = write_by(file, &out, Instant::now() + WRITE_BUDGET);
+    } else {
+        let _ = (&*file).write(&out);
+    }
+    // SAFETY: valid fd and a termios from tcgetattr.
+    cvt(unsafe { libc::tcsetattr(file.as_raw_fd(), libc::TCSANOW, saved) })
 }
 
 /// The NIF resource. Dropping it (BEAM GC of the last reference) restores the
@@ -684,6 +693,27 @@ mod tests {
         assert!(same_termios(&termios(&p.slave), &before));
         let out = read_until(&p.master, b"\x1b[?1049l", Duration::from_secs(1));
         assert!(contains(&out, b"\x1b[?1049l"), "{out:?}");
+    }
+
+    #[test]
+    fn drop_does_not_wait_on_blocked_host() {
+        let p = pty();
+        let before = termios(&p.slave);
+        let tty = TtyResource::new(Inner::open_path(&p.path, 0, None).unwrap());
+        // Fill the host's output queue; the master is never read.
+        let junk = [b'x'; 4096];
+        loop {
+            match (&tty.inner.file).write(&junk) {
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) => panic!("fill: {e}"),
+            }
+        }
+        let start = Instant::now();
+        drop(tty);
+        let took = start.elapsed();
+        assert!(took < Duration::from_millis(20), "drop took {took:?}");
+        assert!(same_termios(&termios(&p.slave), &before));
     }
 
     #[test]

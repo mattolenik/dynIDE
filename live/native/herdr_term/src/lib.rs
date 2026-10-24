@@ -91,7 +91,8 @@ mod nif {
         }
     }
 
-    #[rustler::nif]
+    // Dirty IO: the restore write may poll the host for up to 100 ms.
+    #[rustler::nif(schedule = "DirtyIo")]
     fn tty_restore(tty: ResourceArc<TtyResource>) -> Atom {
         // Best effort by contract: a tty that cannot be reset has nothing left to undo.
         let _ = tty.inner.restore();

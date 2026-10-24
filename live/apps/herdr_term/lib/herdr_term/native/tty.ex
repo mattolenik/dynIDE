@@ -9,6 +9,9 @@ defmodule HerdrTerm.Native.Tty do
     * `{:tty_input, binary}`
     * `{:exit, :tty, :hangup}` on EOF/EIO
     * `{:exit, :tty, {:panic, binary}}`
+
+  Probe replies that arrive after the 250 ms deadline are delivered as
+  ordinary `{:tty_input, binary}`.
   """
 
   alias HerdrTerm.Native
