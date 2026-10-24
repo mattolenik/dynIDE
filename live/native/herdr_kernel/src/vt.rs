@@ -188,8 +188,6 @@ struct VtCore {
     last: Arc<Snapshot>,
 }
 
-const CONTINUATION_MAX_BYTES: usize = 65536;
-
 pub struct Vt {
     core: Mutex<VtCore>,
     snapshot: Mutex<Arc<Snapshot>>,
@@ -393,7 +391,7 @@ impl Vt {
     fn from_terminal(mut terminal: Terminal) -> Result<Arc<Vt>, VtError> {
         terminal.enable_kitty_graphics()?;
         // Ruling 4 (m5): continuation tracking so a snapshot never fails mid-escape.
-        terminal.set_continuation_max_bytes(CONTINUATION_MAX_BYTES)?;
+        terminal.set_continuation_max_bytes(ghostty_vt::CONTINUATION_MAX_BYTES)?;
         let empty = Arc::new(Snapshot {
             gen: 0,
             cols: 0,
@@ -955,6 +953,19 @@ mod tests {
         assert_eq!(got[0].glyph, "X");
         assert_eq!(got[0].fg, Color::Palette(1));
         assert_eq!(got[0], row(&fresh, 0)[0]);
+    }
+
+    #[test]
+    fn snapshot_reencode_after_mid_escape_restore() {
+        let vt = vt();
+        vt.write(b"\x1b[3");
+        let vt2 = roundtrip(&vt, 10_000);
+        let vt3 = roundtrip(&vt2, 10_000);
+        vt3.write(b"1mX");
+        vt3.refresh();
+        let got = row(&vt3, 0);
+        assert_eq!(got[0].glyph, "X");
+        assert_eq!(got[0].fg, Color::Palette(1));
     }
 
     #[test]

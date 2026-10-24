@@ -206,35 +206,9 @@ pub const MODE_COLOR_SCHEME_REPORT: u16 = 2031;
 const TERMINAL_DATA_COLOR_FOREGROUND: ffi::GhosttyTerminalData = 18;
 const TERMINAL_DATA_COLOR_CURSOR: ffi::GhosttyTerminalData = 20;
 
-// The checked-in bindings predate the snapshot API and this option; values and
-// signatures follow vendor/libghostty-vt/include/ghostty/vt/{snapshot,terminal}.h.
-const TERMINAL_OPT_CONTINUATION_MAX_BYTES: ffi::GhosttyTerminalOption = 31;
-const SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION: ffi::GhosttyTerminalOption = 1;
-
-unsafe extern "C" {
-    fn ghostty_snapshot_encode_alloc(
-        terminal: ffi::GhosttyTerminal,
-        allocator: *const ffi::GhosttyAllocator,
-        out_ptr: *mut *mut u8,
-        out_len: *mut usize,
-    ) -> ffi::GhosttyResult;
-    fn ghostty_snapshot_decoder_new_buf(
-        allocator: *const ffi::GhosttyAllocator,
-        decoder: *mut ffi::GhosttySnapshotDecoder,
-        ptr: *const u8,
-        len: usize,
-    ) -> ffi::GhosttyResult;
-    fn ghostty_snapshot_decoder_set(
-        decoder: ffi::GhosttySnapshotDecoder,
-        option: ffi::GhosttyTerminalOption,
-        value: *const c_void,
-    ) -> ffi::GhosttyResult;
-    fn ghostty_snapshot_decoder_decode(
-        decoder: ffi::GhosttySnapshotDecoder,
-        terminal: *mut ffi::GhosttyTerminal,
-    ) -> ffi::GhosttyResult;
-    fn ghostty_snapshot_decoder_free(decoder: ffi::GhosttySnapshotDecoder);
-}
+/// Continuation tracking limit for snapshot-restored terminals (m5 ruling 4); the
+/// kernel Vt applies the same limit to fresh terminals.
+pub const CONTINUATION_MAX_BYTES: usize = 65536;
 
 fn raw_get_u16(raw: ffi::GhosttyTerminal, data: ffi::GhosttyTerminalData) -> Result<u16, Error> {
     let mut out = 0u16;
@@ -910,30 +884,40 @@ impl Terminal {
     }
 
     /// Restores a terminal from `ghostty_snapshot_encode` output. The decoded
-    /// continuation is retained, so the restored terminal can be snapshotted again
-    /// even mid-escape; it gets the same options and callbacks as `new`.
+    /// continuation (up to `CONTINUATION_MAX_BYTES`) is retained, so the restored
+    /// terminal can be snapshotted again even mid-escape; it gets the same options
+    /// and callbacks as `new`.
     pub fn from_snapshot(bytes: &[u8], max_scrollback: usize) -> Result<Self, Error> {
         let mut decoder = ptr::null_mut();
         let retain = true;
+        let max_continuation = CONTINUATION_MAX_BYTES;
         let mut raw: ffi::GhosttyTerminal = ptr::null_mut();
         // SAFETY: bytes outlives the decoder, which is freed before returning; out
         // pointers are valid. The decoded terminal is caller-owned.
         unsafe {
-            ghostty_snapshot_decoder_new_buf(
+            ffi::ghostty_snapshot_decoder_new_buf(
                 ptr::null(),
                 &mut decoder,
                 bytes.as_ptr(),
                 bytes.len(),
             )
             .into_result()?;
-            let result = ghostty_snapshot_decoder_set(
+            let result = ffi::ghostty_snapshot_decoder_set(
                 decoder,
-                SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION,
-                (&retain as *const bool).cast(),
+                ffi::GhosttySnapshotDecoderOption_GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES,
+                (&max_continuation as *const usize).cast(),
             )
             .into_result()
-            .and_then(|()| ghostty_snapshot_decoder_decode(decoder, &mut raw).into_result());
-            ghostty_snapshot_decoder_free(decoder);
+            .and_then(|()| {
+                ffi::ghostty_snapshot_decoder_set(
+                    decoder,
+                    ffi::GhosttySnapshotDecoderOption_GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION,
+                    (&retain as *const bool).cast(),
+                )
+                .into_result()
+            })
+            .and_then(|()| ffi::ghostty_snapshot_decoder_decode(decoder, &mut raw).into_result());
+            ffi::ghostty_snapshot_decoder_free(decoder);
             result?;
         }
         let size = (
@@ -958,7 +942,7 @@ impl Terminal {
         // SAFETY: self.raw is live and &self excludes concurrent writes; the buffer comes
         // from the default allocator and is freed with it after copying.
         unsafe {
-            ghostty_snapshot_encode_alloc(self.raw, ptr::null(), &mut out, &mut len)
+            ffi::ghostty_snapshot_encode_alloc(self.raw, ptr::null(), &mut out, &mut len)
                 .into_result()?;
             let bytes = if out.is_null() {
                 Vec::new()
@@ -977,7 +961,7 @@ impl Terminal {
         unsafe {
             ffi::ghostty_terminal_set(
                 self.raw,
-                TERMINAL_OPT_CONTINUATION_MAX_BYTES,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES,
                 (&max as *const usize).cast(),
             )
             .into_result()
