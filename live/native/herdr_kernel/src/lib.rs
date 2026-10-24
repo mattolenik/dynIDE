@@ -1,5 +1,7 @@
 pub mod cell;
 pub mod input;
+#[cfg(unix)]
+pub mod pty;
 pub mod splitter;
 pub mod vt;
 
