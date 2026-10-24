@@ -1,0 +1,114 @@
+defmodule HerdrTerm.Client.Term.Render.Chrome.ModalTest do
+  use ExUnit.Case, async: true
+
+  alias HerdrScene.{Cell, Fixture, Scene}
+  alias HerdrScene.Scene.Node
+  alias HerdrTerm.Cells
+  alias HerdrTerm.Client.Term.Render.{Chrome, Compose}
+  alias HerdrTerm.Client.Term.Theme
+
+  @theme Theme.default()
+
+  defp layout(scene), do: Chrome.layout(scene.chrome, scene.size, @theme)
+  defp hit(layout, path), do: Enum.find(layout.hits, &(&1.path == path))
+
+  defp texts(scene),
+    do: scene |> Compose.frame(%{}, @theme) |> Enum.map(fn {_, b} -> Cells.to_text(b) end)
+
+  defp cells(scene, y),
+    do: scene |> Compose.frame(%{}, @theme) |> Enum.at(y) |> elem(1) |> Cell.decode_row()
+
+  test "modal_prompt_80x24: a 56-wide box centred, title, input, buttons, dim and hits" do
+    sc = Fixture.load("modal_prompt_80x24")
+    l = layout(sc)
+    assert l.dim
+    t = texts(sc)
+    box = Enum.map(8..14, &String.slice(Enum.at(t, &1), 12, 56))
+    assert Enum.at(box, 0) == "┌" <> String.duplicate("─", 54) <> "┐"
+    assert Enum.at(box, 6) == "└" <> String.duplicate("─", 54) <> "┘"
+    assert Enum.at(box, 1) == "│" <> String.pad_trailing(" rename tab", 54) <> "│"
+    assert Enum.at(box, 3) == "│" <> String.pad_trailing(" 1", 54) <> "│"
+
+    buttons =
+      String.duplicate(" ", 10) <> " ↵ save " <> "  " <> " ^c clear " <> "  " <> " esc cancel "
+
+    assert Enum.at(box, 4) == "│" <> String.pad_trailing(buttons, 54) <> "│"
+    # outside the box: untouched layout (the sidebar) on the same rows
+    assert String.slice(Enum.at(t, 8), 0, 12) ==
+             String.slice(Enum.at(texts(%{sc | chrome: base(sc)}), 8), 0, 12)
+
+    assert hit(l, [{:modal, 0}, :actions, :save]).rect == %{x: 23, y: 12, w: 8, h: 1}
+    assert hit(l, [{:modal, 0}, :actions, :clear]).rect == %{x: 33, y: 12, w: 10, h: 1}
+    assert hit(l, [{:modal, 0}, :actions, :cancel]).rect == %{x: 45, y: 12, w: 12, h: 1}
+    assert hit(l, [{:modal, 0}]).rect == %{x: 12, y: 8, w: 56, h: 7}
+    assert hit(l, [{:modal, 0}, :backdrop]).rect == %{x: 0, y: 0, w: 80, h: 24}
+    # topmost first: buttons, the panel, then the backdrop before any base hit
+    paths = Enum.map(l.hits, & &1.path)
+    assert Enum.find_index(paths, &(&1 == [{:modal, 0}, :backdrop])) == 4
+
+    # border accent, panel and input on the surface, save primary, dim outside the box
+    row = cells(sc, 12)
+    assert Enum.at(row, 12).fg == Theme.style(@theme, :accent).fg
+    assert Enum.at(row, 13).bg == Theme.style(@theme, :surface).bg
+    assert Enum.at(row, 24).bg == Theme.style(@theme, :selected).bg
+    refute :faint in Enum.at(row, 24).attrs
+    assert :faint in Enum.at(row, 11).attrs
+  end
+
+  test "modal_confirm_80x24: 64x6 red border, title and detail, confirm and cancel" do
+    sc = Fixture.load("modal_confirm_80x24")
+    t = texts(sc)
+    box = Enum.map(9..14, &String.slice(Enum.at(t, &1), 8, 64))
+    assert Enum.at(box, 1) == "│" <> String.pad_trailing(" Close workspace?", 62) <> "│"
+    assert Enum.at(box, 2) == "│" <> String.pad_trailing(" 1 — 1 pane", 62) <> "│"
+    buttons = String.duplicate(" ", 18) <> " ↵ confirm " <> "  " <> " esc cancel "
+    assert Enum.at(box, 4) == "│" <> String.pad_trailing(buttons, 62) <> "│"
+    assert Enum.at(cells(sc, 9), 8).fg == Theme.style(@theme, :error).fg
+    assert layout(sc).dim
+  end
+
+  test "menu_tab_80x24: entries at the click, the selected one highlighted, no dim" do
+    sc = Fixture.load("menu_tab_80x24")
+    l = layout(sc)
+    refute l.dim
+    %Node{rect: r} = Node.find(sc.chrome, [{:menu, 0}])
+    assert r == %{x: 36, y: 0, w: 14, h: 5}
+    t = texts(sc)
+    assert String.slice(Enum.at(t, 0), 36, 14) == "┌" <> String.duplicate("─", 12) <> "┐"
+    assert String.slice(Enum.at(t, 1), 36, 14) == "│ New tab    │"
+    assert String.slice(Enum.at(t, 3), 36, 14) == "│ Close      │"
+    assert Enum.at(cells(sc, 1), 38).bg == Theme.style(@theme, :selected).bg
+    assert Enum.at(cells(sc, 2), 38).bg == Theme.style(@theme, :surface).bg
+    assert hit(l, [{:menu, 0}, {:entry, :close}]).rect == %{x: 37, y: 3, w: 12, h: 1}
+    assert hit(l, [{:menu, 0}, :backdrop]).rect == %{x: 0, y: 0, w: 80, h: 24}
+  end
+
+  test "menu_global_120x40 lists detach" do
+    sc = Fixture.load("menu_global_120x40")
+    assert Enum.any?(texts(sc), &(&1 =~ "│ detach"))
+  end
+
+  test "tiny modals and menus clip, keep the backdrop and compose to full-width rows" do
+    for name <- ["modal_prompt_80x24", "modal_confirm_80x24", "menu_tab_80x24"],
+        cols <- [1, 3, 6, 20],
+        rows <- [1, 3, 5] do
+      sc = Fixture.load(name)
+      [top] = Enum.filter(sc.chrome.children, &(&1.role in [:modal, :menu]))
+      r = %{x: 0, y: 0, w: min(cols, top.rect.w), h: min(rows, top.rect.h)}
+
+      sc = %Scene{
+        size: %{cols: cols, rows: rows},
+        chrome: %{sc.chrome | children: [%{top | rect: r}]}
+      }
+
+      l = layout(sc)
+      assert hit(l, [top.id, :backdrop]).rect == %{x: 0, y: 0, w: cols, h: rows}
+      frame = Compose.frame(sc, %{}, @theme)
+      assert length(frame) == rows
+      assert Enum.all?(frame, fn {_, b} -> Cell.cols(b) == cols end), "#{name} #{cols}x#{rows}"
+    end
+  end
+
+  defp base(sc),
+    do: %{sc.chrome | children: Enum.reject(sc.chrome.children, &(&1.role == :modal))}
+end

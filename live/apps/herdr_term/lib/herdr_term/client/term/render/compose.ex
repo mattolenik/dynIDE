@@ -79,12 +79,15 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   defp span(%{cy: cy, ch: ch, border: b}), do: {min(cy, b.oy), max(cy + ch, b.oy + b.oh)}
 
   @doc """
-  Host cursor `{{x, y}, shape}` in screen cells, or nil: the focused pane's cursor from
+  Host cursor `{{x, y}, shape}` in screen cells, or nil: with chrome focus (an open
+  prompt) the scene's own `cursor` when set; else the focused pane's cursor from
   `cursors` (pane id => pane-relative cursor, as read from the row cache) placed in its
   rect, else the scene's own `cursor` (inline scenes carry it).
   """
   @spec cursor(Scene.t(), %{pos_integer => map | nil}) ::
           {{non_neg_integer, non_neg_integer}, Scene.shape()} | nil
+  def cursor(%Scene{focus: %{chrome: [_ | _]}, cursor: %{} = c}, _cursors), do: scene_cursor(c)
+
   def cursor(%Scene{focus: %{pane: id}} = scene, cursors) do
     pane = Enum.find(scene.panes, &(&1.id == id))
 

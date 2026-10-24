@@ -12,9 +12,10 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
       are hits with `drag: true` and draw no cells (pane borders draw them).
     * `dim`: the top-of-stack `:modal` has `props.dim`.
 
-  Segments and hits are clipped to `size`. One module per region role; a region role
-  without its own module (modal, menu, toast until their tasks land) draws a blank box
-  of its rect with one hit. The root's `indicators` prop (`:dots`, default, or
+  Segments and hits are clipped to `size`. One module per region role (`:modal` and
+  `:menu` share `Chrome.Modal`, which adds a whole-screen backdrop hit); a region role
+  without its own module (toast until Task 11) draws a blank box of its rect with one
+  hit. The root's `indicators` prop (`:dots`, default, or
   `:symbols`) picks the sidebar's badge glyphs.
   """
 
@@ -22,7 +23,7 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
   alias HerdrScene.Scene
   alias HerdrScene.Scene.Node
   alias HerdrTerm.Cells
-  alias HerdrTerm.Client.Term.Render.Chrome.{Sidebar, Status, Tabs}
+  alias HerdrTerm.Client.Term.Render.Chrome.{Modal, Sidebar, Status, Tabs}
   alias HerdrTerm.Client.Term.Theme
 
   @type seg :: {non_neg_integer, non_neg_integer, Cell.row()}
@@ -67,7 +68,7 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
 
   # rows grouped by y (tree order kept), one hit list per node in tree order
   defp layer(nodes, theme, ind, size) do
-    {rows, hits} = nodes |> Enum.map(&region(&1, theme, ind)) |> Enum.unzip()
+    {rows, hits} = nodes |> Enum.map(&region(&1, theme, ind, size)) |> Enum.unzip()
 
     rows =
       rows
@@ -78,14 +79,17 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
     {rows, Enum.map(hits, &clip_hits(&1, size))}
   end
 
-  defp region(%Node{role: :status} = n, theme, _), do: Status.render(n, theme)
-  defp region(%Node{role: :tabs} = n, theme, _), do: Tabs.render(n, theme)
-  defp region(%Node{role: :sidebar} = n, theme, ind), do: Sidebar.render(n, theme, ind)
+  defp region(%Node{role: :status} = n, theme, _, _), do: Status.render(n, theme)
+  defp region(%Node{role: :tabs} = n, theme, _, _), do: Tabs.render(n, theme)
+  defp region(%Node{role: :sidebar} = n, theme, ind, _), do: Sidebar.render(n, theme, ind)
 
-  defp region(%Node{role: :divider, id: id, rect: r}, _, _),
+  defp region(%Node{role: role} = n, theme, _, size) when role in [:modal, :menu],
+    do: Modal.render(n, theme, size)
+
+  defp region(%Node{role: :divider, id: id, rect: r}, _, _, _),
     do: {[], [hit(r, [id], :divider, true)]}
 
-  defp region(%Node{id: id, role: role, rect: r}, theme, _) do
+  defp region(%Node{id: id, role: role, rect: r}, theme, _, _) do
     blank = Cells.blank(r.w, Theme.style(theme, :default))
     {for(y <- r.y..(r.y + r.h - 1)//1, do: {y, {r.x, r.w, blank}}), [hit(r, [id], role)]}
   end
