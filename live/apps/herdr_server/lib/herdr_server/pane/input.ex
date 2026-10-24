@@ -19,6 +19,7 @@ defmodule HerdrServer.Pane.Input do
 
   require Logger
 
+  alias HerdrScene.Protocol
   alias HerdrServer.Kernel
   alias HerdrServer.Pane.{Facts, KeyFallback, Rows, Server}
 
@@ -34,16 +35,17 @@ defmodule HerdrServer.Pane.Input do
   @spec key(tuple, pos_integer) :: :ok | {:error, term}
   def key({:key, k}, id) do
     with {:ok, vt, pty} <- resolve(id) do
-      if page_key?(k) and host_scroll?(vt),
+      {scrolled?, pending?, alt?} = Facts.input(id)
+
+      if page_key?(k) and host_scroll?(vt, alt?),
         do: page(k, id, vt),
-        else: send_key(fallback(k, vt), id, vt, pty)
+        else: send_key(fallback(k, vt), id, vt, pty, scrolled?, pending?)
     end
   end
 
-  defp send_key(:drop, _id, _vt, _pty), do: :ok
+  defp send_key(:drop, _id, _vt, _pty, _scrolled?, _pending?), do: :ok
 
-  defp send_key(k, id, vt, pty) do
-    {scrolled?, pending?} = Facts.input(id)
+  defp send_key(k, id, vt, pty, scrolled?, pending?) do
     if scrolled? and k.event != :release, do: Server.scroll(id, :bottom)
     send_input(id, vt, pty, pending?, &Kernel.vt().encode_key(&1, kernel_mods(k)))
   end
@@ -58,9 +60,10 @@ defmodule HerdrServer.Pane.Input do
   end
 
   # herdr's `plain_page_keys_use_host_scrollback`: bracketed paste tells zsh's app cursor
-  # mode apart from `less -X`
-  defp host_scroll?(vt) do
-    not mode?(vt, :alt_screen) and not Enum.any?(@mouse_modes, &mode?(vt, &1)) and
+  # mode apart from `less -X`. `alt?` is the facts row's (as of the last damage: a screen
+  # switch redraws, so it is current by the time a page key follows)
+  defp host_scroll?(vt, alt?) do
+    not alt? and not Enum.any?(@mouse_modes, &mode?(vt, &1)) and
       (not mode?(vt, :cursor_keys) or mode?(vt, :bracketed_paste))
   end
 
@@ -79,7 +82,7 @@ defmodule HerdrServer.Pane.Input do
   @spec mouse(tuple, pos_integer) :: :ok | {:error, term}
   def mouse({:mouse, m}, id) do
     with {:ok, vt, pty} <- resolve(id) do
-      {scrolled?, pending?} = Facts.input(id)
+      {scrolled?, pending?, _} = Facts.input(id)
       if scrolled? and m.kind in [:press, :release, :scroll], do: Server.scroll(id, :bottom)
       m = kernel_mods(%{m | button: if(m.button == :none, do: nil, else: m.button)})
       send_input(id, vt, pty, pending?, &Kernel.vt().encode_mouse(&1, m))
@@ -89,31 +92,32 @@ defmodule HerdrServer.Pane.Input do
   defp kernel_mods(ev), do: %{ev | mods: Enum.filter(ev.mods, &(&1 in @mods))}
 
   @doc """
-  Queues a paste in the pane's write queue (`Pane.Server.write/2`), bracketed when the
+  Queues a paste in the pane's write queue (`Pane.Server.write/3`), bracketed when the
   pane enabled bracketed paste (with any end marker in `bin` removed). A paste over
   `:paste_max_bytes` (default 16 MiB) is rejected. A scrolled pane snaps to the bottom.
+  `origin` (a pid) is told if the queue drops the paste before it is all written.
   """
-  @spec paste(binary, pos_integer) ::
+  @spec paste(binary, pos_integer, pid | nil) ::
           :ok | {:error, {:too_large, non_neg_integer, non_neg_integer}}
-  def paste(bin, id) do
+  def paste(bin, id, origin \\ nil) do
     max = Application.get_env(:herdr_server, :paste_max_bytes, 16_777_216)
 
     with {:size, n} when n <= max <- {:size, byte_size(bin)},
          {:ok, vt, _pty} <- resolve(id) do
-      {scrolled?, _} = Facts.input(id)
+      {scrolled?, _, _} = Facts.input(id)
       if scrolled?, do: Server.scroll(id, :bottom)
-      queue_paste(id, bin, mode?(vt, :bracketed_paste))
+      queue_paste(id, bin, origin, mode?(vt, :bracketed_paste))
     else
       {:size, n} -> {:error, {:too_large, n, max}}
       :ok -> :ok
     end
   end
 
-  defp queue_paste(id, bin, false), do: Server.write(id, bin)
+  defp queue_paste(id, bin, origin, false), do: Server.write(id, bin, origin)
 
-  defp queue_paste(id, bin, true) do
+  defp queue_paste(id, bin, origin, true) do
     Server.write(id, "\e[200~")
-    Server.write(id, strip_end_marker(bin))
+    Server.write(id, strip_end_marker(bin), origin)
     Server.write(id, "\e[201~")
   end
 
@@ -128,7 +132,7 @@ defmodule HerdrServer.Pane.Input do
   @spec focus(boolean, pos_integer) :: :ok | {:error, term}
   def focus(focused?, id) do
     with {:ok, vt, pty} <- resolve(id) do
-      {_, pending?} = Facts.input(id)
+      {_, pending?, _} = Facts.input(id)
       send_input(id, vt, pty, pending?, &Kernel.vt().encode_focus(&1, focused?))
     end
   end
@@ -145,21 +149,28 @@ defmodule HerdrServer.Pane.Input do
   # while the pane has queued writes, input queues behind them (order kept)
   defp send_input(id, vt, pty, pending?, encode) do
     case encode(id, encode, vt) do
-      bytes when not is_binary(bytes) or bytes == "" ->
+      bytes when not is_binary(bytes) or bytes == "" -> :ok
+      bytes when pending? -> queue_input(id, bytes)
+      bytes -> write_now(id, pty, bytes)
+    end
+  end
+
+  # frozen for a handoff: queued input would be acked, then dropped when the queue meets
+  # the frozen pty; `:closed` makes the caller hold it (Client.Session)
+  defp queue_input(id, bytes) do
+    if :persistent_term.get(Protocol.handoff_key(), nil) == :begin,
+      do: {:error, :closed},
+      else: Server.write(id, bytes)
+  end
+
+  defp write_now(id, pty, bytes) do
+    case Kernel.pty().write(pty, bytes) do
+      :ok ->
         :ok
 
-      bytes when pending? ->
-        Server.write(id, bytes)
-
-      bytes ->
-        case Kernel.pty().write(pty, bytes) do
-          :ok ->
-            :ok
-
-          {:error, reason} = err ->
-            warn(id, reason)
-            err
-        end
+      {:error, reason} = err ->
+        warn(id, reason)
+        err
     end
   end
 

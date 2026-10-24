@@ -3,7 +3,8 @@ defmodule HerdrServer.Pane.State do
   State of one pane process (used by `Pane.Server`). `scroll`, `alt_screen`, `cwd`,
   `title` (sanitized), `stripped_title` and `progress` are the pane's terminal facts
   (`Pane.Facts`); `colors` the host colours last applied to the vt; `pending` the
-  write queue (binaries, oldest first) and `write_retry` its backpressure retry state.
+  write queue (`{binary, nil | {paste_origin, bytes_written}}`, oldest first) and
+  `write_retry` its backpressure retry state.
   """
 
   defstruct [
@@ -47,7 +48,7 @@ defmodule HerdrServer.Pane.State do
           cwd: binary() | nil,
           progress: binary() | nil,
           stripped_title: binary() | nil,
-          pending: :queue.queue(binary()),
+          pending: :queue.queue({binary(), nil | {pid(), non_neg_integer()}}),
           write_retry: nil | {:timer | :wait, pos_integer()},
           colors: map() | nil
         }

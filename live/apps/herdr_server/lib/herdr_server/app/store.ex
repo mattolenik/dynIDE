@@ -565,7 +565,7 @@ defmodule HerdrServer.App.Store do
   defp io({:mouse, id, ev}, _), do: Input.mouse(ev, id)
 
   defp io({:paste, id, bin}, origin) do
-    with {:error, {:too_large, n, max}} <- Input.paste(bin, id),
+    with {:error, {:too_large, n, max}} <- Input.paste(bin, id, if(is_pid(origin), do: origin)),
          do: notice(origin, %{level: :warning, text: "paste rejected: #{n} bytes (max #{max})"})
   end
 

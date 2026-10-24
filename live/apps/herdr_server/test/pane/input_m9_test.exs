@@ -133,12 +133,51 @@ defmodule HerdrServer.Pane.InputM9Test do
       assert :queue.is_empty(sync(1).pending)
     end
 
+    test "a key behind a queued paste during a handoff is refused as closed, not queued" do
+      key = HerdrScene.Protocol.handoff_key()
+      on_exit(fn -> :persistent_term.erase(key) end)
+      :ok = Fake.Pty.set_backpressure(pty(1), true)
+      before = written(1)
+      assert Input.paste("abc", 1) == :ok
+      :persistent_term.put(key, :begin)
+      assert Input.key(Event.key("x"), 1) == {:error, :closed}
+      :persistent_term.erase(key)
+      :ok = Fake.Pty.set_backpressure(pty(1), false)
+      assert eventually(fn -> not Facts.pending?(1) end)
+      assert written(1) == before <> "abc"
+    end
+
+    test "a paste cut short by a closed pty tells its origin how much was written" do
+      :ok = Fake.Pty.close_after(pty(1), 1)
+      big = :binary.copy("w", 3 * 65_536)
+      assert Input.paste(big, 1, self()) == :ok
+
+      assert_receive {:notice, %{level: :warning, text: "paste truncated after 65536 bytes"}},
+                     500
+
+      assert eventually(fn -> not Facts.pending?(1) end)
+    end
+
+    test "a restarted Pane.Server resets the pending count" do
+      :ok = Facts.add_pending(1, 3)
+      assert Facts.pending?(1)
+      old = pane_pid(1)
+      Process.exit(old, :kill)
+
+      assert eventually(fn ->
+               match?([{new, _}] when new != old, Registry.lookup(HerdrServer.Pane.Registry, 1))
+             end)
+
+      sync(1)
+      refute Facts.pending?(1)
+    end
+
     test "a facts row from before the queue (hot reload) still reads and takes a count" do
       facts = Facts.get(1)
       :ets.insert(:herdr_pane_facts, {1, %{facts | scrolled: true}})
-      assert Facts.input(1) == {true, false}
+      assert {true, false, _} = Facts.input(1)
       :ok = Facts.add_pending(1, 1)
-      assert Facts.input(1) == {true, true}
+      assert {true, true, _} = Facts.input(1)
       :ok = Facts.add_pending(1, -1)
       :ets.insert(:herdr_pane_facts, {1, facts})
       :ok = Facts.put(1, facts)
@@ -148,10 +187,11 @@ defmodule HerdrServer.Pane.InputM9Test do
     test "Pane.Server.write/2 queues bytes behind a pending paste" do
       :ok = Fake.Pty.backpressure_next(pty(1), 2)
       before = written(1)
+      :ok = Fake.Vt.set_mode(vt(1), :focus_events, true)
       assert Input.paste("one", 1) == :ok
       assert Server.write(1, ["t", "wo"]) == :ok
       assert Input.focus(true, 1) == :ok
-      assert eventually(fn -> written(1) == before <> "onetwo" end)
+      assert eventually(fn -> written(1) == before <> "onetwo\e[I" end)
       assert eventually(fn -> not Facts.pending?(1) end)
     end
   end
@@ -213,6 +253,9 @@ defmodule HerdrServer.Pane.InputM9Test do
 
     test "on the alternate screen page up goes to the child" do
       :ok = Fake.Vt.set_mode(vt(1), :alt_screen, true)
+      # the alt-screen fact is read on damage with dirty rows
+      Fake.Pty.output(pty(1), "z")
+      assert eventually(fn -> Facts.get(1).alt_screen end)
       before = written(1)
       %{offset: bottom} = Fake.Vt.scrollbar(vt(1))
       assert Input.key(Event.key(:page_up), 1) == :ok

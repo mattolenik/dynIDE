@@ -25,7 +25,13 @@ defmodule HerdrServer.Pane.Server do
   `{:error, :backpressure}` retries the same chunk after 2 ms, doubling to 20 ms; any
   other error drops the queue. `Pane.Facts`' pending count is raised by the writer
   before its cast and lowered here once a write is out (or dropped), so a writer that
-  sees no pending writes knows its direct pty write keeps order (`Pane.Input`).
+  sees no pending writes knows its direct pty write keeps order (`Pane.Input`). A dropped
+  paste payload tells its origin (`write/3`) how many of its bytes went out.
+
+  Restart window: `init/1` resets the pending count (a crashed server's queue is gone).
+  A write cast that a writer bumped and sent while the new server was starting can sit in
+  the mailbox past that reset; it is still written, but until then the count reads 0, so
+  that writer's next input may go to the pty ahead of it.
   """
   use GenServer, restart: :transient
 
@@ -62,12 +68,14 @@ defmodule HerdrServer.Pane.Server do
 
   @doc """
   Appends `iodata` to the pane's write queue (see moduledoc). The pending count goes up
-  in the caller, before the cast, so the caller's next input sees it.
+  in the caller, before the cast, so the caller's next input sees it. `paste_origin`
+  marks a paste payload: if the queue is dropped before it is out, that pid gets
+  `{:notice, %{level: :warning, text: "paste truncated after N bytes"}}`.
   """
-  @spec write(pos_integer, iodata) :: :ok
-  def write(id, iodata) do
+  @spec write(pos_integer, iodata, pid | nil) :: :ok
+  def write(id, iodata, paste_origin \\ nil) do
     :ok = Facts.add_pending(id, 1)
-    GenServer.cast(via(id), {:write, iodata})
+    GenServer.cast(via(id), {:write, iodata, paste_origin})
   end
 
   defp call(id, msg) do
@@ -145,10 +153,11 @@ defmodule HerdrServer.Pane.Server do
     end
   end
 
-  def handle_cast({:write, iodata}, state) do
+  def handle_cast({:write, iodata, origin}, state) do
     state = Map.merge(%State{}, state)
     bin = IO.iodata_to_binary(iodata)
-    if bin == "", do: written_empty(state), else: {:noreply, enqueue(state, bin)}
+    meta = if is_pid(origin), do: {origin, 0}
+    if bin == "", do: written_empty(state), else: {:noreply, enqueue(state, {bin, meta})}
   end
 
   def handle_cast(_other, state) do
@@ -352,9 +361,10 @@ defmodule HerdrServer.Pane.Server do
     {:noreply, state}
   end
 
-  defp enqueue(state, bin) do
+  # items are `{bin, nil | {paste_origin, bytes_written}}`
+  defp enqueue(state, item) do
     if :queue.is_empty(state.pending) and state.write_retry == nil, do: send(self(), :write)
-    %{state | pending: :queue.in(bin, state.pending)}
+    %{state | pending: :queue.in(item, state.pending)}
   end
 
   defp write_next(state) do
@@ -362,25 +372,28 @@ defmodule HerdrServer.Pane.Server do
       {:empty, _} ->
         %{state | write_retry: nil}
 
-      {{:value, bin}, rest} ->
+      {{:value, {bin, meta}}, rest} ->
         n = min(byte_size(bin), @chunk)
         {chunk, left} = {binary_part(bin, 0, n), binary_part(bin, n, byte_size(bin) - n)}
 
         case pty_write(state, chunk) do
-          :ok -> written(state, left, rest)
+          :ok -> written(state, {left, sent(meta, n)}, rest)
           {:error, :backpressure} -> backoff(state)
           {:error, reason} -> drop_queue(state, reason)
         end
     end
   end
 
-  defp written(state, left, rest) do
+  defp sent(nil, _n), do: nil
+  defp sent({origin, w}, n), do: {origin, w + n}
+
+  defp written(state, {left, _meta} = item, rest) do
     pending =
       if left == "" do
         :ok = Facts.add_pending(state.id, -1)
         rest
       else
-        :queue.in_r(left, rest)
+        :queue.in_r(item, rest)
       end
 
     if not :queue.is_empty(pending), do: send(self(), :write)
@@ -402,9 +415,15 @@ defmodule HerdrServer.Pane.Server do
     n = :queue.len(state.pending)
     Logger.warning("pane #{state.id}: #{n} queued writes dropped (#{inspect(reason)})")
     :ok = Facts.add_pending(state.id, -n)
+
+    for {_bin, {origin, w}} <- :queue.to_list(state.pending),
+        do: send(origin, {:notice, %{level: :warning, text: "paste truncated after #{w} bytes"}})
+
     %{state | pending: :queue.new(), write_retry: nil}
   end
 
+  # not `kernel/3`: that maps every result but `:ok` to `:error` and logs it, and this
+  # caller must tell backpressure (retry, silently) from `:closed` (drop)
   defp pty_write(state, chunk) do
     Kernel.pty().write(state.pty, chunk)
   rescue

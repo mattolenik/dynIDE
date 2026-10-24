@@ -25,6 +25,7 @@ defmodule HerdrServer.Kernel.Fake.Pty do
             reject_after: nil,
             reject_with: :backpressure,
             reject_next: 0,
+            close_after: nil,
             writes: [],
             closed: false,
             cwd: nil
@@ -65,6 +66,9 @@ defmodule HerdrServer.Kernel.Fake.Pty do
 
   @doc "Test hook: reject the next `n` writes with backpressure, then accept."
   def backpressure_next(pty, n), do: GenServer.call(pty, {:reject_next, n})
+
+  @doc "Test hook: accept `k` more writes, then answer `{:error, :closed}` (no exit event)."
+  def close_after(pty, k), do: GenServer.call(pty, {:close_after, k})
 
   @doc "Test hook: the last 100 accepted writes, oldest first."
   def writes(pty), do: GenServer.call(pty, :writes)
@@ -135,6 +139,11 @@ defmodule HerdrServer.Kernel.Fake.Pty do
     {:reply, {:error, state.reject_with}, %{state | reject_after: nil}}
   end
 
+  def handle_call({:write, _bin}, _from, %{close_after: 0} = state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, {:error, :closed}, %{state | closed: true}}
+  end
+
   def handle_call({:write, _bin}, _from, %{reject_next: n} = state) when n > 0 do
     state = Map.merge(%__MODULE__{}, state)
     {:reply, {:error, :backpressure}, %{state | reject_next: n - 1}}
@@ -143,8 +152,9 @@ defmodule HerdrServer.Kernel.Fake.Pty do
   def handle_call({:write, bin}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     left = if state.reject_after, do: state.reject_after - 1
+    close = if state.close_after, do: state.close_after - 1
     log = Enum.take([IO.iodata_to_binary(bin) | state.writes], 100)
-    state = %{state | reject_after: left, writes: log}
+    state = %{state | reject_after: left, close_after: close, writes: log}
     {:noreply, state} = handle_cast({:output, IO.iodata_to_binary(bin)}, state)
     {:reply, :ok, state}
   end
@@ -167,6 +177,11 @@ defmodule HerdrServer.Kernel.Fake.Pty do
   def handle_call({:reject_next, n}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:reply, :ok, %{state | reject_next: n}}
+  end
+
+  def handle_call({:close_after, k}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, %{state | close_after: k}}
   end
 
   def handle_call(:writes, _from, state) do

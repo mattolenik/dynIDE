@@ -76,15 +76,21 @@ defmodule HerdrServer.Pane.Facts do
   @spec pending?(pos_integer) :: boolean
   def pending?(id), do: elem(input(id), 1)
 
-  @doc "`{scrolled?, pending?}` for pane `id` with one ETS lookup (the input fast path)."
-  @spec input(pos_integer) :: {boolean, boolean}
+  @doc """
+  `{scrolled?, pending?, alt_screen?}` for pane `id` with one ETS lookup (the input fast
+  path). `alt_screen?` is the fact as of the pane's last damage.
+  """
+  @spec input(pos_integer) :: {boolean, boolean, boolean}
   def input(id) do
     case lookup(id) do
-      [{_, facts, n}] -> {match?(%{scrolled: true}, facts), n > 0}
-      [{_, facts}] -> {match?(%{scrolled: true}, facts), false}
-      [] -> {false, false}
+      [{_, facts, n}] -> {back?(facts), n > 0, alt?(facts)}
+      [{_, facts}] -> {back?(facts), false, alt?(facts)}
+      [] -> {false, false, false}
     end
   end
+
+  defp back?(facts), do: match?(%{scrolled: true}, facts)
+  defp alt?(facts), do: match?(%{alt_screen: true}, facts)
 
   @doc """
   Adds `n` (negative to drop) to pane `id`'s pending write count, never below 0. A
@@ -105,8 +111,13 @@ defmodule HerdrServer.Pane.Facts do
   @doc "Resets pane `id`'s pending count (a starting `Pane.Server` has an empty queue)."
   @spec reset_pending(pos_integer) :: :ok
   def reset_pending(id) do
-    with [row] <- lookup(id), do: :ets.insert(@table, {id, elem(row, 1), 0})
+    :ets.update_element(@table, id, {3, 0})
     :ok
+  rescue
+    # no table, or a `{id, facts}` row from before the queue
+    ArgumentError ->
+      with [{^id, facts}] <- lookup(id), do: :ets.insert(@table, {id, facts, 0})
+      :ok
   end
 
   defp lookup(key) do
