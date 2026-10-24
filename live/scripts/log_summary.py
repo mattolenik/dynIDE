@@ -137,7 +137,8 @@ def summarize(events, unparsed=0):
             else:
                 c["r_none"] += 1
         elif kind == "persist_write":
-            c["persist_writes"] += 1
+            # layout writes and scrollback rounds are counted apart
+            c["persist_scrollback_writes" if f.get("kind") == "scrollback" else "persist_writes"] += 1
         elif kind == "persist_error":
             c["persist_errors"] += 1
     hand_ms.sort()
@@ -163,6 +164,7 @@ def summarize(events, unparsed=0):
         "restores": {"disk": c["r_disk"], "boot": c["r_boot"], "fallback": c["r_fallback"],
                      "none": c["r_none"]},
         "persist_writes": c["persist_writes"],
+        "persist_scrollback_writes": c["persist_scrollback_writes"],
         "persist_errors": c["persist_errors"],
         "session_losses": c["session_losses"],
         "unparsed": unparsed,
@@ -196,6 +198,7 @@ def render_text(s):
         ("store_restarts", s["store_restarts"]),
         ("restores", "disk={disk} (boot={boot} fallback={fallback}) none={none}".format(**s["restores"])),
         ("persist_writes", s["persist_writes"]),
+        ("persist_scrollback_writes", s["persist_scrollback_writes"]),
         ("persist_errors", s["persist_errors"]),
         ("session_losses", n),
         ("unparsed", s["unparsed"]),

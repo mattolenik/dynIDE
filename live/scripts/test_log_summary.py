@@ -66,8 +66,9 @@ class LogSummaryTest(unittest.TestCase):
             "period", "vm_starts", "reloads", "modules_reloaded", "fanout_max",
             "compile_errors", "rollbacks", "rollback_reasons", "guard_failures", "tests",
             "syncs", "handoffs", "handoff_ms_p50", "handoff_ms_p95", "handoff_ms_max",
-            "crashes", "store_restarts", "restores", "persist_writes", "persist_errors",
-            "session_losses", "unparsed", "exit_criterion"])
+            "crashes", "store_restarts", "restores", "persist_writes",
+            "persist_scrollback_writes", "persist_errors", "session_losses", "unparsed",
+            "exit_criterion"])
         self.assertIn("rollbacks: manual 1, auto 1", out)
         self.assertIn("handoffs: crash 2, graceful 1, failed 1", out)
         self.assertEqual(out[-1], "exit_criterion: session_losses=0 -> FAIL (3)")
@@ -112,18 +113,22 @@ class LogSummaryTest(unittest.TestCase):
             got = json.loads(run(f.name, "--json").stdout)
             out = run(f.name).stdout.splitlines()
         self.assertEqual(got["restores"], {"disk": 2, "boot": 1, "fallback": 1, "none": 1})
-        self.assertEqual(got["persist_writes"], 2)
+        # the layout write and the scrollback round are counted apart
+        self.assertEqual(got["persist_writes"], 1)
+        self.assertEqual(got["persist_scrollback_writes"], 1)
         self.assertEqual(got["persist_errors"], 1)
         # a fallback restore still follows a lost session: the rule is unchanged
         self.assertEqual(got["session_losses"], 1)
         self.assertIn("restores: disk=2 (boot=1 fallback=1) none=1", out)
-        self.assertIn("persist_writes: 2", out)
+        self.assertIn("persist_writes: 1", out)
+        self.assertIn("persist_scrollback_writes: 1", out)
         self.assertIn("persist_errors: 1", out)
 
     def test_fixture_has_no_persist_events(self):
         got = json.loads(run(FIXTURE, "--json").stdout)
         self.assertEqual(got["restores"], {"disk": 0, "boot": 0, "fallback": 0, "none": 0})
-        self.assertEqual((got["persist_writes"], got["persist_errors"]), (0, 0))
+        self.assertEqual((got["persist_writes"], got["persist_scrollback_writes"],
+                          got["persist_errors"]), (0, 0, 0))
 
     def test_unreadable_log_exits_2(self):
         self.assertEqual(run("/nonexistent/herdr.log").returncode, 2)
