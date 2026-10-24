@@ -12,6 +12,12 @@ defmodule HerdrServer.Reload.GuardTest do
     def f(:nested_exit), do: exit({:inner, [{Elixir.Nested.Mod, :g, 1, []}]})
     def f(:fun), do: %{cb: fn -> 1 end}
     def f(:loop), do: loop()
+
+    def f({:report, to}) do
+      send(to, {:worker, self()})
+      loop()
+    end
+
     defp loop, do: loop()
   end
 
@@ -155,5 +161,56 @@ defmodule HerdrServer.Reload.GuardTest do
     refute match?({:gen_server, :loop, _, _}, frame)
     assert {:failed, {:raise, _, _}} = Guard.run(Toy.A, :f, [:boom])
     assert {:ok, %Batch{id: 2}} = Task.await(reload, 30_000)
+  end
+
+  test "a trapping caller gets no stray messages from budgeted calls" do
+    Process.flag(:trap_exit, true)
+    assert {:ok, :fine} = Guard.run(Fixture, :f, [:ok], [budget_ms: 1_000] ++ @nosrv)
+
+    assert {:failed, {:timeout, 20, _}} =
+             Guard.run(Fixture, :f, [:loop], [budget_ms: 20] ++ @nosrv)
+
+    Process.sleep(20)
+    assert Process.info(self(), :messages) == {:messages, []}
+  end
+
+  test "an externally killed worker fails the call and spares the caller" do
+    killer = spawn(fn -> receive do: ({:worker, pid} -> Process.exit(pid, :kill)) end)
+
+    assert Guard.run(Fixture, :f, [{:report, killer}], [budget_ms: 5_000] ++ @nosrv) ==
+             {:failed, {:exit, :killed, []}}
+  end
+
+  test "killing the caller kills the worker" do
+    me = self()
+
+    caller =
+      spawn(fn -> Guard.run(Fixture, :f, [{:report, me}], [budget_ms: 60_000] ++ @nosrv) end)
+
+    assert_receive {:worker, worker}
+    ref = Process.monitor(worker)
+    Process.exit(caller, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^worker, :killed}
+  end
+
+  test "inline stacks attribute to the called module, not Guard or its caller" do
+    assert {:failed, failure} = Guard.run(Fixture, :f, [:boom], @nosrv)
+    mods = Guard.stack_modules(Fixture, failure)
+    assert Fixture in mods
+    refute Guard in mods
+    refute __MODULE__ in mods
+  end
+
+  test "a GenServer.call exit digs out the callee stack" do
+    reason = {{%RuntimeError{}, [{Deep.Mod, :x, 0, []}]}, {GenServer, :call, [:srv, :msg, 5_000]}}
+    assert Deep.Mod in Guard.stack_modules(Fixture, {:exit, reason, []})
+  end
+
+  test "a server dying during attribution does not crash the caller" do
+    fake = spawn(fn -> receive do: (_ -> exit(:dead)) end)
+    Process.register(fake, :guard_test_dying_server)
+
+    assert {:failed, {:raise, _, _}} =
+             Guard.run(Fixture, :f, [:boom], server: :guard_test_dying_server)
   end
 end

@@ -46,12 +46,18 @@ defmodule HerdrServer.Reload.Guard do
 
   defp call(mod, fun, args, nil), do: attempt(mod, fun, args)
 
+  # No link in either direction: a trapping caller gets no EXIT messages and an
+  # external kill of the worker cannot take the caller down. A watcher ties the
+  # worker's life to the caller instead.
   defp call(mod, fun, args, budget_ms) do
     tag = make_ref()
     parent = self()
 
     {pid, mref} =
-      Process.spawn(fn -> send(parent, {tag, attempt(mod, fun, args)}) end, [:link, :monitor])
+      spawn_monitor(fn ->
+        watch(parent, self())
+        send(parent, {tag, attempt(mod, fun, args)})
+      end)
 
     receive do
       {^tag, outcome} ->
@@ -68,7 +74,6 @@ defmodule HerdrServer.Reload.Guard do
             nil -> []
           end
 
-        Process.unlink(pid)
         Process.exit(pid, :kill)
 
         receive do
@@ -86,6 +91,19 @@ defmodule HerdrServer.Reload.Guard do
     end
   end
 
+  # Kills `worker` if `caller` dies first; exits once the worker is gone.
+  defp watch(caller, worker) do
+    spawn(fn ->
+      cref = Process.monitor(caller)
+      wref = Process.monitor(worker)
+
+      receive do
+        {:DOWN, ^cref, :process, _, _} -> Process.exit(worker, :kill)
+        {:DOWN, ^wref, :process, _, _} -> :ok
+      end
+    end)
+  end
+
   # The only blanket rescue/catch allowed in the codebase: everything a
   # reloaded module can throw at its caller becomes a failure value.
   defp attempt(mod, fun, args) do
@@ -98,7 +116,7 @@ defmodule HerdrServer.Reload.Guard do
   end
 
   defp succeeded(mod, value, server, scan?) do
-    if :ets.whereis(server) != :undefined do
+    if is_atom(server) and :ets.whereis(server) != :undefined do
       :ets.update_counter(server, mod, 1, {mod, 0})
       :ets.update_counter(server, :total, 1, {:total, 0})
     end
@@ -114,22 +132,37 @@ defmodule HerdrServer.Reload.Guard do
   end
 
   defp failed(stack_modules, failure, server) do
-    if GenServer.whereis(server), do: Server.fail(server, stack_modules, failure)
+    _ = attribute(server, stack_modules, failure)
     {:failed, failure}
+  end
+
+  # A server dying between whereis and the call must not crash the caller.
+  defp attribute(server, stack_modules, failure) do
+    if GenServer.whereis(server),
+      do: Server.fail(server, stack_modules, failure),
+      else: :unattributed
+  catch
+    :exit, _ -> :unattributed
   end
 
   @doc false
   @spec stack_modules(module(), failure()) :: [module()]
-  def stack_modules(mod, {:exit, {_, nested}, stack}) when is_list(nested),
-    do: Enum.uniq([mod | frame_modules(stack ++ nested)])
+  def stack_modules(mod, {:exit, reason, stack}) when is_list(stack),
+    do: Enum.uniq([mod | frame_modules(stack) ++ frame_modules(nested_stack(reason))])
 
   def stack_modules(mod, {_, _, stack}) when is_list(stack),
     do: Enum.uniq([mod | frame_modules(stack)])
 
   def stack_modules(mod, _), do: [mod]
 
+  defp nested_stack({{_, stack}, {GenServer, :call, _}}) when is_list(stack), do: stack
+  defp nested_stack({_, stack}) when is_list(stack), do: stack
+  defp nested_stack(_), do: []
+
+  # Frames from the first Guard frame on belong to the caller, not the guarded
+  # call, so they must not steer attribution.
   defp frame_modules(frames) do
-    for {m, f, a, loc} <- frames,
+    for {m, f, a, loc} <- Enum.take_while(frames, &(not match?({__MODULE__, _, _, _}, &1))),
         is_atom(m) and is_atom(f) and (is_integer(a) or is_list(a)) and is_list(loc),
         do: m
   end
