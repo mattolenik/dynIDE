@@ -4,9 +4,11 @@ defmodule HerdrServer.ReloadNoticesTest.SyncedStub do
   use GenServer
   def start_link(mods), do: GenServer.start_link(__MODULE__, mods, name: HerdrReload.Server)
   @impl true
-  def init(mods), do: {:ok, mods}
+  def init({mods, batches}), do: {:ok, {mods, batches}}
+  def init(mods), do: {:ok, {mods, []}}
   @impl true
-  def handle_call(:synced, _from, mods), do: {:reply, mods, mods}
+  def handle_call(:synced, _from, {mods, _} = s), do: {:reply, mods, s}
+  def handle_call(:batches, _from, {_, batches} = s), do: {:reply, batches, s}
 end
 
 defmodule HerdrServer.ReloadNoticesTest do
@@ -258,6 +260,32 @@ defmodule HerdrServer.ReloadNoticesTest do
       HerdrReload.Notices.broadcast({:loaded, 5, [A, B]})
       assert %{reload: %{state: :loaded, batch: 5}} = next_status(s)
 
+      restart_registry()
+      refute_receive {^s, {:runtime_status, _}}, 100
+      assert %{reload: %{state: :loaded, batch: 5}} = :sys.get_state(ReloadNotices).status
+    end
+
+    test "the newest batch seeds the status on subscribe, over the sync" do
+      batch = %HerdrReload.Batch{id: 7, modules: [A, B]}
+      start_supervised!({SyncedStub, {[C], [batch]}})
+      s = fake_session()
+      restart_registry()
+      assert %{reload: %{state: :loaded, batch: 7, fanout: 2}} = next_status(s)
+    end
+
+    test "a rolled back newest batch seeds :rolled_back" do
+      batch = %HerdrReload.Batch{id: 8, modules: [A], rolled_back: true}
+      start_supervised!({SyncedStub, {[], [batch]}})
+      s = fake_session()
+      restart_registry()
+      assert %{reload: %{state: :rolled_back, batch: 8}} = next_status(s)
+    end
+
+    test "an existing reload entry is not overwritten on re-subscribe" do
+      s = fake_session()
+      HerdrReload.Notices.broadcast({:loaded, 5, [A]})
+      assert %{reload: %{batch: 5}} = next_status(s)
+      start_supervised!({SyncedStub, {[], [%HerdrReload.Batch{id: 9, modules: [B]}]}})
       restart_registry()
       refute_receive {^s, {:runtime_status, _}}, 100
       assert %{reload: %{state: :loaded, batch: 5}} = :sys.get_state(ReloadNotices).status

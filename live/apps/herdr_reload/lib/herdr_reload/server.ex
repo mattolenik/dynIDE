@@ -77,8 +77,9 @@ defmodule HerdrReload.Server do
     do: GenServer.call(server, :last_rolled_back, :infinity)
 
   @doc "Recorded batches, newest first."
-  @spec batches(server()) :: [Batch.t()]
-  def batches(server \\ __MODULE__), do: GenServer.call(server, :batches, :infinity)
+  @spec batches(server(), timeout()) :: [Batch.t()]
+  def batches(server \\ __MODULE__, timeout \\ :infinity),
+    do: GenServer.call(server, :batches, timeout)
 
   @doc "Modules the promotion sync loaded at init (empty when none)."
   @spec synced(server(), timeout()) :: [module()]

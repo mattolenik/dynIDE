@@ -58,6 +58,10 @@ defmodule HerdrServer.Application do
       :ok = Handoff.Link.restored()
       # held back in a VM that could have been a standby (config/runtime.exs)
       :ok = HerdrReload.Application.start_deferred()
+      # subscribe now: a first reload would otherwise land before the 500 ms retry
+      if Process.whereis(HerdrServer.ReloadNotices),
+        do: send(HerdrServer.ReloadNotices, :subscribe)
+
       announce_start()
       {:ok, pid}
     end

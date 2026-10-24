@@ -12,7 +12,8 @@ defmodule HerdrServer.ReloadNotices do
       30 s later (also for one seeded from the mirror); `:adopted` takes its kind from `Handoff.Link.adopt_reason/0`. On subscribe
       the modules the promotion sync loaded (`HerdrReload.Server.synced/0`) are applied as
       `{:synced, mods}` when non-empty and no reload entry exists yet (once), so a promoted
-      standby shows them.
+      standby shows them. The newest recorded batch (`HerdrReload.Server.batches/2`) seeds the
+      same way and wins over the sync: a reload finishing before the first subscribe still shows.
 
   Always started. Subscribes when the `HerdrReload.Notices` registry runs (reload is
   enabled), else retries every 500 ms; a registry restart is followed the same way
@@ -136,14 +137,33 @@ defmodule HerdrServer.ReloadNotices do
 
         # once: on a re-subscribe (registry restart, bridge restart from the mirror) a
         # newer reload entry must not go back to the old sync
-        case state.status.reload == nil && synced() do
-          mods when is_list(mods) and mods != [] ->
-            status(state, {:herdr_reload, {:synced, mods}})
-
-          _ ->
-            state
-        end
+        if state.status.reload == nil, do: seed_reload(state), else: state
     end
+  end
+
+  # the newest batch (a reload that finished before we subscribed) wins over the sync
+  defp seed_reload(state) do
+    case {newest_batch(), synced()} do
+      {%{rolled_back: true} = b, _} ->
+        status(state, {:herdr_reload, {:rolled_back, b.id, b.modules, :manual}})
+
+      {%{} = b, _} ->
+        status(state, {:herdr_reload, {:loaded, b.id, b.modules}})
+
+      {nil, [_ | _] = mods} ->
+        status(state, {:herdr_reload, {:synced, mods}})
+
+      _ ->
+        state
+    end
+  end
+
+  defp newest_batch do
+    if Process.whereis(HerdrReload.Server),
+      do: List.first(HerdrReload.Server.batches(HerdrReload.Server, @synced_ms)),
+      else: nil
+  catch
+    :exit, _ -> nil
   end
 
   # the promotion sync's modules; the reload server may not run (reload disabled, tests)
