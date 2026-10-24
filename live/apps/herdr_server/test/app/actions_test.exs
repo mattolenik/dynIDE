@@ -173,4 +173,18 @@ defmodule HerdrServer.App.ActionsTest do
     rel = Event.key("a", [], event: :release)
     assert {_, [{:key, 2, ^rel}]} = Actions.apply(app, rel)
   end
+
+  test "a stale swallow entry never eats a later legitimate release" do
+    {app, _} = pfx(fresh(), "z")
+    {app, [{:key, 1, _}]} = press(app, "z")
+    rel = Event.key("z", [], event: :release)
+    assert {_, [{:key, 1, ^rel}]} = Actions.apply(app, rel)
+  end
+
+  test "release with different modifiers than the consumed press is swallowed" do
+    {app, _} = pfx(fresh(), "v", [])
+    assert {_, []} = Actions.apply(app, Event.key("v", [:ctrl], event: :release))
+    {app, _} = pfx(fresh(), "X", [:shift])
+    assert {_, []} = Actions.apply(app, Event.key("x", [], event: :release))
+  end
 end

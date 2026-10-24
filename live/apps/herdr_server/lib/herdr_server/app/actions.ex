@@ -57,10 +57,11 @@ defmodule HerdrServer.App.Actions do
   @spec apply(app(), tuple()) :: {app(), [effect()]}
   def apply(app, {:key, %{key: k, mods: m, event: :release}} = event) do
     key = Keybinds.normalize(k, m)
+    sk = swallow_key(key)
 
     cond do
-      MapSet.member?(app.focus.swallow, key) ->
-        {update_in(app.focus.swallow, &MapSet.delete(&1, key)), []}
+      MapSet.member?(app.focus.swallow, sk) ->
+        {update_in(app.focus.swallow, &MapSet.delete(&1, sk)), []}
 
       app.focus.mode != :terminal ->
         {app, []}
@@ -74,10 +75,16 @@ defmodule HerdrServer.App.Actions do
     key = Keybinds.normalize(k, m)
     {app, effects} = dispatch_key(app, event, key)
 
+    sk = swallow_key(key)
+
     if Enum.any?(effects, &match?({:key, _, ^event}, &1)),
-      do: {app, effects},
-      else: {update_in(app.focus.swallow, &MapSet.put(&1, key)), effects}
+      do: {update_in(app.focus.swallow, &MapSet.delete(&1, sk)), effects},
+      else: {update_in(app.focus.swallow, &MapSet.put(&1, sk)), effects}
   end
+
+  # Keyed by the key alone (case-insensitive) so a release with different modifiers matches.
+  defp swallow_key({k, _mods}) when is_binary(k), do: String.downcase(k)
+  defp swallow_key({k, _mods}), do: k
 
   def apply(app, {:paste, bin}), do: to_focused(app, :paste, bin)
 
