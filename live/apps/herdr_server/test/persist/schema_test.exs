@@ -98,6 +98,15 @@ defmodule HerdrServer.Persist.SchemaTest do
       refute Map.has_key?(a2.ui, :foo)
     end
 
+    test "plain ui values of any shape round-trip" do
+      app = fresh()
+      app = %{app | ui: %{app.ui | theme: %{name: :dark, accent: {1, 2, 3}, tags: ["a"]}}}
+      s = Schema.capture(app, %{})
+      assert {:ok, a2, f2} = Schema.restore(s)
+      assert a2.ui.theme == app.ui.theme
+      assert Schema.capture(a2, f2) == s
+    end
+
     test "next_id at or below the max pane id is repaired, not an error" do
       s = three() |> Schema.capture(%{}) |> put_in([:session, :next_id], 2)
       assert {:ok, a2, _} = Schema.restore(s)
@@ -106,7 +115,7 @@ defmodule HerdrServer.Persist.SchemaTest do
 
     test "a layout pane missing from panes is invalid" do
       s = three() |> Schema.capture(%{}) |> update_in([:panes], &Map.delete(&1, 2))
-      assert {:error, {:invalid, _}} = Schema.restore(s)
+      assert {:error, {:invalid, :panes_mismatch}} = Schema.restore(s)
     end
 
     test "a pane in panes but in no layout is invalid" do
@@ -118,50 +127,115 @@ defmodule HerdrServer.Persist.SchemaTest do
           hidden: false
         })
 
-      assert {:error, {:invalid, _}} = Schema.restore(s)
+      assert {:error, {:invalid, :panes_mismatch}} = Schema.restore(s)
     end
 
     test "a pane in two layouts is invalid" do
       s = three() |> Schema.capture(%{})
       s = put_tab(s, 1, &put_in(&1.layout.root, {:split, :vertical, 0.5, {:pane, 3}, {:pane, 1}}))
-      assert {:error, {:invalid, _}} = Schema.restore(s)
+      assert {:error, {:invalid, :pane_in_two_layouts}} = Schema.restore(s)
     end
 
     test "a workspace without tabs is invalid" do
       s = fresh() |> Schema.capture(%{}) |> put_ws(&%{&1 | tabs: []})
-      assert {:error, {:invalid, _}} = Schema.restore(s)
+      assert {:error, {:invalid, :workspace_without_tabs}} = Schema.restore(s)
     end
 
     test "an active_tab that does not exist is invalid" do
       s = fresh() |> Schema.capture(%{}) |> put_ws(&%{&1 | active_tab: 5})
-      assert {:error, {:invalid, _}} = Schema.restore(s)
+      assert {:error, {:invalid, :active_tab}} = Schema.restore(s)
     end
 
     test "an active_workspace that does not exist is invalid" do
       s = fresh() |> Schema.capture(%{}) |> put_in([:session, :active_workspace], 3)
-      assert {:error, {:invalid, _}} = Schema.restore(s)
+      assert {:error, {:invalid, :active_workspace}} = Schema.restore(s)
     end
 
     test "a layout focus that does not exist is invalid" do
       s = fresh() |> Schema.capture(%{}) |> put_tab(0, &put_in(&1.layout.focus, 2))
-      assert {:error, {:invalid, _}} = Schema.restore(s)
+      assert {:error, {:invalid, :layout_focus}} = Schema.restore(s)
     end
 
     test "non-plain terms are invalid" do
       s = Schema.capture(fresh(), %{})
-      assert {:error, {:invalid, _}} = Schema.restore(put_in(s, [:ui, :status], fn -> 1 end))
-      assert {:error, {:invalid, _}} = Schema.restore(put_in(s, [:panes, 1, :cwd], self()))
+
+      assert {:error, {:invalid, :not_plain}} =
+               Schema.restore(put_in(s, [:ui, :status], fn -> 1 end))
+
+      assert {:error, {:invalid, :not_plain}} =
+               Schema.restore(put_in(s, [:panes, 1, :cwd], self()))
     end
 
     test "a malformed snapshot is an error, not a crash" do
       s = Schema.capture(fresh(), %{})
-      assert {:error, {:invalid, _}} = Schema.restore(put_in(s, [:session, :workspaces], :nope))
 
-      assert {:error, {:invalid, _}} =
+      assert {:error, {:invalid, :session}} =
+               Schema.restore(put_in(s, [:session, :workspaces], :nope))
+
+      assert {:error, {:invalid, :workspaces}} =
                Schema.restore(put_tab(s, 0, &put_in(&1.layout.root, {:pane, "x"})))
 
-      assert {:error, {:invalid, _}} = Schema.restore(%{v: 1})
+      assert {:error, {:invalid, :shape}} = Schema.restore(%{v: 1})
       assert {:error, _} = Schema.restore(:garbage)
+    end
+
+    test "a split ratio outside Layout's clamp range is invalid" do
+      s = three() |> Schema.capture(%{})
+
+      bad =
+        &put_tab(s, 0, fn t ->
+          put_in(t.layout.root, {:split, :horizontal, &1, {:pane, 1}, {:pane, 2}})
+        end)
+
+      assert {:error, {:invalid, :ratio}} = Schema.restore(bad.(0.95))
+      assert {:error, {:invalid, :ratio}} = Schema.restore(bad.(0.05))
+      assert {:ok, _, _} = Schema.restore(bad.(0.9))
+      assert {:ok, _, _} = Schema.restore(bad.(0.1))
+    end
+
+    test "an empty area is invalid" do
+      s = Schema.capture(fresh(), %{})
+      assert {:error, {:invalid, :area}} = Schema.restore(put_in(s, [:session, :area, :w], 0))
+      assert {:error, {:invalid, :area}} = Schema.restore(put_in(s, [:session, :area, :h], 0))
+    end
+
+    test "focus.pane must be the active tab's layout focus" do
+      s = three() |> Schema.capture(%{})
+      assert {:error, {:invalid, :focus}} = Schema.restore(put_in(s, [:focus, :pane], 1))
+      assert {:error, {:invalid, :focus}} = Schema.restore(put_in(s, [:focus, :pane], nil))
+    end
+
+    test "a nil layout focus is invalid" do
+      s = fresh() |> Schema.capture(%{}) |> put_tab(0, &put_in(&1.layout.focus, nil))
+      s = put_in(s, [:focus, :pane], nil)
+      assert {:error, {:invalid, :layout_focus}} = Schema.restore(s)
+    end
+
+    test "duplicate workspace ids are invalid" do
+      s = Schema.capture(fresh(), %{})
+      [ws] = s.session.workspaces
+
+      ws2 = %{
+        ws
+        | tabs: [%{hd(ws.tabs) | layout: %{root: {:pane, 2}, focus: 2, prev_focus: nil}}]
+      }
+
+      s = put_in(s, [:session, :workspaces], [ws, ws2])
+      s = put_in(s, [:panes, 2], s.panes[1])
+      assert {:error, {:invalid, :duplicate_workspace}} = Schema.restore(s)
+    end
+
+    test "duplicate tab ids within a workspace are invalid" do
+      s = three() |> Schema.capture(%{}) |> put_tab(1, &%{&1 | id: 1})
+      s = put_ws(s, &%{&1 | active_tab: 1})
+      s = put_in(s, [:focus, :pane], 2)
+      assert {:error, {:invalid, :duplicate_tab}} = Schema.restore(s)
+    end
+
+    test "a prev_focus outside its layout is reset to nil" do
+      s = fresh() |> Schema.capture(%{}) |> put_tab(0, &put_in(&1.layout.prev_focus, 7))
+      assert {:ok, a2, _} = Schema.restore(s)
+      assert hd(hd(a2.session.workspaces).tabs).layout.prev_focus == nil
     end
 
     test "a newer snapshot is refused" do

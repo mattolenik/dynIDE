@@ -171,7 +171,7 @@ defmodule HerdrServer.Persist.Schema do
   defp pane?(_), do: false
 
   defp area?(%{x: x, y: y, w: w, h: h}),
-    do: Enum.all?([x, y, w, h], &(is_integer(&1) and &1 >= 0))
+    do: Enum.all?([x, y], &(is_integer(&1) and &1 >= 0)) and id?(w) and id?(h)
 
   defp area?(_), do: false
 
@@ -181,20 +181,43 @@ defmodule HerdrServer.Persist.Schema do
   defp validate(%{session: s, focus: f, panes: panes}) do
     layout_ids = for ws <- s.workspaces, t <- ws.tabs, id <- ids(t.layout.root), do: id
 
-    with :ok <- check(Enum.all?(s.workspaces, &(&1.tabs != [])), :workspace_without_tabs),
+    trees = for ws <- s.workspaces, t <- ws.tabs, do: t.layout.root
+
+    with :ok <- check(unique?(Enum.map(s.workspaces, & &1.id)), :duplicate_workspace),
+         :ok <-
+           check(
+             Enum.all?(s.workspaces, &unique?(Enum.map(&1.tabs, fn t -> t.id end))),
+             :duplicate_tab
+           ),
+         :ok <- check(Enum.all?(s.workspaces, &(&1.tabs != [])), :workspace_without_tabs),
          :ok <- check(Enum.all?(s.workspaces, &active_tab?/1), :active_tab),
          :ok <- check(Enum.any?(s.workspaces, &(&1.id == s.active_workspace)), :active_workspace),
          :ok <- check(Enum.all?(s.workspaces, &layout_focus?/1), :layout_focus),
-         :ok <- check(length(Enum.uniq(layout_ids)) == length(layout_ids), :pane_in_two_layouts),
+         :ok <- check(Enum.all?(trees, &ratios_ok?/1), :ratio),
+         :ok <- check(unique?(layout_ids), :pane_in_two_layouts),
          :ok <- check(MapSet.new(layout_ids) == MapSet.new(Map.keys(panes)), :panes_mismatch) do
-      check(is_nil(f.pane) or Map.has_key?(panes, f.pane), :focus)
+      check(f.pane == active_focus(s), :focus)
     end
   end
+
+  defp unique?(list), do: length(Enum.uniq(list)) == length(list)
+
+  # Actions keeps focus.pane equal to the active tab's layout focus (`sync/1`)
+  defp active_focus(s) do
+    ws = Enum.find(s.workspaces, &(&1.id == s.active_workspace))
+    Enum.find(ws.tabs, &(&1.id == ws.active_tab)).layout.focus
+  end
+
+  # Layout clamps every ratio to [0.1, 0.9]
+  defp ratios_ok?({:pane, _}), do: true
+
+  defp ratios_ok?({:split, _, r, a, b}),
+    do: r >= 0.1 and r <= 0.9 and ratios_ok?(a) and ratios_ok?(b)
 
   defp active_tab?(ws), do: Enum.any?(ws.tabs, &(&1.id == ws.active_tab))
 
   defp layout_focus?(ws) do
-    Enum.all?(ws.tabs, fn %{layout: l} -> is_nil(l.focus) or l.focus in ids(l.root) end)
+    Enum.all?(ws.tabs, fn %{layout: l} -> l.focus in ids(l.root) end)
   end
 
   defp ids({:pane, id}), do: [id]
@@ -222,8 +245,13 @@ defmodule HerdrServer.Persist.Schema do
   defp build_ws(ws) do
     %{
       ws
-      | tabs: Enum.map(ws.tabs, fn t -> %{t | layout: struct(HerdrServer.Layout, t.layout)} end)
+      | tabs: Enum.map(ws.tabs, fn t -> %{t | layout: build_layout(t.layout)} end)
     }
+  end
+
+  defp build_layout(l) do
+    prev = if l.prev_focus in ids(l.root), do: l.prev_focus, else: nil
+    struct(HerdrServer.Layout, %{l | prev_focus: prev})
   end
 
   # --- migration ---
