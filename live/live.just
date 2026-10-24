@@ -8,7 +8,7 @@ live-test:
     cd '{{live_dir}}' && mix test
     for c in {{live_crates}}; do (cd '{{live_dir}}/native'/$c && cargo test --locked) || exit 1; done
 
-# Milestone gate: lint, types, tests, launcher smoke
+# Milestone gate: lint, types, tests, launcher smoke, tty harness
 live-check:
     cd '{{live_dir}}' && mix deps.get
     cd '{{live_dir}}' && mix format --check-formatted
@@ -17,11 +17,17 @@ live-check:
     for c in {{live_crates}}; do (cd '{{live_dir}}/native'/$c && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings) || exit 1; done
     just --justfile '{{justfile()}}' live-test
     '{{live_dir}}/scripts/launcher_smoke.sh'
+    python3 '{{live_dir}}/scripts/tty_harness.py' destructor
+    python3 '{{live_dir}}/scripts/tty_harness.py' demo
 
 # Compile, then run herdr-live
 live-run:
     cd '{{live_dir}}' && mix compile
     exec '{{live_dir}}/bin/herdr-live'
+
+# Throwaway tty/blit demo in this terminal (q quits, Ctrl-Z suspends)
+live-demo:
+    exec '{{live_dir}}/bin/live-demo'
 
 # Placeholder until slice-1 metrics
 live-bench:
