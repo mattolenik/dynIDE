@@ -9,8 +9,8 @@ defmodule HerdrServer.ViewTest do
   alias HerdrServer.Client.State
   alias HerdrServer.View
 
-  defp client(c, r, transport \\ :ref),
-    do: %State{size: %{cols: c, rows: r}, transport: transport}
+  defp client(c, r, transport \\ :ref, mode \\ :terminal),
+    do: %State{size: %{cols: c, rows: r}, transport: transport, mode: mode}
 
   defp status(scene), do: Node.find(scene.chrome, [:status])
   defp child(scene, id), do: Node.find(scene.chrome, [:status, id])
@@ -48,11 +48,13 @@ defmodule HerdrServer.ViewTest do
     assert [%{rows: {:inline, []}}] = s.panes
   end
 
-  test "mode and hint follow focus mode" do
-    app = keys(fresh(80, 24), [{"b", [:ctrl]}])
-    s = View.compute(app, client(80, 24))
+  test "mode and hint follow the client's own input mode" do
+    app = fresh(80, 24)
+    s = View.compute(app, client(80, 24, :ref, :prefix))
     assert %{text: "PREFIX", token: :accent} = child(s, :mode)
-    s = View.compute(pfx(fresh(80, 24), "r"), client(80, 24))
+    assert child(View.compute(app, client(80, 24)), :mode).text == "TERMINAL"
+    assert mode_after(app, ["r"]) == :resize
+    s = View.compute(app, client(80, 24, :ref, :resize))
     assert %{text: "RESIZE", token: :warning} = child(s, :mode)
     assert child(s, :hint).text == ""
   end

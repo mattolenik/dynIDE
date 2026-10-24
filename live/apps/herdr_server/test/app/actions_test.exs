@@ -1,20 +1,18 @@
 defmodule HerdrServer.App.ActionsTest do
   use ExUnit.Case, async: true
   alias HerdrScene.Event
-  alias HerdrServer.App.Actions
+  alias HerdrServer.App.{Actions, Keybinds}
   alias HerdrServer.Layout
 
   defp fresh, do: elem(Actions.init(%{cols: 100, rows: 25}), 0)
   defp press(app, key, mods \\ []), do: Actions.apply(app, Event.key(key, mods))
 
-  defp run(app, keys) do
-    Enum.reduce(keys, {app, []}, fn k, {a, _} ->
-      {key, mods} = if is_tuple(k), do: k, else: {k, []}
-      press(a, key, mods)
-    end)
+  # applies the prefix binding of `key` the way the Store runs it (keys resolve in Client.Keys)
+  defp pfx(app, key, mods \\ []) do
+    {m, f, a} = Keybinds.lookup(app.ui.keybinds, :prefix, Keybinds.normalize(key, mods))
+    Kernel.apply(m, f, [app | a])
   end
 
-  defp pfx(app, key, mods \\ []), do: run(app, [{"b", [:ctrl]}, {key, mods}])
   defp ids(app), do: Layout.pane_ids(tab_layout(app))
 
   defp tab_layout(app) do
@@ -31,7 +29,7 @@ defmodule HerdrServer.App.ActionsTest do
   test "split, focus, close" do
     {app, eff} = pfx(fresh(), "v")
     assert [{:spawn, 2, _}] = eff
-    assert app.focus.pane == 2 and length(ids(app)) == 2 and app.focus.mode == :terminal
+    assert app.focus.pane == 2 and length(ids(app)) == 2
     {app, _} = pfx(app, "h")
     assert app.focus.pane == 1
     {app, _} = pfx(app, "l")
@@ -40,35 +38,22 @@ defmodule HerdrServer.App.ActionsTest do
     assert eff == [{:close, 2}] and app.focus.pane == 1
   end
 
-  test "typing, double prefix, unbound" do
+  test "keys, presses and releases, go to the focused pane" do
     app = fresh()
     ev = Event.key("a")
-    assert {_, [{:key, 1, ^ev}]} = Actions.apply(app, ev)
-    pev = Event.key("b", [:ctrl])
-    {a, []} = Actions.apply(app, pev)
-    assert a.focus.mode == :prefix
-    assert {a2, [{:key, 1, ^pev}]} = Actions.apply(a, pev)
-    assert a2.focus.mode == :terminal
-    {a, []} = Actions.apply(a, Event.key("z"))
-    assert a.focus.mode == :terminal
-    {a, []} = Actions.apply(app, pev)
-    assert {^a, []} = Actions.apply(a, Event.key("c", [], event: :release))
+    assert {^app, [{:key, 1, ^ev}]} = Actions.apply(app, ev)
+    rel = Event.key("b", [:ctrl], event: :release)
+    assert {^app, [{:key, 1, ^rel}]} = Actions.apply(app, rel)
   end
 
-  test "resize mode" do
+  test "resize_dir moves the split" do
     {app, _} = pfx(fresh(), "v")
-    {app, _} = pfx(app, "r")
-    assert app.focus.mode == :resize
     ratio = fn a -> hd(Layout.splits(tab_layout(a), a.session.area)).ratio end
     r0 = ratio.(app)
-    {app, []} = press(app, "h")
+    {app, []} = Actions.resize_dir(app, :left, 0.05)
     r1 = ratio.(app)
-    {app, []} = press(app, "h")
-    assert ratio.(app) < r1 and r1 < r0 and app.focus.mode == :resize
-    {app, []} = press(app, "q")
-    assert app.focus.mode == :resize
-    {app, []} = press(app, :escape)
-    assert app.focus.mode == :terminal
+    {app, []} = Actions.resize_dir(app, :left, 0.05)
+    assert ratio.(app) < r1 and r1 < r0
   end
 
   test "tabs" do
@@ -173,28 +158,5 @@ defmodule HerdrServer.App.ActionsTest do
     rects = content_rects(app)
     assert length(rects) == 15
     assert Enum.all?(rects, &(&1.rect.w > 0 and &1.rect.h > 0))
-  end
-
-  test "release of a consumed press is swallowed; release of a forwarded press is not" do
-    {app, _} = pfx(fresh(), "v")
-    assert {_, []} = Actions.apply(app, Event.key("v", [], event: :release))
-    assert {_, []} = Actions.apply(app, Event.key("b", [:ctrl], event: :release))
-    {app, [{:key, 2, _}]} = press(app, "a")
-    rel = Event.key("a", [], event: :release)
-    assert {_, [{:key, 2, ^rel}]} = Actions.apply(app, rel)
-  end
-
-  test "a stale swallow entry never eats a later legitimate release" do
-    {app, _} = pfx(fresh(), "z")
-    {app, [{:key, 1, _}]} = press(app, "z")
-    rel = Event.key("z", [], event: :release)
-    assert {_, [{:key, 1, ^rel}]} = Actions.apply(app, rel)
-  end
-
-  test "release with different modifiers than the consumed press is swallowed" do
-    {app, _} = pfx(fresh(), "v", [])
-    assert {_, []} = Actions.apply(app, Event.key("v", [:ctrl], event: :release))
-    {app, _} = pfx(fresh(), "X", [:shift])
-    assert {_, []} = Actions.apply(app, Event.key("x", [], event: :release))
   end
 end

@@ -11,8 +11,8 @@ defmodule HerdrServer.App.Actions do
 
   `{:pane_exited, id}` emits `{:close, id}`; the Store must treat closing an already-gone
   pane as idempotent. Mouse `px` is passed through unchanged (not pane-relative) in M3.
-  Presses consumed by the multiplexer are remembered in `focus.swallow` so their later
-  release is not forwarded to the pane.
+  Keys arrive here already resolved by the client's `Client.Keys` and go to the focused
+  pane; bindings are applied by the Store as `apply(m, f, [app | a])`.
 
   Ponytail: panes' `layout_gen` is not bumped here; the Store owns resize bookkeeping.
   """
@@ -55,32 +55,8 @@ defmodule HerdrServer.App.Actions do
   # --- events ---
 
   @spec apply(app(), tuple()) :: {app(), [effect()]}
-  def apply(app, {:key, %{key: k, mods: m, event: :release}} = event) do
-    key = Keybinds.normalize(k, m)
-    sk = swallow_key(key)
-
-    cond do
-      MapSet.member?(app.focus.swallow, sk) ->
-        {update_in(app.focus.swallow, &MapSet.delete(&1, sk)), []}
-
-      app.focus.mode != :terminal ->
-        {app, []}
-
-      true ->
-        dispatch_key(app, event, key)
-    end
-  end
-
-  def apply(app, {:key, %{key: k, mods: m}} = event) do
-    key = Keybinds.normalize(k, m)
-    {app, effects} = dispatch_key(app, event, key)
-
-    sk = swallow_key(key)
-
-    if Enum.any?(effects, &match?({:key, _, ^event}, &1)),
-      do: {update_in(app.focus.swallow, &MapSet.delete(&1, sk)), effects},
-      else: {update_in(app.focus.swallow, &MapSet.put(&1, sk)), effects}
-  end
+  # key resolution (prefix, modes, consumed releases) is per-client, in `Client.Keys`
+  def apply(app, {:key, _} = event), do: to_focused(app, :key, event)
 
   def apply(app, {:paste, bin}), do: to_focused(app, :paste, bin)
 
@@ -130,41 +106,8 @@ defmodule HerdrServer.App.Actions do
   # the generator stops at the cut codepoint's partial bytes
   defp whole_codepoints(bin), do: for(<<c::utf8 <- bin>>, into: "", do: <<c::utf8>>)
 
-  # Keyed by the key alone (case-insensitive) so a release with different modifiers matches.
-  defp swallow_key({k, _mods}) when is_binary(k), do: String.downcase(k)
-  defp swallow_key({k, _mods}), do: k
-
-  defp dispatch_key(app, event, key) do
-    kb = app.ui.keybinds
-    mode = app.focus.mode
-    key_in(mode, app, event, key, Keybinds.lookup(kb, mode, key), Keybinds.prefix?(kb, key))
-  end
-
-  # key_in(mode, app, event, key, bound_mfa | nil, prefix_key?)
-  defp key_in(:terminal, app, {:key, %{event: :release}}, _, bound, prefix?)
-       when bound != nil or prefix?,
-       do: {app, []}
-
-  defp key_in(:terminal, app, _, _, _, true), do: {put_mode(app, :prefix), []}
-  defp key_in(:terminal, app, _, _, bound, _) when bound != nil, do: call(app, bound)
-  defp key_in(:terminal, app, event, _, _, _), do: to_focused(app, :key, event)
-
-  defp key_in(:prefix, app, _, _, bound, _) when bound != nil,
-    do: call(put_mode(app, :terminal), bound)
-
-  defp key_in(:prefix, app, event, _, _, true),
-    do: to_focused(put_mode(app, :terminal), :key, event)
-
-  defp key_in(:prefix, app, _, _, _, _), do: {put_mode(app, :terminal), []}
-  defp key_in(:resize, app, _, _, bound, _) when bound != nil, do: call(app, bound)
-  defp key_in(:resize, app, _, _, _, _), do: {app, []}
-
-  defp call(app, {m, f, a}), do: Kernel.apply(m, f, [app | a])
-
   defp to_focused(%{focus: %{pane: nil}} = app, _, _), do: {app, []}
   defp to_focused(app, tag, payload), do: {app, [{tag, app.focus.pane, payload}]}
-
-  defp put_mode(app, mode), do: put_in(app.focus.mode, mode)
 
   defp rel({:mouse, m}, r), do: {:mouse, %{m | x: m.x - r.x, y: m.y - r.y}}
 
@@ -264,9 +207,6 @@ defmodule HerdrServer.App.Actions do
   @spec resize_dir(app(), Layout.nav(), float()) :: {app(), [effect()]}
   def resize_dir(app, nav, delta),
     do: {put_layout(app, Layout.resize(layout(app), app.session.area, nav, delta)), []}
-
-  @spec enter_mode(app(), :terminal | :prefix | :resize) :: {app(), [effect()]}
-  def enter_mode(app, mode), do: {put_mode(app, mode), []}
 
   @spec detach(app()) :: {app(), [effect()]}
   def detach(app), do: {app, [{:detach}]}

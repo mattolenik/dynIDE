@@ -2,6 +2,8 @@ defmodule HerdrServer.App.Keybinds do
   @moduledoc """
   Keybind tables, mirroring herdr's defaults (`src/config/model.rs`). Values are
   `{HerdrServer.App.Actions, fun, args}` called as `apply(m, f, [app | args])`; never funs.
+  Mode changes are per-client: they target `{HerdrServer.Client.Keys, :enter_mode, [mode]}`
+  and are applied to the client's input state by `Client.Keys`, never to the app.
 
   Keys are `{key, mods}`. Shift-letter normalization: a shifted printable key is stored as
   its uppercase text with `:shift` removed (`normalize/2`); the terminal input parser emits
@@ -9,6 +11,7 @@ defmodule HerdrServer.App.Keybinds do
   """
 
   alias HerdrServer.App.Actions
+  alias HerdrServer.Client.Keys
 
   defstruct prefix: [], prefix_binds: %{}, direct: %{}, resize: %{}
 
@@ -36,7 +39,7 @@ defmodule HerdrServer.App.Keybinds do
         {"v", []} => a(:split, [:horizontal]),
         {"-", []} => a(:split, [:vertical]),
         {"x", []} => a(:close_pane),
-        {"r", []} => a(:enter_mode, [:resize]),
+        {"r", []} => {Keys, :enter_mode, [:resize]},
         {"q", []} => a(:detach)
       }
       |> Map.merge(Map.new(1..9, &{{Integer.to_string(&1), []}, a(:switch_tab, [&1])}))
@@ -46,8 +49,8 @@ defmodule HerdrServer.App.Keybinds do
     resize =
       Map.new(nav, fn {k, d} -> {{k, []}, a(:resize_dir, [d, 0.05])} end)
       |> Map.merge(%{
-        {:escape, []} => a(:enter_mode, [:terminal]),
-        {:enter, []} => a(:enter_mode, [:terminal])
+        {:escape, []} => {Keys, :enter_mode, [:terminal]},
+        {:enter, []} => {Keys, :enter_mode, [:terminal]}
       })
 
     %__MODULE__{

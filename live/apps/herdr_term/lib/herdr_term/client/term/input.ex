@@ -9,7 +9,10 @@ defmodule HerdrTerm.Client.Term.Input do
   Each event takes the fast path (contract decision 6: the focused pane's
   write MFA from `:persistent_term`, read per event) or goes to the session
   as `{:input, self(), seq, event}`. After a slow event every later event is
-  held until `{:ack, seq}`. Key releases always go slow. Delivery is
+  held until `{:ack, seq}`. Key releases always go slow. The fast path also needs this
+  client's own input mode to be `:terminal`: the session sends `{:input_mode, mode}`
+  before the ack of the event that changed it, so the ack-hold orders it before the next
+  event; a new session resets it to `:terminal`. Delivery is
   at-least-once: an unacked event is re-sent first to the next session. Events before the first `{:session, pid}` (sent
   by Render after each attach) are queued. A buffered ESC is flushed after 25ms.
 
@@ -38,6 +41,7 @@ defmodule HerdrTerm.Client.Term.Input do
     :esc,
     parse: Parse.new(),
     seq: 0,
+    mode: :terminal,
     queue: [],
     replies: %{}
   ]
@@ -110,6 +114,11 @@ defmodule HerdrTerm.Client.Term.Input do
     {:noreply, state}
   end
 
+  def handle_info({:input_mode, mode}, state) when is_atom(mode) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, %{state | mode: mode}}
+  end
+
   # at-least-once: the next session gets the unacked event first
   def handle_info({:session, nil}, state) do
     state = Map.merge(%__MODULE__{}, state)
@@ -131,7 +140,7 @@ defmodule HerdrTerm.Client.Term.Input do
         nil -> state.queue
       end
 
-    {:noreply, drain(%{state | session: pid, inflight: nil, queue: queue})}
+    {:noreply, drain(%{state | session: pid, inflight: nil, queue: queue, mode: :terminal})}
   end
 
   def handle_info({:tty_resumed} = msg, state), do: to_owner(msg, state)
@@ -172,7 +181,7 @@ defmodule HerdrTerm.Client.Term.Input do
   defp drain(%{session: s, inflight: nil, queue: [ev | rest]} = state) when is_pid(s) do
     state = %{state | queue: rest}
 
-    case fast(ev, :persistent_term.get(Protocol.fast_path_key(), nil)) do
+    case fast(ev, state.mode, :persistent_term.get(Protocol.fast_path_key(), nil)) do
       {m, f, a} ->
         SafeApply.run(m, f, [ev | a])
         drain(state)
@@ -186,12 +195,16 @@ defmodule HerdrTerm.Client.Term.Input do
 
   defp drain(state), do: state
 
-  defp fast({:key, %{event: :release}}, _fast), do: nil
+  defp fast({:key, %{event: :release}}, _mode, _fast), do: nil
 
-  defp fast({:key, %{key: k, mods: m}}, %{passthrough: true, write: {_, _, _} = w, intercept: i}),
-    do: if(MapSet.member?(i, {k, m}), do: nil, else: w)
+  defp fast(
+         {:key, %{key: k, mods: m}},
+         :terminal,
+         %{passthrough: true, write: {_, _, _} = w, intercept: i}
+       ),
+       do: if(MapSet.member?(i, {k, m}), do: nil, else: w)
 
-  defp fast(_ev, _fast), do: nil
+  defp fast(_ev, _mode, _fast), do: nil
 
   defp now, do: System.monotonic_time(:millisecond)
 end

@@ -1,12 +1,10 @@
 defmodule HerdrServer.App.Focus do
-  @moduledoc "Input focus: focused pane, input mode, modal stack and consumed-press keys (`swallow`)."
+  @moduledoc """
+  Shared input focus: focused pane and modal stack. Input mode and consumed-press keys
+  are per-client (`Client.State`, resolved by `Client.Keys`).
+  """
 
-  defstruct pane: nil, mode: :terminal, modal: [], swallow: MapSet.new()
+  defstruct pane: nil, modal: []
 
-  @type t :: %__MODULE__{
-          pane: pos_integer() | nil,
-          mode: :terminal | :prefix | :resize,
-          modal: list(),
-          swallow: MapSet.t()
-        }
+  @type t :: %__MODULE__{pane: pos_integer() | nil, modal: list()}
 end

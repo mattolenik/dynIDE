@@ -60,6 +60,30 @@ defmodule HerdrTerm.Client.Term.InputTest do
     assert_receive {:fast, {:key, %{key: "v"}}}
   end
 
+  test "in its own prefix mode the next key goes slow despite a passthrough record",
+       %{tty: tty} do
+    fast([{"b", [:ctrl]}])
+    Tty.inject(tty, "\x02x")
+    assert_receive {:input, from, 1, {:key, %{key: "b", mods: [:ctrl]}}}
+    send(from, {:input_mode, :prefix})
+    send(from, {:ack, 1})
+    assert_receive {:input, ^from, 2, {:key, %{key: "x"}}}
+    refute_received {:fast, _}
+    send(from, {:input_mode, :terminal})
+    send(from, {:ack, 2})
+    Tty.inject(tty, "y")
+    assert_receive {:fast, {:key, %{key: "y"}}}
+  end
+
+  test "a new session starts the client in terminal mode", %{sup: sup, tty: tty} do
+    fast([])
+    input = Client.input(sup)
+    send(input, {:input_mode, :prefix})
+    send(input, {:session, spawn(fn -> :ok end)})
+    Tty.inject(tty, "q")
+    assert_receive {:fast, {:key, %{key: "q"}}}
+  end
+
   test "a lone escape flushes after the timeout", %{tty: tty} do
     Tty.inject(tty, "\e")
     assert_receive {:input, _, 1, {:key, %{key: :escape}}}, 200

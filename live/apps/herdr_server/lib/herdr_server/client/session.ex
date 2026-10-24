@@ -13,16 +13,21 @@ defmodule HerdrServer.Client.Session do
   its way (the Store notifies after the event that spawned the pane), and that scene
   brings the pane's rows (inline: filled here; ref: fetched by the client for new refs).
 
-  Client input is validated (server-internal events are refused with a warning notice),
-  checked against the fast path, else sent to `App.Store` with this client's size, and
-  always acked. The session monitors the Store and stops when it dies, so the client
+  Client input is validated (server-internal events are refused with a warning notice)
+  and always acked. Keys are resolved per client by `Client.Keys` (this client's mode and
+  consumed-press set, so one client's prefix never captures another's keys): a forwarded
+  press takes the fast path when the published record allows it, other forwarded keys
+  go to `App.Store.event/2`, bindings to `App.Store.run/2`. When the client's mode
+  changes, the session sends `{:input_mode, mode}` to the input's `from` pid before its
+  `{:ack, seq}`, and re-pushes the scene (the status shows the mode). Non-key events go
+  to `App.Store` with this client's size. The session monitors the Store and stops when it dies, so the client
   re-attaches to the fresh one.
   """
   use GenServer, restart: :temporary
 
   alias HerdrScene.Protocol
   alias HerdrServer.App.{Keybinds, Store}
-  alias HerdrServer.Client.State
+  alias HerdrServer.Client.{Keys, State}
   alias HerdrServer.Pane.Rows
   alias HerdrServer.{SafeApply, View}
 
@@ -75,7 +80,7 @@ defmodule HerdrServer.Client.Session do
     state =
       case Protocol.validate_client_msg(msg) do
         :ok ->
-          input(state, ev)
+          input(state, ev, from)
 
         {:error, why} ->
           send(state.client, {:notice, %{level: :warning, text: "input rejected: " <> why}})
@@ -117,19 +122,48 @@ defmodule HerdrServer.Client.Session do
 
   # --- input ---
 
-  defp input(state, {:resize, %{cols: c, rows: r} = m}) do
+  defp input(state, {:resize, %{cols: c, rows: r} = m}, _from) do
     resized(%{state | size: %{cols: c, rows: r}, cell_px: m.cell_px})
   end
 
-  defp input(state, ev) do
-    if not fast_path(ev), do: Store.event(ev, driving_size(state))
+  defp input(%{keybinds: %{}} = state, {:key, _} = ev, from) do
+    case SafeApply.run(Keys, :resolve, [Map.take(state, [:mode, :swallow]), state.keybinds, ev]) do
+      {:ok, {%{mode: mode, swallow: swallow}, result}} ->
+        keyed(%{state | mode: mode, swallow: swallow}, state.mode, result, from)
+
+      # a broken resolver (failure or bad shape) still lets the client type
+      other ->
+        send(state.client, {:notice, %{level: :error, text: "keys failed: #{inspect(other)}"}})
+        Store.event(ev, driving_size(state))
+        state
+    end
+  end
+
+  defp input(state, ev, _from) do
+    Store.event(ev, driving_size(state))
     state
+  end
+
+  defp keyed(state, old_mode, result, from) do
+    case result do
+      {:forward, ev} -> if not fast_path(ev), do: Store.event(ev, driving_size(state))
+      {:run, mfa} -> Store.run(mfa, driving_size(state))
+      _consumed -> :ok
+    end
+
+    if state.mode == old_mode do
+      state
+    else
+      if is_pid(from), do: send(from, {:input_mode, state.mode})
+      push(state, Store.snapshot())
+    end
   end
 
   defp driving_size(state), do: Map.put(state.size, :cell_px, state.cell_px)
 
-  # Same check as an in-VM client (contract decision 6), for remote/GUI clients. Releases
-  # always go through the Store so `focus.swallow` applies.
+  # Same check as an in-VM client (contract decision 6), for remote/GUI clients, after
+  # `Client.Keys` forwarded the key (so this client's own mode allowed it). Releases go
+  # through the Store.
   defp fast_path({:key, %{key: k, mods: m, event: e}} = ev) when e != :release do
     case :persistent_term.get(Protocol.fast_path_key(), nil) do
       %{passthrough: true, write: {mod, f, a}, intercept: i} ->
@@ -189,6 +223,8 @@ defmodule HerdrServer.Client.Session do
   defp push(state, nil), do: state
 
   defp push(state, app) do
+    state = %{state | keybinds: app.ui.keybinds}
+
     case SafeApply.run(View, :compute, [app, state]) do
       {:ok, scene} ->
         send_scene(state, if(state.transport == :inline, do: fill(scene), else: scene))

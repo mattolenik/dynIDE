@@ -103,6 +103,50 @@ defmodule HerdrServer.ServerTest do
 
   defp fast, do: :persistent_term.get(Protocol.fast_path_key())
 
+  # the client's {:input_mode, mode} for input `seq`, asserted to arrive before its ack
+  defp mode_before_ack(c, seq) do
+    receive do
+      {^c, {:input_mode, mode}} ->
+        assert Protocol.validate_server_msg({:input_mode, mode}) == :ok
+        assert_receive {^c, {:ack, ^seq}}
+        mode
+
+      {^c, {:ack, ^seq}} ->
+        flunk("ack #{seq} before {:input_mode, _}")
+    after
+      500 -> flunk("no {:input_mode, _}")
+    end
+  end
+
+  defp mode_text(scene), do: Scene.Node.find(scene.chrome, [:status, :mode]).text
+
+  test "prefix mode is per client: B types while A is in prefix mode" do
+    {a, sa} = client()
+    scene(a)
+    {b, sb} = client()
+    scene(b)
+    panes = Map.keys(Store.snapshot().session.panes)
+
+    input(sa, a, 1, Event.key("b", [:ctrl]))
+    assert mode_before_ack(a, 1) == :prefix
+    assert mode_text(scene_until(a, &(mode_text(&1) == "PREFIX"))) == "PREFIX"
+
+    # B's "x" goes through B's session fast path to the pane; nothing is closed
+    input(sb, b, 1, Event.key("x"))
+    assert_receive {^b, {:ack, 1}}
+    refute_received {^b, {:input_mode, _}}
+    assert eventually(fn -> Fake.Vt.read_text(vt(1), {:rows, 0..0}) == "x" end)
+    assert Map.keys(Store.snapshot().session.panes) == panes
+    assert mode_text(:sys.get_state(sb).last_scene) == "TERMINAL"
+    assert mode_text(:sys.get_state(sa).last_scene) == "PREFIX"
+
+    # A's "x" closes the (only) pane once: it is replaced by a fresh one
+    input(sa, a, 2, Event.key("x"))
+    assert mode_before_ack(a, 2) == :terminal
+    assert Map.keys(Store.snapshot().session.panes) == [2]
+    assert mode_text(:sys.get_state(sa).last_scene) == "TERMINAL"
+  end
+
   test "attach, type, split" do
     {c, s} = client()
     assert %Scene{panes: [%{id: 1, rows: {:ref, 1, _}}]} = scene(c)
@@ -117,8 +161,9 @@ defmodule HerdrServer.ServerTest do
     assert fast().passthrough == true
     assert fast().write == {HerdrServer.Pane.Input, :key, [1]}
     input(s, c, 2, Event.key("b", [:ctrl]))
-    assert_receive {^c, {:ack, 2}}
-    assert fast().passthrough == false
+    assert mode_before_ack(c, 2) == :prefix
+    # the global record carries no mode: other clients keep their fast path
+    assert fast().passthrough == true
     input(s, c, 3, Event.key("v"))
     assert_receive {^c, {:ack, 3}}
     assert %Scene{panes: [_, _]} = scene_until(c, &(length(&1.panes) == 2))
@@ -146,16 +191,16 @@ defmodule HerdrServer.ServerTest do
     assert hd(s1.panes).rect != hd(sc2.panes).rect
     assert hd(sc2.panes).rect == %{x: 0, y: 0, w: 120, h: 39}
 
-    input(s1pid, c1, 1, Event.key("b", [:ctrl]))
+    input(s1pid, c1, 1, {:focus, true})
     assert_receive {^c1, {:ack, 1}}
     assert vt_size(1) == {80, 23}
 
-    input(s2, c2, 1, Event.key("b", [:ctrl]))
+    input(s2, c2, 1, {:focus, true})
     assert_receive {^c2, {:ack, 1}}
     assert vt_size(1) == {120, 39}
   end
 
-  test "presses take the session fast path, releases go through the store" do
+  test "presses take the session fast path, consumed releases are swallowed per client" do
     {c, s} = client()
     scene(c)
     assert fast().passthrough
@@ -167,15 +212,15 @@ defmodule HerdrServer.ServerTest do
     Process.sleep(20)
     assert Fake.Vt.read_text(vt(1), {:rows, 0..0}) == "q"
 
-    # "v" press is consumed by the prefix; its release must reach the Store's swallow set
+    # "v" press is consumed by the prefix; its release is swallowed by this session
     input(s, c, 2, Event.key("b", [:ctrl]))
     input(s, c, 3, Event.key("v"))
     assert_receive {^c, {:ack, 3}}
-    assert "v" in Store.snapshot().focus.swallow
+    assert "v" in :sys.get_state(s).swallow
     assert fast().passthrough
     input(s, c, 4, Event.key("v", [], event: :release))
     assert_receive {^c, {:ack, 4}}
-    refute "v" in Store.snapshot().focus.swallow
+    refute "v" in :sys.get_state(s).swallow
   end
 
   test "detach stops the session cleanly" do
@@ -414,19 +459,18 @@ defmodule HerdrServer.ServerTest do
       put_in(st.app.ui.keybinds.prefix_binds[{"z", []}], {HerdrServer.ServerTest.Boom, :boom, []})
     end)
 
-    input(s, c, 1, Event.key("b", [:ctrl]))
-    assert_receive {^c, {:ack, 1}}
-    # a second, larger client: its failing event carries a driver resize that must be discarded
+    # a second, larger client: its failing binding carries a driver resize that must be
+    # discarded (the first client drives again through a slow-path event)
     {c2, s2} = client(%{cols: 120, rows: 40})
     scene(c2)
-    input(s, c, 2, Event.key("b", [:ctrl]))
-    input(s, c, 3, Event.key("b", [:ctrl]))
-    assert_receive {^c, {:ack, 3}}
+    input(s, c, 1, {:focus, true})
+    assert_receive {^c, {:ack, 1}}
     before = :sys.get_state(store)
-    assert before.app.focus.mode == :prefix
-    input(s2, c2, 1, Event.key("z"))
+    assert before.driver_pid == s
+    input(s2, c2, 1, Event.key("b", [:ctrl]))
+    input(s2, c2, 2, Event.key("z"))
     assert_receive {^c2, {:notice, %{level: :error}}}, 500
-    assert_receive {^c2, {:ack, 1}}
+    assert_receive {^c2, {:ack, 2}}
     assert Process.whereis(Store) == store
     # only the activity record of c2 changed
     assert %{:sys.get_state(store) | clients: nil} == %{before | clients: nil}
@@ -441,6 +485,7 @@ defmodule HerdrServer.ServerTest do
     input(s, c, 3, Event.key("b", [:ctrl]))
     input(s, c, 4, Event.key("x"))
     scene_until(c, &(length(&1.panes) == 1))
+    flush(c)
     send(s, {:pane_damage, 2, 99})
     send(s, {:damage, 2, 99})
     Store.event({:pane_exited, 2}, nil)

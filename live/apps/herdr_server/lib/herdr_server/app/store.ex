@@ -14,7 +14,7 @@ defmodule HerdrServer.App.Store do
       Store only ever `send`s to sessions, so there is no call cycle.
     * After each event: panes of inactive tabs are hidden, active-tab panes are resized to
       their content rects (bumping `layout_gen`), and the fast-path term is republished if
-      its value changed.
+      its value changed. It carries no input mode: modes are per client.
     * A spawn that fails (keeper open or pane server start) sends the origin a warning
       notice and closes the pane again, as `{:pane_exited, id}`.
     * A Store restart starts from an empty app: `init/1` closes every pane the keeper
@@ -56,6 +56,15 @@ defmodule HerdrServer.App.Store do
           | nil
         ) :: :ok
   def event(event, size), do: GenServer.call(__MODULE__, {:event, event, size})
+
+  @doc """
+  Applies a keybind action `{m, f, a}` (resolved by the calling session's `Client.Keys`)
+  as `apply(m, f, [app | a])`, through `SafeApply` and the same effect handling and
+  driver rule as `event/2`.
+  """
+  @spec run(Keybinds.mfa_t(), map | nil) :: :ok
+  def run({m, f, a} = mfa, size) when is_atom(m) and is_atom(f) and is_list(a),
+    do: GenServer.call(__MODULE__, {:event, {:run, mfa}, size})
 
   @spec event_async(tuple) :: :ok
   def event_async(event), do: GenServer.cast(__MODULE__, {:event, event})
@@ -188,6 +197,7 @@ defmodule HerdrServer.App.Store do
     result =
       case step do
         {:init, size} -> SafeApply.run(Actions, :init, [size])
+        {:run, {m, f, a}} -> SafeApply.run(m, f, [state.app | a])
         ev -> SafeApply.run(Actions, :apply, [state.app, ev])
       end
 
@@ -332,7 +342,8 @@ defmodule HerdrServer.App.Store do
       pane: f.pane,
       write: f.pane && {Input, :key, [f.pane]},
       intercept: intercept,
-      passthrough: f.mode == :terminal and f.modal == []
+      # shared state only; each client also checks its own input mode
+      passthrough: f.pane != nil and f.modal == []
     }
 
     old = state.fast

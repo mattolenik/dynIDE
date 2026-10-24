@@ -5,9 +5,8 @@ defmodule HerdrServer.App.KeybindsTest do
   defp tables(kb), do: [kb.prefix_binds, kb.direct, kb.resize]
 
   test "every default MFA is an exported function of the right arity" do
-    Code.ensure_loaded!(HerdrServer.App.Actions)
-
     for t <- tables(Keybinds.default()), {_, {m, f, a}} <- t do
+      Code.ensure_loaded!(m)
       assert function_exported?(m, f, length(a) + 1), "#{f}/#{length(a) + 1}"
     end
   end

@@ -18,6 +18,7 @@ defmodule HerdrServer.View do
       the divider line itself is vertical (and `:vertical` gives a horizontal line).
     * Divider rects are clamped into the pane area; pane rects are inside it by
       `Layout.borders/2`, so tiny clients never produce invalid scenes.
+    * The `:mode` node shows the client's own input mode (`Client.State.mode`).
     * Self-describing chrome: the `:mode` node has `props: %{mode: mode}`, the `:hint` node
       `props: %{key: binary, mods: [atom]}` (the prefix key; empty props when hidden).
   """
@@ -28,7 +29,7 @@ defmodule HerdrServer.View do
   alias HerdrServer.Layout
 
   @spec compute(map, State.t()) :: Scene.t()
-  def compute(app, %State{size: %{cols: cols, rows: rows} = size, transport: transport}) do
+  def compute(app, %State{size: %{cols: cols, rows: rows} = size, transport: transport} = client) do
     area = %{x: 0, y: 0, w: cols, h: max(rows - 1, 0)}
     ws = Enum.find(app.session.workspaces, &(&1.id == app.session.active_workspace))
     tab = Enum.find(ws.tabs, &(&1.id == ws.active_tab))
@@ -43,7 +44,7 @@ defmodule HerdrServer.View do
     %Scene{
       size: %{cols: cols, rows: rows},
       panes: panes,
-      chrome: chrome(app, ws, layout, size, area),
+      chrome: chrome(app, client.mode, ws, layout, size, area),
       focus: %{pane: app.focus.pane, chrome: nil}
     }
   end
@@ -59,12 +60,12 @@ defmodule HerdrServer.View do
     }
   end
 
-  defp chrome(app, ws, layout, %{cols: cols, rows: rows}, area) do
+  defp chrome(app, mode, ws, layout, %{cols: cols, rows: rows}, area) do
     status = %Node{
       role: :status,
       id: :status,
       rect: %{x: 0, y: rows - 1, w: cols, h: 1},
-      children: [mode(app), tabs(ws), title(app), hint(app)]
+      children: [mode(mode), tabs(ws), title(app), hint(mode, app.ui)]
     }
 
     dividers =
@@ -86,7 +87,7 @@ defmodule HerdrServer.View do
   defp divider_rect(%{direction: :vertical, pos: pos, area: a}, area),
     do: clamp(%{x: a.x, y: pos, w: a.w, h: 1}, area)
 
-  defp mode(%{focus: %{mode: m}}) do
+  defp mode(m) do
     {label, token} =
       case m do
         :terminal -> {"TERMINAL", :default}
@@ -118,7 +119,7 @@ defmodule HerdrServer.View do
     text(:title, (meta && meta.title) || "", :muted)
   end
 
-  defp hint(%{focus: %{mode: mode}, ui: ui}) do
+  defp hint(mode, ui) do
     case ui.keybinds.prefix do
       [{key, mods} | _] when mode in [:terminal, :prefix] and ui.status.show_hints ->
         label = Enum.map_join(mods ++ [key], "+", &to_string/1)

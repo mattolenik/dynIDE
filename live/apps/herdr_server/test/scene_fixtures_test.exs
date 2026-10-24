@@ -20,8 +20,12 @@ defmodule HerdrServer.SceneFixturesTest do
   for {name, size, steps} <- @fixtures do
     test name do
       {cols, rows} = unquote(Macro.escape(size))
-      app = build(cols, rows, unquote(Macro.escape(steps)))
-      scene = View.compute(app, %State{size: %{cols: cols, rows: rows}, transport: :ref})
+      steps = unquote(Macro.escape(steps))
+      app = build(cols, rows, steps)
+      # the prefix step is client input state, not app state
+      mode = if :prefix in steps, do: :prefix, else: :terminal
+      client = %State{size: %{cols: cols, rows: rows}, transport: :ref, mode: mode}
+      scene = View.compute(app, client)
       assert :ok = Scene.validate(scene)
 
       if System.get_env("HERDR_UPDATE_FIXTURES") == "1" do
@@ -50,6 +54,6 @@ defmodule HerdrServer.SceneFixturesTest do
   defp step(:v, app), do: HerdrServer.ViewHelpers.pfx(app, "v")
   defp step(:h, app), do: HerdrServer.ViewHelpers.pfx(app, "-")
   defp step(:c, app), do: HerdrServer.ViewHelpers.pfx(app, "c")
-  defp step(:prefix, app), do: HerdrServer.ViewHelpers.keys(app, [{"b", [:ctrl]}])
+  defp step(:prefix, app), do: app
   defp step({:many, n}, app), do: HerdrServer.ViewHelpers.many(app, n)
 end

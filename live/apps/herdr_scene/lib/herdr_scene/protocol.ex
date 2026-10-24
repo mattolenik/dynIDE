@@ -21,6 +21,10 @@ defmodule HerdrScene.Protocol do
     * `{:handoff, map}`
     * `{:detached, reason :: atom}`: the server ended this client's session (`:requested`:
       the client's own detach binding or `{:detach}`); the session is gone after it
+    * `{:input_mode, :terminal | :prefix | :resize}`: this client's own input mode
+      changed (input modes are per client). Sent to the `from_pid` of the `{:input, ...}`
+      that caused it, before that input's `{:ack, seq}`; a session starts in `:terminal`.
+      A client may take the fast path only while its own mode is `:terminal`
 
   Generations: `{:ref, id, layout_gen}` in a scene is the pane's layout generation;
   the `gen` of `{:damage, ...}`, `{:rows, ...}` and the rows MFA is its content
@@ -29,7 +33,8 @@ defmodule HerdrScene.Protocol do
   Maps are open: required keys must be valid, unknown extra keys are accepted.
 
   The server publishes the focused-pane fast path under `fast_path_key/0` in
-  `:persistent_term`.
+  `:persistent_term`. Its `passthrough` reflects shared state only (a focused pane, no
+  modal); the client's own mode comes from `{:input_mode, mode}`.
   """
 
   alias HerdrScene.{Event, Scene}
@@ -84,6 +89,8 @@ defmodule HerdrScene.Protocol do
 
   def validate_server_msg({:handoff, %{}}), do: :ok
   def validate_server_msg({:detached, reason}) when is_atom(reason), do: :ok
+
+  def validate_server_msg({:input_mode, m}) when m in [:terminal, :prefix, :resize], do: :ok
   def validate_server_msg(other), do: {:error, "unknown server message #{inspect(other)}"}
 
   @doc "Validates the reply to `{:attach, _}`."
