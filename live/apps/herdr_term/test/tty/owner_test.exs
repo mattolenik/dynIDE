@@ -5,6 +5,7 @@ defmodule HerdrTerm.Tty.OwnerTest do
 
   import ExUnit.CaptureLog
 
+  alias HerdrScene.Protocol
   alias HerdrTerm.Client
   alias HerdrTerm.Kernel.Fake.Tty
   alias HerdrTerm.Test.FakeServer
@@ -93,10 +94,10 @@ defmodule HerdrTerm.Tty.OwnerTest do
       starter = Task.async(fn -> HerdrTerm.Application.start_when_ready(endpoint: ep) end)
       Process.sleep(100)
       # a standby VM: no endpoint, so no tty is opened
-      assert Process.whereis(HerdrTerm.LocalClient) == nil
+      assert Process.whereis(Protocol.local_client_name()) == nil
       FakeServer.start(self(), ep, {__MODULE__, :rows, []})
       assert {:ok, pid} = Task.await(starter)
-      assert Process.whereis(HerdrTerm.LocalClient) == pid
+      assert Process.whereis(Protocol.local_client_name()) == pid
       assert_receive {:attached, _, _}
     end
 
@@ -118,6 +119,34 @@ defmodule HerdrTerm.Tty.OwnerTest do
       :erlang.trace_pattern({Tty, :_, :_}, false, [:local])
     end
 
+    test "an aborted handoff starts the local client again", %{ep: ep} do
+      on_exit(fn ->
+        :persistent_term.erase(Protocol.handoff_key())
+        Supervisor.terminate_child(HerdrTerm.Supervisor, HerdrTerm.LocalClient)
+      end)
+
+      starter = Task.async(fn -> HerdrTerm.Application.run_local(endpoint: ep) end)
+      assert_receive {:attached, %{client: render}, _}
+      old = Process.whereis(Protocol.local_client_name())
+      ref = Process.monitor(old)
+      :persistent_term.put(Protocol.handoff_key(), :begin)
+      send(render, {:handoff, %{phase: :begin, gen: 1, panes: []}})
+      assert_receive {:DOWN, ^ref, :process, _, :shutdown}, 1000
+      refute_receive {:attached, _, _}, 100
+      :persistent_term.put(Protocol.handoff_key(), :aborted)
+      assert_receive {:attached, %{client: render2}, _}, 1000
+      new = Process.whereis(Protocol.local_client_name())
+      assert is_pid(new) and new != old
+
+      # a completed handoff ends the starter
+      :persistent_term.put(Protocol.handoff_key(), :begin)
+      send(render2, {:handoff, %{phase: :begin, gen: 2, panes: []}})
+      Process.sleep(100)
+      :persistent_term.put(Protocol.handoff_key(), :released)
+      assert Task.await(starter) == :ok
+      assert Process.whereis(Protocol.local_client_name()) == nil
+    end
+
     test "other clients ignore a handoff", %{ep: ep} do
       %{sup: sup} = start(ep)
       send(Client.render(sup), {:handoff, %{phase: :begin, gen: 1, panes: []}})
@@ -134,7 +163,7 @@ defmodule HerdrTerm.Tty.OwnerTest do
 
       assert [_] = Regex.scan(~r/terminal client not started: \{:tty_open, :enxio\}/, log)
       refute log =~ "terminal client started"
-      assert Process.whereis(HerdrTerm.LocalClient) == nil
+      assert Process.whereis(Protocol.local_client_name()) == nil
       assert Process.alive?(Process.whereis(HerdrTerm.Supervisor))
     end
 
@@ -143,15 +172,15 @@ defmodule HerdrTerm.Tty.OwnerTest do
 
       assert capture_log(fn ->
                assert {:ok, pid} = HerdrTerm.Application.start_local(endpoint: ep)
-               assert Process.whereis(HerdrTerm.LocalClient) == pid
+               assert Process.whereis(Protocol.local_client_name()) == pid
              end) =~ "terminal client started"
 
       assert_receive {:attached, _, _}
-      Tty.hangup(Client.tty(HerdrTerm.LocalClient))
+      Tty.hangup(Client.tty(Protocol.local_client_name()))
       assert_receive :local_exit, 500
-      Process.exit(Process.whereis(HerdrTerm.LocalClient), :kill)
+      Process.exit(Process.whereis(Protocol.local_client_name()), :kill)
       Process.sleep(20)
-      assert Process.whereis(HerdrTerm.LocalClient) == nil
+      assert Process.whereis(Protocol.local_client_name()) == nil
     end
   end
 end

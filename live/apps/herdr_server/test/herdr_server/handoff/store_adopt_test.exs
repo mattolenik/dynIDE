@@ -13,18 +13,10 @@ defmodule HerdrServer.Handoff.StoreAdoptTest do
     on_exit(&Store.reset/0)
   end
 
-  defp eventually(fun, tries \\ 50) do
-    cond do
-      fun.() -> true
-      tries == 0 -> false
-      true -> Process.sleep(10) && eventually(fun, tries - 1)
-    end
-  end
-
+  # not a kill: the supervisor's restart intensity (3 in 5 s) is shared with other tests
   defp restart_store do
-    old = Process.whereis(Store)
-    Process.exit(old, :kill)
-    assert eventually(fn -> Process.whereis(Store) not in [nil, old] end)
+    :ok = Supervisor.terminate_child(HerdrServer.Supervisor, Store)
+    {:ok, _} = Supervisor.restart_child(HerdrServer.Supervisor, Store)
   end
 
   test "init with an app/store entry adopts instead of closing" do
@@ -33,16 +25,7 @@ defmodule HerdrServer.Handoff.StoreAdoptTest do
     [{1, kid}] = Rows.kernel_ids()
     # a keeper pane the Store never mapped (e.g. opened through ctl)
     {:ok, other} =
-      Fake.Keeper.open(%{
-        cmd: "sh",
-        args: [],
-        env: [],
-        cwd: nil,
-        cols: 10,
-        rows: 5,
-        max_scrollback: 0,
-        subscriber: nil
-      })
+      Fake.Keeper.open(spec())
 
     # a fresh VM: no pane servers, no row cache, an app/store entry from the broker
     HerdrServer.Pane.Supervisor.stop_pane(1)
@@ -54,10 +37,41 @@ defmodule HerdrServer.Handoff.StoreAdoptTest do
     restart_store()
     assert Store.snapshot() == app
     assert Rows.kernel_ids() == [{1, kid}]
-    assert [{_pid, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
+    assert [{pane, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
     assert Enum.sort(Fake.Keeper.ids()) == Enum.sort([kid, other])
     assert Link.take_adopted("app/") == []
+
+    # a crash-restart in the adopted VM closes no keeper pane
+    restart_store()
+    assert Enum.sort(Fake.Keeper.ids()) == Enum.sort([kid, other])
+    # its pane servers stop (Registry unregisters asynchronously, so check the pid)
+    refute Process.alive?(pane)
   end
+
+  test "an app/store entry without session.panes adopts as an empty app" do
+    {:ok, kid} = Fake.Keeper.open(spec())
+    blob = :erlang.term_to_binary(%{v: 1, app: %{session: %{}}, kernel_ids: [{1, kid}]})
+    :ok = Link.put_adopted_for_test([{"app/store", blob, []}])
+    on_exit(fn -> if pid = Process.whereis(Link), do: GenServer.stop(pid) end)
+
+    restart_store()
+    assert Store.snapshot() == nil
+    assert Fake.Keeper.ids() == [kid]
+    # unclaimed: RESTORED drops it
+    assert :sys.get_state(Link).rejected == ["app/store"]
+  end
+
+  defp spec,
+    do: %{
+      cmd: "sh",
+      args: [],
+      env: [],
+      cwd: nil,
+      cols: 10,
+      rows: 5,
+      max_scrollback: 0,
+      subscriber: nil
+    }
 
   test "a changed app is held under app/store" do
     path = "/tmp/hs-#{System.unique_integer([:positive])}.sock"

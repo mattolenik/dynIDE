@@ -37,6 +37,11 @@ defmodule HerdrScene.Protocol do
   The server publishes the focused-pane fast path under `fast_path_key/0` in
   `:persistent_term`. Its `passthrough` reflects shared state only (a focused pane, no
   modal); the client's own mode comes from `{:input_mode, mode}`.
+
+  Handoff: the in-VM local client's top-level process registers as `local_client_name/0`
+  (the server waits for it to stop on `:begin` before the next VM may open the tty), and
+  the server keeps the current handoff phase (`:begin | :aborted | :released`, absent
+  otherwise) under `handoff_key/0` in `:persistent_term`.
   """
 
   alias HerdrScene.{Event, Scene}
@@ -48,6 +53,12 @@ defmodule HerdrScene.Protocol do
 
   @spec fast_path_key() :: {__MODULE__, :fast_path}
   def fast_path_key, do: {__MODULE__, :fast_path}
+
+  @spec local_client_name() :: :herdr_local_client
+  def local_client_name, do: :herdr_local_client
+
+  @spec handoff_key() :: {__MODULE__, :handoff}
+  def handoff_key, do: {__MODULE__, :handoff}
 
   @spec validate_client_msg(term) :: :ok | {:error, binary}
   def validate_client_msg({:attach, %{} = a}), do: validate_attach(a)

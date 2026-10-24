@@ -38,15 +38,19 @@ defmodule HerdrServer.App.Store do
       error notice.
       The reload server is `config :herdr_server, :reload_server` (default
       `HerdrReload.Server`).
-    * Handoff (M5): after each event that changed the app, the app and the pane/keeper
-      id map are held with the broker under `"app/store"` (`Handoff.Link.hold/3`, a no-op
-      without one). A new VM's `init/1` that finds that entry adopts it: it maps the panes
-      the Keeper adopted, starts their `Pane.Server`s, and leaves every other keeper pane
-      alone (they belong to whoever opened them, e.g. ctl). A mapped pane the Keeper lost
-      is closed as `{:pane_exited, id}`.
-      The carried app is mirrored at once, so a later Store restart in this VM restarts
-      from the mirror as above. A VM's ETS mirror never crosses a handoff; the carried
-      entry is the only app a new VM starts from.
+    * Handoff (M5): with a broker, the latest app and the pane/keeper id map are held
+      under `"app/store"` (`Handoff.Link.hold/3`) at most once per 100 ms after events
+      that changed the app; `flush_hold/0` (the Link's PREPARE) holds a pending one now.
+      A new VM's `init/1` that finds that entry adopts it (before looking at the mirror,
+      which is empty in a new VM): it maps the panes the Keeper adopted in
+      `:herdr_pane_kernel`, starts their `Pane.Server`s, and leaves every other keeper
+      pane alone (they belong to whoever opened them, e.g. ctl). A mapped pane the Keeper
+      lost is closed as `{:pane_exited, id}`. The adopted app is mirrored at once, so a
+      later Store restart in this VM restarts from the mirror as above. An unusable entry
+      (its pure part runs through `HerdrReload.Guard`) is logged and unclaimed, and the
+      Store starts with an empty app.
+    * In a VM that adopted panes (`Link.adopt_reason/0` not nil) no restart or restore
+      closes a keeper pane nothing maps (`App.Restore`): it may be an adopted child.
   """
   use GenServer
 
@@ -63,6 +67,7 @@ defmodule HerdrServer.App.Store do
   # bytes of scrollback per pane
   @max_scrollback 10_000_000
   @hold_key "app/store"
+  @hold_ms 100
 
   defstruct app: nil,
             subs: %{},
@@ -72,6 +77,7 @@ defmodule HerdrServer.App.Store do
             sizes: %{},
             hidden: MapSet.new(),
             fast: nil,
+            hold_timer: nil,
             mirrored: %{},
             flush: nil
 
@@ -113,6 +119,17 @@ defmodule HerdrServer.App.Store do
   @doc "Test helper: closes every pane and forgets the app; the next event re-initialises."
   @spec reset() :: :ok
   def reset, do: GenServer.call(__MODULE__, :reset)
+
+  @doc "Holds the latest app with the broker now if a coalesced HOLD is pending."
+  @spec flush_hold() :: :ok
+  def flush_hold do
+    GenServer.call(__MODULE__, :flush_hold, 5000)
+  catch
+    # a Store restarting into its init (which calls the Link) must not block the Link
+    :exit, {reason, _} when reason in [:noproc, :timeout] ->
+      Logger.warning("app/store flush skipped: #{inspect(reason)}")
+      :ok
+  end
 
   @impl true
   def init(:ok) do
@@ -193,6 +210,11 @@ defmodule HerdrServer.App.Store do
     {:reply, :ok, %{state | subs: subs}}
   end
 
+  def handle_call(:flush_hold, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, if(state.hold_timer, do: hold_now(state), else: state)}
+  end
+
   def handle_call(:reset, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     Restore.close_all()
@@ -218,6 +240,11 @@ defmodule HerdrServer.App.Store do
     {:noreply, flush(%{state | flush: nil})}
   end
 
+  def handle_info(:hold, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, hold_now(state)}
+  end
+
   def handle_info(_other, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:noreply, state}
@@ -239,11 +266,11 @@ defmodule HerdrServer.App.Store do
     state = state |> settle() |> publish_fast()
 
     if state.app != old do
-      hold(state)
       Enum.each(Map.keys(state.subs), &send(&1, {:app_changed, state.app}))
+      hold(state)
+    else
+      state
     end
-
-    state
   end
 
   defp batch(state, ev, size) do
@@ -432,38 +459,64 @@ defmodule HerdrServer.App.Store do
 
   # --- handoff ---
 
-  defp hold(state) do
-    if Link.enabled?() do
+  # coalesced: one HOLD of the latest app per @hold_ms (the app can change per event)
+  defp hold(%{hold_timer: nil} = state) do
+    if Link.enabled?(),
+      do: %{state | hold_timer: Process.send_after(self(), :hold, @hold_ms)},
+      else: state
+  end
+
+  defp hold(state), do: state
+
+  defp hold_now(state) do
+    if state.hold_timer, do: Process.cancel_timer(state.hold_timer)
+
+    if state.app != nil do
       blob = :erlang.term_to_binary(%{v: 1, app: state.app, kernel_ids: Rows.kernel_ids()})
       Link.hold(@hold_key, blob, [])
     end
+
+    %{state | hold_timer: nil}
   end
 
   defp adopt_carried(blob) do
-    case decode(blob) do
-      %{v: 1, app: app, kernel_ids: kids} ->
-        adopt_carried(app, Map.new(kids))
+    case Guard.run_twice(__MODULE__, :adoption, [blob], server: reload_server()) do
+      {:ok, {app, pairs}} ->
+        adopt_carried(app, pairs)
 
-      other ->
-        # the keeper's panes are left alone, as unmapped ones are below
-        Logger.error("handoff: unusable app/store entry #{inspect(other, limit: 5)}")
+      # the keeper's panes are left alone, as unmapped ones are below
+      {:failed, reason} ->
+        Logger.error("handoff: unusable app/store entry: #{inspect(reason, limit: 5)}")
+        Link.unclaim(@hold_key)
         %__MODULE__{}
     end
   end
 
-  defp adopt_carried(app, kids) do
+  @doc false
+  # The pure part of an adoption: the carried app and `[{pane_id, kernel_id | nil}]` for
+  # its panes. Raises on an entry of the wrong shape.
+  @spec adoption(binary) :: {Actions.app(), [{pos_integer, pos_integer | nil}]}
+  def adoption(blob) do
+    %{v: 1, app: %{session: %{panes: %{} = panes}} = app, kernel_ids: kids} =
+      :erlang.binary_to_term(blob, [:safe])
+
+    kids = Map.new(kids)
+    {app, Enum.map(Map.keys(panes), &{&1, Map.get(kids, &1)})}
+  end
+
+  defp adopt_carried(app, pairs) do
     keeper = Kernel.keeper()
-    ids = Map.keys(app.session.panes)
-    live = Enum.filter(ids, &start_adopted(&1, kids[&1], keeper))
+    live = Enum.filter(pairs, fn {id, kid} -> start_adopted(id, kid, keeper) end)
     # after init: drops the pane from the layout and closes whatever is left of it
-    Enum.each(ids -- live, &event_async({:pane_exited, &1}))
-    unmapped = keeper.ids() -- Enum.map(live, &kids[&1])
+    Enum.each(pairs -- live, fn {id, _} -> event_async({:pane_exited, id}) end)
+    unmapped = keeper.ids() -- Enum.map(live, &elem(&1, 1))
     if unmapped != [], do: Logger.info("handoff: keeper panes left alone: #{inspect(unmapped)}")
-    Logger.info("handoff: adopted app with panes #{inspect(live)}")
+    Logger.info("handoff: adopted app with panes #{inspect(Enum.map(live, &elem(&1, 0)))}")
     # sizes are unknown here: {0, 0} makes the next settle resize each visible pane to
     # its rect (the same size it has, so no SIGWINCH)
+    sizes = Map.new(live, fn {id, _} -> {id, {0, 0}} end)
     # mirrored now: a Store restart in this VM must find the carried app, not close it
-    flush(publish_fast(%__MODULE__{app: app, sizes: Map.new(live, &{&1, {0, 0}})}))
+    flush(publish_fast(%__MODULE__{app: app, sizes: sizes}))
   end
 
   defp start_adopted(_id, nil, _keeper), do: false
@@ -476,12 +529,6 @@ defmodule HerdrServer.App.Store do
     else
       _ -> false
     end
-  end
-
-  defp decode(blob) do
-    :erlang.binary_to_term(blob, [:safe])
-  rescue
-    ArgumentError -> :undecodable
   end
 
   # --- after every event ---

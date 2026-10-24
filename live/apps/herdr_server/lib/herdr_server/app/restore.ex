@@ -2,7 +2,13 @@ defmodule HerdrServer.App.Restore do
   @moduledoc """
   Pane bookkeeping for `App.Store` across its restarts and state restores: the live pane
   set `App.Reconcile` works against, starting missing `Pane.Server`s, closing panes.
+
+  In a VM that adopted panes from the handoff broker (`Handoff.Link.adopt_reason/0` not
+  nil) a keeper pane nothing maps may be an adopted child (ctl-opened, or spawned just
+  before the crash): `live/0` and `close_all/0` never close one there.
   """
+
+  alias HerdrServer.Handoff.Link
 
   alias HerdrServer.Kernel
   alias HerdrServer.Pane.Rows
@@ -20,7 +26,7 @@ defmodule HerdrServer.App.Restore do
     {live, stale} = Enum.split_with(Rows.kernel_ids(), &MapSet.member?(kids, elem(&1, 1)))
     Enum.each(stale, &close(elem(&1, 0)))
     owned = MapSet.new(live, &elem(&1, 1))
-    for kid <- kids, not MapSet.member?(owned, kid), do: keeper.close(kid)
+    if not adopted?(), do: for(kid <- kids, not MapSet.member?(owned, kid), do: keeper.close(kid))
     Map.new(live)
   end
 
@@ -40,11 +46,23 @@ defmodule HerdrServer.App.Restore do
     Rows.delete(id)
   end
 
-  @doc "Closes every pane mapped in `Pane.Rows`, then anything else the keeper holds."
+  @doc """
+  Closes every pane mapped in `Pane.Rows`, then anything else the keeper holds. In an
+  adopted VM it closes no keeper pane: it stops the pane servers and forgets the map.
+  """
   @spec close_all() :: :ok
   def close_all do
-    Enum.each(Rows.kernel_ids(), fn {id, _kid} -> close(id) end)
-    keeper = Kernel.keeper()
-    Enum.each(keeper.ids(), &keeper.close/1)
+    if adopted?() do
+      Enum.each(Rows.kernel_ids(), fn {id, _kid} ->
+        Panes.stop_pane(id)
+        Rows.delete(id)
+      end)
+    else
+      Enum.each(Rows.kernel_ids(), fn {id, _kid} -> close(id) end)
+      keeper = Kernel.keeper()
+      Enum.each(keeper.ids(), &keeper.close/1)
+    end
   end
+
+  defp adopted?, do: Link.adopt_reason() != nil
 end

@@ -10,6 +10,12 @@ defmodule HerdrServer.Handoff.Link do
   through the link resource in `:persistent_term`, never through this process, so
   `Keeper.open` cannot be delayed by a slow request here.
 
+  The current handoff phase (`:begin`, `:aborted`, `:released`) is kept under
+  `HerdrScene.Protocol.handoff_key/0` for the local terminal client, which cannot
+  subscribe to `Handoff.Notice`. On PREPARE the Link waits (at most 2 s) for the local
+  client (`Protocol.local_client_name/0`) to stop, so its tty restore is done before the
+  next VM's client can open the tty, and flushes `App.Store`'s pending HOLD.
+
   A closed link while primary halts the VM: the broker already treats it as dead and
   adopts its panes elsewhere.
   """
@@ -17,11 +23,14 @@ defmodule HerdrServer.Handoff.Link do
 
   require Logger
 
+  alias HerdrScene.Protocol
+  alias HerdrServer.App.Store
   alias HerdrServer.Handoff.{Ctl, Notice}
   alias HerdrServer.Native.{Keeper, Pty}
   alias HerdrServer.Native.Link, as: NLink
 
   @key {__MODULE__, :link}
+  @local_client_ms 2000
 
   defstruct link: nil,
             gen: 0,
@@ -92,7 +101,7 @@ defmodule HerdrServer.Handoff.Link do
 
   @impl true
   def init({:adopted_for_test, entries}),
-    do: {:ok, %__MODULE__{adopted: entries}}
+    do: {:ok, %__MODULE__{reason: :graceful, adopted: entries}}
 
   def init(_opts) do
     case System.get_env("HERDR_BROKER_SOCK") do
@@ -163,6 +172,7 @@ defmodule HerdrServer.Handoff.Link do
 
   def handle_call(:restored, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
+    :persistent_term.erase(Protocol.handoff_key())
 
     if state.reason == nil do
       {:reply, :ok, state}
@@ -208,8 +218,11 @@ defmodule HerdrServer.Handoff.Link do
 
   def handle_info({:herdr_link, _, @prepare, _, _}, state) do
     state = Map.merge(%__MODULE__{}, state)
+    :persistent_term.put(Protocol.handoff_key(), :begin)
     # notice first, so clients stop writing before the panes freeze
     notice(:begin, state)
+    await_local_client()
+    :ok = Store.flush_hold()
     :ok = Keeper.prepare()
     send_frame(:prepared, "", [])
     {:noreply, state}
@@ -218,12 +231,14 @@ defmodule HerdrServer.Handoff.Link do
   def handle_info({:herdr_link, _, @thaw, _, _}, state) do
     state = Map.merge(%__MODULE__{}, state)
     :ok = Keeper.thaw()
+    :persistent_term.put(Protocol.handoff_key(), :aborted)
     notice(:aborted, state)
     {:noreply, state}
   end
 
   def handle_info({:herdr_link, _, @release, _, _}, state) do
     state = Map.merge(%__MODULE__{}, state)
+    :persistent_term.put(Protocol.handoff_key(), :released)
     notice(:released, state)
     :ok = Keeper.release()
     Logger.info("handoff: released, stopping")
@@ -293,6 +308,22 @@ defmodule HerdrServer.Handoff.Link do
     :erlang.binary_to_term(payload, [:safe])
   rescue
     ArgumentError -> {:bad_request, byte_size(payload)}
+  end
+
+  # the local client stops on the :begin notice and restores the tty in its terminate,
+  # before its :DOWN: only then may the next VM's client open the tty
+  defp await_local_client do
+    with pid when is_pid(pid) <- Process.whereis(Protocol.local_client_name()) do
+      ref = Process.monitor(pid)
+
+      receive do
+        {:DOWN, ^ref, :process, _, _} -> :ok
+      after
+        @local_client_ms ->
+          Process.demonitor(ref, [:flush])
+          Logger.warning("handoff: local client still running after #{@local_client_ms} ms")
+      end
+    end
   end
 
   defp notice(phase, state),

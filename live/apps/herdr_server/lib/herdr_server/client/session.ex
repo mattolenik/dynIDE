@@ -32,9 +32,11 @@ defmodule HerdrServer.Client.Session do
   `{:detached, :store_restart}`.
 
   Handoff (M5): every `Handoff.Notice` event is forwarded verbatim (`{:handoff, map}`).
-  From `:begin` input is held: each input gets a warning notice and no ack, so the
+  From `:begin` input is held: it gets no ack (one warning notice per handoff), so the
   client keeps it unacked (at-least-once: resent first to its next session, in the new
-  VM). `:aborted` runs the held input in order, acking each.
+  VM). `:aborted` runs the held input in order, acking each. The in-VM local client stops
+  on `:begin`: keystrokes it already read between `:begin` and its stop are dropped (a
+  small window); unread ones stay in the host tty's input queue for the next client.
   """
   use GenServer, restart: :temporary
 
@@ -105,7 +107,10 @@ defmodule HerdrServer.Client.Session do
 
   def handle_info({:input, _, _, _} = msg, %{held: held} = state) when is_list(held) do
     state = Map.merge(%State{}, state)
-    send(state.client, {:notice, %{level: :warning, text: "input held: handoff in progress"}})
+
+    if held == [],
+      do: send(state.client, {:notice, %{level: :warning, text: "input held during handoff"}})
+
     {:noreply, %{state | held: [msg | held]}}
   end
 

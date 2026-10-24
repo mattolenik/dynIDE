@@ -823,14 +823,18 @@ defmodule HerdrServer.ServerTest do
 
     # held: a rejection notice, no ack (the client keeps it), nothing reaches the pane
     input(s, c, 5, Event.key("x"))
+    input(s, c, 6, Event.key("y"))
     assert_receive {^c, {:notice, %{level: :warning}}}
-    refute_receive {^c, {:ack, 5}}, 100
+    # one notice per handoff
+    refute_receive {^c, {:notice, _}}, 100
+    refute_received {^c, {:ack, _}}
     assert Fake.Pty.writes(pty(1)) == []
 
     Notice.broadcast({:handoff, %{phase: :aborted, gen: 3, panes: [1]}})
     assert_receive {^c, {:handoff, %{phase: :aborted}}}
     assert_receive {^c, {:ack, 5}}
-    assert Fake.Pty.writes(pty(1)) == ["x"]
+    assert_receive {^c, {:ack, 6}}
+    assert Fake.Pty.writes(pty(1)) == ["x", "y"]
   end
 
   test "server-internal and invalid events from clients are rejected but acked" do

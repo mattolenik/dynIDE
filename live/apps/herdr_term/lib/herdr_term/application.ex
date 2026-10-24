@@ -2,8 +2,9 @@ defmodule HerdrTerm.Application do
   @moduledoc """
   Loads the kernel config (`HerdrTerm.Kernel.load/0`), starts
   `HerdrTerm.Registry` and, unless headless (`HERDR_LIVE_HEADLESS=1` or
-  `config :herdr_term, :headless`), the local terminal client `HerdrTerm.LocalClient`
-  once the server endpoint exists (`start_when_ready/1`).
+  `config :herdr_term, :headless`), the local terminal client (child id
+  `HerdrTerm.LocalClient`, registered as `HerdrScene.Protocol.local_client_name/0`) once
+  the server endpoint exists (`run_local/1`).
   """
 
   use Application
@@ -20,7 +21,7 @@ defmodule HerdrTerm.Application do
       System.get_env("HERDR_LIVE_HEADLESS") == "1" or
         Application.get_env(:herdr_term, :headless, false)
 
-    starter = Supervisor.child_spec({Task, fn -> start_when_ready([]) end}, id: :local_starter)
+    starter = Supervisor.child_spec({Task, fn -> run_local([]) end}, id: :local_starter)
 
     children =
       [{Registry, keys: :unique, name: HerdrTerm.Registry}] ++
@@ -44,6 +45,42 @@ defmodule HerdrTerm.Application do
     end
   end
 
+  @doc false
+  # The local starter: starts the client when the endpoint exists. A client stopped by a
+  # handoff `:begin` is started again (it repaints) if the handoff is aborted; the
+  # starter ends when the client stops for any other reason or the handoff completes.
+  @spec run_local(keyword) :: :ok
+  def run_local(opts) do
+    with {:ok, pid} <- start_when_ready(opts) do
+      ref = Process.monitor(pid)
+
+      receive do
+        {:DOWN, ^ref, :process, _, _} -> :ok
+      end
+
+      if handoff_phase() == :begin, do: await_abort(opts)
+    end
+
+    :ok
+  end
+
+  # ponytail: polls every 20 ms like start_when_ready/1
+  defp await_abort(opts) do
+    case handoff_phase() do
+      :begin ->
+        Process.sleep(20)
+        await_abort(opts)
+
+      :aborted ->
+        run_local(opts)
+
+      _released_or_gone ->
+        :ok
+    end
+  end
+
+  defp handoff_phase, do: :persistent_term.get(Protocol.handoff_key(), nil)
+
   @doc """
   Starts `HerdrTerm.LocalClient` under `HerdrTerm.Supervisor`, `restart:
   :temporary`: a client that cannot start (no host terminal) or later dies is
@@ -54,7 +91,7 @@ defmodule HerdrTerm.Application do
   def start_local(opts \\ []) do
     spec =
       Supervisor.child_spec(
-        {HerdrTerm.Client, [name: HerdrTerm.LocalClient, local: true] ++ opts},
+        {HerdrTerm.Client, [name: Protocol.local_client_name(), local: true] ++ opts},
         id: HerdrTerm.LocalClient,
         restart: :temporary
       )

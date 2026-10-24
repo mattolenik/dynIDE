@@ -124,6 +124,44 @@ defmodule HerdrServer.Handoff.LinkTest do
     stop(pid)
   end
 
+  test "prepare waits for the local client to stop and publishes the phase" do
+    {pid, peer} = start_link_with(<<2::32, 0x41, 0>>)
+    on_exit(fn -> :persistent_term.erase(HerdrScene.Protocol.handoff_key()) end)
+    :ok = Notice.subscribe()
+    test = self()
+
+    # stands in for herdr_term's local client: stops 300 ms after the :begin notice
+    local =
+      spawn(fn ->
+        Process.register(self(), HerdrScene.Protocol.local_client_name())
+        send(test, :registered)
+
+        receive do
+          :stop -> Process.sleep(300)
+        end
+      end)
+
+    assert_receive :registered
+    ref = Process.monitor(local)
+    :ok = :gen_tcp.send(peer, <<2::32, 0x44, 0>>)
+    assert_receive {:handoff, %{phase: :begin}}, 5000
+    assert :persistent_term.get(HerdrScene.Protocol.handoff_key()) == :begin
+    send(local, :stop)
+
+    assert {0x06, ""} =
+             Enum.find(Stream.repeatedly(fn -> frame(peer) end), &(elem(&1, 0) != 0x03))
+
+    # PREPARED only after the local client is gone
+    assert_received {:DOWN, ^ref, :process, ^local, _}
+
+    :ok = :gen_tcp.send(peer, <<2::32, 0x46, 0>>)
+    assert_receive {:handoff, %{phase: :aborted}}, 5000
+    assert :persistent_term.get(HerdrScene.Protocol.handoff_key()) == :aborted
+    assert Link.restored() == :ok
+    assert :persistent_term.get(HerdrScene.Protocol.handoff_key(), nil) == nil
+    stop(pid)
+  end
+
   defmodule BoomCtl do
     alias HerdrServer.Handoff.Ctl
     def handle(:boom), do: raise("boom")
