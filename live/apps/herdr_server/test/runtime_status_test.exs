@@ -94,6 +94,10 @@ defmodule HerdrServer.RuntimeStatusTest do
 
     t = run([{:herdr_reload, {:tests, :running, %{files: 2}}}])
     assert t.tests == %{result: :running, files: 2, failures: 0, ms: nil}
+
+    # a gated batch with no mapped tests clears the entry
+    none = {:herdr_reload, {:tests, :none, %{files: 0, failures: 0, ms: 0}}}
+    assert run([{:herdr_reload, {:tests, :running, %{files: 2}}}, none]).tests == nil
   end
 
   test "handoff phases, and expiry after 30 s" do

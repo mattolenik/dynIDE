@@ -50,7 +50,10 @@ defmodule HerdrReload.TestGateTest do
       mode: mode,
       root: root,
       server: :gate_under_test,
-      reload: fn paths -> send(me, {:reload, paths}) && :reloaded end,
+      reload: fn paths ->
+        send(me, {:reload, paths})
+        :reloaded
+      end,
       runner: fn dir, args, env, _t ->
         send(me, {:ran, dir, args, env})
         runner_result
@@ -85,12 +88,30 @@ defmodule HerdrReload.TestGateTest do
     assert_received {:herdr_reload, {:tests, :passed, %{failures: 0}}}
   end
 
-  test "gate without mapped tests reloads and broadcasts nothing", %{root: root} do
+  test "gate without mapped tests reloads and broadcasts :none, logged once", %{root: root} do
     Notices.subscribe()
     paths = [p(root, "apps/a/lib/a/y.ex")]
-    assert TestGate.reload(paths, opts(root, {"", 1}, :gate)) == :reloaded
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert TestGate.reload(paths, opts(root, {"", 1}, :gate)) == :reloaded
+      end)
+
     refute_received {:ran, _, _, _}
+    # so the chrome clears a "tests..." left by an earlier stale run
+    assert_received {:herdr_reload, {:tests, :none, %{files: 0, failures: 0, ms: 0}}}
     refute_received {:herdr_reload, _}
+    assert [_] = Regex.scan(~r/herdr-event tests ts=\d+ result=none files=0 failures=0 ms=0/, log)
+  end
+
+  test "the root is computed once at init and used when no :root is given", %{root: root, gate: gate} do
+    assert %{root: init_root} = :sys.get_state(gate)
+    assert init_root == Path.dirname(Mix.Project.project_file())
+    # later lookups use the state, not Mix.Project at call time
+    :sys.replace_state(gate, &%{&1 | root: root})
+    o = Keyword.delete(opts(root, {"1 test, 0 failures\n", 0}, :gate), :root)
+    assert TestGate.reload([p(root, "apps/a/lib/a/x.ex")], o) == :reloaded
+    assert_received {:ran, _, ["test", "test/a/x_test.exs"], _}
   end
 
   test "an exit status without a summary line is an error; a timeout too" do
@@ -102,7 +123,10 @@ defmodule HerdrReload.TestGateTest do
 
   test "run passes MIX_ENV=test and unsets the live VM's env" do
     me = self()
-    runner = fn _, _, env, _ -> send(me, {:env, env}) && {"1 test, 0 failures", 0} end
+    runner = fn _, _, env, _ ->
+      send(me, {:env, env})
+      {"1 test, 0 failures", 0}
+    end
     TestGate.run(%{"/d" => ["test/x_test.exs"]}, runner: runner)
     assert_received {:env, env}
     assert {"MIX_ENV", "test"} in env
@@ -160,7 +184,10 @@ defmodule HerdrReload.TestGateTest do
       Notices.subscribe()
       x = p(root, "apps/a/lib/a/x.ex")
       o = opts(root, {"1 test, 0 failures\n", 0}, :gate)
-      runner = fn _, _, _, _ -> File.write!(x, "changed") && {"1 test, 0 failures\n", 0} end
+      runner = fn _, _, _, _ ->
+        File.write!(x, "changed")
+        {"1 test, 0 failures\n", 0}
+      end
       assert {:tests, :stale, _} = TestGate.reload([x], Keyword.put(o, :runner, runner))
       refute_received {:reload, _}
       # no passed result is broadcast for a skipped reload
@@ -174,7 +201,10 @@ defmodule HerdrReload.TestGateTest do
       File.mkdir_p!(Path.join(root, "apps/b/test"))
       File.write!(Path.join(root, "apps/b/test/z_test.exs"), "")
       ok = {"1 test, 0 failures\n", 0}
-      slow = fn _, _, _, _ -> File.write!(z, "broken") && ok end
+      slow = fn _, _, _, _ ->
+        File.write!(z, "broken")
+        ok
+      end
       assert {:tests, :stale, _} = TestGate.reload([x], Keyword.put(opts(root, ok, :gate), :runner, slow))
       refute_received {:reload, _}
 

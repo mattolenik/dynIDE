@@ -222,6 +222,10 @@ defmodule HerdrServer.ReloadNoticesTest do
       HerdrReload.Notices.broadcast({:tests, :running, %{files: 1}})
       assert %{tests: %{result: :running}} = next_status(s)
       refute_receive {^s, {:notice, _}}, 50
+
+      HerdrReload.Notices.broadcast({:tests, :none, %{files: 0, failures: 0, ms: 0}})
+      assert %{tests: nil} = next_status(s)
+      refute_receive {^s, {:notice, _}}, 50
     end
 
     test "a handoff sets the handoff entry, kind from Handoff.Link.adopt_reason/0, and expires" do

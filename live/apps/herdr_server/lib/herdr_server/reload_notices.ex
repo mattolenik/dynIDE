@@ -102,6 +102,7 @@ defmodule HerdrServer.ReloadNotices do
   end
 
   defp notify({:tests, :running, _}), do: :ok
+  defp notify({:tests, :none, _}), do: :ok
 
   defp notify(event) do
     {level, text} = format(event)

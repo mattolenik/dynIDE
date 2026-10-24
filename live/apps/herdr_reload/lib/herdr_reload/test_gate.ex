@@ -31,7 +31,8 @@ defmodule HerdrReload.TestGate do
   A crash of this process loses the blocked set (and restarts the Watcher, supervisor
   `rest_for_one`); a start in `:gate` mode logs a warning so a restart is visible.
 
-  Notices: `{:tests, :running | :passed | :failed | :error, %{files, failures, ms}}`.
+  Notices: `{:tests, :running | :passed | :failed | :error | :none, %{files, failures,
+  ms}}` (`:none`: a gated batch with no mapped tests and nothing blocked).
   """
 
   use GenServer
@@ -125,20 +126,23 @@ defmodule HerdrReload.TestGate do
     end
   end
 
-  # blocked: paths whose gate failed or errored, not yet passed
-  defstruct blocked: MapSet.new()
+  # blocked: paths whose gate failed or errored, not yet passed; root: the umbrella root,
+  # taken once at init (during an umbrella compile Mix.Project.project_file/0 can point at
+  # a child app)
+  defstruct blocked: MapSet.new(), root: nil
 
   @impl true
   def init(nil) do
     # a crash loses the blocked set (and, under rest_for_one, restarts the Watcher)
     if mode() == :gate, do: Logger.warning("test gate (re)started: blocked set is empty")
-    {:ok, %__MODULE__{}}
+    {:ok, %__MODULE__{root: root()}}
   end
 
   @impl true
   def handle_call({:reload, paths, opts}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {reply, blocked} = gated(paths, state.blocked, opts)
+    state = if state.root, do: state, else: %{state | root: root()}
+    {reply, blocked} = gated(paths, state.blocked, Keyword.put_new(opts, :root, state.root))
     {:reply, reply, %{state | blocked: blocked}}
   end
 
@@ -153,12 +157,13 @@ defmodule HerdrReload.TestGate do
 
   defp gated(paths, blocked, opts) do
     reload_fun = Keyword.get(opts, :reload, &Server.reload/1)
-    root = Keyword.get_lazy(opts, :root, &root/0)
+    root = Keyword.fetch!(opts, :root)
     all = Enum.uniq(paths ++ MapSet.to_list(blocked))
     tests = tests_for(all, root)
 
     if map_size(tests) == 0 do
-      Telemetry.event(:tests, result: :none, files: 0, failures: 0, ms: 0)
+      # clears a "tests..." a stale run left in the chrome; logs `tests result=none`
+      Notices.broadcast({:tests, :none, %{files: 0, failures: 0, ms: 0}})
       {reload_fun.(paths), MapSet.new()}
     else
       snapshot = snapshot(root, all)
@@ -172,7 +177,7 @@ defmodule HerdrReload.TestGate do
   # A pass reloads only if no source changed while the tests ran: Server.reload compiles
   # every stale source, so another file saved meanwhile would be loaded ungated. The
   # stale outcome broadcasts no result (chrome keeps "tests..." until the queued batch
-  # for that save reports; if that batch has no mapped tests nothing replaces it).
+  # for that save reports, `:none` if it has no mapped tests).
   defp after_run(:passed, info, {_paths, all, blocked}, {root, snapshot}, reload_fun) do
     if snapshot(root, all) == snapshot do
       Notices.broadcast({:tests, :passed, info})

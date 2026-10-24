@@ -49,6 +49,9 @@ defmodule HerdrServer.RuntimeStatus do
   @spec apply(t, term, integer) :: t
   def apply(t, event, now \\ System.monotonic_time(:millisecond))
 
+  # a gated batch with no mapped tests: nothing to show
+  def apply(t, {:herdr_reload, {:tests, :none, _info}}, _now), do: %{t | tests: nil}
+
   def apply(t, {:herdr_reload, {:tests, result, info}}, _now)
       when result in [:running, :passed, :failed, :error] and is_map(info) do
     tests = %{
