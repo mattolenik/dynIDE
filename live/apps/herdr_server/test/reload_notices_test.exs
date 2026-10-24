@@ -121,6 +121,13 @@ defmodule HerdrServer.ReloadNoticesTest do
 
   test "a rollback reason from the guard is summarised and truncated" do
     reason = {:raise, RuntimeError.exception(String.duplicate("x", 200)), []}
+
+    assert {:info, "tests passed (3 files)"} =
+             ReloadNotices.format({:tests, :passed, %{files: 3, failures: 0, ms: 5}})
+
+    assert {:warning, "tests error, not loaded"} =
+             ReloadNotices.format({:tests, :error, %{files: 3, failures: 0, ms: 5}})
+
     {:warning, text} = ReloadNotices.format({:rolled_back, 7, [A, B], reason})
     assert text =~ "rolled back batch 7 (2 modules): ** (RuntimeError) xxx"
     assert String.length(text) == 80
@@ -206,6 +213,12 @@ defmodule HerdrServer.ReloadNoticesTest do
 
       HerdrReload.Notices.broadcast({:tests, :failed, %{files: 1, failures: 2, ms: 9}})
       assert %{reload: %{batch: 1}, tests: %{result: :failed, failures: 2}} = next_status(s)
+
+      assert_receive {^s,
+                      {:notice, %{level: :warning, text: "tests failed: 2 failures, not loaded"}}}
+
+      HerdrReload.Notices.broadcast({:tests, :running, %{files: 1}})
+      assert %{tests: %{result: :running}} = next_status(s)
       refute_receive {^s, {:notice, _}}, 50
     end
 

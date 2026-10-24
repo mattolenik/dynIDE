@@ -23,7 +23,8 @@ config :logger, :default_formatter, format: "$date $time [$level] $message\n"
 
 config :herdr_reload, HerdrReload,
   enabled: config_env() == :dev,
-  scan_local_funs: config_env() != :prod
+  scan_local_funs: config_env() != :prod,
+  test_on_save: :off
 
 # Handoff (M5): with a broker, changed panes are snapshotted to it this often.
 config :herdr_server, HerdrServer.Handoff, snapshot_ms: 1000

@@ -1,0 +1,117 @@
+defmodule HerdrReload.TestGateTest do
+  use ExUnit.Case, async: false
+  @moduletag :capture_log
+
+  alias HerdrReload.{Notices, TestGate}
+
+  setup do
+    root = Path.join(System.tmp_dir!(), "gate_#{System.unique_integer([:positive])}")
+    for f <- ~w(apps/a/lib/a/x.ex apps/a/lib/a/y.ex apps/a/test/a/x_test.exs apps/b/lib/z.ex) do
+      File.mkdir_p!(Path.dirname(Path.join(root, f)))
+      File.write!(Path.join(root, f), "")
+    end
+
+    start_supervised!(Notices)
+    on_exit(fn -> File.rm_rf!(root) end)
+    {:ok, root: root}
+  end
+
+  defp p(root, rel), do: Path.join(root, rel)
+
+  test "tests_for maps lib files, test files and ignores the rest", %{root: root} do
+    a = p(root, "apps/a")
+    assert TestGate.tests_for([p(root, "apps/a/lib/a/x.ex")], root) == %{a => ["test/a/x_test.exs"]}
+    assert TestGate.tests_for([p(root, "apps/a/test/a/x_test.exs")], root) ==
+             %{a => ["test/a/x_test.exs"]}
+
+    both = [p(root, "apps/a/lib/a/x.ex"), p(root, "apps/a/test/a/x_test.exs")]
+    assert TestGate.tests_for(both, root) == %{a => ["test/a/x_test.exs"]}
+    assert TestGate.tests_for([p(root, "apps/a/lib/a/y.ex")], root) == %{}
+    assert TestGate.tests_for([p(root, "apps/b/lib/z.ex")], root) == %{}
+    assert TestGate.tests_for([p(root, "config/config.exs"), "/elsewhere/x.ex"], root) == %{}
+  end
+
+  test "mode round-trips through the app env" do
+    old = TestGate.mode()
+    on_exit(fn -> TestGate.set_mode(old) end)
+    TestGate.set_mode(:gate)
+    assert TestGate.mode() == :gate
+    TestGate.set_mode(:off)
+    assert TestGate.mode() == :off
+  end
+
+  defp opts(root, runner_result, mode) do
+    me = self()
+
+    [
+      mode: mode,
+      root: root,
+      reload: fn paths -> send(me, {:reload, paths}) && :reloaded end,
+      runner: fn dir, args, env, _t ->
+        send(me, {:ran, dir, args, env})
+        runner_result
+      end
+    ]
+  end
+
+  test "off reloads once and never runs tests", %{root: root} do
+    paths = [p(root, "apps/a/lib/a/x.ex")]
+    assert TestGate.reload(paths, opts(root, {"", 0}, :off)) == :reloaded
+    assert_received {:reload, ^paths}
+    refute_received {:ran, _, _, _}
+  end
+
+  test "gate with a failing runner never reloads and broadcasts running then failed", %{root: root} do
+    Notices.subscribe()
+    paths = [p(root, "apps/a/lib/a/x.ex")]
+    out = "3 tests, 2 failures\n"
+    assert {:tests, :failed, %{failures: 2, files: 1}} =
+             TestGate.reload(paths, opts(root, {out, 2}, :gate))
+
+    refute_received {:reload, _}
+    assert_received {:ran, _, ["test", "test/a/x_test.exs"], _}
+    assert_received {:herdr_reload, {:tests, :running, %{files: 1}}}
+    assert_received {:herdr_reload, {:tests, :failed, %{files: 1, failures: 2}}}
+  end
+
+  test "gate with a passing runner reloads", %{root: root} do
+    Notices.subscribe()
+    paths = [p(root, "apps/a/lib/a/x.ex")]
+    assert TestGate.reload(paths, opts(root, {"3 tests, 0 failures\n", 0}, :gate)) == :reloaded
+    assert_received {:herdr_reload, {:tests, :passed, %{failures: 0}}}
+  end
+
+  test "gate without mapped tests reloads and broadcasts nothing", %{root: root} do
+    Notices.subscribe()
+    paths = [p(root, "apps/a/lib/a/y.ex")]
+    assert TestGate.reload(paths, opts(root, {"", 1}, :gate)) == :reloaded
+    refute_received {:ran, _, _, _}
+    refute_received {:herdr_reload, _}
+  end
+
+  test "an exit status without a summary line is an error; a timeout too" do
+    t = %{"/d" => ["test/x_test.exs"]}
+    assert {:error, _} = TestGate.run(t, runner: fn _, _, _, _ -> {"boom", 1} end)
+    assert {:error, _} = TestGate.run(t, runner: fn _, _, _, _ -> :timeout end)
+    assert {:passed, %{failures: 0}} = TestGate.run(t, runner: fn _, _, _, _ -> {"", 0} end)
+  end
+
+  test "run passes MIX_ENV=test and unsets the live VM's env" do
+    me = self()
+    runner = fn _, _, env, _ -> send(me, {:env, env}) && {"1 test, 0 failures", 0} end
+    TestGate.run(%{"/d" => ["test/x_test.exs"]}, runner: runner)
+    assert_received {:env, env}
+    assert {"MIX_ENV", "test"} in env
+    for v <- ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN HERDR_LIVE_CONTROL HERDR_LIVE_LOG
+                HERDR_LIVE_RUNTIME_DIR HERDR_LIVE_HEADLESS),
+        do: assert({v, nil} in env)
+  end
+
+  test "the default runner kills a command over the timeout" do
+    # real port runner with a tiny timeout against a dir where mix test is slow to start
+    dir = System.tmp_dir!()
+    t0 = System.monotonic_time(:millisecond)
+    assert {:error, _} = TestGate.run(%{dir => ["test/x_test.exs"]}, timeout_ms: 1)
+    assert System.monotonic_time(:millisecond) - t0 < 5_000
+  end
+end

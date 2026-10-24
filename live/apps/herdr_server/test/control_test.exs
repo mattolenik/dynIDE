@@ -42,6 +42,19 @@ defmodule HerdrServer.ControlTest do
     refute File.exists?(p)
   end
 
+  test "test-on-save flips the gate mode" do
+    old = HerdrReload.TestGate.mode()
+    on_exit(fn -> HerdrReload.TestGate.set_mode(old) end)
+    p = path()
+    start_supervised!({Control, path: p, server: :no_such_server})
+    assert ask(p, "test-on-save on\n") == "ok gate\n"
+    assert HerdrReload.TestGate.mode() == :gate
+    assert ask(p, "test-on-save status\n") == "ok gate\n"
+    assert ask(p, "test-on-save off\n") == "ok off\n"
+    assert HerdrReload.TestGate.mode() == :off
+    assert ask(p, "test-on-save maybe\n") == "error unknown command\n"
+  end
+
   test "a missing reload server is an error reply, not a crash" do
     p = path()
     start_supervised!({Control, path: p, server: :no_such_server})

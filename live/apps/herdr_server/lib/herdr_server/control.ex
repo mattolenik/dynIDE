@@ -4,7 +4,8 @@ defmodule HerdrServer.Control do
   (`$HERDR_LIVE_CONTROL`, else `${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/control.sock`),
   mode 0600, removed on stop. Started only when `HerdrReload` is enabled.
 
-  Line protocol, one command per connection: `rollback [N]\\n` (N >= 1, default 1) replies
+  Line protocol, one command per connection: `test-on-save on|off|status\\n` replies
+  `ok gate\\n` or `ok off\\n` (the `HerdrReload.TestGate` mode); `rollback [N]\\n` (N >= 1, default 1) replies
   `ok <batch ids>\\n` (`ok none\\n` when nothing was rolled back) or `error <msg>\\n`.
   Ruling: a stopgap until M12's API; local only, never a network listener.
   After a rollback only a content change of a rolled-back source reloads it (a re-save
@@ -193,7 +194,26 @@ defmodule HerdrServer.Control do
     end
   end
 
+  defp reply("test-on-save " <> arg, _owner) do
+    case String.trim(arg) do
+      "on" -> gate(:gate)
+      "off" -> gate(:off)
+      "status" -> gate(nil)
+      _ -> "error unknown command\n"
+    end
+  end
+
   defp reply(_, _), do: "error unknown command\n"
+
+  # the reload app owns the mode; it may be absent (reload disabled): then an error
+  defp gate(mode) do
+    if Code.ensure_loaded?(HerdrReload.TestGate) do
+      if mode, do: HerdrReload.TestGate.set_mode(mode)
+      if HerdrReload.TestGate.mode() == :gate, do: "ok gate\n", else: "ok off\n"
+    else
+      "error test gate unavailable\n"
+    end
+  end
 
   defp rollback(n, owner) do
     {server, timeout} = GenServer.call(owner, :server)

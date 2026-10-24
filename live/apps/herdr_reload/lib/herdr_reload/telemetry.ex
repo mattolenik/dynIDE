@@ -67,6 +67,13 @@ defmodule HerdrReload.Telemetry do
   def from_notice({:synced, mods}, extra),
     do: {:sync, [count: length(mods), modules: mods, failed: 0] |> Keyword.merge(extra)}
 
+  def from_notice({:tests, :running, _info}, _extra), do: nil
+
+  def from_notice({:tests, result, info}, extra) do
+    {:tests,
+     [result: result, files: info[:files], failures: info[:failures], ms: info[:ms]] ++ extra}
+  end
+
   def from_notice(_other, _extra), do: nil
 
   @classes [:raise, :throw, :exit, :timeout, :local_fun]

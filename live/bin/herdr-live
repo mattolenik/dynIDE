@@ -1,5 +1,5 @@
 #!/bin/sh
-# herdr-live launcher (dev build). Usage: herdr-live [kernel-restart | status | rollback [n]]
+# herdr-live launcher (dev build). Usage: herdr-live [kernel-restart | status | rollback [n] | test-on-save [on|off]]
 # With no argument it builds native/herdr_broker and execs `herdr_broker run`,
 # which supervises the VMs (warm standby, fd holding, handoff on kill -9 or
 # kernel-restart) and restores the host tty at exit (it replaces
@@ -14,20 +14,33 @@
 # by the current primary VM; a promoted VM takes the socket over).
 # A rolled-back source is reloaded again only when its content changes: re-saving
 # or touching the same bytes does nothing (edit it, or revert it, to reload).
-if [ "${1:-}" = rollback ]; then
+# herdr-live test-on-save [on|off]: switch the test-on-save gate (a save runs the changed
+# module's tests in a separate mix test first; failing tests block the reload). No
+# argument prints the current mode (ok gate | ok off). Off by default; it adds seconds
+# per save. HERDR_LIVE_TEST_ON_SAVE=1 starts it on.
+control() { # control <command line>
   sock=${HERDR_LIVE_CONTROL:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/control.sock}
   [ -S "$sock" ] || { echo "herdr-live is not running" >&2; exit 1; }
   exec elixir -e '
-    [sock, n] = System.argv()
+    [sock, line] = System.argv()
     with {:ok, s} <- :gen_tcp.connect({:local, sock}, 0, [:binary, packet: :line, active: false], 2000),
-         :ok <- :gen_tcp.send(s, "rollback #{n}\n"),
+         :ok <- :gen_tcp.send(s, line <> "\n"),
          {:ok, reply} <- :gen_tcp.recv(s, 0, 60_000) do
       IO.write(reply)
       System.halt(if String.starts_with?(reply, "ok"), do: 0, else: 1)
     else
       _ -> IO.puts(:stderr, "herdr-live is not running"); System.halt(1)
-    end' "$sock" "${2:-1}"
-fi
+    end' "$sock" "$1"
+}
+case ${1:-} in
+  rollback) control "rollback ${2:-1}" ;;
+  test-on-save)
+    case ${2:-status} in
+      on | off | status) control "test-on-save ${2:-status}" ;;
+      *) echo "usage: herdr-live test-on-save [on|off]" >&2; exit 2 ;;
+    esac
+    ;;
+esac
 log=${HERDR_LIVE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/herdr-live.log}
 case $log in /*) ;; *) log=$PWD/$log ;; esac
 case ${HERDR_LIVE_RUNTIME_DIR:-} in /* | '') ;; *) HERDR_LIVE_RUNTIME_DIR=$PWD/$HERDR_LIVE_RUNTIME_DIR ;; esac
@@ -49,7 +62,7 @@ case ${1:-} in
     ;;
   '') ;;
   *)
-    echo "usage: herdr-live [kernel-restart | status | rollback [n]]" >&2
+    echo "usage: herdr-live [kernel-restart | status | rollback [n] | test-on-save [on|off]]" >&2
     exit 2
     ;;
 esac

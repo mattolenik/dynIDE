@@ -4,7 +4,7 @@ defmodule HerdrServer.ReloadNotices do
 
     * Notices: every reload event becomes `{:notice, %{level, text, source: :reload}}` sent
       to each `Client.Session` (which renders it in the status line and forwards it to its
-      client). Test-on-save results (`{:tests, ...}`) are status only, no notice.
+      client). Test-on-save `:passed`/`:failed`/`:error` results are notices too; `:running` is status only.
     * Runtime status: reload, test and handoff events are folded into a
       `HerdrServer.RuntimeStatus` (shared session facts, held here); each change is written
       to `Mirror.put(:runtime_status, st)` (a new session reads it in init) and sent as
@@ -64,7 +64,7 @@ defmodule HerdrServer.ReloadNotices do
 
   def handle_info({:herdr_reload, event} = msg, state) do
     state = Map.merge(%__MODULE__{}, state)
-    unless match?({:tests, _, _}, event), do: notify(event)
+    notify(event)
     {:noreply, status(state, msg)}
   end
 
@@ -99,6 +99,8 @@ defmodule HerdrServer.ReloadNotices do
     if status.handoff, do: Process.send_after(self(), :expire, @expire_ms)
     status
   end
+
+  defp notify({:tests, :running, _}), do: :ok
 
   defp notify(event) do
     {level, text} = format(event)
@@ -177,6 +179,13 @@ defmodule HerdrServer.ReloadNotices do
 
   defp raw({:purge_blocked, mod, holders}),
     do: {:warning, "purge blocked: #{inspect(mod)} still running in #{length(holders)} processes"}
+
+  defp raw({:tests, :passed, info}), do: {:info, "tests passed (#{info[:files]} files)"}
+
+  defp raw({:tests, :failed, info}),
+    do: {:warning, "tests failed: #{info[:failures]} failures, not loaded"}
+
+  defp raw({:tests, :error, _}), do: {:warning, "tests error, not loaded"}
 
   defp raw(other), do: {:warning, "reload: #{inspect(other)}"}
 

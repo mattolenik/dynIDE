@@ -2,14 +2,14 @@ defmodule HerdrReload.Watcher do
   @moduledoc """
   Watches source dirs and hands debounced batches of changed files to `on_batch`.
 
-  Options: `dirs`, `debounce_ms` (50), `on_batch` (default `Server.reload/1`, run in
+  Options: `dirs`, `debounce_ms` (50), `on_batch` (default `TestGate.reload/1`, run in
   a spawned process so events keep flowing), `backend_opts` for `FileSystem`.
   Returns `:ignore` (after a warning) when no file watcher backend can start.
   """
 
   use GenServer
 
-  alias HerdrReload.Server
+  alias HerdrReload.TestGate
 
   require Logger
 
@@ -30,7 +30,7 @@ defmodule HerdrReload.Watcher do
         {:ok,
          %{
            debounce: Keyword.get(opts, :debounce_ms, 50),
-           on_batch: Keyword.get(opts, :on_batch, &Server.reload/1),
+           on_batch: Keyword.get(opts, :on_batch, &TestGate.reload/1),
            paths: MapSet.new(),
            timer: nil
          }}

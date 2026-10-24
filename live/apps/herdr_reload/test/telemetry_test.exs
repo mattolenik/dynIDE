@@ -87,5 +87,11 @@ defmodule HerdrReload.TelemetryTest do
 
       assert Telemetry.from_notice(:x, []) == nil
     end
+
+    test "tests" do
+      assert {:tests, kw} = Telemetry.from_notice({:tests, :failed, %{files: 2, failures: 1, ms: 9}}, [])
+      assert kw == [result: :failed, files: 2, failures: 1, ms: 9]
+      assert Telemetry.from_notice({:tests, :running, %{files: 2}}, []) == nil
+    end
   end
 end
