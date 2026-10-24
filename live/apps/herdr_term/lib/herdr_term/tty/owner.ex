@@ -37,6 +37,7 @@ defmodule HerdrTerm.Tty.Owner do
 
   defp sigwinch do
     if Kernel.tty() != HerdrTerm.Kernel.Fake.Tty do
+      # stays set after this client stops; harmless, SIGWINCH's default action is ignore
       :os.set_signal(:sigwinch, :handle)
       handler = {HerdrTerm.Tty.Sigwinch, make_ref()}
       :ok = :gen_event.add_handler(:erl_signal_server, handler, self())

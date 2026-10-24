@@ -8,7 +8,8 @@ defmodule HerdrTerm.Client.Term.Input do
   Each event takes the fast path (contract decision 6: the focused pane's
   write MFA from `:persistent_term`, read per event) or goes to the session
   as `{:input, self(), seq, event}`. After a slow event every later event is
-  held until `{:ack, seq}`. Events before the first `{:session, pid}` (sent
+  held until `{:ack, seq}`. Key releases always go slow. Delivery is
+  at-least-once: an unacked event is re-sent first to the next session. Events before the first `{:session, pid}` (sent
   by Render after each attach) are queued. A buffered ESC is flushed after 25ms.
   """
 
@@ -28,7 +29,7 @@ defmodule HerdrTerm.Client.Term.Input do
     :id,
     :tty,
     :session,
-    :awaiting,
+    :inflight,
     :esc,
     parse: Parse.new(),
     seq: 0,
@@ -85,9 +86,9 @@ defmodule HerdrTerm.Client.Term.Input do
     {:noreply, state}
   end
 
-  def handle_info({:ack, seq}, %{awaiting: seq} = state) do
+  def handle_info({:ack, seq}, %{inflight: {seq, _}} = state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, drain(%{state | awaiting: nil})}
+    {:noreply, drain(%{state | inflight: nil})}
   end
 
   def handle_info({:ack, _seq}, state) do
@@ -95,10 +96,22 @@ defmodule HerdrTerm.Client.Term.Input do
     {:noreply, state}
   end
 
-  # a new session will never ack the old one's events
+  # at-least-once: the next session gets the unacked event first
+  def handle_info({:session, nil}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, %{state | session: nil}}
+  end
+
   def handle_info({:session, pid}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, drain(%{state | session: pid, awaiting: nil})}
+
+    queue =
+      case state.inflight do
+        {_seq, ev} -> [ev | state.queue]
+        nil -> state.queue
+      end
+
+    {:noreply, drain(%{state | session: pid, inflight: nil, queue: queue})}
   end
 
   defp arm_esc(%{parse: %Parse{buffer: "\e" <> _}} = state) do
@@ -121,7 +134,7 @@ defmodule HerdrTerm.Client.Term.Input do
     drain(%{state | replies: replies, queue: state.queue ++ events})
   end
 
-  defp drain(%{session: s, awaiting: nil, queue: [ev | rest]} = state) when is_pid(s) do
+  defp drain(%{session: s, inflight: nil, queue: [ev | rest]} = state) when is_pid(s) do
     state = %{state | queue: rest}
 
     case fast(ev, :persistent_term.get(Protocol.fast_path_key(), nil)) do
@@ -132,11 +145,13 @@ defmodule HerdrTerm.Client.Term.Input do
       nil ->
         seq = state.seq + 1
         send(s, {:input, self(), seq, ev})
-        %{state | seq: seq, awaiting: seq}
+        %{state | seq: seq, inflight: {seq, ev}}
     end
   end
 
   defp drain(state), do: state
+
+  defp fast({:key, %{event: :release}}, _fast), do: nil
 
   defp fast({:key, %{key: k, mods: m}}, %{passthrough: true, write: {_, _, _} = w, intercept: i}),
     do: if(MapSet.member?(i, {k, m}), do: nil, else: w)

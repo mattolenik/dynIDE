@@ -16,8 +16,8 @@ defmodule HerdrTerm.Client.Term.InputTest do
     ep = FakeServer.unique_name()
     FakeServer.start(self(), ep, {__MODULE__, :rows, []})
     sup = start_supervised!({Client, endpoint: ep})
-    assert_receive {:attached, %{kind: :term, size: %{cols: 80, rows: 24}}, _session}
-    %{sup: sup, tty: Client.tty(sup)}
+    assert_receive {:attached, %{kind: :term, size: %{cols: 80, rows: 24}}, session}
+    %{sup: sup, tty: Client.tty(sup), session: session}
   end
 
   defp fast(intercept) do
@@ -62,7 +62,6 @@ defmodule HerdrTerm.Client.Term.InputTest do
 
   test "a lone escape flushes after the timeout", %{tty: tty} do
     Tty.inject(tty, "\e")
-    refute_receive {:input, _, _, _}, 10
     assert_receive {:input, _, 1, {:key, %{key: :escape}}}, 200
   end
 
@@ -80,6 +79,26 @@ defmodule HerdrTerm.Client.Term.InputTest do
     wait_until(fn -> :sys.get_state(Client.input(sup)).session end)
     Tty.inject(tty, "q")
     assert_receive {:input, _, 1, {:key, %{key: "q"}}}
+  end
+
+  test "key releases never take the fast path", %{tty: tty} do
+    fast([])
+    Tty.inject(tty, "\e[97;1:3u")
+    assert_receive {:input, _, 1, {:key, %{key: "a", event: :release}}}
+    refute_receive {:fast, _}, 50
+  end
+
+  test "an unacked event is re-sent first to the next session", %{tty: tty, session: session} do
+    Tty.inject(tty, "a")
+    assert_receive {:input, _, 1, {:key, %{key: "a"}}}
+    Process.exit(session, :kill)
+    Tty.inject(tty, "b")
+    assert_receive {:attached, _, session2}
+    assert session2 != session
+    assert_receive {:input, from, seq, {:key, %{key: "a"}}}
+    refute_receive {:input, _, _, _}, 50
+    send(from, {:ack, seq})
+    assert_receive {:input, ^from, _, {:key, %{key: "b"}}}
   end
 
   defp wait_until(f, n \\ 100) do

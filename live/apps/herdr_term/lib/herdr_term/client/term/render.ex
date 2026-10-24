@@ -75,6 +75,7 @@ defmodule HerdrTerm.Client.Term.Render do
 
   def handle_info({:DOWN, mon, :process, _, _}, %{mon: mon} = state) do
     state = Map.merge(%__MODULE__{}, state)
+    send_input(state, {:session, nil})
     {:noreply, attach(%{state | session: nil, mon: nil, repaint: true})}
   end
 
