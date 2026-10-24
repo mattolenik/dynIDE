@@ -19,6 +19,13 @@ defmodule HerdrServer.Pane.Server do
   and the `:osc` codes are parsed by `Pane.Osc`; bells and child OSC 52 go to the
   foreground client (`Client.Foreground`). Host colours (`Pane.Facts.host_colors/0`)
   are applied on init, since the vt's colours do not survive a restore or handoff.
+
+  Writes (`write/2`) queue in `pending` and go to the pty one chunk of at most
+  65_536 bytes per message, so damage and scrolls interleave with a long paste. A
+  `{:error, :backpressure}` retries the same chunk after 2 ms, doubling to 20 ms; any
+  other error drops the queue. `Pane.Facts`' pending count is raised by the writer
+  before its cast and lowered here once a write is out (or dropped), so a writer that
+  sees no pending writes knows its direct pty write keeps order (`Pane.Input`).
   """
   use GenServer, restart: :transient
 
@@ -53,6 +60,16 @@ defmodule HerdrServer.Pane.Server do
   @spec scroll(pos_integer, {:delta, integer} | :bottom | {:top, non_neg_integer}) :: :ok
   def scroll(id, req), do: GenServer.cast(via(id), {:scroll, req})
 
+  @doc """
+  Appends `iodata` to the pane's write queue (see moduledoc). The pending count goes up
+  in the caller, before the cast, so the caller's next input sees it.
+  """
+  @spec write(pos_integer, iodata) :: :ok
+  def write(id, iodata) do
+    :ok = Facts.add_pending(id, 1)
+    GenServer.cast(via(id), {:write, iodata})
+  end
+
   defp call(id, msg) do
     GenServer.call(via(id), msg)
   catch
@@ -86,6 +103,8 @@ defmodule HerdrServer.Pane.Server do
       }
 
       :ok = Facts.put(id, facts(state))
+      # a restarted server starts with an empty queue
+      :ok = Facts.reset_pending(id)
       {:ok, reload(state)}
     else
       _ -> :ignore
@@ -124,6 +143,12 @@ defmodule HerdrServer.Pane.Server do
     else
       _same_or_error -> {:noreply, state}
     end
+  end
+
+  def handle_cast({:write, iodata}, state) do
+    state = Map.merge(%State{}, state)
+    bin = IO.iodata_to_binary(iodata)
+    if bin == "", do: written_empty(state), else: {:noreply, enqueue(state, bin)}
   end
 
   def handle_cast(_other, state) do
@@ -194,6 +219,11 @@ defmodule HerdrServer.Pane.Server do
   def handle_info({:bell, kid}, %{kernel_id: kid} = state) do
     state = Map.merge(%State{}, state)
     {:noreply, foreground(state, {:pane_bell, state.id})}
+  end
+
+  def handle_info(:write, state) do
+    state = Map.merge(%State{}, state)
+    {:noreply, write_next(%{state | write_retry: retry_timer(state.write_retry)})}
   end
 
   def handle_info(_other, state) do
@@ -304,6 +334,81 @@ defmodule HerdrServer.Pane.Server do
     if colors != nil and
          kernel(id, :set_colors, fn -> Kernel.vt().set_colors(vt, colors) end) == :ok,
        do: colors
+  end
+
+  # -- write queue ----------------------------------------------------------
+
+  @chunk 65_536
+  @retry_first_ms 2
+  @retry_max_ms 20
+
+  # `write_retry` is nil, or `{:timer, ms}` while a retry is scheduled, `{:wait, ms}` after
+  # it fired and before a write succeeds (the next backoff doubles `ms`)
+  defp retry_timer({:timer, ms}), do: {:wait, ms}
+  defp retry_timer(other), do: other
+
+  defp written_empty(state) do
+    :ok = Facts.add_pending(state.id, -1)
+    {:noreply, state}
+  end
+
+  defp enqueue(state, bin) do
+    if :queue.is_empty(state.pending) and state.write_retry == nil, do: send(self(), :write)
+    %{state | pending: :queue.in(bin, state.pending)}
+  end
+
+  defp write_next(state) do
+    case :queue.out(state.pending) do
+      {:empty, _} ->
+        %{state | write_retry: nil}
+
+      {{:value, bin}, rest} ->
+        n = min(byte_size(bin), @chunk)
+        {chunk, left} = {binary_part(bin, 0, n), binary_part(bin, n, byte_size(bin) - n)}
+
+        case pty_write(state, chunk) do
+          :ok -> written(state, left, rest)
+          {:error, :backpressure} -> backoff(state)
+          {:error, reason} -> drop_queue(state, reason)
+        end
+    end
+  end
+
+  defp written(state, left, rest) do
+    pending =
+      if left == "" do
+        :ok = Facts.add_pending(state.id, -1)
+        rest
+      else
+        :queue.in_r(left, rest)
+      end
+
+    if not :queue.is_empty(pending), do: send(self(), :write)
+    %{state | pending: pending, write_retry: nil}
+  end
+
+  defp backoff(state) do
+    ms =
+      case state.write_retry do
+        {:wait, ms} -> min(ms * 2, @retry_max_ms)
+        _ -> @retry_first_ms
+      end
+
+    Process.send_after(self(), :write, ms)
+    %{state | write_retry: {:timer, ms}}
+  end
+
+  defp drop_queue(state, reason) do
+    n = :queue.len(state.pending)
+    Logger.warning("pane #{state.id}: #{n} queued writes dropped (#{inspect(reason)})")
+    :ok = Facts.add_pending(state.id, -n)
+    %{state | pending: :queue.new(), write_retry: nil}
+  end
+
+  defp pty_write(state, chunk) do
+    Kernel.pty().write(state.pty, chunk)
+  rescue
+    e in [ArgumentError, ErlangError] -> {:error, {:raised, Exception.message(e)}}
   end
 
   # -- scrolling ------------------------------------------------------------

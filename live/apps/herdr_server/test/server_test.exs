@@ -905,7 +905,7 @@ defmodule HerdrServer.ServerTest do
     assert Fake.Vt.read_text(vt(1), {:rows, 0..0}) == ""
   end
 
-  test "pastes are written in 64 KiB chunks; a mid-paste rejection notifies and closes paste mode" do
+  test "pastes are queued in 64 KiB chunks; a mid-paste rejection is retried, not truncated" do
     {c, s} = client()
     scene(c)
     :ok = Fake.Vt.set_mode(vt(1), :bracketed_paste, true)
@@ -913,10 +913,10 @@ defmodule HerdrServer.ServerTest do
 
     input(s, c, 1, {:paste, big})
     assert_receive {^c, {:ack, 1}}
+    assert eventually(fn -> List.last(Fake.Pty.writes(pty(1))) == "\e[201~" end)
     refute_received {^c, {:notice, _}}
-    writes = Fake.Pty.writes(pty(1))
+    writes = Enum.take(Fake.Pty.writes(pty(1)), -7)
     assert ["\e[200~" | _] = writes
-    assert List.last(writes) == "\e[201~"
 
     assert writes |> Enum.slice(1..-2//1) |> Enum.map(&byte_size/1) == [
              65_536,
@@ -926,16 +926,23 @@ defmodule HerdrServer.ServerTest do
              65_526
            ]
 
-    # start marker and two chunks go out, the third is rejected
+    # start marker and two chunks go out, the third is rejected once and retried
     :ok = Fake.Pty.backpressure_once_after(pty(1), 3)
     input(s, c, 2, {:paste, big})
-
-    assert_receive {^c,
-                    {:notice, %{level: :warning, text: "paste truncated after 131072 bytes"}}},
-                   500
-
     assert_receive {^c, {:ack, 2}}
-    assert [_, _, "\e[200~", _, _, "\e[201~"] = Enum.take(Fake.Pty.writes(pty(1)), -6)
+    assert eventually(fn -> Enum.take(Fake.Pty.writes(pty(1)), -7) == writes end)
+    refute_received {^c, {:notice, _}}
+  end
+
+  test "a paste over the maximum is rejected with a notice" do
+    {c, s} = client()
+    scene(c)
+    Application.put_env(:herdr_server, :paste_max_bytes, 10)
+    on_exit(fn -> Application.delete_env(:herdr_server, :paste_max_bytes) end)
+    input(s, c, 1, {:paste, :binary.copy("q", 11)})
+
+    assert_receive {^c, {:notice, %{level: :warning, text: "paste rejected: 11 bytes (max 10)"}}},
+                   500
   end
 
   test "a hollow block cursor is stored as a block" do

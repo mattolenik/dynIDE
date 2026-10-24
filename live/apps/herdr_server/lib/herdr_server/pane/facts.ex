@@ -13,6 +13,12 @@ defmodule HerdrServer.Pane.Facts do
   kept current only while scrolled (an unscrolled pane's growing scrollback is not
   rewritten on every damage). Plain ETS API, no process.
 
+  Pane rows are `{id, facts, pending}`: `pending` is the count of writes queued in the
+  pane's `Pane.Server` (`add_pending/2`); other rows are `{key, value}`. Keeping it in the facts row lets
+  the input fast path read both facts with one lookup (`input/1`), and a counter (bumped
+  by the writer before its cast, dropped by the server after the write) cannot race
+  the way a set/clear flag would.
+
   A VM that hot-loads this module before `Mirror` has created the table reads nil and
   skips writes; the first skipped write wakes `Mirror`, which creates it.
   """
@@ -32,18 +38,28 @@ defmodule HerdrServer.Pane.Facts do
   @spec get(pos_integer | atom) :: term | nil
   def get(key) do
     case lookup(key) do
-      [{^key, v}] -> v
+      [row] -> elem(row, 1)
       [] -> nil
     end
   end
 
   @spec put(pos_integer | atom, term) :: :ok
   def put(key, value) do
-    if :ets.whereis(@table) == :undefined,
-      do: wake_owner(),
-      else: :ets.insert(@table, {key, value})
-
+    if :ets.whereis(@table) == :undefined, do: wake_owner(), else: put_value(key, value)
     :ok
+  end
+
+  # a pane row keeps its pending count (a `{id, facts}` row from before the write queue
+  # existed, kept over a hot reload, becomes `{id, facts, 0}`)
+  defp put_value(key, value) when not is_integer(key), do: :ets.insert(@table, {key, value})
+
+  defp put_value(key, value) do
+    with false <- :ets.insert_new(@table, {key, value, 0}) do
+      case :ets.lookup(@table, key) do
+        [{_, _, _}] -> :ets.update_element(@table, key, {2, value})
+        _ -> :ets.insert(@table, {key, value, 0})
+      end
+    end
   end
 
   @spec delete(pos_integer) :: :ok
@@ -54,7 +70,44 @@ defmodule HerdrServer.Pane.Facts do
 
   @doc "Whether pane `id` is scrolled back (one ETS lookup; the input fast path uses it)."
   @spec scrolled?(pos_integer) :: boolean
-  def scrolled?(id), do: match?([{_, %{scrolled: true}}], lookup(id))
+  def scrolled?(id), do: elem(input(id), 0)
+
+  @doc "Whether pane `id` has writes queued in its `Pane.Server`."
+  @spec pending?(pos_integer) :: boolean
+  def pending?(id), do: elem(input(id), 1)
+
+  @doc "`{scrolled?, pending?}` for pane `id` with one ETS lookup (the input fast path)."
+  @spec input(pos_integer) :: {boolean, boolean}
+  def input(id) do
+    case lookup(id) do
+      [{_, facts, n}] -> {match?(%{scrolled: true}, facts), n > 0}
+      [{_, facts}] -> {match?(%{scrolled: true}, facts), false}
+      [] -> {false, false}
+    end
+  end
+
+  @doc """
+  Adds `n` (negative to drop) to pane `id`'s pending write count, never below 0. A
+  missing table is a no-op (writes then go direct, as before the queue existed).
+  """
+  @spec add_pending(pos_integer, integer) :: :ok
+  def add_pending(id, n) do
+    op = if n < 0, do: {3, n, 0, 0}, else: {3, n}
+    :ets.update_counter(@table, id, op, {id, nil, 0})
+    :ok
+  rescue
+    # no table, or a `{id, facts}` row from before the queue: give it the count
+    ArgumentError ->
+      with [{^id, facts}] <- lookup(id), do: :ets.insert(@table, {id, facts, max(n, 0)})
+      :ok
+  end
+
+  @doc "Resets pane `id`'s pending count (a starting `Pane.Server` has an empty queue)."
+  @spec reset_pending(pos_integer) :: :ok
+  def reset_pending(id) do
+    with [row] <- lookup(id), do: :ets.insert(@table, {id, elem(row, 1), 0})
+    :ok
+  end
 
   defp lookup(key) do
     :ets.lookup(@table, key)

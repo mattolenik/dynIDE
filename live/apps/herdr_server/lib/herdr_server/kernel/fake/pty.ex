@@ -24,6 +24,7 @@ defmodule HerdrServer.Kernel.Fake.Pty do
             backpressure: false,
             reject_after: nil,
             reject_with: :backpressure,
+            reject_next: 0,
             writes: [],
             closed: false,
             cwd: nil
@@ -61,6 +62,9 @@ defmodule HerdrServer.Kernel.Fake.Pty do
 
   @doc "Test hook: like `backpressure_once_after/2`, but the rejected write is `{:error, reason}`."
   def fail_once_after(pty, k, reason), do: GenServer.call(pty, {:reject_after, k, reason})
+
+  @doc "Test hook: reject the next `n` writes with backpressure, then accept."
+  def backpressure_next(pty, n), do: GenServer.call(pty, {:reject_next, n})
 
   @doc "Test hook: the last 100 accepted writes, oldest first."
   def writes(pty), do: GenServer.call(pty, :writes)
@@ -131,6 +135,11 @@ defmodule HerdrServer.Kernel.Fake.Pty do
     {:reply, {:error, state.reject_with}, %{state | reject_after: nil}}
   end
 
+  def handle_call({:write, _bin}, _from, %{reject_next: n} = state) when n > 0 do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, {:error, :backpressure}, %{state | reject_next: n - 1}}
+  end
+
   def handle_call({:write, bin}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     left = if state.reject_after, do: state.reject_after - 1
@@ -153,6 +162,11 @@ defmodule HerdrServer.Kernel.Fake.Pty do
   def handle_call({:set_cwd, cwd}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:reply, :ok, %{state | cwd: cwd}}
+  end
+
+  def handle_call({:reject_next, n}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, %{state | reject_next: n}}
   end
 
   def handle_call(:writes, _from, state) do

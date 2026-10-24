@@ -103,7 +103,7 @@ defmodule HerdrIntegration.RealKernelTest do
     assert Rows.kernel_id(second) == nil
   end
 
-  test "a 2 MiB paste into cat either lands whole or reports truncation" do
+  test "a 2 MiB paste into cat lands whole" do
     client = Driver.start_client({80, 24})
     assert Driver.wait_screen(client, &prompt?(Driver.scene(client), 1, &1), 5000)
     Driver.type(client, "cat > /dev/null\r")
@@ -111,14 +111,12 @@ defmodule HerdrIntegration.RealKernelTest do
     line = String.duplicate("y", 63) <> "\n"
     paste = :binary.copy(line, div(2 * 1024 * 1024, 64))
 
-    case Input.paste(paste, 1) do
-      :ok -> :ok
-      {:error, {:truncated, n}} -> assert n < byte_size(paste) and rem(n, 65_536) == 0
-    end
+    # queued whole; backpressure is retried in the pane's write queue
+    assert Input.paste(paste, 1) == :ok
 
-    # the pane still answers once its write queue drains (keys typed into a full queue are
-    # dropped, so retry): end cat, then run a command. Two loops: a ^C sent with the command
-    # reaches the shell at its prompt, and dash drops the typeahead line on SIGINT.
+    # the pane still answers once its write queue drains (retry: typing races the queue):
+    # end cat, then run a command. Two loops: a ^C sent with the command reaches the shell
+    # at its prompt, and dash drops the typeahead line on SIGINT.
     assert Enum.any?(1..20, fn _ ->
              Driver.type(client, "\x03")
              Driver.wait_screen(client, &line?(Driver.scene(client), 1, &1, "$"), 500)
@@ -137,13 +135,16 @@ defmodule HerdrIntegration.RealKernelTest do
     Process.sleep(100)
     move = {:mouse, %{kind: :move, button: :none, x: 0, y: 0, mods: [:hyper], px: nil}}
     assert Input.mouse(move, 1) == :ok
-    # :hyper is not an M1 modifier: dropped, the key still types
+    # herdr does not forward hyper or meta chords: dropped, and the pane still types
     for k <- ["h", "y", "p"], do: assert(Input.key(Event.key(k, [:hyper]), 1) == :ok)
+    for k <- ["o", "k"], do: assert(Input.key(Event.key(k), 1) == :ok)
 
     assert Driver.wait_screen(
              client,
-             &(rows(Driver.scene(client), 1, &1) |> Enum.join() =~ "hyp")
+             &(rows(Driver.scene(client), 1, &1) |> Enum.join() =~ "ok")
            )
+
+    refute rows(Driver.scene(client), 1, Driver.screen(client)) |> Enum.join() =~ "hyp"
   end
 
   defp rows(scene, id, screen) do

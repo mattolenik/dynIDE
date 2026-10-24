@@ -565,8 +565,8 @@ defmodule HerdrServer.App.Store do
   defp io({:mouse, id, ev}, _), do: Input.mouse(ev, id)
 
   defp io({:paste, id, bin}, origin) do
-    with {:error, {:truncated, n}} <- Input.paste(bin, id),
-         do: notice(origin, %{level: :warning, text: "paste truncated after #{n} bytes"})
+    with {:error, {:too_large, n, max}} <- Input.paste(bin, id),
+         do: notice(origin, %{level: :warning, text: "paste rejected: #{n} bytes (max #{max})"})
   end
 
   defp io({:focus_report, id, f}, _), do: Input.focus(f, id)
