@@ -64,6 +64,14 @@ defmodule HerdrServer.App.ActionsTest do
     assert {^app, [{:key, 1, ^rel}]} = Actions.apply(app, rel)
   end
 
+  test "focus_pane focuses a pane by id; an unknown id is a no-op" do
+    {app, _} = pfx(fresh(), "v")
+    assert app.focus.pane == 2
+    assert {app, []} = Actions.focus_pane(app, 1)
+    assert app.focus.pane == 1
+    assert {^app, []} = Actions.focus_pane(app, 99)
+  end
+
   test "resize_dir moves the split" do
     {app, _} = pfx(fresh(), "v")
     ratio = fn a -> hd(Layout.splits(tab_layout(a), a.session.area)).ratio end

@@ -53,13 +53,23 @@ defmodule HerdrServer.Client.Session do
   and lost; route Store writes' results back if that window matters. The in-VM local client stops
   on `:begin`: keystrokes it already read between `:begin` and its stop are dropped (a
   small window); unread ones stay in the host tty's input queue for the next client.
+
+  Pointer (M9): mouse input goes through `Client.Pointer` (pure, guarded) with a
+  context from `Client.PointerIo`, which then executes the actions; a failure forwards
+  the event to the Store as before. Selection and hover live in `state.pointer` (per
+  client); a change repaints. Autoscroll ticks every 30 ms; a kept word highlight
+  expires after 500 ms. Each pushed scene prunes pointer state of panes that left it
+  or changed size. This session becomes the foreground client (`Client.Foreground`) on
+  attach and on each slow-path input; pane bells and child clipboard writes sent to it
+  go to the client as `{:bell, id}` and `{:clipboard, %{source: :pane}}`, and
+  `{:pane_facts, id}` repaints when the pane is in the last scene.
   """
   use GenServer, restart: :temporary
 
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
   alias HerdrServer.App.{Actions, Keybinds, Modal, Store}
-  alias HerdrServer.Client.{Keys, State, Toasts}
+  alias HerdrServer.Client.{Foreground, Keys, Pointer, PointerIo, State, Toasts}
   alias HerdrServer.Handoff.Notice
   alias HerdrServer.Mirror
   alias HerdrServer.Pane.Rows
@@ -103,6 +113,7 @@ defmodule HerdrServer.Client.Session do
     state = Map.merge(%State{}, state)
     # a mirrored mode: the client reset its own to :terminal for this new session
     if state.mode != :terminal, do: send(state.client, {:input_mode, state.mode})
+    Foreground.mark(self())
     {:noreply, resized(state)}
   end
 
@@ -230,6 +241,52 @@ defmodule HerdrServer.Client.Session do
     end
   end
 
+  def handle_info({:pane_bell, id}, state) do
+    state = Map.merge(%State{}, state)
+    send(state.client, {:bell, id})
+    {:noreply, state}
+  end
+
+  def handle_info({:pane_clipboard, _id, text}, state) do
+    state = Map.merge(%State{}, state)
+    send(state.client, {:clipboard, %{text: text, source: :pane}})
+    {:noreply, state}
+  end
+
+  def handle_info({:pane_facts, id}, state) do
+    state = Map.merge(%State{}, state)
+
+    if state.last_scene != nil and Enum.any?(state.last_scene.panes, &(&1.id == id)),
+      do: {:noreply, repaint(state)},
+      else: {:noreply, state}
+  end
+
+  def handle_info({:autoscroll, ref}, %{pointer_refs: %{autoscroll: ref}} = state) do
+    state = Map.merge(%State{}, state)
+    state = %{state | pointer_refs: Map.delete(state.pointer_refs, :autoscroll)}
+    ctx = Guard.run_twice(PointerIo, :context, [state.pointer, nil, state.last_scene], guard())
+
+    with {:ok, ctx} <- ctx,
+         %State{} = new <- pointer_run(state, Pointer, :tick, [state.pointer, ctx]) do
+      # keep ticking while the pointer holds an edge
+      if new.pointer.autoscroll != nil and not is_map_key(new.pointer_refs, :autoscroll),
+        do: {:noreply, arm(new, :autoscroll, 30, &{:autoscroll, &1}, & &1)},
+        else: {:noreply, new}
+    else
+      _failed -> {:noreply, state}
+    end
+  end
+
+  def handle_info({:selection_expired, ref}, %{pointer_refs: %{expire: {ref, sel}}} = state) do
+    state = Map.merge(%State{}, state)
+    state = %{state | pointer_refs: Map.delete(state.pointer_refs, :expire)}
+    p = state.pointer
+
+    if p.selection == sel and p.press == nil,
+      do: {:noreply, repaint(%{state | pointer: %{p | selection: nil}})},
+      else: {:noreply, state}
+  end
+
   # stale damage for closed panes, unknown messages: ignore
   def handle_info(_other, state) do
     state = Map.merge(%State{}, state)
@@ -325,6 +382,7 @@ defmodule HerdrServer.Client.Session do
 
   # a capturing modal (keybind capture) takes every key, the prefix too: no Client.Keys
   defp apply_input(%{capture: true} = state, {:key, _} = ev, _from) do
+    Foreground.mark(self())
     Store.event(ev, driving_size(state))
     state
   end
@@ -338,12 +396,14 @@ defmodule HerdrServer.Client.Session do
 
       # a broken resolver (failure or bad shape) still lets the client type
       other ->
+        Foreground.mark(self())
         Store.event(ev, driving_size(state))
         notice(state, %{level: :error, text: "keys failed: #{inspect(other)}"})
     end
   end
 
   defp apply_input(state, {:focus, f} = ev, _from) do
+    Foreground.mark(self())
     Store.event(ev, driving_size(state))
     %{state | focused: f}
   end
@@ -360,7 +420,23 @@ defmodule HerdrServer.Client.Session do
     end
   end
 
+  defp apply_input(state, {:mouse, _} = ev, _from) do
+    Foreground.mark(self())
+    ctx = Guard.run_twice(PointerIo, :context, [state.pointer, ev, state.last_scene], guard())
+
+    with {:ok, ctx} <- ctx,
+         %State{} = new <- pointer_run(state, Pointer, :resolve, [state.pointer, ev, ctx]) do
+      new
+    else
+      # a broken pointer still lets the mouse through, as before M9
+      _ ->
+        Store.event(ev, driving_size(state))
+        state
+    end
+  end
+
   defp apply_input(state, ev, _from) do
+    Foreground.mark(self())
     Store.event(ev, driving_size(state))
     state
   end
@@ -396,6 +472,7 @@ defmodule HerdrServer.Client.Session do
               state
 
             false ->
+              Foreground.mark(self())
               Store.event(ev, driving_size(state))
               state
 
@@ -404,6 +481,7 @@ defmodule HerdrServer.Client.Session do
           end
 
         {:run, mfa} ->
+          Foreground.mark(self())
           Store.run(mfa, driving_size(state))
           state
 
@@ -420,6 +498,68 @@ defmodule HerdrServer.Client.Session do
   end
 
   defp driving_size(state), do: Map.put(state.size, :cell_px, state.cell_px)
+
+  defp guard, do: [server: Store.reload_server()]
+
+  # --- pointer ---
+
+  # Runs a guarded `Pointer` step, executes its actions; :error when the step failed
+  defp pointer_run(state, mod, fun, args) do
+    case Guard.run_twice(mod, fun, args, guard()) do
+      {:ok, {%Pointer{} = p, actions}} when is_list(actions) -> pointed(state, p, actions)
+      _failed -> :error
+    end
+  end
+
+  defp pointed(state, p, actions) do
+    io = %{client: state.client, size: driving_size(state)}
+
+    {p, notices} =
+      case Guard.run_twice(PointerIo, :run, [actions, p, io], guard()) do
+        {:ok, {%Pointer{} = p, notices}} when is_list(notices) -> {p, notices}
+        other -> {p, [%{level: :error, text: "pointer failed: #{inspect(other)}"}]}
+      end
+
+    old = state.pointer
+    state = pointer_timers(%{state | pointer: p}, actions)
+    state = Enum.reduce(notices, state, &notice(&2, &1))
+
+    if :repaint in actions or {old.selection, old.hover} != {p.selection, p.hover},
+      do: repaint(state),
+      else: state
+  end
+
+  defp pointer_timers(state, actions) do
+    Enum.reduce(actions, state, fn
+      {:autoscroll, _, _}, %{pointer_refs: %{autoscroll: _}} = s ->
+        s
+
+      {:autoscroll, _, _}, s ->
+        arm(s, :autoscroll, 30, &{:autoscroll, &1}, & &1)
+
+      :autoscroll_stop, s ->
+        %{s | pointer_refs: Map.delete(s.pointer_refs, :autoscroll)}
+
+      {:expire_selection, ms}, s ->
+        arm(s, :expire, ms, &{:selection_expired, &1}, &{&1, s.pointer.selection})
+
+      _, s ->
+        s
+    end)
+  end
+
+  defp arm(state, key, ms, msg, value) do
+    ref = make_ref()
+    Process.send_after(self(), msg.(ref), ms)
+    %{state | pointer_refs: Map.put(state.pointer_refs, key, value.(ref))}
+  end
+
+  defp prune(state, old, new) do
+    case Guard.run_twice(Pointer, :prune, [state.pointer, old, new], guard()) do
+      {:ok, %Pointer{} = p} when p != state.pointer -> repaint(%{state | pointer: p})
+      _same_or_failed -> state
+    end
+  end
 
   # Same check as an in-VM client (contract decision 6), for remote/GUI clients, after
   # `Client.Keys` forwarded the key (so this client's own mode allowed it). Releases go
@@ -548,7 +688,7 @@ defmodule HerdrServer.Client.Session do
 
   defp send_scene(state, scene) do
     send(state.client, {:scene, scene})
-    %{state | last_scene: scene}
+    prune(%{state | last_scene: scene}, state.last_scene, scene)
   end
 
   # inline transport: full rows and cursors in the scene (M16 optimizes)

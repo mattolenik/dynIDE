@@ -7,7 +7,9 @@ defmodule HerdrServer.Client.State do
   `HerdrServer.RuntimeStatus` the session got from `ReloadNotices` (shared facts, copied
   here so the pure View reads only its client). `toasts` are this client's queued
   notifications (`Client.Toasts`, newest first), `focused` its outer terminal's last
-  `{:focus, bool}` report (nil: unknown).
+  `{:focus, bool}` report (nil: unknown). `pointer` is this client's
+  `Client.Pointer` (selection, link hover, gestures; transient, not mirrored) and
+  `pointer_refs` the session's pointer timers (`:autoscroll` ref, `:expire` `{ref, selection}`).
   """
 
   defstruct [
@@ -30,7 +32,9 @@ defmodule HerdrServer.Client.State do
     store_monitor: nil,
     held: nil,
     toasts: [],
-    focused: nil
+    focused: nil,
+    pointer: %HerdrServer.Client.Pointer{},
+    pointer_refs: %{}
   ]
 
   @type t :: %__MODULE__{
@@ -53,6 +57,8 @@ defmodule HerdrServer.Client.State do
           store_monitor: reference() | nil,
           held: [tuple()] | nil,
           toasts: [HerdrServer.Client.Toasts.toast()],
-          focused: boolean() | nil
+          focused: boolean() | nil,
+          pointer: HerdrServer.Client.Pointer.t(),
+          pointer_refs: map()
         }
 end
