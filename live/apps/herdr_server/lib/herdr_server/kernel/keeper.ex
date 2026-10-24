@@ -2,6 +2,11 @@ defmodule HerdrServer.Kernel.Keeper do
   @moduledoc """
   Owns the vt/pty resources per pane. Callers never hold a resource past a
   `lookup/1`. Not in design.md; proposed to M1.
+
+  `lookup/1` is on the keystroke path (`Pane.Input` runs it for every fast-path key, in
+  the client's process): it must be callable from any process and must not serialize
+  through one GenServer (e.g. a `read_concurrency` ETS table written by the keeper).
+  `Kernel.Fake.Keeper` answers with a `GenServer.call`, which is acceptable for tests only.
   """
 
   @type resources :: %{vt: term, pty: term, os_pid: integer}

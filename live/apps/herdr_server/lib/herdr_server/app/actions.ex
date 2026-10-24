@@ -110,12 +110,25 @@ defmodule HerdrServer.App.Actions do
 
   def apply(app, {:pane_title, id, title}) do
     case app.session.panes do
-      %{^id => meta} -> {put_in(app.session.panes[id], %{meta | title: title}), []}
+      %{^id => meta} -> {put_in(app.session.panes[id], %{meta | title: clean_title(title)}), []}
       _ -> {app, []}
     end
   end
 
   def apply(app, _other), do: {app, []}
+
+  @title_max 256
+
+  # Titles come from programs: valid UTF-8, at most @title_max bytes, cut on a codepoint.
+  defp clean_title(title) when is_binary(title) do
+    t = String.replace_invalid(title)
+    if byte_size(t) <= @title_max, do: t, else: whole_codepoints(binary_part(t, 0, @title_max))
+  end
+
+  defp clean_title(_other), do: nil
+
+  # the generator stops at the cut codepoint's partial bytes
+  defp whole_codepoints(bin), do: for(<<c::utf8 <- bin>>, into: "", do: <<c::utf8>>)
 
   # Keyed by the key alone (case-insensitive) so a release with different modifiers matches.
   defp swallow_key({k, _mods}) when is_binary(k), do: String.downcase(k)

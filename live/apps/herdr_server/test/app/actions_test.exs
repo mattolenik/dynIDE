@@ -116,6 +116,16 @@ defmodule HerdrServer.App.ActionsTest do
     assert a.session.panes[1].title == "t"
   end
 
+  test "titles are made valid UTF-8 and capped at 256 bytes on a codepoint" do
+    app = fresh()
+    {a, []} = Actions.apply(app, {:pane_title, 1, <<"ok", 0xFF, "!">>})
+    assert a.session.panes[1].title == "ok\uFFFD!"
+    {a, []} = Actions.apply(app, {:pane_title, 1, String.duplicate("é", 200)})
+    assert a.session.panes[1].title == String.duplicate("é", 128)
+    {a, []} = Actions.apply(app, {:pane_title, 1, "a" <> String.duplicate("é", 200)})
+    assert a.session.panes[1].title == "a" <> String.duplicate("é", 127)
+  end
+
   defp wide(app), do: elem(Actions.apply(app, {:resize, %{cols: 200, rows: 51, cell_px: nil}}), 0)
 
   defp content_rects(app) do
