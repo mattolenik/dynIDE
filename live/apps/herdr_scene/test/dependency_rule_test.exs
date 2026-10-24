@@ -2,6 +2,9 @@ defmodule HerdrScene.DependencyRuleTest do
   # Mix.Project.in_project changes VM-wide cwd and project stack
   use ExUnit.Case, async: false
 
+  # The test-only integration app is the one exemption, by exact name.
+  @integration_deps [:herdr_scene, :herdr_server, :herdr_term]
+
   test "every app depends on herdr_scene only; herdr_scene depends on nothing" do
     deps =
       for mix_exs <- Path.wildcard(Path.expand("../../../apps/*/mix.exs", __DIR__)), into: %{} do
@@ -27,7 +30,10 @@ defmodule HerdrScene.DependencyRuleTest do
 
     assert deps[:herdr_scene] == []
 
-    for {app, d} <- deps, app != :herdr_scene do
+    assert deps[:herdr_integration] == @integration_deps,
+           "herdr_integration must depend on exactly #{inspect(@integration_deps)}"
+
+    for {app, d} <- deps, app not in [:herdr_scene, :herdr_integration] do
       assert d == [:herdr_scene], "#{app} must depend on herdr_scene only, got #{inspect(d)}"
     end
 
