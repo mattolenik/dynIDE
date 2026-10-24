@@ -137,8 +137,23 @@ defmodule HerdrIntegration.Driver do
     end
   end
 
+  @doc "Zeroes a `trace_frames/1` tracer's count and violations (e.g. at the start of a phase)."
+  def reset_frames(tracer) do
+    send(tracer, {:reset, self()})
+
+    receive do
+      {:reset, ^tracer} -> :ok
+    after
+      2000 -> :timeout
+    end
+  end
+
   defp tracer(acc, cols, rows) do
     receive do
+      {:reset, from} ->
+        send(from, {:reset, self()})
+        tracer(%{count: 0, bad: []}, cols, rows)
+
       {:trace, _pid, :call, {Blit, :frame, [_tty, frame, _opts]}} ->
         n = acc.count + 1
         widths = Enum.reject(frame, fn {_, row} -> Cell.cols(row) == cols end)
