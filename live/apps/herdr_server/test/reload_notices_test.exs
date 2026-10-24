@@ -1,3 +1,14 @@
+defmodule HerdrServer.ReloadNoticesTest.SyncedStub do
+  @moduledoc false
+  # stands in for HerdrReload.Server: answers synced/0 with the given modules
+  use GenServer
+  def start_link(mods), do: GenServer.start_link(__MODULE__, mods, name: HerdrReload.Server)
+  @impl true
+  def init(mods), do: {:ok, mods}
+  @impl true
+  def handle_call(:synced, _from, mods), do: {:reply, mods, mods}
+end
+
 defmodule HerdrServer.ReloadNoticesTest do
   # Reload events reach a fake client's scene as the status line's :notice child.
   use ExUnit.Case, async: false
@@ -8,6 +19,7 @@ defmodule HerdrServer.ReloadNoticesTest do
   alias HerdrServer.Handoff.{Link, Notice}
   alias HerdrServer.{Mirror, RuntimeStatus}
   alias HerdrServer.ReloadNotices
+  alias HerdrServer.ReloadNoticesTest.SyncedStub
 
   setup do
     reset()
@@ -157,7 +169,7 @@ defmodule HerdrServer.ReloadNoticesTest do
     # only the status changed (r2): one scene, the notice did not repaint
     status_scene(c)
     # the first timer would have fired 50 ms from now
-    refute_receive {^c, {:scene, _}}, 50
+    refute_receive {^c, {:scene, _}}, 100
     assert next_notice(c) == nil
   end
 
@@ -224,6 +236,32 @@ defmodule HerdrServer.ReloadNoticesTest do
       wait_reload(c, "r3 2m")
     end
 
+    test "the promotion sync shows once; a newer reload survives a registry restart" do
+      start_supervised!({SyncedStub, [A, B, C, D]})
+      s = fake_session()
+      restart_registry()
+      assert %{reload: %{state: :synced, fanout: 4}} = next_status(s)
+
+      HerdrReload.Notices.broadcast({:loaded, 5, [A, B]})
+      assert %{reload: %{state: :loaded, batch: 5}} = next_status(s)
+
+      restart_registry()
+      refute_receive {^s, {:runtime_status, _}}, 100
+      assert %{reload: %{state: :loaded, batch: 5}} = :sys.get_state(ReloadNotices).status
+    end
+
+    test "a handoff entry seeded from the mirror still expires" do
+      at = System.monotonic_time(:millisecond) - 31_000
+      st = %{RuntimeStatus.new() | handoff: %{phase: :begin, kind: nil, gen: 1, panes: 0, at: at}}
+      Mirror.put(:runtime_status, st)
+      {:ok, pid} = GenServer.start(ReloadNotices, nil)
+      on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+      assert :sys.get_state(pid).status == st
+      # the tick init armed, fired early (the entry is 31 s old)
+      send(pid, :expire)
+      assert :sys.get_state(pid).status.handoff == nil
+    end
+
     test "a state from before the status (a bare monitor ref) converts on code_change" do
       ref = make_ref()
 
@@ -231,6 +269,25 @@ defmodule HerdrServer.ReloadNoticesTest do
                ReloadNotices.code_change(nil, ref, nil)
 
       assert {:ok, %ReloadNotices{ref: nil}} = ReloadNotices.code_change(nil, nil, nil)
+    end
+  end
+
+  # stop and restart the reload registry, then wait for the bridge to re-subscribe
+  defp restart_registry do
+    stop_supervised!(HerdrReload.Notices)
+    start_supervised!(HerdrReload.Notices)
+    send(ReloadNotices, :subscribe)
+    wait_subscribed(50)
+  end
+
+  defp wait_subscribed(0), do: flunk("ReloadNotices did not re-subscribe")
+
+  defp wait_subscribed(n) do
+    if Registry.keys(HerdrReload.Notices, Process.whereis(ReloadNotices)) == [] do
+      Process.sleep(10)
+      wait_subscribed(n - 1)
+    else
+      :sys.get_state(ReloadNotices)
     end
   end
 

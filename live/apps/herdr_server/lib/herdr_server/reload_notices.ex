@@ -9,9 +9,10 @@ defmodule HerdrServer.ReloadNotices do
       `HerdrServer.RuntimeStatus` (shared session facts, held here); each change is written
       to `Mirror.put(:runtime_status, st)` (a new session reads it in init) and sent as
       `{:runtime_status, st}` to each session. Each handoff event arms an `:expire` tick
-      30 s later; `:adopted` takes its kind from `Handoff.Link.adopt_reason/0`. On subscribe
+      30 s later (also for one seeded from the mirror); `:adopted` takes its kind from `Handoff.Link.adopt_reason/0`. On subscribe
       the modules the promotion sync loaded (`HerdrReload.Server.synced/0`) are applied as
-      `{:synced, mods}` when non-empty, so a promoted standby shows them.
+      `{:synced, mods}` when non-empty and no reload entry exists yet (once), so a promoted
+      standby shows them.
 
   Always started. Subscribes when the `HerdrReload.Notices` registry runs (reload is
   enabled), else retries every 500 ms; a registry restart is followed the same way
@@ -26,9 +27,10 @@ defmodule HerdrServer.ReloadNotices do
   @retry_ms 500
   @max 80
   @expire_ms 30_000
+  @synced_ms 5_000
 
   # ref: the monitor of the reload registry we are subscribed to, or nil
-  defstruct ref: nil, status: %{reload: nil, tests: nil, handoff: nil}
+  defstruct ref: nil, status: RuntimeStatus.new()
 
   @type t :: %__MODULE__{ref: reference() | nil, status: RuntimeStatus.t()}
 
@@ -39,8 +41,14 @@ defmodule HerdrServer.ReloadNotices do
     # Registry.register links us to the registry: its exit must not take us down
     Process.flag(:trap_exit, true)
     :ok = Notice.subscribe()
-    status = Mirror.get(:runtime_status) || RuntimeStatus.new()
-    {:ok, subscribe(%__MODULE__{status: status})}
+    # outside init: subscribing may wait on the reload server (synced/0)
+    {:ok, %__MODULE__{status: seeded()}, {:continue, :subscribe}}
+  end
+
+  @impl true
+  def handle_continue(:subscribe, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, subscribe(state)}
   end
 
   @impl true
@@ -81,9 +89,16 @@ defmodule HerdrServer.ReloadNotices do
   @impl true
   # before the runtime status the state was the bare registry monitor (or nil)
   def code_change(_old, ref, _extra) when is_reference(ref) or is_nil(ref),
-    do: {:ok, %__MODULE__{ref: ref, status: Mirror.get(:runtime_status) || RuntimeStatus.new()}}
+    do: {:ok, %__MODULE__{ref: ref, status: seeded()}}
 
   def code_change(_old, state, _extra), do: {:ok, Map.merge(%__MODULE__{}, state)}
+
+  # a restarted bridge starts from the mirror; a seeded handoff entry still expires
+  defp seeded do
+    status = Mirror.get(:runtime_status) || RuntimeStatus.new()
+    if status.handoff, do: Process.send_after(self(), :expire, @expire_ms)
+    status
+  end
 
   defp notify(event) do
     {level, text} = format(event)
@@ -117,16 +132,23 @@ defmodule HerdrServer.ReloadNotices do
         :ok = HerdrReload.Notices.subscribe()
         state = %{state | ref: Process.monitor(pid)}
 
-        case synced() do
-          [] -> state
-          mods -> status(state, {:herdr_reload, {:synced, mods}})
+        # once: on a re-subscribe (registry restart, bridge restart from the mirror) a
+        # newer reload entry must not go back to the old sync
+        case state.status.reload == nil && synced() do
+          mods when is_list(mods) and mods != [] ->
+            status(state, {:herdr_reload, {:synced, mods}})
+
+          _ ->
+            state
         end
     end
   end
 
   # the promotion sync's modules; the reload server may not run (reload disabled, tests)
   defp synced do
-    if Process.whereis(HerdrReload.Server), do: HerdrReload.Server.synced(), else: []
+    if Process.whereis(HerdrReload.Server),
+      do: HerdrReload.Server.synced(HerdrReload.Server, @synced_ms),
+      else: []
   catch
     :exit, _ -> []
   end

@@ -81,8 +81,9 @@ defmodule HerdrReload.Server do
   def batches(server \\ __MODULE__), do: GenServer.call(server, :batches, :infinity)
 
   @doc "Modules the promotion sync loaded at init (empty when none)."
-  @spec synced(server()) :: [module()]
-  def synced(server \\ __MODULE__), do: GenServer.call(server, :synced, :infinity)
+  @spec synced(server(), timeout()) :: [module()]
+  def synced(server \\ __MODULE__, timeout \\ :infinity),
+    do: GenServer.call(server, :synced, timeout)
 
   @doc "Name of the Guard counters table."
   @spec counters_table(server()) :: atom()
