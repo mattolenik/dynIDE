@@ -150,4 +150,44 @@ defmodule HerdrServer.Client.SessionCopyTest do
     assert_receive {^a, {:input_mode, :terminal}}, 500
     assert %{mode: :terminal, copy: nil} = :sys.get_state(sa)
   end
+
+  test "the copy pane closing ends copy mode" do
+    {a, sa} = client()
+    {b, sb} = client()
+    keys(sa, a, [{"b", [:ctrl]}, "v"])
+    assert eventually(fn -> Store.snapshot().focus.pane == 2 end)
+    keys(sa, a, [{"b", [:ctrl]}, "["])
+    assert %{mode: :copy, copy: %CopyMode{pane: 2}} = :sys.get_state(sa)
+
+    keys(sb, b, [{"b", [:ctrl]}, "x"])
+    assert_receive {^a, {:input_mode, :terminal}}, 500
+    assert eventually(fn -> map_size(Store.snapshot().session.panes) == 1 end)
+    assert %{mode: :terminal, copy: nil} = :sys.get_state(sa)
+    assert Process.alive?(sa)
+  end
+
+  test "a re-attach with a mirrored :copy mode starts outside copy mode" do
+    me = self()
+    on_exit(fn -> HerdrServer.Mirror.delete({:client, me}) end)
+
+    HerdrServer.Mirror.put({:client, me}, %{
+      viewports: %{},
+      hover: nil,
+      mode: :copy,
+      swallow: MapSet.new()
+    })
+
+    info = %{
+      kind: :term,
+      transport: :ref,
+      size: %{cols: 80, rows: 24},
+      cell_px: nil,
+      caps: %{},
+      client: me
+    }
+
+    {:ok, session, _} = GenServer.call(Protocol.endpoint(), {:attach, info})
+    assert %{mode: :terminal, copy: nil} = :sys.get_state(session)
+    refute_received {:input_mode, _}
+  end
 end

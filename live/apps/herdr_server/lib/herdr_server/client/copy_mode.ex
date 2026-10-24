@@ -4,8 +4,10 @@ defmodule HerdrServer.Client.CopyMode do
   client input mode `:copy`.
 
   Positions are `{col, row}` with `row` an absolute screen row (viewport row + scroll
-  offset), as in `Client.Selection`. `top` is the viewport top this mode last asked for
-  (the live offset may lag behind its `{:scroll_top}` casts), `entry` the offset saved
+  offset), as in `Client.Selection`. `top` is the viewport top this mode works against
+  and `seen` the live offset it last observed: a live offset that differs from `seen`
+  (output following the bottom, the wheel, another client) is authoritative, otherwise
+  `top` stands (this mode's own `{:scroll_top}` cast may not have landed). `entry` the offset saved
   at entry (`:bottom` when the pane was at the bottom), restored on exit.
 
   `key/3` takes a context `%{scroll, h, w, read}`: `scroll` is the pane's live
@@ -36,6 +38,7 @@ defmodule HerdrServer.Client.CopyMode do
           cursor: pos,
           entry: non_neg_integer | :bottom,
           top: non_neg_integer,
+          seen: non_neg_integer,
           anchor: pos | nil,
           unit: :char | :line,
           prompt: nil | %{dir: :forward | :backward, query: binary},
@@ -48,6 +51,7 @@ defmodule HerdrServer.Client.CopyMode do
             cursor: {0, 0},
             entry: 0,
             top: 0,
+            seen: 0,
             anchor: nil,
             unit: :char,
             prompt: nil,
@@ -111,7 +115,7 @@ defmodule HerdrServer.Client.CopyMode do
       end
 
     entry = if top >= max_top(scroll.total, h), do: :bottom, else: top
-    %__MODULE__{pane: pane, cursor: {x, y}, entry: entry, top: top}
+    %__MODULE__{pane: pane, cursor: {x, y}, entry: entry, top: top, seen: top}
   end
 
   @doc "The status label while a search prompt is open (`/query`, `?query`), else nil."
@@ -158,11 +162,15 @@ defmodule HerdrServer.Client.CopyMode do
   @doc "Handles one key event (see moduledoc)."
   @spec key(t, tuple, map) :: {t, [tuple]} | {:exit, [tuple]}
   def key(t, {:key, %{event: :release}}, _ctx), do: {t, []}
+  def key(t, ev, ctx), do: keyed(observe(t, ctx.scroll.offset), ev, ctx)
 
-  def key(%__MODULE__{prompt: %{}} = t, {:key, %{key: k, mods: m}}, ctx),
+  defp observe(%{seen: live} = t, live), do: t
+  defp observe(t, live), do: %{t | top: live, seen: live}
+
+  defp keyed(%__MODULE__{prompt: %{}} = t, {:key, %{key: k, mods: m}}, ctx),
     do: prompt(t, norm(k, m), ctx)
 
-  def key(t, {:key, %{key: k, mods: m}}, ctx) do
+  defp keyed(t, {:key, %{key: k, mods: m}}, ctx) do
     case command(norm(k, m), ctx.h) do
       nil -> {t, []}
       cmd -> t |> run(cmd, ctx) |> refresh(ctx)
@@ -372,11 +380,7 @@ defmodule HerdrServer.Client.CopyMode do
 
     case String.downcase(k) do
       "w" ->
-        [{_, _, c0} | _] = Enum.take(stream, 1)
-
-        stream
-        |> Stream.drop_while(fn {_, _, c} -> c == c0 and c != :space end)
-        |> first_word()
+        next_word(stream, Enum.take(stream, 1))
 
       _end_or_back ->
         stream |> Stream.drop(1) |> Stream.drop_while(&space?/1) |> run_end()
@@ -384,6 +388,12 @@ defmodule HerdrServer.Client.CopyMode do
   end
 
   defp space?({_, _, c}), do: c == :space
+
+  # past the cursor's run (unless on space), then past spaces
+  defp next_word(_stream, []), do: nil
+
+  defp next_word(stream, [{_, _, c0}]),
+    do: stream |> Stream.drop_while(fn {_, _, c} -> c == c0 and c != :space end) |> first_word()
 
   defp first_word(stream) do
     case stream |> Stream.drop_while(&space?/1) |> Enum.take(1) do

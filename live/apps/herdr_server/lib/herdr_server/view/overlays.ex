@@ -6,7 +6,8 @@ defmodule HerdrServer.View.Overlays do
   (`Client.Selection.overlay/4` through the facts' scroll offset), `:link_hover`
   (`pointer.hover` on this pane), then copy mode's selection, search matches and cursor
   (`Client.CopyMode.overlays/4` from `client.copy`, through the facts' offset or the
-  mode's own viewport top).
+  mode's own viewport top). On copy mode's pane the pointer selection is not drawn (copy
+  mode's own selection is).
   No state for the pane means `[]` without any per-row work.
   """
 
@@ -16,9 +17,10 @@ defmodule HerdrServer.View.Overlays do
   @spec pane(term, %{w: integer, h: integer}, map) :: [Overlay.t()]
   def pane(id, rect, client) do
     facts = Map.get(client.facts, id)
+    copy? = match?(%{copy: %CopyMode{pane: ^id}}, client)
 
     scrollbar(facts) ++
-      selection(client.pointer, id, rect, facts) ++
+      if(copy?, do: [], else: selection(client.pointer, id, rect, facts)) ++
       hover(client.pointer, id) ++ copy(client, id, rect)
   end
 

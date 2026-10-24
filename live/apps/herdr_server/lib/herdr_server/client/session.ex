@@ -551,15 +551,29 @@ defmodule HerdrServer.Client.Session do
         {:exit, actions} when is_list(actions) ->
           copy_left(state, actions)
 
-        _bad ->
-          copy_left(state, [])
+        bad ->
+          copy_failed(state, copy, {:bad_result, bad})
       end
     else
-      _pane_gone_or_failed -> copy_left(state, [])
+      # the pane is gone (copy_follow usually saw it first)
+      {:ok, nil} -> copy_left(state, copy_leave(copy))
+      failed -> copy_failed(state, copy, failed)
     end
   end
 
   defp copy_mode(state, _old, _ev), do: state
+
+  defp copy_failed(state, copy, why) do
+    state = copy_left(state, copy_leave(copy))
+    notice(state, %{level: :error, text: "copy mode failed: #{inspect(why)}"})
+  end
+
+  defp copy_leave(copy) do
+    case Guard.run_twice(CopyMode, :leave, [copy], guard()) do
+      {:ok, actions} when is_list(actions) -> actions
+      _failed -> []
+    end
+  end
 
   defp copy_left(state, actions), do: copy_run(%{state | mode: :terminal, copy: nil}, actions)
 
@@ -581,14 +595,8 @@ defmodule HerdrServer.Client.Session do
   # the copy pane lost the app focus (focus moved, pane closed, tab switched): leave
   defp copy_follow(%{copy: %CopyMode{pane: id} = copy} = state, %{focus: %{pane: focus}})
        when focus != id do
-    actions =
-      case Guard.run_twice(CopyMode, :leave, [copy], guard()) do
-        {:ok, actions} when is_list(actions) -> actions
-        _failed -> []
-      end
-
     send(state.client, {:input_mode, :terminal})
-    state = copy_left(state, actions)
+    state = copy_left(state, copy_leave(copy))
     Mirror.put({:client, state.client}, presentation(state))
     state
   end

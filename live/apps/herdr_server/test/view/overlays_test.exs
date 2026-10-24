@@ -92,4 +92,13 @@ defmodule HerdrServer.View.OverlaysTest do
     assert [%Overlay{kind: :search_match}, %Overlay{kind: :copy_cursor, args: %{at: {4, 7}}}] =
              Overlays.pane(2, @rect, %{c | facts: %{}})
   end
+
+  test "on copy mode's pane the pointer selection is not drawn" do
+    c = %{
+      client(selection(2), %{2 => facts(10, false)})
+      | copy: %CopyMode{pane: 2, cursor: {0, 10}}
+    }
+
+    assert [%Overlay{kind: :copy_cursor}] = Overlays.pane(2, @rect, c)
+  end
 end

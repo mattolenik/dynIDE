@@ -13,10 +13,18 @@ defmodule HerdrServer.Client.CopyModeTest.Reader do
           t -> {t, false}
         end
 
-      cells = for g <- String.graphemes(text), do: %Cell{glyph: g, width: 1}
+      # Han characters are wide: the glyph cell and a width-0 tail
+      cells = Enum.flat_map(String.graphemes(text), &cells/1)
+
       pad = List.duplicate(%Cell{}, max(80 - length(cells), 0))
       {y, Cell.encode_row(cells ++ pad), wrapped}
     end
+  end
+
+  defp cells(g) do
+    if g =~ ~r/\p{Han}/u,
+      do: [%Cell{glyph: g, width: 2}, %Cell{glyph: "", width: 0}],
+      else: [%Cell{glyph: g, width: 1}]
   end
 end
 
@@ -31,8 +39,8 @@ defmodule HerdrServer.Client.CopyModeTest do
   @h 24
   @w 80
 
-  defp lines(overrides \\ %{}) do
-    0..299 |> Enum.map(&Map.get(overrides, &1, "line #{&1}")) |> List.to_tuple()
+  defp lines(overrides \\ %{}, n \\ 300) do
+    0..(n - 1) |> Enum.map(&Map.get(overrides, &1, "line #{&1}")) |> List.to_tuple()
   end
 
   defp ctx(lines, offset \\ 276),
@@ -277,5 +285,59 @@ defmodule HerdrServer.Client.CopyModeTest do
     assert CopyMode.label(enter(c, nil)) == nil
     {t, _} = keys(enter(c, nil), c, ["?", "x"])
     assert CopyMode.label(t) == "?x"
+  end
+
+  describe "the live viewport is authoritative" do
+    test "output moved the viewport: a motion scrolls the cursor back into view" do
+      t = enter(ctx(lines()), nil)
+      assert t.cursor == {0, 299}
+      # 30 more rows arrived and the bottom-following viewport moved to 306
+      moved = ctx(lines(%{}, 330), 306)
+
+      assert {%CopyMode{cursor: {0, 298}, top: 298}, [{:scroll_top, @id, 298}]} =
+               CopyMode.key(t, key("k"), moved)
+    end
+
+    test "an own scroll request not landed yet is not undone" do
+      c = ctx(lines())
+      {t, [{:scroll_top, @id, 0}]} = CopyMode.key(enter(c, nil), key("g"), c)
+      # the live offset still says 276: the cursor stays at the top without a new scroll
+      assert {%CopyMode{cursor: {0, 1}, top: 0}, []} = CopyMode.key(t, key("j"), c)
+    end
+
+    test "visible matches are read from the live viewport rows" do
+      t = %{enter(ctx(lines()), nil) | search: %{dir: :forward, query: "bar"}}
+      moved = ctx(lines(%{305 => "bar"}, 310), 286)
+      {t, []} = CopyMode.key(t, key("l"), moved)
+      assert t.matches == [{{0, 305}, {2, 305}}]
+    end
+  end
+
+  test "w with the cursor beyond a short last row stays put" do
+    c = %{ctx(lines(%{299 => {"abc", :wrap}})) | w: 100}
+    t = enter(c, {95, 23})
+    assert {%CopyMode{cursor: {95, 299}}, []} = CopyMode.key(t, key("w"), c)
+  end
+
+  test "a match after a wide character spans its display columns" do
+    c = ctx(lines(%{210 => "中x 中文"}), 200)
+    {t, _} = keys(enter(c, {0, 0}), c, ["/", "x", :enter])
+    assert t.match == {{2, 210}, {2, 210}}
+    {t, _} = keys(t, c, ["/", "中", "文", :enter])
+    assert t.match == {{4, 210}, {7, 210}}
+  end
+
+  test "search reads at most 20_000 rows from the cursor" do
+    far = lines(%{20_050 => "needle"}, 20_100)
+    c = %{ctx(far, 0) | scroll: %{total: 20_100, viewport: @h, offset: 0}}
+
+    assert {%CopyMode{match: nil}, [{:notice, _}]} =
+             keys(enter(c, {0, 0}), c, ["/", "n", "e", "e", "d", "l", "e", :enter])
+
+    near = lines(%{19_999 => "needle"}, 20_100)
+    c = %{c | read: {Reader, :rows, [near]}}
+
+    assert {%CopyMode{match: {{0, 19_999}, _}}, _} =
+             keys(enter(c, {0, 0}), c, ["/", "n", "e", "e", "d", "l", "e", :enter])
   end
 end
