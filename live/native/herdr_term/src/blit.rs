@@ -317,7 +317,22 @@ fn cell_width(cell: &Cell) -> usize {
 
 /// Whether the host cursor lands on the next column after drawing `cell`.
 fn advances_inline(cell: &Cell) -> bool {
-    cell.width == 1 && cell.glyph.as_bytes().is_ascii()
+    cell.width == 1 && drawn_glyph(cell).is_ascii()
+}
+
+/// The bytes sent to the host for a cell: a space for an empty glyph or one
+/// carrying a C0, DEL or C1 control, so row content can never inject escape
+/// sequences into the host terminal. The cell keeps its width.
+fn drawn_glyph(cell: &Cell) -> &[u8] {
+    let glyph = cell.glyph.as_bytes();
+    let control = glyph.iter().any(|&b| b < 0x20 || b == 0x7f)
+        // C1 (U+0080..U+009F) is C2 80..C2 9F in UTF-8 (glyphs are valid UTF-8).
+        || (!glyph.is_ascii() && glyph.windows(2).any(|w| w[0] == 0xC2 && (0x80..=0x9F).contains(&w[1])));
+    if glyph.is_empty() || control {
+        b" "
+    } else {
+        glyph
+    }
 }
 
 fn write_cell(out: &mut Vec<u8>, cursor_position: Option<(u16, u16)>, cell: &Cell, sgr: &mut Sgr) {
@@ -333,8 +348,7 @@ fn write_cell(out: &mut Vec<u8>, cursor_position: Option<(u16, u16)>, cell: &Cel
         }
         sgr.style = Some(style);
     }
-    let glyph = cell.glyph.as_bytes();
-    let _ = out.write_all(if glyph.is_empty() { b" " } else { glyph });
+    let _ = out.write_all(drawn_glyph(cell));
 }
 
 /// Writes every cell of row `y` (full redraw).
@@ -624,6 +638,22 @@ mod tests {
             out.contains("\x1b[1;1H\x1b[0;1;4:3;38;5;1;49mrr\x1b[0;39;49mp\x1b[0m"),
             "{out:?}"
         );
+    }
+
+    #[test]
+    fn control_glyphs_are_drawn_as_space() {
+        for evil in ["\x1b]52;c;x\x07", "\u{9b}31m", "a\x7f"] {
+            let mut enc = BlitEncoder::default();
+            let row = encode_row(&[text("a"), text(evil), text("b")]);
+            let out = encode(&mut enc, &job(vec![row]));
+            assert!(out.contains("\x1b[0;39;49ma b\x1b[0m"), "{evil:?}: {out:?}");
+            assert!(!out.contains("]52") && !out.contains('\u{9b}') && !out.contains('\x07'));
+            assert!(!out.contains('\x7f'), "{evil:?}: {out:?}");
+        }
+        // Non-control multibyte glyphs (C2 A0 and up) are kept.
+        let mut enc = BlitEncoder::default();
+        let out = encode(&mut enc, &job(vec![encode_row(&[text("\u{a9}")])]));
+        assert!(out.contains('\u{a9}'), "{out:?}");
     }
 
     #[test]
