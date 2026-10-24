@@ -28,6 +28,8 @@ pub enum ExitStatus {
     Code(i32),
     Signal(i32),
     Panic(String),
+    /// The real status was lost (e.g. someone else reaped the child).
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,6 +147,8 @@ struct Inner {
     writer: Arc<Writer>,
     hidden: AtomicBool,
     exit_sent: AtomicBool,
+    /// Set by `fail`; the reader stops after its next wake.
+    stop: AtomicBool,
     exit: Mutex<Option<ExitStatus>>,
     /// Reap status. The waiter holds this lock across the reaping `waitpid`, and `signal`
     /// holds it across `kill`, so a signal never reaches a recycled pid.
@@ -272,9 +276,11 @@ impl Inner {
 
     /// A kernel thread panicked: report once, kill the child, stop writing.
     fn fail(&self, msg: String) {
+        // Close first so a write after `Exit(Panic)` already sees `Closed`.
+        self.writer.close();
+        self.stop.store(true, Ordering::Release);
         self.send_exit(ExitStatus::Panic(msg));
         let _ = self.signal(libc::SIGKILL);
-        self.writer.close();
         self.wake();
     }
 
@@ -351,6 +357,9 @@ fn reader_main(inner: &Inner) {
         ];
         poll(&mut fds, timeout);
         inner.check_injected_panic();
+        if inner.stop.load(Ordering::Acquire) {
+            break;
+        }
         if fds[0].revents != 0 {
             while matches!(read_fd(inner.wake_r.as_raw_fd(), &mut buf), Ok(n) if n > 0) {}
             if lock(&inner.reaped).is_some() {
@@ -402,7 +411,7 @@ fn reader_main(inner: &Inner) {
     }
     inner.writer.close();
     let status = lock(&inner.reaped).clone();
-    inner.send_exit(status.unwrap_or(ExitStatus::Code(-1)));
+    inner.send_exit(status.unwrap_or(ExitStatus::Unknown));
 }
 
 fn writer_main(inner: &Inner) {
@@ -416,7 +425,13 @@ fn writer_main(inner: &Inner) {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     // The fd is O_NONBLOCK (shared with the reader's file description), so
                     // wait for room, waking every tick to notice the pane closing.
-                    poll(&mut [pollfd(fd, libc::POLLOUT)], WRITER_TICK_MS);
+                    let mut p = [pollfd(fd, libc::POLLOUT)];
+                    poll(&mut p, WRITER_TICK_MS);
+                    let gone = p[0].revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL);
+                    if gone != 0 {
+                        inner.writer.close();
+                        return;
+                    }
                     if inner.writer.is_closed() {
                         return;
                     }
@@ -434,19 +449,26 @@ fn writer_main(inner: &Inner) {
 fn waiter_main(inner: &Inner) {
     // Wait on this pid only, never -1, so other children (erts', std::process) are untouched.
     // WNOWAIT leaves the zombie in place until `reaped` is locked; see `Inner::reaped`.
-    loop {
+    let exited = loop {
         // SAFETY: zeroed siginfo_t is a valid out-parameter for waitid.
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
         let flags = libc::WEXITED | libc::WNOWAIT;
         // SAFETY: info is a valid, exclusively borrowed siginfo_t.
         let r = unsafe { libc::waitid(libc::P_PID, inner.pid as libc::id_t, &mut info, flags) };
-        if r == 0 || last_err().kind() != io::ErrorKind::Interrupted {
-            break;
+        if r == 0 {
+            break true;
         }
-    }
+        if last_err().kind() != io::ErrorKind::Interrupted {
+            break false;
+        }
+    };
     let mut reaped = lock(&inner.reaped);
     let mut status = 0;
     let st = loop {
+        // waitid failed (not EINTR): do not block in waitpid while holding `reaped`.
+        if !exited {
+            break ExitStatus::Unknown;
+        }
         // SAFETY: status is a valid out-parameter.
         let r = unsafe { libc::waitpid(inner.pid, &mut status, 0) };
         if r == inner.pid {
@@ -456,7 +478,7 @@ fn waiter_main(inner: &Inner) {
             continue;
         }
         // ECHILD: someone else reaped our child; the real status is lost.
-        break ExitStatus::Code(-1);
+        break ExitStatus::Unknown;
     };
     *reaped = Some(st);
     drop(reaped);
@@ -534,8 +556,9 @@ impl Pty {
         let w = Arc::clone(&writer);
         // ghostty replies (DA, DSR, ...) bypass the cap; the callback runs under the core
         // lock, so it only enqueues.
+        // This closure is called from C: no unwind may cross back into it.
         vt.set_write_pty(move |b| {
-            let _ = w.push(b, None);
+            let _ = catch_unwind(AssertUnwindSafe(|| w.push(b, None)));
         });
         let inner = Arc::new(Inner {
             id: opts.id,
@@ -548,6 +571,7 @@ impl Pty {
             writer,
             hidden: AtomicBool::new(false),
             exit_sent: AtomicBool::new(false),
+            stop: AtomicBool::new(false),
             exit: Mutex::new(None),
             reaped: Mutex::new(None),
             #[cfg(any(test, feature = "test-nifs"))]
@@ -832,7 +856,7 @@ mod tests {
 
     #[test]
     fn backpressure_when_child_not_reading() {
-        let (_vt, pty, _rx) = sh("sleep 30");
+        let (_vt, pty, _rx) = sh("stty raw -echo; sleep 30");
         let chunk = vec![b'a'; 64 * 1024];
         let mut accepted = 0usize;
         let mut hit = false;
@@ -864,10 +888,10 @@ mod tests {
         let (vt, pty, rx) = sh("sleep 30");
         pty.inject_reader_panic();
         assert!(matches!(exit_of(&rx), ExitStatus::Panic(m) if m.contains("injected")));
+        assert_eq!(pty.write(b"x"), Err(WriteError::Closed));
         std::thread::sleep(Duration::from_millis(500));
         assert!(rx.try_iter().all(|ev| !matches!(ev, Event::Exit(_))));
         assert!(matches!(pty.exit_status(), Some(ExitStatus::Panic(_))));
-        assert_eq!(pty.write(b"x"), Err(WriteError::Closed));
         vt.write(b"still ok");
         vt.refresh();
         assert_eq!(vt.full_rows().1.len(), 24);
