@@ -1,6 +1,8 @@
 # herdr task runner
 set windows-shell := ["cmd.exe", "/d", "/s", "/c"]
 
+import 'live/live.just'
+
 python := if os() == "windows" { "python" } else { "python3" }
 
 # Run tests
