@@ -8,6 +8,8 @@ defmodule HerdrServer.Pane.Server do
   """
   use GenServer, restart: :transient
 
+  require Logger
+
   alias HerdrServer.App.Store
   alias HerdrServer.Kernel
   alias HerdrServer.Pane.{Rows, State}
@@ -31,7 +33,13 @@ defmodule HerdrServer.Pane.Server do
     GenServer.call(via(id), msg)
   catch
     # the pane closed under us; callers treat it as absent
-    :exit, {reason, _} when reason in [:noproc, :normal, :shutdown] -> nil
+    :exit, {reason, _} when reason in [:noproc, :normal, :shutdown] ->
+      nil
+
+    # a pane stuck behind its vt must not take the caller (the Store) down
+    :exit, {:timeout, _} ->
+      Logger.warning("pane #{id}: #{inspect(msg)} timed out")
+      nil
   end
 
   @impl true
@@ -81,16 +89,21 @@ defmodule HerdrServer.Pane.Server do
   end
 
   def handle_info({:exit, id, _status}, state) do
+    state = Map.merge(%State{}, state)
     Store.event_async({:pane_exited, id})
-    {:noreply, Map.merge(%State{}, state)}
+    {:noreply, state}
   end
 
   def handle_info({:title, id, title}, state) do
+    state = Map.merge(%State{}, state)
     Store.event_async({:pane_title, id, title})
-    {:noreply, Map.merge(%State{}, state)}
+    {:noreply, state}
   end
 
-  def handle_info(_other, state), do: {:noreply, Map.merge(%State{}, state)}
+  def handle_info(_other, state) do
+    state = Map.merge(%State{}, state)
+    {:noreply, state}
+  end
 
   defp put_row({n, b}, t) when n < tuple_size(t), do: put_elem(t, n, b)
   defp put_row(_row, t), do: t

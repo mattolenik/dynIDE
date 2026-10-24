@@ -12,10 +12,17 @@ defmodule HerdrServer.Pane.Rows do
 
   @spec fetch(pos_integer) :: {non_neg_integer, tuple} | nil
   def fetch(pane_id) do
-    case :ets.lookup(@table, pane_id) do
+    case lookup(pane_id) do
       [{^pane_id, gen, rows}] -> {gen, rows}
       [] -> nil
     end
+  end
+
+  # the table is briefly missing while this process restarts
+  defp lookup(pane_id) do
+    :ets.lookup(@table, pane_id)
+  rescue
+    ArgumentError -> []
   end
 
   @spec put(pos_integer, non_neg_integer, tuple) :: :ok

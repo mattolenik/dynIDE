@@ -61,7 +61,7 @@ defmodule HerdrServer.Client.Session do
 
       scene.focus.pane == id ->
         forward(state, id, gen)
-        {:noreply, send_scene(state, with_cursors(scene))}
+        {:noreply, send_scene(state, refresh_cursor(scene, id))}
 
       true ->
         forward(state, id, gen)
@@ -92,13 +92,22 @@ defmodule HerdrServer.Client.Session do
     {:noreply, state}
   end
 
-  def handle_info({:detach}, state), do: {:stop, :normal, Map.merge(%State{}, state)}
+  # the protocol's client -> server detach message
+  def handle_info({:detach}, state) do
+    state = Map.merge(%State{}, state)
+    {:stop, :normal, state}
+  end
 
-  def handle_info({:DOWN, ref, :process, _, _}, %{monitor: ref} = state),
-    do: {:stop, :normal, Map.merge(%State{}, state)}
+  def handle_info({:DOWN, ref, :process, _, _}, state) do
+    state = Map.merge(%State{}, state)
+    if ref == state.monitor, do: {:stop, :normal, state}, else: {:noreply, state}
+  end
 
   # stale damage for closed panes, unknown messages: ignore
-  def handle_info(_other, state), do: {:noreply, Map.merge(%State{}, state)}
+  def handle_info(_other, state) do
+    state = Map.merge(%State{}, state)
+    {:noreply, state}
+  end
 
   # --- input ---
 
@@ -111,8 +120,9 @@ defmodule HerdrServer.Client.Session do
     state
   end
 
-  # Same check as an in-VM client (contract decision 6), for remote/GUI clients.
-  defp fast_path({:key, %{key: k, mods: m}} = ev) do
+  # Same check as an in-VM client (contract decision 6), for remote/GUI clients. Releases
+  # always go through the Store so `focus.swallow` applies.
+  defp fast_path({:key, %{key: k, mods: m, event: e}} = ev) when e != :release do
     case :persistent_term.get(Protocol.fast_path_key(), nil) do
       %{passthrough: true, write: {mod, f, a}, intercept: i} ->
         not MapSet.member?(i, Keybinds.normalize(k, m)) and apply(mod, f, [ev | a]) == :ok
@@ -172,11 +182,25 @@ defmodule HerdrServer.Client.Session do
     %{state | last_scene: scene}
   end
 
-  # ponytail: one cursor call per pane per scene; cache in Pane.Rows if pane counts grow
+  # ponytail: one cursor call per pane per scene compute; cache cursors if pane counts grow
   defp with_cursors(scene) do
     panes = Enum.map(scene.panes, &%{&1 | cursor: Server.cursor(&1.id)})
-    host = Enum.find_value(panes, &(&1.id == scene.focus.pane and host_cursor(&1)))
-    %{scene | panes: panes, cursor: host || nil}
+    %{scene | panes: panes, cursor: host(panes, scene.focus.pane)}
+  end
+
+  # damage to one pane: only its cursor can have moved
+  defp refresh_cursor(scene, id) do
+    panes =
+      Enum.map(scene.panes, &if(&1.id == id, do: %{&1 | cursor: Server.cursor(id)}, else: &1))
+
+    %{scene | panes: panes, cursor: host(panes, scene.focus.pane)}
+  end
+
+  defp host(panes, focus) do
+    case Enum.find(panes, &(&1.id == focus)) do
+      nil -> nil
+      pane -> host_cursor(pane)
+    end
   end
 
   defp host_cursor(%{cursor: %{visible: true} = c, rect: r}) when c.y < r.h and r.w > 0,

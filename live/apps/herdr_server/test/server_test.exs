@@ -94,6 +94,11 @@ defmodule HerdrServer.ServerTest do
     end
   end
 
+  defp vt_size(id) do
+    st = :sys.get_state(vt(id))
+    {st.cols, st.rows}
+  end
+
   defp fast, do: :persistent_term.get(Protocol.fast_path_key())
 
   test "attach, type, split" do
@@ -132,17 +137,52 @@ defmodule HerdrServer.ServerTest do
   end
 
   test "two clients get their own rects; the latest active one drives pty size" do
-    {c1, _s1} = client()
+    {c1, s1pid} = client()
     s1 = scene(c1)
     {c2, s2} = client(%{cols: 120, rows: 40})
     sc2 = scene(c2)
     assert hd(s1.panes).rect != hd(sc2.panes).rect
     assert hd(sc2.panes).rect == %{x: 0, y: 0, w: 120, h: 39}
 
+    input(s1pid, c1, 1, Event.key("b", [:ctrl]))
+    assert_receive {^c1, {:ack, 1}}
+    assert vt_size(1) == {80, 23}
+
     input(s2, c2, 1, Event.key("b", [:ctrl]))
     assert_receive {^c2, {:ack, 1}}
+    assert vt_size(1) == {120, 39}
+  end
+
+  test "presses take the session fast path, releases go through the store" do
+    {c, s} = client()
+    scene(c)
+    assert fast().passthrough
+    store = Process.whereis(Store)
+    :sys.suspend(store)
+    input(s, c, 1, Event.key("q"))
+    assert_receive {^c, {:ack, 1}}, 500
+    :sys.resume(store)
     Process.sleep(20)
-    assert :sys.get_state(vt(1)) |> then(&{&1.cols, &1.rows}) == {120, 39}
+    assert Fake.Vt.read_text(vt(1), {:rows, 0..0}) == "q"
+
+    # "v" press is consumed by the prefix; its release must reach the Store's swallow set
+    input(s, c, 2, Event.key("b", [:ctrl]))
+    input(s, c, 3, Event.key("v"))
+    assert_receive {^c, {:ack, 3}}
+    assert "v" in Store.snapshot().focus.swallow
+    assert fast().passthrough
+    input(s, c, 4, Event.key("v", [], event: :release))
+    assert_receive {^c, {:ack, 4}}
+    refute "v" in Store.snapshot().focus.swallow
+  end
+
+  test "detach stops the session cleanly" do
+    {c, s} = client()
+    scene(c)
+    ref = Process.monitor(s)
+    send(s, {:detach})
+    assert_receive {:DOWN, ^ref, :process, ^s, :normal}
+    assert Process.alive?(c)
   end
 
   test "inline clients receive full rows" do
@@ -197,14 +237,21 @@ defmodule HerdrServer.ServerTest do
       put_in(st.app.ui.keybinds.prefix_binds[{"z", []}], {HerdrServer.ServerTest.Boom, :boom, []})
     end)
 
-    before = Store.snapshot()
     input(s, c, 1, Event.key("b", [:ctrl]))
-    input(s, c, 2, Event.key("z"))
-    assert_receive {^c, {:notice, %{level: :error}}}, 500
-    assert_receive {^c, {:ack, 2}}
+    assert_receive {^c, {:ack, 1}}
+    # a second, larger client: its failing event carries a driver resize that must be discarded
+    {c2, s2} = client(%{cols: 120, rows: 40})
+    scene(c2)
+    input(s, c, 2, Event.key("b", [:ctrl]))
+    input(s, c, 3, Event.key("b", [:ctrl]))
+    assert_receive {^c, {:ack, 3}}
+    before = :sys.get_state(store)
+    assert before.app.focus.mode == :prefix
+    input(s2, c2, 1, Event.key("z"))
+    assert_receive {^c2, {:notice, %{level: :error}}}, 500
+    assert_receive {^c2, {:ack, 1}}
     assert Process.whereis(Store) == store
-    assert Store.snapshot().focus.mode == :prefix
-    assert Store.snapshot().session == before.session
+    assert :sys.get_state(store) == before
   end
 
   test "closing a pane makes stale damage harmless" do

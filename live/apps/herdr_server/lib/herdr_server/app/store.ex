@@ -83,37 +83,46 @@ defmodule HerdrServer.App.Store do
     {:noreply, %{state | subs: Map.delete(state.subs, pid)}}
   end
 
-  def handle_info(_other, state), do: {:noreply, Map.merge(%__MODULE__{}, state)}
+  def handle_info(_other, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, state}
+  end
 
   # --- events ---
 
+  # A failed batch (driver resize + event) is discarded whole; init commits on its own.
   defp handle_event(state, ev, size, origin) do
     old = state.app
+    state = if old == nil, do: commit(state, [{:init, first_size(ev, size)}], origin), else: state
 
     state =
-      state
-      |> steps(ev, size)
-      |> Enum.reduce_while(state, &step(&2, &1, origin))
-      |> Map.update!(:driver, &(size || &1))
+      if state.app == nil,
+        do: state,
+        else: commit(state, batch(state, ev, size), origin, &%{&1 | driver: size || &1.driver})
 
     state = state |> settle() |> publish_fast()
     if state.app != old, do: Enum.each(Map.keys(state.subs), &send(&1, {:app_changed, state.app}))
     state
   end
 
-  defp steps(state, ev, size) do
-    init = if state.app == nil, do: [{:init, first_size(ev, size)}], else: []
-
+  defp batch(state, ev, size) do
     drive =
       if size != nil and size != state.driver and not match?({:resize, _}, ev),
         do: [{:resize, Map.put(size, :cell_px, nil)}],
         else: []
 
-    init ++ drive ++ [ev]
+    drive ++ [ev]
   end
 
   defp first_size({:resize, %{cols: c, rows: r}}, _), do: %{cols: c, rows: r}
   defp first_size(_, size), do: size || %{cols: 80, rows: 24}
+
+  defp commit(state, steps, origin, after_ok \\ & &1) do
+    case Enum.reduce_while(steps, {:ok, state}, &step(elem(&2, 1), &1, origin)) do
+      {:ok, new} -> after_ok.(new)
+      :failed -> state
+    end
+  end
 
   defp step(state, step, origin) do
     result =
@@ -124,11 +133,11 @@ defmodule HerdrServer.App.Store do
 
     case result do
       {:ok, {app, effects}} ->
-        {:cont, Enum.reduce(effects, %{state | app: app}, &effect(&2, &1, origin))}
+        {:cont, {:ok, Enum.reduce(effects, %{state | app: app}, &effect(&2, &1, origin))}}
 
       {:failed, reason} ->
         notice(origin, %{level: :error, text: "action failed: #{inspect(reason)}"})
-        {:halt, state}
+        {:halt, :failed}
     end
   end
 

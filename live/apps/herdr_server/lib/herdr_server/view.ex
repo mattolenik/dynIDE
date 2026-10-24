@@ -38,7 +38,7 @@ defmodule HerdrServer.View do
       layout
       |> Layout.panes(area)
       |> Layout.borders(area)
-      |> Enum.map(&pane(&1, app, transport, area))
+      |> Enum.map(&pane(&1, app, transport))
 
     %Scene{
       size: %{cols: cols, rows: rows},
@@ -48,7 +48,7 @@ defmodule HerdrServer.View do
     }
   end
 
-  defp pane(%{id: id, rect: rect, border: border}, app, transport, area) do
+  defp pane(%{id: id, rect: rect, border: border}, app, transport) do
     meta = Map.get(app.session.panes, id, %{title: nil, layout_gen: 0})
 
     %Pane{

@@ -82,10 +82,6 @@ defmodule HerdrServer.App.Actions do
       else: {update_in(app.focus.swallow, &MapSet.put(&1, sk)), effects}
   end
 
-  # Keyed by the key alone (case-insensitive) so a release with different modifiers matches.
-  defp swallow_key({k, _mods}) when is_binary(k), do: String.downcase(k)
-  defp swallow_key({k, _mods}), do: k
-
   def apply(app, {:paste, bin}), do: to_focused(app, :paste, bin)
 
   def apply(app, {:focus, b}) when is_boolean(b), do: to_focused(app, :focus_report, b)
@@ -120,6 +116,10 @@ defmodule HerdrServer.App.Actions do
   end
 
   def apply(app, _other), do: {app, []}
+
+  # Keyed by the key alone (case-insensitive) so a release with different modifiers matches.
+  defp swallow_key({k, _mods}) when is_binary(k), do: String.downcase(k)
+  defp swallow_key({k, _mods}), do: k
 
   defp dispatch_key(app, event, key) do
     kb = app.ui.keybinds
