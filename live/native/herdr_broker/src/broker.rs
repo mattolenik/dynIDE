@@ -65,7 +65,8 @@ impl Config {
             stop_grace: s(2),
             shutdown_grace: s(15),
             frame_timeout: s(5),
-            exit_grace: Duration::from_millis(1000),
+            // a clean quit under load must not read as a crash
+            exit_grace: s(5),
         }
     }
 }
@@ -93,6 +94,11 @@ struct Vm {
     /// No link EOF or reap seen yet.
     alive: bool,
     released: bool,
+    /// Sent PREPARED (until THAW): its HOLD/UPDATE/DROP are ignored, since the
+    /// target already got the entries.
+    prepared: bool,
+    /// Logged one ignored frame since `prepared`.
+    warned: bool,
 }
 
 /// A queued ctl reply; replies leave in request order.
@@ -488,11 +494,21 @@ impl<S: Spawner> Broker<S> {
             self.closing.push(t);
             return;
         };
+        if vm.pid != os_pid {
+            // Not the process we spawned (or a confused one): never trust it with fds.
+            log!(
+                "vm gen={gen} reports pid={os_pid}, spawned pid={}; killing it",
+                vm.pid
+            );
+            vm.alive = false;
+            let pid = vm.pid;
+            self.closing.push(t);
+            self.spawner.signal(pid, libc::SIGKILL);
+            self.vm_died(gen, false, "bad hello");
+            return;
+        }
         vm.conn = Some(t);
         vm.ready = true;
-        if vm.pid != os_pid {
-            log!("vm gen={gen} reports pid={os_pid}, spawned pid={}", vm.pid);
-        }
         if let Some(c) = self.conns.get_mut(&t) {
             c.kind = ConnKind::Vm(gen);
         }
@@ -531,7 +547,12 @@ impl<S: Spawner> Broker<S> {
     fn on_vm_frame(&mut self, gen: u64, f: Frame) {
         match f.kind {
             kind::HOLD | kind::UPDATE | kind::DROP => {
-                if self.primary == Some(gen) {
+                if let Some(v) = self.vms.get_mut(&gen).filter(|v| v.prepared) {
+                    if !v.warned {
+                        v.warned = true;
+                        log!("vm gen={gen} sent {:#x} after PREPARED; ignored", f.kind);
+                    }
+                } else if self.primary == Some(gen) {
                     self.apply(f);
                 } else if self.plan_target() == Some(gen) {
                     self.staged.push(f);
@@ -727,6 +748,9 @@ impl<S: Spawner> Broker<S> {
         };
         if old != gen {
             return;
+        }
+        if let Some(v) = self.vms.get_mut(&old) {
+            v.prepared = true;
         }
         match self.send_adopt(to, 0) {
             Some(sent) => {
@@ -927,6 +951,9 @@ impl<S: Spawner> Broker<S> {
             return;
         };
         if froze {
+            if let Some(v) = self.vms.get_mut(&old) {
+                (v.prepared, v.warned) = (false, false);
+            }
             if let Some(t) = self.vm_conn(old) {
                 self.send(t, kind::THAW, &[]);
             }
@@ -963,6 +990,8 @@ impl<S: Spawner> Broker<S> {
                         ready: false,
                         alive: true,
                         released: false,
+                        prepared: false,
+                        warned: false,
                     },
                 );
                 Some(gen)
@@ -1585,6 +1614,137 @@ mod tests {
         send(&vm2, kind::RESTORED, &0u32.to_be_bytes(), &[]);
         let st = h.wait_status("primary_gen=2");
         assert!(st.contains("last_handoff_kind=crash\n"));
+    }
+
+    /// Kinds received on `s` until EOF or 300 ms of silence.
+    fn drain_kinds(s: &UnixStream) -> Vec<u8> {
+        // EINVAL on macOS once the broker shut the socket: recv then sees EOF anyway
+        let _ = fp::set_timeouts(s.as_fd(), Duration::from_millis(300));
+        let mut kinds = Vec::new();
+        while let Ok(Some(f)) = fp::recv_frame(s.as_fd()) {
+            kinds.push(f.kind);
+        }
+        kinds
+    }
+
+    /// Signals until `want` are all seen (any order).
+    fn wait_signals(h: &H, want: &[(u32, i32)]) {
+        let mut left = want.to_vec();
+        while !left.is_empty() {
+            let got = h.sigs.recv_timeout(WAIT).unwrap();
+            left.retain(|w| *w != got);
+        }
+    }
+
+    /// Reaps `pids` (status 0) and expects a clean broker exit with the socket gone.
+    fn finish(h: H, pids: &[u32]) {
+        h.reaps.lock().unwrap().extend(pids.iter().map(|&p| (p, 0)));
+        (&h.sig_w).write_all(b"C").unwrap();
+        let o = h.thread.join().unwrap().unwrap();
+        assert_eq!(o.code, 0);
+        assert!(!h.sock.exists());
+    }
+
+    #[test]
+    fn exit_grace_lapse_crashes() {
+        let h = start("grace");
+        let (vm1, vm2) = h.boot();
+        let t0 = Instant::now();
+        // link EOF and no exit status: wait out exit_grace, then SIGKILL + crash path
+        drop(vm1);
+        let end = expect(&vm2, kind::ADOPT_END);
+        assert!(
+            t0.elapsed() >= Duration::from_millis(300),
+            "{:?}",
+            t0.elapsed()
+        );
+        assert_eq!(end.body, [0, 0, 0, 0, 1]);
+        assert_eq!(h.sigs.try_recv(), Ok((pid(1), libc::SIGKILL)));
+        send(&vm2, kind::RESTORED, &0u32.to_be_bytes(), &[]);
+        h.wait_status("primary_gen=2");
+    }
+
+    #[test]
+    fn sigterm_while_standby_boots() {
+        let h = start("termboot");
+        let (_, _, vm1) = h.vm();
+        hello(&vm1, 1);
+        expect(&vm1, kind::FRESH);
+        let (g, r, vm2) = h.vm();
+        assert_eq!((g, r), (2, Role::Standby));
+        (&h.sig_w).write_all(b"T").unwrap();
+        wait_signals(&h, &[(pid(1), libc::SIGTERM), (pid(2), libc::SIGTERM)]);
+        // a late HELLO from the booting standby gets nothing
+        hello(&vm2, 2);
+        assert!(drain_kinds(&vm2).is_empty());
+        assert!(drain_kinds(&vm1).is_empty());
+        finish(h, &[pid(1), pid(2)]);
+    }
+
+    #[test]
+    fn sigterm_mid_graceful_adopts_nothing() {
+        let h = start("termgraceful");
+        let (vm1, vm3, c) = to_preparing(&h);
+        (&h.sig_w).write_all(b"T").unwrap();
+        wait_signals(&h, &[(pid(1), libc::SIGTERM), (pid(3), libc::SIGTERM)]);
+        let r = expect(&c, kind::CTL_RESULT);
+        assert_eq!(r.body[0], 0);
+        // the old VM finishing its freeze must not start an adoption
+        send(&vm1, kind::PREPARED, &[], &[]);
+        assert!(!drain_kinds(&vm3).contains(&kind::ADOPT));
+        assert!(h.status().contains("phase=stopping\n"));
+        finish(h, &[pid(1), pid(2), pid(3)]);
+    }
+
+    #[test]
+    fn sigterm_while_crash_target_boots() {
+        let h = start("termcrash");
+        let (_, _, vm1) = h.vm();
+        hello(&vm1, 1);
+        expect(&vm1, kind::FRESH);
+        let (_, _, vm2) = h.vm();
+        // the primary dies before the standby is ready: the crash plan waits for its HELLO
+        drop(vm1);
+        h.reaps.lock().unwrap().push((pid(1), 1));
+        (&h.sig_w).write_all(b"C").unwrap();
+        h.wait_status("phase=adopting");
+        (&h.sig_w).write_all(b"T").unwrap();
+        wait_signals(&h, &[(pid(2), libc::SIGTERM)]);
+        hello(&vm2, 2);
+        let kinds = drain_kinds(&vm2);
+        assert!(!kinds.contains(&kind::ADOPT) && !kinds.contains(&kind::ADOPT_END));
+        finish(h, &[pid(2)]);
+    }
+
+    #[test]
+    fn frames_after_prepared_are_ignored() {
+        let h = start("prepared");
+        let (vm1, vm3, _c) = to_preparing(&h);
+        send(&vm1, kind::PREPARED, &[], &[]);
+        expect(&vm3, kind::ADOPT);
+        expect(&vm3, kind::ADOPT_END);
+        let (_pr, pw) = UnixStream::pair().unwrap();
+        send(&vm1, kind::HOLD, &keyed(b"pane/9", b"late"), &[pw.as_fd()]);
+        std::thread::sleep(Duration::from_millis(100));
+        send(&vm3, kind::RESTORED, &1u32.to_be_bytes(), &[]);
+        let st = h.wait_status("primary_gen=3");
+        assert!(st.contains("entries=1\n"), "{st}");
+    }
+
+    #[test]
+    fn hello_with_wrong_pid_is_killed() {
+        let h = start("badpid");
+        let (_, _, vm1) = h.vm();
+        hello(&vm1, 1);
+        expect(&vm1, kind::FRESH);
+        let (_, _, vm2) = h.vm();
+        let mut b = 2u64.to_be_bytes().to_vec();
+        b.extend((pid(2) + 1).to_be_bytes());
+        send(&vm2, kind::HELLO, &b, &[]);
+        h.wait_signal(pid(2), libc::SIGKILL);
+        let st = h.wait_status("standby_gen=-");
+        assert!(st.contains("standby_ready=0\n"));
+        assert!(drain_kinds(&vm2).is_empty());
     }
 
     #[test]

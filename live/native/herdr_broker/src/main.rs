@@ -87,7 +87,11 @@ fn run(dir: &Path, sock: PathBuf, argv: Vec<OsString>) -> i32 {
             return 1;
         }
     };
-    let guard = tty::Guard::open_path("/dev/tty");
+    // Headless (benches, smokes): never touch a tty the caller may own.
+    let headless = std::env::var_os("HERDR_LIVE_HEADLESS").is_some_and(|v| v == "1");
+    let guard = (!headless)
+        .then(|| tty::Guard::open_path("/dev/tty"))
+        .flatten();
     let cfg = broker::Config::new(sock.clone());
     let spawner = vm::Real { argv, sock };
     let outcome = broker::Broker::new(cfg, spawner, sig).and_then(|mut b| b.run());
@@ -137,12 +141,29 @@ fn open_max(hard: libc::rlim_t) -> libc::rlim_t {
 
 static SIG_FD: AtomicI32 = AtomicI32::new(-1);
 
+#[cfg(target_os = "macos")]
+fn errno() -> *mut libc::c_int {
+    // SAFETY: returns this thread's errno slot.
+    unsafe { libc::__error() }
+}
+
+#[cfg(target_os = "linux")]
+fn errno() -> *mut libc::c_int {
+    // SAFETY: returns this thread's errno slot.
+    unsafe { libc::__errno_location() }
+}
+
 extern "C" fn on_signal(sig: libc::c_int) {
     let b: u8 = if sig == libc::SIGCHLD { b'C' } else { b'T' };
+    // The interrupted code may be about to read errno: keep it.
+    // SAFETY: the errno slot of this thread is always valid.
+    let saved = unsafe { *errno() };
     // Async-signal-safe: one write to a non-blocking socket. A full buffer
     // already holds a wakeup, so a failed write loses nothing.
     // SAFETY: plain write(2) of one byte from a live stack slot.
     unsafe { libc::write(SIG_FD.load(Ordering::Relaxed), (&b as *const u8).cast(), 1) };
+    // SAFETY: as above.
+    unsafe { *errno() = saved };
 }
 
 /// Self-pipe: the handlers write `C` (SIGCHLD) or `T` (TERM/INT/HUP).
