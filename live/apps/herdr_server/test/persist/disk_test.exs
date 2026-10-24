@@ -113,6 +113,11 @@ defmodule HerdrServer.Persist.DiskTest do
     File.write!(path, envelope(%{}))
     File.chmod!(path, 0o000)
 
+    # nothing unreadable may stay behind (the moved-aside copy keeps mode 0000)
+    on_exit(fn ->
+      for f <- [path | Path.wildcard(path <> ".*")], do: File.chmod(f, 0o600)
+    end)
+
     log = capture_log(fn -> assert Disk.read(cfg) == {:error, :eacces} end)
     assert log =~ ~r/persist_error .*op=read reason=:eacces moved=session\.t\.etf\.bad-\d+/
     assert [moved] = aside(cfg)

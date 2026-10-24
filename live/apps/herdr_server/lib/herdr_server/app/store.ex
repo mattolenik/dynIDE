@@ -140,7 +140,7 @@ defmodule HerdrServer.App.Store do
         cfg = Disk.config()
 
         # a Store that crashed restoring this file must not read it again
-        if not Load.crashed?(cfg) and cfg.enabled,
+        if cfg.enabled and not Load.crashed?(cfg),
           do: {:ok, %__MODULE__{}, {:continue, {:disk, cfg}}},
           else: {:ok, %__MODULE__{}}
 
