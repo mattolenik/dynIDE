@@ -4,7 +4,8 @@
 # kill -> new primary_gen with phase=idle. A final cold run kills twice back to
 # back, the second time before a new standby is ready (Review Focus 5).
 # Usage: cd live && elixir bench/handoff/kill9.exs [runs=12]
-# Exit 1 if any child died or the warm p95 >= 1000 ms.
+# Exit 1 if any run (warm or cold) reports alive, answered, scrollback or htop
+# below N/N, or the warm p95 >= 1000 ms.
 Code.require_file("driver.exs", __DIR__)
 alias HandoffDriver, as: D
 
@@ -107,7 +108,8 @@ bench = fn b ->
       if wall > 300, do: for({_, d, t} <- ph, do: IO.puts("KILL9 slow run=#{run} +#{d} #{t}"))
     end
 
-    alive
+    alive == length(ids) and answered == length(seq_ids) and
+      scrollback == length(seq_ids) and htop_ok == length(htop_ids)
   end
 
   warm =
@@ -115,8 +117,7 @@ bench = fn b ->
       ready.()
       Process.sleep(1500)
       {wall, s0, s1} = kill.()
-      alive = line.(run, wall, s0, s1, check.(run), "")
-      {wall, alive}
+      {wall, line.(run, wall, s0, s1, check.(run), "")}
     end
 
   # Cold: a warm kill, then at once a second kill while the new standby boots.
@@ -125,10 +126,10 @@ bench = fn b ->
   {prep_wall, _, _} = kill.()
   {wall, s0, s1} = kill.()
   s0["standby_ready"] == "0" || IO.puts("KILL9 note: the cold run found a ready standby")
-  cold_alive = line.("cold", wall, s0, s1, check.(runs + 1), " prep_wall_ms=#{prep_wall}")
+  cold_ok = line.("cold", wall, s0, s1, check.(runs + 1), " prep_wall_ms=#{prep_wall}")
 
   walls = warm |> Enum.map(&elem(&1, 0)) |> Enum.sort()
-  died = Enum.any?(warm, fn {_, a} -> a != length(ids) end) or cold_alive != length(ids)
+  failed = Enum.any?(warm, fn {_, ok} -> not ok end) or not cold_ok
   p95 = D.percentile(walls, 95)
 
   IO.puts(
@@ -138,7 +139,7 @@ bench = fn b ->
 
   :gen_tcp.close(c)
   :gen_tcp.close(sc)
-  not died and p95 < 1000
+  not failed and p95 < 1000
 end
 
 code =
