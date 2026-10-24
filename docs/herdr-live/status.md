@@ -36,7 +36,7 @@ the recovery map for the coordinating session: trust this file and
 |---|---|---|---|---|---|
 | M0 skeleton | merged | (deleted) | agent | 179cd23e | 15 commits; results/m0.md; live-check verified green by coordinator |
 | M1 kernel vt+pty | merged | live/m1 | agent | 95ace52e | 25 commits; results/m1.md; 56 cargo + 26 ExUnit; mode/2 p999 1µs under cat 100MB; live-check verified green |
-| M2 term kernel tty+blit | in progress | live/m2 | agent | | wave 1; waits on packed cell spec for decode |
+| M2 term kernel tty+blit | merged | live/m2 | agent | 4ce76654 | 16 commits; results/m2.md; green on macOS and Linux (podman); manual GUI-terminal check owed by human (steps in results/m2.md) |
 | M3 server core + term client | in progress | live/m3 | agent | | wave 1; against Kernel.Fake; owns scene contract |
 | M4 reload + rollback | phase 1 merged; phase 2 pending M3 | live/m4 | agent | 54093015 | phase 1: Reload.Watcher/Compiler/Ring/Guard, 65 tests; save→loaded ~90ms one module, ~95ms for 21-module fan-out |
 | M5 kernel restart | in progress | live/m5 | agent | | wave 2; dispatched from 95ace52e; rebases when M2/M3 land |
@@ -66,6 +66,7 @@ the recovery map for the coordinating session: trust this file and
 - 2026-10-23: M1, M2, M3 owners all terminated by an API rate limit; resumed from their saved state once lifted. M3 told to rebase onto 33a8a6b4 (M4 phase 1 present).
 - 2026-10-23: M1 DONE_WITH_CONCERNS at 7a32cf4c; merged as 95ace52e with one conflict (application.ex: Keeper first, then Reload.Supervisor). live-check green. Carried: SIGCHLD reset to default at NIF load is process-wide (M5/M18 informed); x86_64 Linux unrun; final drain after exit can drop background-job output on Linux; hyperlink id table grows for pane lifetime; Keeper crash during the 2s close window leaves a child with only HUP. M3 informed of the real kernel API and told to rebase.
 - 2026-10-23: M5 dispatched (kernel restart under live children) from 95ace52e.
+- 2026-10-23: M2 DONE_WITH_CONCERNS at 6f7e05e3; merged as 4ce76654 (conflict: live/mix.exs dialyzer plt_add_apps, kept :mix and :ex_unit). Linux root causes fixed: ttyname -> ttyname_r in the test helper; Linux-only raise(SIGSTOP) after kill(0, SIGSTOP) returns early. Owed to human: manual live-demo check in a real GUI terminal. Leftovers outside repo: podman image localhost/herdr-m2-check. M3 and M5 informed (Tty/Blit API; stty wrapper belongs in the broker).
 
 ## Rulings
 
