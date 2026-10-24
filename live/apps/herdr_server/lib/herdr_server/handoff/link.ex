@@ -21,6 +21,11 @@ defmodule HerdrServer.Handoff.Link do
   broker forwards right after FRESH must not reach a Keeper whose `App.Store.init` is
   still to close every pane.
 
+  PREPARE is a barrier for ctl requests: requests already running finish first (at most
+  2 s, then a warning), so none races the Keeper freeze; requests that arrive
+  later wait for THAW, and after RELEASE they never run in this VM (the broker queues
+  them for the next one anyway).
+
   A closed link while primary halts the VM: the broker already treats it as dead and
   adopts its panes elsewhere.
   """
@@ -36,6 +41,7 @@ defmodule HerdrServer.Handoff.Link do
 
   @key {__MODULE__, :link}
   @local_client_ms 2000
+  @ctl_drain_ms 2000
 
   defstruct link: nil,
             gen: 0,
@@ -46,7 +52,10 @@ defmodule HerdrServer.Handoff.Link do
             released: false,
             ctl: :queue.new(),
             ready: false,
-            worker: nil
+            worker: nil,
+            # PREPARE..THAW: requests wait in `later`
+            frozen: false,
+            later: :queue.new()
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -220,15 +229,7 @@ defmodule HerdrServer.Handoff.Link do
   @impl true
   def handle_info({:herdr_link, _, @request, <<ref::64, payload::binary>>, _}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    state = %{state | ctl: :queue.in({ref, payload}, state.ctl)}
-
-    if state.ready do
-      state = ensure_worker(state)
-      send(elem(state.worker, 0), {:req, ref, payload})
-      {:noreply, state}
-    else
-      {:noreply, state}
-    end
+    {:noreply, enqueue(state, {ref, payload})}
   end
 
   def handle_info({:ctl_done, ref}, state) do
@@ -253,6 +254,7 @@ defmodule HerdrServer.Handoff.Link do
     notice(:begin, state)
     await_local_client()
     :ok = Store.flush_hold()
+    state = drain_ctl(%{state | frozen: true})
     :ok = Keeper.prepare()
     send_frame(:prepared, "", [])
     {:noreply, state}
@@ -263,7 +265,10 @@ defmodule HerdrServer.Handoff.Link do
     :ok = Keeper.thaw()
     :persistent_term.put(Protocol.handoff_key(), :aborted)
     notice(:aborted, state)
-    {:noreply, state}
+    later = :queue.to_list(state.later)
+
+    {:noreply,
+     Enum.reduce(later, %{state | frozen: false, later: :queue.new()}, &enqueue(&2, &1))}
   end
 
   def handle_info({:herdr_link, _, @release, _, _}, state) do
@@ -310,6 +315,50 @@ defmodule HerdrServer.Handoff.Link do
 
     state
   end
+
+  defp enqueue(%{frozen: true} = state, req), do: %{state | later: :queue.in(req, state.later)}
+
+  defp enqueue(state, {ref, payload} = req) do
+    state = %{state | ctl: :queue.in(req, state.ctl)}
+
+    if state.ready do
+      state = ensure_worker(state)
+      send(elem(state.worker, 0), {:req, ref, payload})
+      state
+    else
+      state
+    end
+  end
+
+  # PREPARE: lets the requests the worker already has finish (selective receive; new
+  # REQUESTs stay in the mailbox and go to `later` afterwards).
+  defp drain_ctl(state),
+    do: drain_ctl(state, System.monotonic_time(:millisecond) + @ctl_drain_ms)
+
+  defp drain_ctl(%{ready: true, worker: {_, mref}} = state, deadline) do
+    if :queue.is_empty(state.ctl) do
+      state
+    else
+      receive do
+        {:ctl_done, ref} ->
+          {{:value, {^ref, _}}, ctl} = :queue.out(state.ctl)
+          drain_ctl(%{state | ctl: ctl}, deadline)
+
+        {:DOWN, ^mref, :process, _, reason} ->
+          drain_ctl(worker_down(reason, state), deadline)
+      after
+        max(deadline - System.monotonic_time(:millisecond), 0) ->
+          Logger.warning(
+            "handoff: #{:queue.len(state.ctl)} ctl requests still running after #{@ctl_drain_ms} ms"
+          )
+
+          state
+      end
+    end
+  end
+
+  # not running requests yet (before restored/0): nothing in flight
+  defp drain_ctl(state, _deadline), do: state
 
   # restored/0 ran: from now on requests go straight to the worker
   defp run_queued(%{ready: true} = state), do: state

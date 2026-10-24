@@ -53,8 +53,9 @@ defmodule HerdrServer.Handoff.Snapshotter do
   def handle_call(:pause, _from, state),
     do: {:reply, :ok, %{Map.merge(%__MODULE__{}, state) | paused: true}}
 
+  # marks reset: what the broker holds now is the final state of an aborted handoff
   def handle_call(:resume, _from, state),
-    do: {:reply, :ok, %{Map.merge(%__MODULE__{}, state) | paused: false}}
+    do: {:reply, :ok, %{Map.merge(%__MODULE__{}, state) | paused: false, sent: %{}}}
 
   def handle_call(:stats, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
@@ -96,9 +97,7 @@ defmodule HerdrServer.Handoff.Snapshotter do
 
   # `last` is the mark last sent, or `{:failed, mark}` while encoding fails
   defp snap(id, row, last, sent, bytes) do
-    prev = with {:failed, p} <- last, do: p
-    {gen, _} = Vt.rows_since(row.vt, if(prev, do: elem(prev, 0), else: 0))
-    mark = {gen, Map.take(Pty.info(row.pty), [:title, :pwd, :hidden, :exited])}
+    mark = {Vt.gen(row.vt), Map.take(Pty.info(row.pty), [:title, :pwd, :hidden, :exited])}
 
     if mark == last do
       {Map.put(sent, id, mark), bytes}

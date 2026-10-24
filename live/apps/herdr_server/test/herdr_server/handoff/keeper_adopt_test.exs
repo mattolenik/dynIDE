@@ -61,6 +61,72 @@ defmodule HerdrServer.Handoff.KeeperAdoptTest do
     Keeper.close(500)
   end
 
+  test "the blob carries the start time; a recycled pid is adopted as exited" do
+    {:ok, id} = Keeper.open(spec(%{cmd: "/bin/sleep", args: ["30"]}))
+    {:ok, %{os_pid: os_pid} = row} = Keeper.lookup(id)
+    assert %{start_time: st} = State.build(id, row, vt: false)
+    assert is_integer(st)
+
+    hand_over(id, 410, &%{&1 | start_time: st + 1})
+
+    assert {:ok, %{os_pid: ^os_pid, pty: pty}} = Keeper.lookup(410)
+    :ok = Pty.subscribe(pty, self())
+    assert_receive {:exit, 410, :unknown}, 2000
+    :ok = Keeper.close(410)
+    Process.sleep(200)
+    assert alive?(os_pid)
+    System.cmd("kill", ["-9", "#{os_pid}"])
+  end
+
+  test "a blob without start_time (older VM) adopts unchecked" do
+    {:ok, id} = Keeper.open(spec(%{cmd: "/bin/sleep", args: ["30"]}))
+    {:ok, %{os_pid: os_pid}} = Keeper.lookup(id)
+
+    hand_over(id, 420, &Map.delete(&1, :start_time))
+
+    assert {:ok, %{os_pid: ^os_pid, pty: pty}} = Keeper.lookup(420)
+    :ok = Pty.subscribe(pty, self())
+    :ok = Keeper.close(420)
+    assert_receive {:exit, 420, :unknown}, 5000
+    refute alive?(os_pid)
+  end
+
+  test "open and close are refused while frozen, and work again after thaw" do
+    {:ok, id} = Keeper.open(spec(%{cmd: "/bin/sleep", args: ["30"]}))
+    {:ok, %{os_pid: os_pid}} = Keeper.lookup(id)
+    ids = Keeper.ids()
+
+    :ok = Keeper.prepare()
+    assert Keeper.open(spec()) == {:error, :handoff}
+    assert Keeper.close(id) == {:error, :handoff}
+    assert Keeper.ids() == ids
+    Process.sleep(100)
+    assert alive?(os_pid)
+
+    :ok = Keeper.thaw()
+    assert {:ok, id2} = Keeper.open(spec())
+    :ok = Keeper.close(id2)
+    :ok = Keeper.close(id)
+  end
+
+  test "a raise while handing the new pane to the broker closes it and keeps the Keeper" do
+    keeper = Process.whereis(Keeper)
+    ids = Keeper.ids()
+    # not a link resource: the HOLD send raises ArgumentError in the Keeper
+    :persistent_term.put({HerdrServer.Handoff.Link, :link}, :bogus)
+
+    try do
+      assert {:error, {:raise, _}} = Keeper.open(spec(%{cmd: "/bin/sleep", args: ["30"]}))
+    after
+      :persistent_term.erase({HerdrServer.Handoff.Link, :link})
+    end
+
+    assert Process.whereis(Keeper) == keeper
+    assert Keeper.ids() == ids
+    assert {:ok, id} = Keeper.open(spec())
+    :ok = Keeper.close(id)
+  end
+
   test "adopt with exited set never signals" do
     {:ok, id} = Keeper.open(spec(%{cmd: "/bin/sleep", args: ["30"]}))
     {:ok, %{os_pid: os_pid}} = Keeper.lookup(id)

@@ -735,7 +735,7 @@ defmodule HerdrServer.ServerTest do
 
     log =
       capture_log(fn ->
-        for k <- ~w(a b c), do: assert(Input.key(Event.key(k), 1) == :ok)
+        for k <- ~w(a b c), do: assert(Input.key(Event.key(k), 1) == {:error, :backpressure})
       end)
 
     assert length(String.split(log, "pane 1: input dropped")) == 2
@@ -835,6 +835,37 @@ defmodule HerdrServer.ServerTest do
     assert_receive {^c, {:ack, 5}}
     assert_receive {^c, {:ack, 6}}
     assert Fake.Pty.writes(pty(1)) == ["x", "y"]
+  end
+
+  test "input whose write finds the pane frozen is held, not acked" do
+    {c, s} = client()
+    scene(c)
+    # the pane froze (take_pending) before this session saw the :begin notice
+    :sys.replace_state(pty(1), &%{&1 | closed: true})
+    input(s, c, 5, Event.key("x"))
+    assert_receive {^c, {:notice, %{level: :warning}}}
+    refute_receive {^c, {:ack, 5}}, 100
+
+    :sys.replace_state(pty(1), &%{&1 | closed: false})
+    Notice.broadcast({:handoff, %{phase: :aborted, gen: 3, panes: [1]}})
+    assert_receive {^c, {:ack, 5}}
+    assert Fake.Pty.writes(pty(1)) == ["x"]
+  end
+
+  test "input is held from the published :begin, before the notice arrives" do
+    {c, s} = client()
+    scene(c)
+    :persistent_term.put(Protocol.handoff_key(), :begin)
+    on_exit(fn -> :persistent_term.erase(Protocol.handoff_key()) end)
+    input(s, c, 5, Event.key("x"))
+    assert_receive {^c, {:notice, %{level: :warning}}}
+    refute_receive {^c, {:ack, 5}}, 100
+    assert Fake.Pty.writes(pty(1)) == []
+
+    :persistent_term.put(Protocol.handoff_key(), :aborted)
+    Notice.broadcast({:handoff, %{phase: :aborted, gen: 3, panes: [1]}})
+    assert_receive {^c, {:ack, 5}}
+    assert Fake.Pty.writes(pty(1)) == ["x"]
   end
 
   test "server-internal and invalid events from clients are rejected but acked" do

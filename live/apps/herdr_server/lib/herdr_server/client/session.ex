@@ -34,7 +34,11 @@ defmodule HerdrServer.Client.Session do
   Handoff (M5): every `Handoff.Notice` event is forwarded verbatim (`{:handoff, map}`).
   From `:begin` input is held: it gets no ack (one warning notice per handoff), so the
   client keeps it unacked (at-least-once: resent first to its next session, in the new
-  VM). `:aborted` runs the held input in order, acking each. The in-VM local client stops
+  VM). `:aborted` runs the held input in order, acking each. Holding starts as soon as
+  the Link publishes `:begin` (before the notice reaches this mailbox), and an input
+  whose fast-path write finds its pane frozen (`:closed`) is held instead of acked.
+  ponytail: a slow-path write (through `App.Store`) racing the freeze is still acked
+  and lost; route Store writes' results back if that window matters. The in-VM local client stops
   on `:begin`: keystrokes it already read between `:begin` and its stop are dropped (a
   small window); unread ones stay in the host tty's input queue for the next client.
   """
@@ -114,20 +118,15 @@ defmodule HerdrServer.Client.Session do
     {:noreply, %{state | held: [msg | held]}}
   end
 
-  def handle_info({:input, from, seq, ev} = msg, state) do
+  def handle_info({:input, _, _, _} = msg, state) do
     state = Map.merge(%State{}, state)
 
-    state =
-      case Protocol.validate_client_msg(msg) do
-        :ok ->
-          input(state, ev, from)
-
-        {:error, why} ->
-          notice(state, %{level: :warning, text: "input rejected: " <> why})
-      end
-
-    if is_pid(from), do: send(from, {:ack, seq})
-    {:noreply, state}
+    if :persistent_term.get(Protocol.handoff_key(), nil) == :begin do
+      # the panes may be freezing already: hold, as after the :begin notice
+      handle_info(msg, %{state | held: []})
+    else
+      unheld(msg, state)
+    end
   end
 
   def handle_info({:handoff, %{phase: phase}} = event, state) do
@@ -251,6 +250,28 @@ defmodule HerdrServer.Client.Session do
     :exit, _ -> state
   end
 
+  defp unheld({:input, from, seq, ev} = msg, state) do
+    state =
+      case Protocol.validate_client_msg(msg) do
+        :ok ->
+          input(state, ev, from)
+
+        {:error, why} ->
+          notice(state, %{level: :warning, text: "input rejected: " <> why})
+      end
+
+    case state.held do
+      # the write found the pane frozen: the handoff has begun, keep the input
+      [] ->
+        send(state.client, {:notice, %{level: :warning, text: "input held during handoff"}})
+        {:noreply, %{state | held: [msg]}}
+
+      _ ->
+        if is_pid(from), do: send(from, {:ack, seq})
+        {:noreply, state}
+    end
+  end
+
   # --- input ---
 
   # presentation fields can only change on input: mirror them then
@@ -285,11 +306,28 @@ defmodule HerdrServer.Client.Session do
   end
 
   defp keyed(state, old_mode, result, from) do
-    case result do
-      {:forward, ev} -> if not fast_path(ev), do: Store.event(ev, driving_size(state))
-      {:run, mfa} -> Store.run(mfa, driving_size(state))
-      _consumed -> :ok
-    end
+    state =
+      case result do
+        {:forward, ev} ->
+          case fast_path(ev) do
+            true ->
+              state
+
+            false ->
+              Store.event(ev, driving_size(state))
+              state
+
+            :closed ->
+              %{state | held: []}
+          end
+
+        {:run, mfa} ->
+          Store.run(mfa, driving_size(state))
+          state
+
+        _consumed ->
+          state
+      end
 
     if state.mode == old_mode do
       state
@@ -312,9 +350,10 @@ defmodule HerdrServer.Client.Session do
                Guard.run_twice(Keybinds, :normalize, [k, m], server: Store.reload_server()),
              false <- MapSet.member?(i, key),
              # ponytail: a write that writes then raises is re-sent after a rollback
-             {:ok, :ok} <-
-               Guard.run_twice(mod, f, [ev | a], scan: false, server: Store.reload_server()),
-             do: true,
+             do:
+               fast_write(
+                 Guard.run_twice(mod, f, [ev | a], scan: false, server: Store.reload_server())
+               ),
              else: (_ -> false)
 
       _ ->
@@ -323,6 +362,13 @@ defmodule HerdrServer.Client.Session do
   end
 
   defp fast_path(_ev), do: false
+
+  defp fast_write({:ok, :ok}), do: true
+  # frozen for a handoff: the caller holds the input unacked
+  defp fast_write({:ok, {:error, :closed}}), do: :closed
+  # another write error dropped the input already (as before)
+  defp fast_write({:ok, {:error, _}}), do: true
+  defp fast_write(_failed), do: false
 
   defp resized(state) do
     :ok = Store.event({:resize, driving_size(state)}, driving_size(state))

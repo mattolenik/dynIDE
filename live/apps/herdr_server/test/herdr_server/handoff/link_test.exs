@@ -262,6 +262,109 @@ defmodule HerdrServer.Handoff.LinkTest do
     stop(pid)
   end
 
+  defmodule SlowCtl do
+    alias HerdrServer.Handoff.Ctl
+    def handle({:sleep, ms}), do: Process.sleep(ms) && :slept
+    def handle(req), do: Ctl.handle(req)
+  end
+
+  # frames other than UPDATE (every pane's final state) until PREPARED
+  defp until_prepared(peer, acc \\ []) do
+    case frame(peer) do
+      {0x03, _} -> until_prepared(peer, acc)
+      {0x06, _} = f -> Enum.reverse([f | acc])
+      f -> until_prepared(peer, [f | acc])
+    end
+  end
+
+  defp next_reply(peer) do
+    case frame(peer) do
+      {0x07, <<ref::64, reply::binary>>} -> {ref, :erlang.binary_to_term(reply)}
+      _ -> next_reply(peer)
+    end
+  end
+
+  test "prepare lets running ctl requests finish; later ones wait for thaw" do
+    Application.put_env(:herdr_server, HerdrServer.Handoff, snapshot_ms: 1000, ctl: SlowCtl)
+    on_exit(fn -> Application.put_env(:herdr_server, HerdrServer.Handoff, snapshot_ms: 1000) end)
+    on_exit(fn -> :persistent_term.erase(HerdrScene.Protocol.handoff_key()) end)
+    {pid, peer} = start_link_with(<<2::32, 0x41, 0>>)
+    assert Link.restored() == :ok
+
+    request(peer, 1, {:sleep, 400})
+    Process.sleep(50)
+    :ok = :gen_tcp.send(peer, <<2::32, 0x44, 0>>)
+    request(peer, 2, :ping)
+
+    # the running request answers before PREPARED, the later one not before THAW
+    assert [{0x07, <<1::64, r1::binary>>}, {0x06, ""}] = until_prepared(peer)
+    assert :erlang.binary_to_term(r1) == :slept
+    assert {:error, :timeout} = :gen_tcp.recv(peer, 1, 300)
+
+    :ok = :gen_tcp.send(peer, <<2::32, 0x46, 0>>)
+    assert next_reply(peer) == {2, :pong}
+    stop(pid)
+  end
+
+  # Runs `fun` in a task while collecting every frame the peer gets, until it returns.
+  defp during(peer, fun), do: collect(peer, Task.async(fun), [])
+
+  defp collect(peer, t, acc) do
+    case :gen_tcp.recv(peer, 6, 100) do
+      {:ok, <<len::32, kind, _>>} ->
+        {:ok, body} = if len > 2, do: :gen_tcp.recv(peer, len - 2, 5000), else: {:ok, ""}
+        collect(peer, t, [{kind, body} | acc])
+
+      {:error, :timeout} ->
+        if Task.yield(t, 0), do: Enum.reverse(acc), else: collect(peer, t, acc)
+    end
+  end
+
+  defp updates(frames, key) do
+    for {0x03, body} <- frames,
+        {^key, blob} <- [NLink.parse_key(body)],
+        {:ok, st} <- [State.decode(blob)],
+        do: st.pending_input
+  end
+
+  test "thaw clears the input held in the broker before writing it back" do
+    path = "/tmp/hh-#{System.unique_integer([:positive])}.sock"
+    {:ok, l} = :gen_tcp.listen(0, ifaddr: {:local, path}, mode: :binary, active: false)
+    {:ok, link} = NLink.connect(path, self())
+    {:ok, peer} = :gen_tcp.accept(l, 5_000)
+    :persistent_term.put({Link, :link}, link)
+
+    on_exit(fn ->
+      :persistent_term.erase({Link, :link})
+      NLink.close(link)
+      :gen_tcp.close(l)
+      File.rm(path)
+    end)
+
+    spec = %{
+      cmd: "/bin/sh",
+      args: ["-c", "stty raw -echo; sleep 30"],
+      env: [],
+      cwd: nil,
+      cols: 80,
+      rows: 24,
+      max_scrollback: 1000,
+      subscriber: nil
+    }
+
+    {:ok, id} = Keeper.open(spec)
+    {:ok, %{pty: pty}} = Keeper.lookup(id)
+    Process.sleep(200)
+    # the child never reads: most of it stays in the writer queue
+    :ok = Pty.write(pty, String.duplicate("a", 65_536))
+    key = "pane/#{id}"
+
+    assert [pending] = updates(during(peer, &Keeper.prepare/0), key)
+    assert pending != ""
+    assert updates(during(peer, &Keeper.thaw/0), key) == [""]
+    :ok = Keeper.close(id)
+  end
+
   defp wait_text(vt, s, deadline \\ System.monotonic_time(:millisecond) + 3000) do
     cond do
       Vt.read_text(vt, :screen) =~ s -> true

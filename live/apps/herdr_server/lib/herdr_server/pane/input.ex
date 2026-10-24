@@ -3,6 +3,8 @@ defmodule HerdrServer.Pane.Input do
   Writes input to a pane: encode with the pane's vt (live modes), write to its pty.
   `key/2` is the fast-path target published by `App.Store` (contract decision 6):
   clients call `apply(Pane.Input, :key, [event, pane_id])`. Unknown panes are a no-op.
+  A failed pty write is logged and dropped; `key/2` still returns `{:error, reason}` so
+  a caller that can keep the input (a frozen pane is `:closed`) does.
 
   Events are `HerdrScene.Event` tuples; the kernel takes the inner map with M1's
   vocabulary (mods `:shift | :ctrl | :alt | :super`, button nil for none), so other
@@ -16,10 +18,10 @@ defmodule HerdrServer.Pane.Input do
 
   @mods [:shift, :ctrl, :alt, :super]
 
-  @spec key(tuple, pos_integer) :: :ok
+  @spec key(tuple, pos_integer) :: :ok | {:error, term}
   def key({:key, k}, id), do: write(id, &Kernel.vt().encode_key(&1, kernel_mods(k)))
 
-  @spec mouse(tuple, pos_integer) :: :ok
+  @spec mouse(tuple, pos_integer) :: :ok | {:error, term}
   def mouse({:mouse, m}, id) do
     m = kernel_mods(%{m | button: if(m.button == :none, do: nil, else: m.button)})
     write(id, &Kernel.vt().encode_mouse(&1, m))
@@ -67,7 +69,7 @@ defmodule HerdrServer.Pane.Input do
     end
   end
 
-  @spec focus(boolean, pos_integer) :: :ok
+  @spec focus(boolean, pos_integer) :: :ok | {:error, term}
   def focus(focused?, id), do: write(id, &Kernel.vt().encode_focus(&1, focused?))
 
   defp write(id, encode) do
@@ -75,11 +77,12 @@ defmodule HerdrServer.Pane.Input do
          {:ok, %{vt: vt, pty: pty}} <- Kernel.keeper().lookup(kid),
          bytes when is_binary(bytes) and bytes != "" <- encode(id, encode, vt),
          # ponytail: {:error, :backpressure} drops the input; queue in Pane.Server if it shows up
-         {:error, reason} <- Kernel.pty().write(pty, bytes) do
+         {:error, reason} = err <- Kernel.pty().write(pty, bytes) do
       warn(id, reason)
+      err
+    else
+      _ -> :ok
     end
-
-    :ok
   end
 
   defp encode(id, encode, vt) do

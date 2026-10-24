@@ -6,6 +6,10 @@ defmodule HerdrServer.Native.Keeper do
   A bad spec or a raising NIF returns an error instead of crashing the Keeper:
   a crash would lose the table and SIGHUP every pane.
 
+  From `prepare/0` until `thaw/0` the Keeper is frozen: `open/1` and `close/1` return
+  `{:error, :handoff}` and change nothing (the broker's entries already describe the
+  final state).
+
   Handoff (`HerdrServer.Handoff`): `init` adopts the panes a previous VM left with the
   broker, `open` hands the broker a dup of each new master before replying, and
   `prepare/0`, `thaw/0`, `release/0` run the old VM's side of a graceful restart.
@@ -22,9 +26,11 @@ defmodule HerdrServer.Native.Keeper do
   @keys [:cmd, :args, :env, :cwd, :cols, :rows, :max_scrollback, :subscriber]
 
   # closing: id => pty, kept after `close/1` until the SIGKILL escalation.
-  # pending: id => input taken by `prepare/0`, written back by `thaw/0`.
+  # pending: id => {input taken by `prepare/0`, the final state sent with it}, written
+  #   back by `thaw/0`.
   # carried: id => input an adopted pane brought along, written by `write_carried/0`.
-  defstruct next_id: 1, closing: %{}, pending: %{}, carried: %{}
+  # frozen: between `prepare/0` and `thaw/0`.
+  defstruct next_id: 1, closing: %{}, pending: %{}, carried: %{}, frozen: false
 
   @type id :: pos_integer
   @typedoc "`max_scrollback` is in bytes (e.g. 10_000_000); cols and rows are in 1..65535."
@@ -45,7 +51,8 @@ defmodule HerdrServer.Native.Keeper do
   Creates the vt and pty for `spec` and returns the new pane id.
   `{:error, {:invalid_spec, key}}` for a missing or ill-typed key,
   `{:error, Pty.spawn_error()}` when the spawn fails, `{:error, {:raise, message}}`
-  when a NIF raises.
+  when a NIF raises (a pane already started is closed again), `{:error, :handoff}`
+  while frozen.
   """
   @spec open(spec) :: {:ok, id} | {:error, term}
   def open(spec) do
@@ -66,8 +73,9 @@ defmodule HerdrServer.Native.Keeper do
   @doc """
   Sends SIGHUP and removes the pane from the table; SIGKILL follows after 2 s
   (a no-op if the child was already reaped). The exit event still follows.
+  `{:error, :handoff}` while frozen.
   """
-  @spec close(id) :: :ok
+  @spec close(id) :: :ok | {:error, :handoff}
   def close(id), do: GenServer.call(__MODULE__, {:close, id})
 
   @spec ids() :: [id]
@@ -110,33 +118,21 @@ defmodule HerdrServer.Native.Keeper do
   @impl true
   def handle_call({:open, spec}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    id = state.next_id
-
-    with :ok <- check(spec), :ok <- start(id, spec) do
-      # before replying (ruling 3): a kill -9 after open returns cannot lose the pane
-      if Link.enabled?() do
-        {:ok, row} = lookup(id)
-        Link.hold(key(id), State.encode(State.build(id, row, vt: false)), [row.pty])
-      end
-
-      {:reply, {:ok, id}, %{state | next_id: id + 1}}
-    else
-      {:error, _} = err -> {:reply, err, state}
-    end
+    if state.frozen, do: {:reply, {:error, :handoff}, state}, else: open_pane(spec, state)
   end
 
   def handle_call({:close, id}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
 
-    case lookup(id) do
-      {:ok, %{pty: pty}} ->
-        Pty.kill(pty, :hup)
-        :ets.delete(@table, id)
-        Link.drop(key(id))
-        Process.send_after(self(), {:escalate, id}, @escalate_ms)
-        {:reply, :ok, %{state | closing: Map.put(state.closing, id, pty)}}
+    cond do
+      state.frozen ->
+        {:reply, {:error, :handoff}, state}
 
-      :error ->
+      match?({:ok, _}, lookup(id)) ->
+        Link.drop(key(id))
+        {:reply, :ok, retire(id, state)}
+
+      true ->
         {:reply, :ok, state}
     end
   end
@@ -163,32 +159,40 @@ defmodule HerdrServer.Native.Keeper do
       Map.new(rows(), fn {id, row} ->
         Pty.freeze(row.pty)
         pending = Pty.take_pending(row.pty)
-        final_update(id, row, pending)
-        {id, pending}
+        {id, {pending, final_update(id, row, pending)}}
       end)
 
-    {:reply, :ok, %{state | pending: pending}}
+    {:reply, :ok, %{state | pending: pending, frozen: true}}
   end
 
   def handle_call(:thaw, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
 
     for {id, row} <- rows() do
-      Pty.thaw(row.pty)
+      case Map.get(state.pending, id) do
+        {bytes, st} when bytes != "" ->
+          # The broker's blob still carries `bytes`: clear it before they reach the
+          # child, or a crash after this thaw would replay them in the next VM.
+          Link.update(key(id), State.encode(%{st | pending_input: ""}))
+          thaw_pty(id, row.pty)
+          write_pending(id, row.pty, bytes)
 
-      case Map.get(state.pending, id, "") do
-        "" -> :ok
-        bytes -> write_pending(id, row.pty, bytes)
+        _ ->
+          thaw_pty(id, row.pty)
       end
     end
 
     :ok = Snapshotter.resume()
-    {:reply, :ok, %{state | pending: %{}}}
+    {:reply, :ok, %{state | pending: %{}, frozen: false}}
   end
 
   def handle_call(:release, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    for {_id, row} <- rows(), do: Pty.release(row.pty)
+
+    for {id, row} <- rows(),
+        {:error, reason} <- [Pty.release(row.pty)],
+        do: Logger.warning("handoff: release of pane #{id} failed: #{inspect(reason)}")
+
     {:reply, :ok, state}
   end
 
@@ -205,13 +209,64 @@ defmodule HerdrServer.Native.Keeper do
   defp key(id), do: "pane/#{id}"
   defp rows, do: :ets.tab2list(@table)
 
+  defp open_pane(spec, state) do
+    id = state.next_id
+
+    with :ok <- check(spec), :ok <- start(id, spec), :ok <- hold(id) do
+      {:reply, {:ok, id}, %{state | next_id: id + 1}}
+    else
+      # started, but the broker never got it: close it again (the id stays used)
+      {:error, {:hold, msg}} ->
+        {:reply, {:error, {:raise, msg}}, retire(id, %{state | next_id: id + 1})}
+
+      {:error, _} = err ->
+        {:reply, err, state}
+    end
+  end
+
+  # Before `open` replies (ruling 3): a kill -9 after open returns cannot lose the pane.
+  defp hold(id) do
+    with true <- Link.enabled?(),
+         {:ok, row} <- lookup(id),
+         do: Link.hold(key(id), State.encode(State.build(id, row, vt: false)), [row.pty])
+
+    :ok
+  rescue
+    # same narrow rescue as `start/2`: a raising NIF must not take the table down
+    e in [ArgumentError, ErlangError] -> {:error, {:hold, Exception.message(e)}}
+  end
+
+  # SIGHUP now, SIGKILL after @escalate_ms; the row leaves the table.
+  defp retire(id, state) do
+    case lookup(id) do
+      {:ok, %{pty: pty}} ->
+        Pty.kill(pty, :hup)
+        :ets.delete(@table, id)
+        Process.send_after(self(), {:escalate, id}, @escalate_ms)
+        %{state | closing: Map.put(state.closing, id, pty)}
+
+      :error ->
+        state
+    end
+  end
+
+  defp thaw_pty(id, pty) do
+    with {:error, reason} <- Pty.thaw(pty),
+         do: Logger.warning("handoff: thaw of pane #{id} failed: #{inspect(reason)}")
+  end
+
+  # Sends and returns the final state of pane `id`.
   defp final_update(id, row, pending) do
-    Link.update(key(id), State.encode(State.build(id, row, pending_input: pending)))
+    st = State.build(id, row, pending_input: pending)
+    Link.update(key(id), State.encode(st))
+    st
   rescue
     # ghostty refused the snapshot: the screen is lost, the input must not be
     e in ErlangError ->
       Logger.warning("handoff: final screen of pane #{id} lost: #{Exception.message(e)}")
-      Link.update(key(id), State.encode(State.build(id, row, vt: false, pending_input: pending)))
+      st = State.build(id, row, vt: false, pending_input: pending)
+      Link.update(key(id), State.encode(st))
+      st
   end
 
   defp write_pending(id, pty, bytes) do
@@ -239,7 +294,10 @@ defmodule HerdrServer.Native.Keeper do
   defp adopt_one(id, st, fd, reason) do
     vt = restore_vt(id, st)
 
-    with {:ok, pty} <- Pty.adopt(vt, id, fd, st.os_pid, st.exited != nil, st.title, st.pwd) do
+    exited = st.exited != nil
+    start = Map.get(st, :start_time)
+
+    with {:ok, pty} <- Pty.adopt(vt, id, fd, st.os_pid, exited, st.title, st.pwd, start) do
       :ets.insert(
         @table,
         {id, %{vt: vt, pty: pty, os_pid: st.os_pid, max_scrollback: st.max_scrollback}}

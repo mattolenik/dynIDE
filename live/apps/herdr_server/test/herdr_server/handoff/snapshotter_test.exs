@@ -73,6 +73,29 @@ defmodule HerdrServer.Handoff.SnapshotterTest do
     Keeper.close(id)
   end
 
+  test "resume resends every pane (an aborted handoff left final states behind)", %{peer: peer} do
+    spec = %{
+      cmd: "/bin/sh",
+      args: [],
+      env: [{"PS1", "$ "}, {"ENV", ""}],
+      cwd: nil,
+      cols: 80,
+      rows: 24,
+      max_scrollback: 1000,
+      subscriber: nil
+    }
+
+    {:ok, id} = Keeper.open(spec)
+    key = "pane/#{id}"
+    Process.sleep(200)
+    assert Map.has_key?(tick(peer), key)
+    refute Map.has_key?(tick(peer), key)
+    :ok = Snapshotter.pause()
+    :ok = Snapshotter.resume()
+    assert Map.has_key?(tick(peer), key)
+    Keeper.close(id)
+  end
+
   defp wait_text(vt, s, deadline \\ System.monotonic_time(:millisecond) + 3000) do
     cond do
       Vt.read_text(vt, :screen) =~ s -> true
