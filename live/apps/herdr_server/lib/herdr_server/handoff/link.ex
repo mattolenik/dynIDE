@@ -134,7 +134,11 @@ defmodule HerdrServer.Handoff.Link do
     gen = "HERDR_LIVE_GEN" |> System.get_env("0") |> String.to_integer()
     os_pid = String.to_integer(System.pid())
     {us, n} = :timer.tc(&preload/0)
-    Logger.info("handoff link gen=#{gen} preloaded #{n} modules in #{div(us, 1000)} ms")
+    {up, _} = :erlang.statistics(:wall_clock)
+
+    Logger.info(
+      "handoff link gen=#{gen} preloaded #{n} modules in #{div(us, 1000)} ms (vm up #{up} ms)"
+    )
 
     with {:ok, l} <- NLink.connect(path, self()),
          :ok <- NLink.send(l, NLink.kind(:hello), <<gen::64, os_pid::32>>, []) do

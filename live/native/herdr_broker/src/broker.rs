@@ -789,7 +789,10 @@ impl<S: Spawner> Broker<S> {
             res = fp::send_frame(c.sock.as_fd(), kind::ADOPT_END, &b, &[]);
         }
         match res {
-            Ok(()) => Some(n),
+            Ok(()) => {
+                log!("adopt sent to gen={to} entries={n}");
+                Some(n)
+            }
             Err(e) => {
                 log!("adopt send to gen={to}: {e}");
                 self.closing.push(t);
@@ -1047,6 +1050,7 @@ impl<S: Spawner> Broker<S> {
         if !v.alive {
             return;
         }
+        log!("vm gen={gen} link closed");
         if primary && !v.released && !stopping {
             // A quitting VM closes its link long before it exits: let the exit
             // status decide (reap), or exit_grace lapse into the crash path.

@@ -86,7 +86,8 @@ defmodule HandoffDriver do
 
     case {r, stop_broker(b), outlived(vm_pids(b) ++ panes)} do
       {r, st, []} ->
-        if st == 0, do: File.rm_rf(b.root)
+        keep(b)
+        if st == 0 and not keep?(), do: File.rm_rf(b.root)
         {r, st}
 
       {r, _st, left} ->
@@ -94,6 +95,80 @@ defmodule HandoffDriver do
         {r, {:outlived, left}}
     end
   end
+
+  # ---- evidence (HERDR_BENCH_KEEP=1) ----
+
+  @doc "HERDR_BENCH_KEEP=1: keep the run dir and copy its log to HERDR_BENCH_KEEP_DIR."
+  def keep?, do: System.get_env("HERDR_BENCH_KEEP") == "1"
+
+  defp keep(b) do
+    with true <- keep?(), dir when is_binary(dir) <- System.get_env("HERDR_BENCH_KEEP_DIR") do
+      File.mkdir_p!(dir)
+      dest = Path.join(dir, "#{Path.basename(b.root)}-herdr-live.log")
+      File.cp!(b.log, dest)
+      IO.puts("KEEP log=#{dest}")
+    else
+      _ -> keep?() && IO.puts("KEEP log=#{b.log}")
+    end
+  end
+
+  @doc "Log size now: pass to `phases/3` to read only what a run logged."
+  def log_mark(b), do: (File.stat(b.log) |> elem(1)).size
+
+  @doc "Wall clock now as ms of the UTC day (the broker log's clock)."
+  def day_ms, do: rem(System.os_time(:millisecond), 86_400_000)
+
+  @doc """
+  The handoff steps logged since `mark`, as `[{step, ms_since_kill, text}]`. Broker
+  lines carry UTC `HH:MM:SS.mmm`; VM Logger lines carry local time, so those are
+  aligned modulo one hour (whole-hour zone offsets).
+  """
+  def phases(b, mark, kill_ms) do
+    all = File.read!(b.log)
+    text = binary_part(all, mark, byte_size(all) - mark)
+
+    for line <- String.split(text, "\n"),
+        [_, h, m, sec, ms, rest] <- [Regex.run(~r/(\d\d):(\d\d):(\d\d)\.(\d{3}) (.*)$/, line)],
+        step = step(rest),
+        step != nil do
+      t =
+        ((String.to_integer(h) * 60 + String.to_integer(m)) * 60 + String.to_integer(sec)) * 1000 +
+          String.to_integer(ms)
+
+      d =
+        if String.starts_with?(rest, "herdr-broker:"),
+          do: wrap(t - kill_ms, 86_400_000),
+          else: wrap(rem(t, 3_600_000) - rem(kill_ms, 3_600_000), 3_600_000)
+
+      {step, d, String.trim(rest)}
+    end
+  end
+
+  defp wrap(d, m) when d > div(m, 2), do: d - m
+  defp wrap(d, m) when d < -div(m, 2), do: d + m
+  defp wrap(d, _), do: d
+
+  @steps [
+    {"role=standby", :standby},
+    {"link closed", :eof},
+    {"died status", :died},
+    {"started vm", :spawn},
+    {"preloaded", :preloaded},
+    {"adopt sent", :adopt},
+    {"crash entries", :link_up},
+    {"handoff failed", :failed},
+    {"handoff crash", :restored},
+    {"is primary", :primary},
+    {"herdr-live started", :started}
+  ]
+
+  defp step(rest) do
+    Enum.find_value(@steps, fn {needle, step} -> String.contains?(rest, needle) && step end)
+  end
+
+  @doc "One line: `step=ms` in log order (first of each step)."
+  def phase_line(ph),
+    do: ph |> Enum.uniq_by(&elem(&1, 0)) |> Enum.map_join(" ", fn {s, d, _} -> "#{s}=#{d}" end)
 
   # every pane child still known to the primary
   defp pane_pids(b) do

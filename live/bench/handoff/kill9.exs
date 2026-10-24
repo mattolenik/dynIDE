@@ -74,6 +74,8 @@ bench = fn b ->
 
   kill = fn ->
     s0 = D.status(sc)
+    mark = D.log_mark(b)
+    kill_ms = D.day_ms()
     t0 = D.now()
     System.cmd("kill", ["-KILL", s0["primary_pid"]])
 
@@ -87,7 +89,7 @@ bench = fn b ->
         2
       )
 
-    {round(D.now() - t0), s0, s1}
+    {round(D.now() - t0), s0, Map.put(s1, :phases, {mark, kill_ms})}
   end
 
   line = fn run, wall, s0, s1, {alive, answered, scrollback, htop_ok}, extra ->
@@ -97,6 +99,13 @@ bench = fn b ->
         "scrollback=#{scrollback}/#{length(seq_ids)} htop=#{htop_ok}/#{length(htop_ids)} " <>
         "standby_ready=#{s0["standby_ready"]} kind=#{s1["last_handoff_kind"]}#{extra}"
     )
+
+    if D.keep?() do
+      {mark, kill_ms} = s1.phases
+      ph = D.phases(b, mark, kill_ms)
+      IO.puts("KILL9 phases run=#{run} #{D.phase_line(ph)}")
+      if wall > 300, do: for({_, d, t} <- ph, do: IO.puts("KILL9 slow run=#{run} +#{d} #{t}"))
+    end
 
     alive
   end
