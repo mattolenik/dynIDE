@@ -12,10 +12,16 @@ defmodule HerdrServer.Application do
     reload = Application.get_env(:herdr_server, HerdrServer.Reload, [])
     reload_children = if reload[:enabled], do: [HerdrServer.Reload.Supervisor], else: []
 
+    :ok = HerdrServer.Kernel.load()
+    keeper = HerdrServer.Kernel.keeper()
+    # a configured fake keeper runs beside the real one (M1's own tests need Native.Keeper)
+    fake_keeper = if keeper == HerdrServer.Native.Keeper, do: [], else: [keeper]
+
     # Order follows design.md "Supervision trees": Keeper, Reload, then the app.
     children =
-      [HerdrServer.Kernel.keeper()] ++
+      [HerdrServer.Native.Keeper] ++
         reload_children ++
+        fake_keeper ++
         [
           HerdrServer.Pane.Rows,
           {Registry, keys: :duplicate, name: HerdrServer.Client.Registry},

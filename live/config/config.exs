@@ -22,19 +22,24 @@ config :herdr_server, HerdrServer.Reload,
   enabled: config_env() == :dev,
   scan_local_funs: config_env() != :prod
 
-# Kernel modules used by herdr_server (see HerdrServer.Kernel). The in-memory
-# fakes are the test double and the default until the Rust NIFs land. To use
-# the real kernel, point these at the NIF-backed modules implementing the
-# HerdrServer.Kernel.{Vt,Pty,Keeper} behaviours, e.g. in config/prod.exs:
-#
-#     config :herdr_server, :kernel, vt: HerdrServer.Native.Vt, ...
-#
-# These are read with Application.compile_env, so recompile herdr_server after
-# changing them.
-config :herdr_server, :kernel,
-  vt: HerdrServer.Kernel.Fake.Vt,
-  pty: HerdrServer.Kernel.Fake.Pty,
-  keeper: HerdrServer.Kernel.Fake.Keeper
+# Kernel modules used by herdr_server (see HerdrServer.Kernel): M1's NIF-backed
+# HerdrServer.Native.* in dev and prod, the in-memory fakes (the test double) in
+# test. Read once when herdr_server starts; restart the app after changing them.
+# HerdrServer.Native.Keeper always runs (first child); a fake keeper runs beside it.
+config :herdr_server,
+       :kernel,
+       if(config_env() == :test,
+         do: [
+           vt: HerdrServer.Kernel.Fake.Vt,
+           pty: HerdrServer.Kernel.Fake.Pty,
+           keeper: HerdrServer.Kernel.Fake.Keeper
+         ],
+         else: [
+           vt: HerdrServer.Native.Vt,
+           pty: HerdrServer.Native.Pty,
+           keeper: HerdrServer.Native.Keeper
+         ]
+       )
 
 # Host-terminal modules used by herdr_term (see HerdrTerm.Kernel). The
 # in-memory fakes are the test double and the default until the Rust NIFs
