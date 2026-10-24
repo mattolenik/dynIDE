@@ -1,7 +1,7 @@
 # herdr-live recipes (imported from the root justfile)
 
 live_dir := source_directory()
-live_crates := "herdr_kernel herdr_term"
+live_crates := "herdr_fdpass herdr_kernel herdr_term"
 
 # Elixir and Rust tests
 live-test:
