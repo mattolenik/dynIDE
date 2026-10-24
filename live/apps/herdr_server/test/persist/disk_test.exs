@@ -42,8 +42,19 @@ defmodule HerdrServer.Persist.DiskTest do
     assert File.stat!(cfg.dir).mode |> Bitwise.band(0o777) == 0o700
     assert File.ls!(cfg.dir) == ["session.t.etf"]
 
-    assert {:ok, %{format: :herdr_live_session, v: 1, snapshot: _}} =
+    v = Schema.version()
+
+    assert {:ok, %{format: :herdr_live_session, v: ^v, snapshot: _}} =
              {:ok, path |> File.read!() |> :erlang.binary_to_term()}
+  end
+
+  test "every envelope version up to the current one is read", %{cfg: cfg, path: path} do
+    File.mkdir_p!(cfg.dir)
+
+    for v <- 1..Schema.version() do
+      File.write!(path, envelope(%{v: v}))
+      assert {:ok, _, 1} = Disk.read(cfg)
+    end
   end
 
   test "a snapshot holding a fun is refused and nothing is written", %{cfg: cfg} do

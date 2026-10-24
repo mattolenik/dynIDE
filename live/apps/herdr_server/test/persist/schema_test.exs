@@ -2,7 +2,7 @@ defmodule HerdrServer.Persist.SchemaTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias HerdrServer.App.{Actions, Keybinds}
+  alias HerdrServer.App.{Actions, Keybinds, Session, Ui}
   alias HerdrServer.Persist.Schema
 
   defp fresh, do: elem(Actions.init(%{cols: 80, rows: 24}), 0)
@@ -21,12 +21,12 @@ defmodule HerdrServer.Persist.SchemaTest do
   end
 
   describe "capture/2" do
-    test "an initial app has exactly the v1 shape" do
-      assert Schema.version() == 1
+    test "an initial app has exactly the v2 shape" do
+      assert Schema.version() == 2
 
       assert Schema.capture(fresh(), %{1 => %{cwd: "/tmp", command: ["/bin/zsh"], hidden: true}}) ==
                %{
-                 v: 1,
+                 v: 2,
                  session: %{
                    workspaces: [
                      %{
@@ -44,10 +44,11 @@ defmodule HerdrServer.Persist.SchemaTest do
                    ],
                    active_workspace: 1,
                    next_id: 2,
+                   size: %{cols: 80, rows: 24},
                    area: %{x: 0, y: 0, w: 80, h: 23}
                  },
                  focus: %{pane: 1},
-                 ui: %{status: %{show_hints: true}, theme: :default},
+                 ui: Map.delete(Map.from_struct(%Ui{}), :keybinds),
                  panes: %{1 => %{title: nil, cwd: "/tmp", command: ["/bin/zsh"], hidden: true}}
                }
     end
@@ -94,8 +95,51 @@ defmodule HerdrServer.Persist.SchemaTest do
       s = %{s | ui: %{foo: 1, status: %{show_hints: false}}}
       assert {:ok, a2, _} = Schema.restore(s)
       assert a2.ui.status == %{show_hints: false}
-      assert a2.ui.theme == :default
+      assert a2.ui.theme == %Ui{}.theme
       refute Map.has_key?(a2.ui, :foo)
+    end
+
+    test "an app with every Ui default is a fixed point and keeps each field" do
+      app = %{fresh() | ui: %Ui{keybinds: Keybinds.default()}}
+      app = put_in(app.session.size, %{cols: 120, rows: 40})
+      s = Schema.capture(app, %{})
+      assert {:ok, a2, f2} = Schema.restore(s)
+      assert Schema.capture(a2, f2) == s
+      assert a2.session.size == %{cols: 120, rows: 40}
+
+      # every Ui default is plain: none is filtered out of the snapshot
+      for k <- [
+            :sidebar,
+            :tab_bar,
+            :theme,
+            :indicators,
+            :confirm_close,
+            :onboarding,
+            :toast,
+            :sound,
+            :prompt_new_tab_name
+          ] do
+        assert Map.has_key?(s.ui, k), "#{k} not captured"
+        assert Map.fetch!(a2.ui, k) == Map.fetch!(%Ui{}, k)
+      end
+
+      assert is_map(a2.ui.theme)
+      assert a2.ui == app.ui
+    end
+
+    test "a v1 snapshot migrates to v2 with the default session size" do
+      s = Schema.capture(three(), %{})
+      v1 = %{s | v: 1, session: Map.delete(s.session, :size)}
+      assert {:ok, a2, _} = Schema.restore(v1)
+      assert a2.session.size == %Session{}.size
+      assert Schema.capture(a2, %{}) == s
+    end
+
+    test "a bad session size is invalid" do
+      s = Schema.capture(fresh(), %{})
+
+      assert {:error, {:invalid, :size}} =
+               Schema.restore(put_in(s.session.size, %{cols: 0, rows: 1}))
     end
 
     test "plain ui values of any shape round-trip" do
@@ -239,7 +283,7 @@ defmodule HerdrServer.Persist.SchemaTest do
     end
 
     test "a newer snapshot is refused" do
-      assert {:error, {:newer, 2}} = Schema.restore(%{Schema.capture(fresh(), %{}) | v: 2})
+      assert {:error, {:newer, 3}} = Schema.restore(%{Schema.capture(fresh(), %{}) | v: 3})
     end
   end
 
@@ -258,7 +302,7 @@ defmodule HerdrServer.Persist.SchemaTest do
     def up(%{v: 0} = m), do: m |> Map.delete(:old) |> Map.put(:v, 1)
 
     test "a newer version is refused" do
-      assert Schema.migrate(%{v: 2}) == {:error, {:newer, 2}}
+      assert Schema.migrate(%{v: 3}) == {:error, {:newer, 3}}
     end
 
     test "a non-integer or missing version is unknown" do
@@ -271,12 +315,12 @@ defmodule HerdrServer.Persist.SchemaTest do
     end
 
     test "the current version is unchanged" do
-      assert Schema.migrate(%{v: 1, x: 2}) == {:ok, %{v: 1, x: 2}}
+      assert Schema.migrate(%{v: 2, x: 2}) == {:ok, %{v: 2, x: 2}}
     end
 
     test "a synthetic chain is applied in order" do
-      chain = %{0 => {__MODULE__, :up}}
-      assert Schema.migrate(%{v: 0, old: true, x: 1}, chain) == {:ok, %{v: 1, x: 1}}
+      chain = %{0 => {__MODULE__, :up}, 1 => :v1_to_v2}
+      assert Schema.migrate(%{v: 0, old: true, x: 1}, chain) == {:ok, %{v: 2, x: 1}}
     end
   end
 
@@ -307,6 +351,8 @@ defmodule HerdrServer.Persist.SchemaTest do
           steps <- list_of(member_of(@steps), max_length: 30)
         ) do
       app = elem(Actions.init(%{cols: cols, rows: rows}), 0)
+      # init leaves the default size; the driving client's size is set by the View
+      app = put_in(app.session.size, %{cols: cols, rows: rows})
       Enum.reduce(steps, app, fn {f, a}, acc -> step(acc, f, a) end)
     end
   end

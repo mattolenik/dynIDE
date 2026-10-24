@@ -4,12 +4,12 @@ defmodule HerdrServer.Persist.Schema do
   runtime facts into a plain, versioned snapshot; `restore/1` migrates, validates and
   rebuilds the app. `restore(capture(app, facts))` captures back to the same snapshot.
 
-  Snapshot (v1):
+  Snapshot (v2):
 
-      %{v: 1,
+      %{v: 2,
         session: %{workspaces: [%{id, name, active_tab,
                                   tabs: [%{id, name, layout: %{root, focus, prev_focus}}]}],
-                   active_workspace, next_id, area: %{x, y, w, h}},
+                   active_workspace, next_id, size: %{cols, rows}, area: %{x, y, w, h}},
         focus: %{pane: id | nil},
         ui: Map.from_struct(ui) without :keybinds, plain values only,
         panes: %{id => %{title, cwd, command, hidden}}}
@@ -22,13 +22,14 @@ defmodule HerdrServer.Persist.Schema do
 
   Migrations: `migrate/2` takes a chain `%{from_v => {module, fun} | fun_atom}` (an atom
   names a function in this module). Each function takes the map at `from_v` and returns
-  it at `from_v + 1`; `:v` is set to `from_v + 1` after each step.
+  it at `from_v + 1`; `:v` is set to `from_v + 1` after each step. Registered: v1 -> v2
+  (`v1_to_v2/1`) adds `session.size` with `App.Session`'s default.
   """
 
   alias HerdrServer.App.Keybinds
 
-  @version 1
-  @migrations %{}
+  @version 2
+  @migrations %{1 => :v1_to_v2}
 
   @session HerdrServer.App.Session
   @focus HerdrServer.App.Focus
@@ -56,6 +57,7 @@ defmodule HerdrServer.Persist.Schema do
         workspaces: Enum.map(s.workspaces, &capture_ws/1),
         active_workspace: s.active_workspace,
         next_id: s.next_id,
+        size: Map.take(s.size, [:cols, :rows]),
         area: Map.take(s.area, [:x, :y, :w, :h])
       },
       focus: %{pane: app.focus.pane},
@@ -122,7 +124,7 @@ defmodule HerdrServer.Persist.Schema do
   defp check(true, _what), do: :ok
   defp check(false, what), do: {:error, {:invalid, what}}
 
-  # Structural check; returns the snapshot reduced to the v1 keys.
+  # Structural check; returns the snapshot reduced to the current keys.
   defp shape(%{session: s, focus: %{pane: fp}, ui: ui, panes: panes} = snap)
        when is_map(s) and is_map(ui) and is_map(panes) do
     with :ok <- check(id_or_nil?(fp), :focus),
@@ -135,12 +137,15 @@ defmodule HerdrServer.Persist.Schema do
 
   defp shape(_snap), do: {:error, {:invalid, :shape}}
 
-  defp shape_session(%{workspaces: wss, active_workspace: aw, next_id: n, area: area} = s)
+  defp shape_session(
+         %{workspaces: wss, active_workspace: aw, next_id: n, size: size, area: area} = s
+       )
        when is_list(wss) and is_integer(n) do
     with :ok <- check(id_or_nil?(aw), :active_workspace),
+         :ok <- check(size?(size), :size),
          :ok <- check(area?(area), :area),
          :ok <- check(Enum.all?(wss, &ws?/1), :workspaces) do
-      {:ok, Map.take(s, [:workspaces, :active_workspace, :next_id, :area])}
+      {:ok, Map.take(s, [:workspaces, :active_workspace, :next_id, :size, :area])}
     end
   end
 
@@ -174,6 +179,9 @@ defmodule HerdrServer.Persist.Schema do
     do: Enum.all?([x, y], &(is_integer(&1) and &1 >= 0)) and id?(w) and id?(h)
 
   defp area?(_), do: false
+
+  defp size?(%{cols: c, rows: r}), do: id?(c) and id?(r)
+  defp size?(_), do: false
 
   defp id?(id), do: is_integer(id) and id > 0
   defp id_or_nil?(id), do: is_nil(id) or id?(id)
@@ -232,6 +240,7 @@ defmodule HerdrServer.Persist.Schema do
         active_workspace: s.active_workspace,
         panes: Map.new(panes, fn {id, p} -> {id, %{title: p.title, layout_gen: 0}} end),
         next_id: max(s.next_id, max_id + 1),
+        size: Map.take(s.size, [:cols, :rows]),
         area: s.area
       )
 
@@ -279,6 +288,14 @@ defmodule HerdrServer.Persist.Schema do
 
   def migrate(map, _migrations) when is_map(map),
     do: {:error, {:unknown_version, Map.get(map, :v)}}
+
+  @doc false
+  # v1 had no session size: App.Session's default (read at runtime, no struct literal)
+  @spec v1_to_v2(map()) :: map()
+  def v1_to_v2(%{session: %{} = s} = map),
+    do: %{map | session: Map.put_new(s, :size, struct(@session).size)}
+
+  def v1_to_v2(map), do: map
 
   defp step(map, v, {m, fun}, migrations) do
     map |> then(&apply(m, fun, [&1])) |> Map.put(:v, v + 1) |> migrate(migrations)
