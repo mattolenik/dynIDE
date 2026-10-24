@@ -5,6 +5,7 @@
 //! `Drop` restores the terminal without waiting and raises `shutdown`; each
 //! detached thread re-checks it at least every `POLL_MS` and drops its `Arc`.
 
+use crate::output::{Flushed, Output, StubEncoder};
 use crate::probe::{self, ProbeState};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -88,6 +89,10 @@ pub struct Inner {
     restored: AtomicBool,
     shutdown: AtomicBool,
     sub: Mutex<Subscription>,
+    pub output: Output,
+    /// Held for each write syscall on `file` (never across a wait), so a
+    /// restore never interleaves with a half-written output item.
+    write_lock: Mutex<()>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -245,15 +250,19 @@ impl Inner {
             restored: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
             sub: Mutex::new(subscription),
+            output: Output::new(),
+            write_lock: Mutex::new(()),
         });
-        let reader = Arc::clone(&inner);
-        let spawned = std::thread::Builder::new()
-            .name("herdr-tty-reader".into())
-            .spawn(move || reader.run_guarded(Inner::read_loop));
-        match spawned {
-            // Detached: the thread holds its own Arc and exits within POLL_MS of shutdown.
-            Ok(_) => {}
-            Err(err) => {
+        // Detached: each thread holds its own Arc and exits within POLL_MS of shutdown.
+        for (name, body) in [
+            ("herdr-tty-reader", Inner::read_loop as fn(&Inner)),
+            ("herdr-tty-output", Inner::output_loop),
+        ] {
+            let thread = Arc::clone(&inner);
+            let spawned = std::thread::Builder::new()
+                .name(name.into())
+                .spawn(move || thread.run_guarded(body));
+            if let Err(err) = spawned {
                 let _ = inner.restore();
                 return Err(err);
             }
@@ -338,6 +347,46 @@ impl Inner {
         }
     }
 
+    fn output_loop(&self) {
+        let mut encoder = StubEncoder;
+        let poll = Duration::from_millis(POLL_MS as u64);
+        self.output
+            .run(&mut encoder, poll, |bytes| self.write_output(bytes));
+    }
+
+    /// Writes all of `bytes`, waiting `POLL_MS` at a time for the host and
+    /// rechecking `shutdown` before every write syscall.
+    fn write_output(&self, mut bytes: &[u8]) -> Flushed {
+        let fd = self.file.as_raw_fd();
+        while !bytes.is_empty() {
+            let result = {
+                let _guard = lock(&self.write_lock);
+                if self.shutdown.load(Ordering::Acquire) {
+                    return Flushed::Failed;
+                }
+                (&self.file).write(bytes)
+            };
+            match result {
+                Ok(0) => return Flushed::Failed,
+                Ok(n) => bytes = &bytes[n..],
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    if poll_fd(fd, libc::POLLOUT, POLL_MS).is_err() {
+                        return Flushed::Failed;
+                    }
+                }
+                Err(_) => return Flushed::Failed,
+            }
+        }
+        Flushed::Done
+    }
+
+    /// Stops both threads and discards queued output.
+    fn stop(&self) {
+        self.shutdown.store(true, Ordering::Release);
+        self.output.close();
+    }
+
     fn hangup(&self) {
         if !self.shutdown.load(Ordering::Acquire) {
             lock(&self.sub).deliver(Event::Hangup);
@@ -372,12 +421,15 @@ impl Inner {
         Ok((ws.ws_col, ws.ws_row, ws.ws_xpixel, ws.ws_ypixel))
     }
 
-    /// Restores the host terminal once; later calls do nothing. Waits up to
-    /// `WRITE_BUDGET` for the host to take the sequence.
+    /// Restores the host terminal once; later calls do nothing. Stops the
+    /// reader and output threads first; later writes and frames are
+    /// discarded. Waits up to `WRITE_BUDGET` for the host to take the
+    /// sequence, which is written directly, not through the output queue.
     pub fn restore(&self) -> io::Result<()> {
         if self.restored.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
+        self.stop();
         self.reset_terminal()
     }
 
@@ -385,17 +437,20 @@ impl Inner {
     /// termios to the saved state. Does not claim `restored`, so suspend can
     /// reuse it.
     pub(crate) fn reset_terminal(&self) -> io::Result<()> {
+        let _guard = lock(&self.write_lock);
         reset(&self.file, &self.saved, self.kitty_pushed, true)
     }
 
-    /// Destructor path, never waits: one non-blocking restore write attempt
-    /// (if not already restored), then signals the threads, which hold their
-    /// own `Arc` and exit within `POLL_MS`.
+    /// Destructor path, never waits: signals the threads (which hold their
+    /// own `Arc` and exit within `POLL_MS`), then makes one non-blocking
+    /// restore write attempt if not already restored.
     fn shutdown(&self) {
+        self.stop();
         if !self.restored.swap(true, Ordering::AcqRel) {
+            // Waits for at most one non-blocking write syscall.
+            let _guard = lock(&self.write_lock);
             let _ = reset(&self.file, &self.saved, self.kitty_pushed, false);
         }
-        self.shutdown.store(true, Ordering::Release);
     }
 }
 
@@ -439,6 +494,7 @@ impl Drop for TtyResource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::{Backpressure, FrameJob, WRITE_QUEUE_BYTES};
     use std::fs::File;
     use std::io::{Read, Write};
     use std::os::fd::{AsRawFd, FromRawFd};
@@ -714,6 +770,139 @@ mod tests {
         let took = start.elapsed();
         assert!(took < Duration::from_millis(20), "drop took {took:?}");
         assert!(same_termios(&termios(&p.slave), &before));
+    }
+
+    fn frame(bytes: &[u8], repaint: bool) -> FrameJob {
+        FrameJob {
+            rows: vec![(0, bytes.to_vec())],
+            repaint,
+            ..FrameJob::default()
+        }
+    }
+
+    /// Fills the host's output queue directly; the master is never read.
+    fn fill(tty: &TtyResource) {
+        let junk = [b'x'; 4096];
+        loop {
+            match (&tty.inner.file).write(&junk) {
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) => panic!("fill: {e}"),
+            }
+        }
+    }
+
+    fn wait_for(mut cond: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if cond() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        cond()
+    }
+
+    #[test]
+    fn blocked_reader_does_not_block_write() {
+        let p = pty();
+        let tty = TtyResource::new(Inner::open_path(&p.path, 0, None).unwrap());
+        let mut refused = 0;
+        for _ in 0..64 {
+            let chunk = vec![b'w'; 64 * 1024];
+            let start = Instant::now();
+            if tty.inner.output.write(chunk) == Err(Backpressure) {
+                refused += 1;
+            }
+            let took = start.elapsed();
+            assert!(took < Duration::from_millis(5), "write took {took:?}");
+            assert!(tty.inner.output.stats().queued_bytes <= WRITE_QUEUE_BYTES);
+        }
+        assert!(refused > 0, "a blocked host must push back");
+    }
+
+    #[test]
+    fn blocked_reader_drops_frames() {
+        let p = pty();
+        let tty = TtyResource::new(Inner::open_path(&p.path, 0, None).unwrap());
+        fill(&tty);
+        for i in 0..1000 {
+            let start = Instant::now();
+            tty.inner
+                .output
+                .submit_frame(frame(format!("<F{i:04}>").as_bytes(), false));
+            let took = start.elapsed();
+            assert!(took < Duration::from_millis(5), "submit took {took:?}");
+        }
+        assert!(tty.inner.output.stats().frames_dropped >= 990);
+        let out = read_until(&p.master, b"<F0999>", Duration::from_secs(5));
+        let tail = read_until(&p.master, b"", Duration::from_millis(200));
+        assert!(contains(&out, b"<F0999>"), "last frame written");
+        assert!(tail.is_empty(), "nothing after the last frame: {tail:?}");
+        assert!(out.ends_with(b"<F0999>"));
+        assert!(wait_for(|| {
+            let st = tty.inner.output.stats();
+            st.frames_written + st.frames_dropped == 1000
+        }));
+    }
+
+    #[test]
+    fn superseded_repaint_is_kept() {
+        let p = pty();
+        let tty = TtyResource::new(Inner::open_path(&p.path, 0, None).unwrap());
+        fill(&tty);
+        tty.inner.output.submit_frame(frame(b"<A>", false));
+        // Let the output thread take <A> so it is in flight, not pending.
+        std::thread::sleep(Duration::from_millis(50));
+        tty.inner.output.submit_frame(frame(b"<B>", true));
+        tty.inner.output.submit_frame(frame(b"<C>", false));
+        let out = read_until(&p.master, b"<C>", Duration::from_secs(5));
+        assert!(
+            out.ends_with(b"<A>\x1b[2J<C>"),
+            "{:?}",
+            &out[out.len().saturating_sub(16)..]
+        );
+        assert_eq!(tty.inner.output.stats().frames_dropped, 1);
+    }
+
+    #[test]
+    fn writes_and_frames_keep_order() {
+        let p = pty();
+        let tty = TtyResource::new(Inner::open_path(&p.path, 0, None).unwrap());
+        read_until(&p.master, b"\x1b[c", Duration::from_secs(1));
+        tty.inner.output.write(b"<A>".to_vec()).unwrap();
+        tty.inner.output.submit_frame(frame(b"<B>", false));
+        tty.inner.output.write(b"<C>".to_vec()).unwrap();
+        let out = read_until(&p.master, b"<C>", Duration::from_secs(2));
+        assert_eq!(out, b"<A><B><C>");
+    }
+
+    #[test]
+    fn drop_with_blocked_reader_returns_quickly() {
+        let p = pty();
+        let before = termios(&p.slave);
+        let tty = TtyResource::new(Inner::open_path(&p.path, 0, None).unwrap());
+        for _ in 0..64 {
+            let _ = tty.inner.output.write(vec![b'w'; 64 * 1024]);
+        }
+        tty.inner.output.submit_frame(frame(b"<F>", true));
+        let start = Instant::now();
+        drop(tty);
+        let took = start.elapsed();
+        assert!(took < Duration::from_millis(500), "drop took {took:?}");
+        assert!(same_termios(&termios(&p.slave), &before));
+    }
+
+    #[test]
+    fn output_after_restore_is_discarded() {
+        let p = pty();
+        let tty = TtyResource::new(Inner::open_path(&p.path, 0, None).unwrap());
+        tty.inner.restore().unwrap();
+        read_until(&p.master, b"\x1b[?1049l", Duration::from_secs(1));
+        assert_eq!(tty.inner.output.write(b"late".to_vec()), Ok(()));
+        tty.inner.output.submit_frame(frame(b"late", false));
+        let out = read_until(&p.master, b"", Duration::from_millis(300));
+        assert!(out.is_empty(), "{out:?}");
     }
 
     #[test]

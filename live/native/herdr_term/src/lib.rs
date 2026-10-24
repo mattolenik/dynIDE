@@ -2,19 +2,22 @@
 //! which is tested without the BEAM.
 
 #[cfg(unix)]
+mod output;
+#[cfg(unix)]
 mod probe;
 #[cfg(unix)]
 mod tty;
 
 #[cfg(unix)]
 mod nif {
+    use crate::output::{OutputStats, WRITE_QUEUE_BYTES};
     use crate::tty::{Event, Inner, Sink, TtyResource};
     use rustler::types::binary::{Binary, OwnedBinary};
     use rustler::{Atom, Encoder, Env, LocalPid, OwnedEnv, ResourceArc, Term};
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
     mod atoms {
-        rustler::atoms! { ok, error, tty_input, exit, tty, hangup, panic }
+        rustler::atoms! { ok, error, tty_input, exit, tty, hangup, panic, backpressure }
     }
 
     impl rustler::Resource for TtyResource {}
@@ -113,6 +116,27 @@ mod nif {
             let _ = env.send(&pid, encode(env, &event));
         });
         atoms::ok()
+    }
+
+    /// Enqueues bytes for the output thread: a copy and a lock, never a wait.
+    /// More than `WRITE_QUEUE_BYTES` at once can never fit and is refused
+    /// before copying. After restore the bytes are discarded and this is `:ok`.
+    #[rustler::nif]
+    fn tty_write<'a>(env: Env<'a>, tty: ResourceArc<TtyResource>, bytes: Binary) -> Term<'a> {
+        let queued = if bytes.len() > WRITE_QUEUE_BYTES {
+            Err(crate::output::Backpressure)
+        } else {
+            tty.inner.output.write(bytes.as_slice().to_vec())
+        };
+        match queued {
+            Ok(()) => atoms::ok().encode(env),
+            Err(_) => (atoms::error(), atoms::backpressure()).encode(env),
+        }
+    }
+
+    #[rustler::nif]
+    fn tty_stats(tty: ResourceArc<TtyResource>) -> OutputStats {
+        tty.inner.output.stats()
     }
 
     #[rustler::nif]

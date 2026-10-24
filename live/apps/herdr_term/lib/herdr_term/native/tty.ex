@@ -53,6 +53,23 @@ defmodule HerdrTerm.Native.Tty do
   @spec subscribe(t(), pid()) :: :ok
   def subscribe(tty, pid), do: Native.tty_subscribe(tty, pid)
 
+  @doc """
+  Queues bytes for the host terminal without waiting for it. Returns
+  `{:error, :backpressure}` (nothing queued) when the 1 MiB write queue cannot
+  take them; a single write over 1 MiB is always refused. After `restore/1`
+  writes are discarded and return `:ok`.
+  """
+  @spec write(t(), iodata()) :: :ok | {:error, :backpressure}
+  def write(tty, iodata), do: Native.tty_write(tty, IO.iodata_to_binary(iodata))
+
+  @doc "Output counters: frames written and dropped, raw bytes still queued."
+  @spec stats(t()) :: %{
+          frames_written: non_neg_integer(),
+          frames_dropped: non_neg_integer(),
+          queued_bytes: non_neg_integer()
+        }
+  def stats(tty), do: Native.tty_stats(tty)
+
   @doc "Kitty keyboard flags reported by the host, or `nil` without support."
   @spec kitty_keyboard(t()) :: non_neg_integer() | nil
   def kitty_keyboard(tty), do: Native.tty_kitty_keyboard(tty)

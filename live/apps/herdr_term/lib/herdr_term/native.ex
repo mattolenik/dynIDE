@@ -26,6 +26,18 @@ defmodule HerdrTerm.Native do
   def tty_subscribe(_tty, _pid), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc false
+  @spec tty_write(tty(), binary()) :: :ok | {:error, :backpressure}
+  def tty_write(_tty, _bytes), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  @spec tty_stats(tty()) :: %{
+          frames_written: non_neg_integer(),
+          frames_dropped: non_neg_integer(),
+          queued_bytes: non_neg_integer()
+        }
+  def tty_stats(_tty), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
   @spec tty_kitty_keyboard(tty()) :: non_neg_integer() | nil
   def tty_kitty_keyboard(_tty), do: :erlang.nif_error(:nif_not_loaded)
 end
