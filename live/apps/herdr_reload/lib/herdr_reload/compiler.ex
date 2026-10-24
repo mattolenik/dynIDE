@@ -1,4 +1,4 @@
-defmodule HerdrServer.Reload.Compiler do
+defmodule HerdrReload.Compiler do
   @moduledoc """
   Drives Mix's incremental compiler for one reload batch and reports what changed.
 
@@ -11,7 +11,7 @@ defmodule HerdrServer.Reload.Compiler do
   project instead of the current one.
   """
 
-  alias HerdrServer.Reload.Loader
+  alias HerdrReload.Loader
   alias Mix.Task.Compiler, as: MixCompiler
 
   require Logger

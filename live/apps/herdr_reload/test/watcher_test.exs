@@ -1,9 +1,9 @@
-defmodule HerdrServer.Reload.WatcherTest do
+defmodule HerdrReload.WatcherTest do
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
 
-  alias HerdrServer.Reload.Watcher
+  alias HerdrReload.Watcher
 
   setup do
     dir = Path.join(System.tmp_dir!(), "watcher_#{System.unique_integer([:positive])}")

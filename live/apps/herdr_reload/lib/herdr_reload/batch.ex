@@ -1,4 +1,4 @@
-defmodule HerdrServer.Reload.Batch do
+defmodule HerdrReload.Batch do
   @moduledoc """
   One reload batch: the modules loaded together plus what is needed to undo it.
   A `nil` previous beam means the module was new in the batch.

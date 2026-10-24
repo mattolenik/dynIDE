@@ -1,7 +1,7 @@
-defmodule HerdrServer.Reload.NoticesTest do
+defmodule HerdrReload.NoticesTest do
   use ExUnit.Case, async: false
 
-  alias HerdrServer.Reload.Notices
+  alias HerdrReload.Notices
 
   test "broadcast without registry is a no-op" do
     assert Notices.broadcast({:loaded, 1, [Foo]}) == :ok

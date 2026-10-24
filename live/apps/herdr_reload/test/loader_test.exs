@@ -1,9 +1,9 @@
-defmodule HerdrServer.Reload.LoaderTest do
+defmodule HerdrReload.LoaderTest do
   use ExUnit.Case, async: false
 
-  alias HerdrServer.Reload.{Loader, Notices}
+  alias HerdrReload.{Loader, Notices}
 
-  @mod HerdrServer.LoaderFixture
+  @mod HerdrReload.LoaderFixture
 
   # dynamic module reference: the fixture does not exist at compile time
   defp fixture, do: Module.concat([@mod])

@@ -1,5 +1,5 @@
 # Reload latency bench. Run: cd live && mix run bench/reload/reload_bench.exs
-alias HerdrServer.Reload.{Notices, Server, Watcher}
+alias HerdrReload.{Notices, Server, Watcher}
 
 defmodule ReloadBench do
   @app :toy_bench

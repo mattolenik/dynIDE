@@ -29,8 +29,8 @@ defmodule HerdrServer.MixProject do
   defp deps do
     [
       {:herdr_scene, in_umbrella: true},
-      {:rustler, "~> 0.38.0", runtime: false},
-      {:file_system, "~> 1.1"}
+      {:herdr_reload, in_umbrella: true},
+      {:rustler, "~> 0.38.0", runtime: false}
     ]
   end
 

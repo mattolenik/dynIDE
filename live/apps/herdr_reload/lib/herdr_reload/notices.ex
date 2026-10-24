@@ -1,4 +1,4 @@
-defmodule HerdrServer.Reload.Notices do
+defmodule HerdrReload.Notices do
   @moduledoc """
   Pub/sub for reload events. Subscribers receive `{:herdr_reload, event}`.
 

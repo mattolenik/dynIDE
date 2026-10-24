@@ -1,4 +1,4 @@
-defmodule HerdrServer.Reload.Guard do
+defmodule HerdrReload.Guard do
   @moduledoc """
   Runs a call into reloadable code, turning any raise, throw, exit, timeout or
   local fun in the result into `{:failed, failure}` and blaming it on the
@@ -13,7 +13,7 @@ defmodule HerdrServer.Reload.Guard do
   table named after the server (`mod` and `:total`).
   """
 
-  alias HerdrServer.Reload.{LocalFuns, Notices, Server}
+  alias HerdrReload.{LocalFuns, Notices, Server}
 
   @type stack :: [term()]
   @type failure ::
@@ -25,7 +25,7 @@ defmodule HerdrServer.Reload.Guard do
 
   @doc """
   Applies `fun` of `mod` to `args`. Opts: `budget_ms` (nil runs inline),
-  `server` (default `HerdrServer.Reload.Server`), `scan` (local fun scan of
+  `server` (default `HerdrReload.Server`), `scan` (local fun scan of
   the result; defaults to the `:scan_local_funs` config).
   """
   @spec run(module(), atom(), [term()], keyword()) :: {:ok, term()} | {:failed, failure()}
@@ -40,7 +40,7 @@ defmodule HerdrServer.Reload.Guard do
 
   defp scan?(opts) do
     Keyword.get_lazy(opts, :scan, fn ->
-      Application.get_env(:herdr_server, HerdrServer.Reload, [])[:scan_local_funs]
+      Application.get_env(:herdr_reload, HerdrReload, [])[:scan_local_funs]
     end)
   end
 

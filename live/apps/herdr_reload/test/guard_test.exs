@@ -1,7 +1,7 @@
-defmodule HerdrServer.Reload.GuardTest do
-  use HerdrServer.ReloadCase, async: false
+defmodule HerdrReload.GuardTest do
+  use HerdrReload.ReloadCase, async: false
 
-  alias HerdrServer.Reload.{Batch, Compiler, Guard, Notices, Server}
+  alias HerdrReload.{Batch, Compiler, Guard, Notices, Server}
 
   defmodule Fixture do
     @moduledoc false
@@ -45,7 +45,7 @@ defmodule HerdrServer.Reload.GuardTest do
 
   # starts a server on a toy project with `files` and loads them as batch 1
   defp toy!(app, files, server_opts \\ []) do
-    dir = HerdrServer.ReloadCase.toy_project!(app, files)
+    dir = HerdrReload.ReloadCase.toy_project!(app, files)
     opts = [project_dir: dir, app: app]
 
     on_exit(fn ->
@@ -107,9 +107,9 @@ defmodule HerdrServer.Reload.GuardTest do
 
   test "a raise rolls back only the batch that owns the failing module" do
     dir = toy!(:toy_g_attr, %{"lib/a.ex" => a_src(1), "lib/b.ex" => b_src(1)})
-    HerdrServer.ReloadCase.write_source!(dir, "lib/a.ex", a_src(2))
+    HerdrReload.ReloadCase.write_source!(dir, "lib/a.ex", a_src(2))
     assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "a")])
-    HerdrServer.ReloadCase.write_source!(dir, "lib/b.ex", b_src(2))
+    HerdrReload.ReloadCase.write_source!(dir, "lib/b.ex", b_src(2))
     assert {:ok, %Batch{id: 3}} = Server.reload([path(dir, "b")])
 
     assert {:ok, 2} = Guard.run(Toy.A, :f, [:ok])
@@ -145,7 +145,7 @@ defmodule HerdrServer.Reload.GuardTest do
   test "a guarded failure while the server compiles waits and still fails" do
     dir = toy!(:toy_g_busy, %{"lib/a.ex" => a_src(1), "lib/b.ex" => b_src(1)})
 
-    HerdrServer.ReloadCase.write_source!(
+    HerdrReload.ReloadCase.write_source!(
       dir,
       "lib/b.ex",
       "defmodule Toy.B do\n  Process.sleep(300)\n  def g, do: 2\nend\n"

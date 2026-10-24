@@ -1,4 +1,4 @@
-defmodule HerdrServer.ReloadCase do
+defmodule HerdrReload.ReloadCase do
   @moduledoc "Test helpers that build throwaway Mix projects for reload tests."
   use ExUnit.CaseTemplate
 

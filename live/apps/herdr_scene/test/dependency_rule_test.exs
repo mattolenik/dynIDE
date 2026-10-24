@@ -5,7 +5,7 @@ defmodule HerdrScene.DependencyRuleTest do
   # The test-only integration app is the one exemption, by exact name.
   @integration_deps [:herdr_scene, :herdr_server, :herdr_term]
 
-  test "every app depends on herdr_scene only; herdr_scene depends on nothing" do
+  test "every app depends on herdr_scene (and optionally herdr_reload); herdr_scene depends on nothing" do
     deps =
       for mix_exs <- Path.wildcard(Path.expand("../../../apps/*/mix.exs", __DIR__)), into: %{} do
         dir = Path.dirname(mix_exs)
@@ -21,9 +21,12 @@ defmodule HerdrScene.DependencyRuleTest do
                "#{app} must set consolidate_protocols: Mix.env() == :prod"
 
         in_umbrella =
-          for {name, opts} <- config[:deps],
-              is_list(opts) and opts[:in_umbrella] == true,
-              do: name
+          for(
+            {name, opts} <- config[:deps],
+            is_list(opts) and opts[:in_umbrella] == true,
+            do: name
+          )
+          |> Enum.sort()
 
         {app, in_umbrella}
       end
@@ -33,10 +36,14 @@ defmodule HerdrScene.DependencyRuleTest do
     assert deps[:herdr_integration] == @integration_deps,
            "herdr_integration must depend on exactly #{inspect(@integration_deps)}"
 
-    for {app, d} <- deps, app not in [:herdr_scene, :herdr_integration] do
-      assert d == [:herdr_scene], "#{app} must depend on herdr_scene only, got #{inspect(d)}"
+    assert deps[:herdr_reload] == [:herdr_scene],
+           "herdr_reload must depend on herdr_scene only, got #{inspect(deps[:herdr_reload])}"
+
+    for {app, d} <- deps, app not in [:herdr_scene, :herdr_reload, :herdr_integration] do
+      assert d in [[:herdr_scene], [:herdr_reload, :herdr_scene]],
+             "#{app} must depend on herdr_scene (and optionally herdr_reload), got #{inspect(d)}"
     end
 
-    assert Map.has_key?(deps, :herdr_server) and Map.has_key?(deps, :herdr_term)
+    for app <- [:herdr_server, :herdr_term, :herdr_reload], do: assert(Map.has_key?(deps, app))
   end
 end

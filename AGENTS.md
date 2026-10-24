@@ -75,11 +75,12 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
 - Rust `src/` is herdr, kept as reference until the M6 gate, pruned in M7.
 
 Adding an app: from `live/`, `mix new apps/<name>`; depend only on
-`{:herdr_scene, in_umbrella: true}`; set
+`{:herdr_scene, in_umbrella: true}` (and optionally `{:herdr_reload, in_umbrella: true}`); set
 `consolidate_protocols: Mix.env() == :prod`.
 `live/apps/herdr_scene/test/dependency_rule_test.exs` discovers `apps/*`,
-asserts every app except `herdr_scene` has exactly `[:herdr_scene]` as its
-umbrella deps (`herdr_scene` has none), and enforces `consolidate_protocols`.
+asserts every app except `herdr_scene` has `[:herdr_scene]` or
+`[:herdr_reload, :herdr_scene]` as its umbrella deps (`herdr_reload` exactly
+`[:herdr_scene]`, `herdr_scene` none), and enforces `consolidate_protocols`.
 
 Adding a NIF: a `#[rustler::nif]` fn (auto-registered by `rustler::init!`)
 plus `def name(...), do: :erlang.nif_error(:nif_not_loaded)` in the crate's

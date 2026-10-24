@@ -26,6 +26,10 @@ defmodule HerdrTerm.MixProject do
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
-    [{:herdr_scene, in_umbrella: true}, {:rustler, "~> 0.38.0", runtime: false}]
+    [
+      {:herdr_scene, in_umbrella: true},
+      {:herdr_reload, in_umbrella: true},
+      {:rustler, "~> 0.38.0", runtime: false}
+    ]
   end
 end

@@ -1,5 +1,5 @@
 # Guard overhead bench. Run: cd live && mix run bench/reload/guard_bench.exs
-alias HerdrServer.Reload.{Guard, Server}
+alias HerdrReload.{Guard, Server}
 
 defmodule GuardBench do
   def id(x), do: x

@@ -1,9 +1,9 @@
-defmodule HerdrServer.Reload.Loader do
+defmodule HerdrReload.Loader do
   @moduledoc """
   Loads and purges module code without killing processes unless allowlisted.
   """
 
-  alias HerdrServer.Reload.Notices
+  alias HerdrReload.Notices
 
   @type pid_info :: %{
           pid: pid(),

@@ -1,9 +1,9 @@
-defmodule HerdrServer.Reload.ServerTest do
-  use HerdrServer.ReloadCase, async: false
+defmodule HerdrReload.ServerTest do
+  use HerdrReload.ReloadCase, async: false
 
   import ExUnit.CaptureIO
 
-  alias HerdrServer.Reload.{Batch, Compiler, Notices, Server}
+  alias HerdrReload.{Batch, Compiler, Notices, Server}
 
   @counter """
   defmodule Toy.Counter do
@@ -41,7 +41,7 @@ defmodule HerdrServer.Reload.ServerTest do
   # starts a server on a fresh toy project and loads it as batch 1
   defp toy!(app, server_opts \\ []) do
     dir =
-      HerdrServer.ReloadCase.toy_project!(app, %{
+      HerdrReload.ReloadCase.toy_project!(app, %{
         "lib/v.ex" => v_src(1),
         "lib/w.ex" => w_src(1),
         "lib/counter.ex" => @counter
@@ -64,7 +64,7 @@ defmodule HerdrServer.Reload.ServerTest do
     :ok = GenServer.call(pid, :inc)
     assert GenServer.call(pid, :get) == {42, 1}
 
-    HerdrServer.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
     assert {:ok, %Batch{id: 2, modules: [Toy.V]}} = Server.reload([path(dir, "v")])
     assert :code.is_loaded(Toy.V) != false
     assert v() == 2
@@ -86,7 +86,7 @@ defmodule HerdrServer.Reload.ServerTest do
     {dir, _} = toy!(:toy_s_ring, ring_depth: 2)
 
     for n <- 2..3 do
-      HerdrServer.ReloadCase.write_source!(dir, "lib/v.ex", v_src(n))
+      HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(n))
       assert {:ok, _} = Server.reload([path(dir, "v")])
     end
 
@@ -96,9 +96,9 @@ defmodule HerdrServer.Reload.ServerTest do
   test "fail attributes to the live batch containing the module" do
     start_supervised!(Notices)
     {dir, _} = toy!(:toy_s_fail)
-    HerdrServer.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
     assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "v")])
-    HerdrServer.ReloadCase.write_source!(dir, "lib/w.ex", w_src(2))
+    HerdrReload.ReloadCase.write_source!(dir, "lib/w.ex", w_src(2))
     assert {:ok, %Batch{id: 3}} = Server.reload([path(dir, "w")])
 
     Notices.subscribe()
@@ -115,7 +115,7 @@ defmodule HerdrServer.Reload.ServerTest do
 
   test "a batch whose modules are never guarded closes after floor and total" do
     {dir, _} = toy!(:toy_s_close, exercise_n: 2, exercise_floor_ms: 0)
-    HerdrServer.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
     assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "v")])
     :ets.update_counter(Server, :total, 2, {:total, 0})
     assert Server.fail([Toy.V], :boom) == :unattributed
@@ -124,11 +124,11 @@ defmodule HerdrServer.Reload.ServerTest do
   test "overlapping rollback loads each module once, from the oldest batch" do
     start_supervised!(Notices)
     {dir, _} = toy!(:toy_s_overlap)
-    HerdrServer.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
-    HerdrServer.ReloadCase.write_source!(dir, "lib/w.ex", w_src(2))
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    HerdrReload.ReloadCase.write_source!(dir, "lib/w.ex", w_src(2))
     assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "v"), path(dir, "w")])
-    HerdrServer.ReloadCase.write_source!(dir, "lib/v.ex", v_src(3))
-    HerdrServer.ReloadCase.write_source!(dir, "lib/x.ex", "defmodule Toy.X do\nend\n")
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(3))
+    HerdrReload.ReloadCase.write_source!(dir, "lib/x.ex", "defmodule Toy.X do\nend\n")
     assert {:ok, %Batch{id: 3}} = Server.reload([path(dir, "v"), path(dir, "x")])
 
     # holds batch-3 V code: a second load of V would block on its purge
@@ -150,11 +150,11 @@ defmodule HerdrServer.Reload.ServerTest do
 
   test "an unrelated reload right after a rollback keeps the rolled-back code" do
     {dir, _} = toy!(:toy_s_after_rb)
-    HerdrServer.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
     assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "v")])
     assert Server.rollback(1) == {:ok, [2]}
 
-    HerdrServer.ReloadCase.write_source!(dir, "lib/w.ex", w_src(2))
+    HerdrReload.ReloadCase.write_source!(dir, "lib/w.ex", w_src(2))
     assert {:ok, %Batch{id: 3, modules: [Toy.W]}} = Server.reload([path(dir, "w")])
     assert v() == 1
   end
@@ -164,7 +164,7 @@ defmodule HerdrServer.Reload.ServerTest do
     {dir, _} = toy!(:toy_s_err)
     Notices.subscribe()
 
-    HerdrServer.ReloadCase.write_source!(
+    HerdrReload.ReloadCase.write_source!(
       dir,
       "lib/v.ex",
       "defmodule Toy.V do\n  def v, do: (\nend\n"

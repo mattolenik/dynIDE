@@ -32,6 +32,10 @@ defmodule HerdrIntegration.ArchitectureTest do
     assert refs(:herdr_term, ["Elixir.HerdrServer"]) == []
   end
 
+  test "herdr_reload references neither HerdrServer nor HerdrTerm" do
+    assert refs(:herdr_reload, ["Elixir.HerdrServer", "Elixir.HerdrTerm"]) == []
+  end
+
   test "herdr_scene references neither" do
     assert refs(:herdr_scene, ["Elixir.HerdrServer", "Elixir.HerdrTerm"]) == []
   end

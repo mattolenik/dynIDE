@@ -7,13 +7,13 @@ defmodule Mix.Tasks.Compile.ToyBoom do
   def run(_args), do: if(Process.get(:toy_boom), do: raise("boom"), else: {:noop, []})
 end
 
-defmodule HerdrServer.Reload.CompilerTest do
-  use HerdrServer.ReloadCase, async: false
+defmodule HerdrReload.CompilerTest do
+  use HerdrReload.ReloadCase, async: false
 
-  import HerdrServer.ReloadCase
+  import HerdrReload.ReloadCase
   import ExUnit.CaptureIO
 
-  alias HerdrServer.Reload.Compiler
+  alias HerdrReload.Compiler
 
   @s "defmodule ToyC.S do\n  defstruct a: 1\nend\n"
   @u "defmodule ToyC.U do\n  def make, do: %ToyC.S{}\nend\n"

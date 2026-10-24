@@ -1,4 +1,4 @@
-defmodule HerdrServer.Reload.Server do
+defmodule HerdrReload.Server do
   @moduledoc """
   Owns the reload history: compiles batches, loads them, and rolls them back.
 
@@ -17,7 +17,7 @@ defmodule HerdrServer.Reload.Server do
 
   use GenServer
 
-  alias HerdrServer.Reload.{Batch, Compiler, Loader, Notices, Ring}
+  alias HerdrReload.{Batch, Compiler, Loader, Notices, Ring}
 
   require Logger
 

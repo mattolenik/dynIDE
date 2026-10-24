@@ -1,9 +1,9 @@
-defmodule HerdrServer.Reload.Supervisor do
+defmodule HerdrReload.Supervisor do
   @moduledoc "Supervises the reload pipeline; later children depend on earlier ones."
 
   use Supervisor
 
-  alias HerdrServer.Reload.{Notices, Server, Watcher}
+  alias HerdrReload.{Notices, Server, Watcher}
 
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts \\ []), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)

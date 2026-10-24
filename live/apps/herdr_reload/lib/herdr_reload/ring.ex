@@ -1,10 +1,10 @@
-defmodule HerdrServer.Reload.Ring do
+defmodule HerdrReload.Ring do
   @moduledoc """
   Bounded history of reload batches (newest first) and the pure rules for
   deciding which batch is still "live" (recently exercised) and what to roll back.
   """
 
-  alias HerdrServer.Reload.Batch
+  alias HerdrReload.Batch
 
   defstruct depth: 1, batches: []
 

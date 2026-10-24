@@ -1,4 +1,4 @@
-defmodule HerdrServer.Reload.Watcher do
+defmodule HerdrReload.Watcher do
   @moduledoc """
   Watches source dirs and hands debounced batches of changed files to `on_batch`.
 
@@ -9,7 +9,7 @@ defmodule HerdrServer.Reload.Watcher do
 
   use GenServer
 
-  alias HerdrServer.Reload.Server
+  alias HerdrReload.Server
 
   require Logger
 

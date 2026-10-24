@@ -1,7 +1,7 @@
-defmodule HerdrServer.Reload.RingTest do
+defmodule HerdrReload.RingTest do
   use ExUnit.Case, async: true
 
-  alias HerdrServer.Reload.{Batch, Ring}
+  alias HerdrReload.{Batch, Ring}
 
   defp batch(id, mods, extra \\ []), do: struct!(Batch, [id: id, modules: mods] ++ extra)
 

@@ -1,4 +1,4 @@
-defmodule HerdrServer.Reload.LocalFuns do
+defmodule HerdrReload.LocalFuns do
   @moduledoc """
   Finds local (non-external) funs inside a term. A local fun pins the code
   generation of its defining module, so it would break on purge.

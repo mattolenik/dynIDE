@@ -1,7 +1,7 @@
-defmodule HerdrServer.Reload.LocalFunsTest do
+defmodule HerdrReload.LocalFunsTest do
   use ExUnit.Case, async: true
 
-  alias HerdrServer.Reload.LocalFuns
+  alias HerdrReload.LocalFuns
 
   defmodule S do
     defstruct [:field]
