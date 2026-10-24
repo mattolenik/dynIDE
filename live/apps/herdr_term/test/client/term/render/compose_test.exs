@@ -155,6 +155,49 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
     assert {{_, _}, :underline} = Compose.cursor(%{sc | cursor: nil}, %{sc.focus.pane => c})
   end
 
+  test "cursor shapes map to blit shapes: :default stays, blinking picks *_blink" do
+    sc = scene()
+    p1 = hd(sc.panes)
+    sc = %{sc | focus: %{sc.focus | pane: p1.id}}
+    c = %{x: 0, y: 0, visible: true}
+
+    for {shape, blink, want} <- [
+          {:default, false, :default},
+          {:default, true, :default},
+          {:block, false, :block},
+          {:block, true, :block_blink},
+          {:underline, true, :underline_blink},
+          {:bar, false, :bar},
+          {:bar, true, :bar_blink}
+        ] do
+      assert {_, ^want} =
+               Compose.cursor(sc, %{p1.id => Map.merge(c, %{shape: shape, blinking: blink})})
+    end
+
+    # inline scenes carry the cursor themselves, blinking optional
+    inline = %{scene() | cursor: %{x: 1, y: 1, shape: :bar, blinking: true}}
+    assert Compose.cursor(inline, %{}) == {{1, 1}, :bar_blink}
+  end
+
+  test "scrollbar draws on the content's last column; focus picks the thumb glyph" do
+    bar = %Overlay{kind: :scrollbar, args: %{total: 70, viewport: 7, offset: 0}}
+    sc = scene([bar])
+    # pane 1 content is x 1..18, y 1..7; thumb len 1 at the top
+    glyph = fn sc, y -> Enum.at(cells(Compose.frame(sc, rows(), @theme), y), 18).glyph end
+    assert glyph.(sc, 1) == "▕"
+    assert glyph.(sc, 2) == "▕"
+    assert glyph.(%{sc | focus: %{sc.focus | pane: 1}}, 1) == "▐"
+    assert Enum.at(cells(Compose.frame(sc, rows(), @theme), 1), 19).glyph == "│"
+  end
+
+  test "selection uses the host colours when the theme knows them" do
+    sel = %Overlay{kind: :selection, args: %{from: {0, 0}, to: {0, 0}}}
+    theme = %{@theme | host: %{fg: nil, bg: {0, 0, 0}}}
+
+    assert Enum.at(cells(Compose.frame(scene([sel]), rows(), theme), 1), 1).bg ==
+             {:rgb, 71, 71, 71}
+  end
+
   test "screen/4 is frame/3 and cursor/2 in one call" do
     sc = Fixture.load("two_pane_split_120x40")
     [p1 | _] = sc.panes

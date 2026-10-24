@@ -138,20 +138,31 @@ defmodule HerdrTerm.Cells do
   end
 
   @doc """
-  Changes columns `x..x+w-1`: `add_attrs: [flag]`, `fg:`, `bg:`, `underline:`.
+  Changes columns `x..x+w-1`: `add_attrs: [flag]`, `attrs: [flag]` (replace), `fg:`,
+  `bg:`, `ul:`, `underline:`.
   """
   @spec restyle(Cell.row(), non_neg_integer, non_neg_integer, keyword) :: Cell.row()
-  def restyle(row, x, w, changes) do
+  def restyle(row, x, w, changes), do: restyle(row, [{x, w, changes}])
+
+  @doc "`restyle/4` for several `{x, w, changes}` spans in order, decoding the row once."
+  @spec restyle(Cell.row(), [{non_neg_integer, non_neg_integer, keyword}]) :: Cell.row()
+  def restyle(row, spans) do
     row
     |> Cell.decode_row()
-    |> Enum.with_index()
-    |> Enum.map(fn {c, i} -> if i >= x and i < x + w, do: apply_changes(c, changes), else: c end)
+    |> Enum.with_index(fn c, i -> Enum.reduce(spans, c, &restyle_cell(&1, &2, i)) end)
     |> Cell.encode_row()
   end
+
+  defp restyle_cell({x, w, changes}, c, i) when i >= x and i < x + w,
+    do: apply_changes(c, changes)
+
+  defp restyle_cell(_span, c, _i), do: c
 
   defp apply_changes(c, changes) do
     Enum.reduce(changes, c, fn
       {:add_attrs, flags}, c -> %{c | attrs: Enum.uniq(c.attrs ++ flags)}
+      {:attrs, flags}, c -> %{c | attrs: flags}
+      {:ul, v}, c -> %{c | ul: v}
       {:fg, v}, c -> %{c | fg: v}
       {:bg, v}, c -> %{c | bg: v}
       {:underline, v}, c -> %{c | underline: v}

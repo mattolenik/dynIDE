@@ -18,6 +18,7 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   alias HerdrScene.Scene.Pane
   alias HerdrTerm.Cells
   alias HerdrTerm.Client.Term.Render.Chrome
+  alias HerdrTerm.Client.Term.Render.Overlays
   alias HerdrTerm.Client.Term.Theme
 
   @typedoc "Packed rows per pane id; panes absent here fall back to their `{:inline, rows}`."
@@ -27,7 +28,8 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
 
   @doc "`{frame/3, cursor/2}`: one guarded call per frame instead of two."
   @spec screen(Scene.t(), rows_by_pane, %{pos_integer => map | nil}, Theme.t()) ::
-          {[{non_neg_integer, binary}], {{non_neg_integer, non_neg_integer}, Scene.shape()} | nil}
+          {[{non_neg_integer, binary}],
+           {{non_neg_integer, non_neg_integer}, HerdrTerm.Native.Blit.shape()} | nil}
   def screen(scene, rows_by_pane, cursors, theme),
     do: screen(scene, rows_by_pane, cursors, theme, layout(scene, theme))
 
@@ -82,10 +84,11 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   Host cursor `{{x, y}, shape}` in screen cells, or nil: with chrome focus (an open
   prompt) the scene's own `cursor` when set; else the focused pane's cursor from
   `cursors` (pane id => pane-relative cursor, as read from the row cache) placed in its
-  rect, else the scene's own `cursor` (inline scenes carry it).
+  rect, else the scene's own `cursor` (inline scenes carry it). The shape is a
+  `Native.Blit` shape: `:default` as is, `blinking: true` picks the `*_blink` variant.
   """
   @spec cursor(Scene.t(), %{pos_integer => map | nil}) ::
-          {{non_neg_integer, non_neg_integer}, Scene.shape()} | nil
+          {{non_neg_integer, non_neg_integer}, HerdrTerm.Native.Blit.shape()} | nil
   def cursor(%Scene{focus: %{chrome: [_ | _]}, cursor: %{} = c}, _cursors), do: scene_cursor(c)
 
   def cursor(%Scene{focus: %{pane: id}} = scene, cursors) do
@@ -97,13 +100,20 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
     end
   end
 
-  defp in_rect(%{visible: true, x: x, y: y, shape: shape}, r) when y < r.h and r.w > 0,
-    do: {{r.x + min(x, r.w - 1), r.y + y}, shape}
+  defp in_rect(%{visible: true, x: x, y: y} = c, r) when y < r.h and r.w > 0,
+    do: {{r.x + min(x, r.w - 1), r.y + y}, shape(c)}
 
   defp in_rect(_hidden_or_nil, _r), do: nil
 
-  defp scene_cursor(%{x: x, y: y, shape: shape}), do: {{x, y}, shape}
+  defp scene_cursor(%{x: x, y: y} = c), do: {{x, y}, shape(c)}
   defp scene_cursor(nil), do: nil
+
+  # scene shape (+ optional blinking) to `Native.Blit` shape; :default keeps the host's
+  defp shape(%{shape: :default}), do: :default
+  defp shape(%{shape: :block, blinking: true}), do: :block_blink
+  defp shape(%{shape: :underline, blinking: true}), do: :underline_blink
+  defp shape(%{shape: :bar, blinking: true}), do: :bar_blink
+  defp shape(%{shape: s}), do: s
 
   # assembly
 
@@ -153,6 +163,8 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
       ch: r.h,
       src: rows_source(Map.get(rows_by_pane, pane.id, inline(pane.rows))),
       overlays: pane.overlays,
+      ctx: %{w: r.w, h: r.h, focused: pane.id == scene.focus.pane},
+      theme: theme,
       border: border
     }
 
@@ -271,33 +283,7 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
         r -> if Cells.exact?(r, p.cw), do: r, else: Cells.fit(r, 0, p.cw)
       end
 
-    Enum.reduce(p.overlays, row, fn o, row ->
-      case overlay_change(o, n, p.cw) do
-        nil -> row
-        {x, w, changes} -> Cells.restyle(row, x, w, changes)
-      end
-    end)
+    Overlays.apply(row, p.overlays, n, p.ctx, p.theme)
   end
 
-  defp overlay_change(%{kind: :selection, args: a}, y, cw),
-    do: span(a.from, a.to, y, cw, add_attrs: [:inverse])
-
-  defp overlay_change(%{kind: :link_hover, args: a}, y, cw),
-    do: span(a.from, a.to, y, cw, underline: :single)
-
-  # ponytail: decodes every row of a dimmed pane; raw attr-bit patching if it shows in benchmarks
-  defp overlay_change(%{kind: :dim}, _y, cw), do: {0, cw, add_attrs: [:faint]}
-  defp overlay_change(_scrollbar_or_unknown, _y, _cw), do: nil
-
-  defp span(from, to, y, cw, changes) do
-    {{fx, fy}, {tx, ty}} = if swap?(from, to), do: {to, from}, else: {from, to}
-
-    if y >= fy and y <= ty do
-      xs = if y == fy, do: fx, else: 0
-      xe = min(if(y == ty, do: tx, else: cw - 1), cw - 1)
-      if xs <= xe, do: {xs, xe - xs + 1, changes}
-    end
-  end
-
-  defp swap?({fx, fy}, {tx, ty}), do: {fy, fx} > {ty, tx}
 end

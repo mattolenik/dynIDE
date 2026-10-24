@@ -8,8 +8,10 @@ defmodule HerdrTerm.Client.Term.Theme do
   alias HerdrTerm.Cells
   alias HerdrTerm.Client.Term.Theme.Palettes
 
+  @type rgb :: {0..255, 0..255, 0..255}
   @type glyphs :: %{atom => binary | %{atom => binary}}
-  @type t :: %{styles: %{atom => Cell.t()}, glyphs: glyphs}
+  @typedoc "`host`: the host terminal's default colours, nil until it answers OSC 10/11."
+  @type t :: %{styles: %{atom => Cell.t()}, glyphs: glyphs, host: %{fg: rgb | nil, bg: rgb | nil}}
 
   # badge glyphs per agent state (inventory §2), for `indicators: :dots | :symbols`
   @state_dots %{blocked: "●", done: "●", working: "●", idle: "○", unknown: "·"}
@@ -56,7 +58,8 @@ defmodule HerdrTerm.Client.Term.Theme do
         tree_end: "└─",
         state_dots: @state_dots,
         state_symbols: @state_symbols
-      }
+      },
+      host: %{fg: nil, bg: nil}
     }
   end
 
@@ -97,6 +100,42 @@ defmodule HerdrTerm.Client.Term.Theme do
           surface: Cells.style(fg: p.text, bg: p.surface0)
         }
     }
+  end
+
+  @doc """
+  `Cells.restyle/4` changes for a selection, as herdr draws it: with a known host bg,
+  a reset style whose bg is that bg mixed 28% toward white (dark host, relative
+  luminance below 0.5) or black (light host) and whose fg is black or white,
+  whichever contrasts more; otherwise inverse.
+  """
+  @spec selection_changes(t) :: keyword
+  def selection_changes(theme) do
+    case theme |> Map.get(:host, %{}) |> Map.get(:bg) do
+      {_, _, _} = bg ->
+        target = if luminance(bg) < 0.5, do: {255, 255, 255}, else: {0, 0, 0}
+        {r, g, b} = sel = mix(bg, target, 0.28)
+        l = luminance(sel)
+
+        fg =
+          if (l + 0.05) / 0.05 > 1.05 / (l + 0.05),
+            do: {:rgb, 0, 0, 0},
+            else: {:rgb, 255, 255, 255}
+
+        [fg: fg, bg: {:rgb, r, g, b}, ul: :default, attrs: [], underline: :none]
+
+      nil ->
+        [add_attrs: [:inverse]]
+    end
+  end
+
+  defp mix({r, g, b}, {tr, tg, tb}, k),
+    do: {round(r + (tr - r) * k), round(g + (tg - g) * k), round(b + (tb - b) * k)}
+
+  defp luminance({r, g, b}), do: 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+
+  defp lin(v) do
+    v = v / 255
+    if v <= 0.03928, do: v / 12.92, else: :math.pow((v + 0.055) / 1.055, 2.4)
   end
 
   @doc "Style for a token; nil or unknown tokens resolve to `:default`."
