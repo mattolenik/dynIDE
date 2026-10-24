@@ -72,7 +72,7 @@ defmodule HerdrServer.Client.WordsTest do
   test "empty cell and out of range return nil" do
     assert Words.word_at(cells("a b"), 1) == nil
     assert Words.word_at(cells("a b"), 9) == nil
-    assert Words.word_at(cells("x \"/a b/c\""), 5) == nil
+    assert Words.word_at(cells("x \"/a b/c\""), 5) == {3, 8}
   end
 
   test "herdr word bound cases" do

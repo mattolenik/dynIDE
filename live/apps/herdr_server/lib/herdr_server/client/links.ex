@@ -75,23 +75,39 @@ defmodule HerdrServer.Client.Links do
     end
   end
 
+  # The glyph is decoded only for a link-0 cell right after a wide cell.
   defp link(rows, x, y) do
-    {g, width, l} = cell(rows, x, y)
+    case meta(rows, x, y) do
+      {_, l} when l != 0 or x == 0 -> l
+      {width, 0} -> inherited(rows, x, y, width, meta(rows, x - 1, y))
+    end
+  end
 
-    if l == 0 and x > 0 and (width == 0 or Words.blank?(g)) do
-      case cell(rows, x - 1, y) do
-        {_, 2, prev} -> prev
-        _ -> 0
-      end
+  defp inherited(rows, x, y, width, {2, prev}),
+    do: if(width == 0 or blank_at?(rows, x, y), do: prev, else: 0)
+
+  defp inherited(_rows, _x, _y, _width, _prev), do: 0
+
+  defp blank_at?(rows, x, y), do: Words.blank?(elem(cell(rows, x, y), 0))
+
+  # {width, link} straight from the record, no glyph decoding
+  defp meta(rows, x, y) do
+    row = elem(rows, y)
+
+    if x >= Cell.cols(row) do
+      {1, 0}
     else
-      l
+      record(_glyph, _fg, _bg, _ul, _attrs, width, link) =
+        binary_part(row, x * Cell.size(), Cell.size())
+
+      {width, link}
     end
   end
 
   # text URLs
 
   defp text_url(rows, w, x, y) do
-    x = if x > 0 and elem(cell(rows, x, y), 1) == 0, do: x - 1, else: x
+    x = if x > 0 and elem(meta(rows, x, y), 0) == 0, do: x - 1, else: x
     here = text_cell(rows, x, y)
 
     if Words.blank?(elem(here, 0)) do
@@ -137,7 +153,7 @@ defmodule HerdrServer.Client.Links do
   end
 
   defp next(rows, w, x, y) do
-    nx = if elem(cell(rows, x, y), 1) == 2, do: x + 2, else: x + 1
+    nx = if elem(meta(rows, x, y), 0) == 2, do: x + 2, else: x + 1
 
     cond do
       nx < w -> {nx, y}
@@ -147,7 +163,7 @@ defmodule HerdrServer.Client.Links do
   end
 
   defp head(rows, x, y) do
-    if x > 0 and elem(cell(rows, x, y), 1) == 0, do: {x - 1, y}, else: {x, y}
+    if x > 0 and elem(meta(rows, x, y), 0) == 0, do: {x - 1, y}, else: {x, y}
   end
 
   defp text_cell(rows, x, y) do

@@ -4,7 +4,7 @@ defmodule HerdrServer.Client.Words do
 
   `word_at/2` takes one decoded row (`HerdrScene.Cell.decode_row/1`) and a display
   column and returns the inclusive display columns of the word there, or `nil` (an
-  empty or whitespace cell, even inside a quoted path, a separator, or nothing left after trimming). In order:
+  empty or whitespace cell outside a quoted path, a separator, or nothing left after trimming). In order:
 
     1. an `http://`/`https://` URL running to the next whitespace, with trailing
        `" ' `` ` `` . , ; : ! ?` trimmed and `) ] }` trimmed unless balanced inside;
@@ -24,6 +24,8 @@ defmodule HerdrServer.Client.Words do
 
   @type span :: {non_neg_integer, non_neg_integer}
 
+  @http String.graphemes("http://")
+  @https String.graphemes("https://")
   @url_trim ~w(" ' ` . , ; : ! ?)
   @closers %{")" => "(", "]" => "[", "}" => "{"}
   @quotes ~w(" ' `)
@@ -36,11 +38,8 @@ defmodule HerdrServer.Client.Words do
     tc = cells |> text_cells() |> List.to_tuple()
 
     with i when is_integer(i) <- index_at(tc, col),
-         false <- blank?(g(tc, i)),
          {s, e} <- url_span(tc, i) || quoted_span(tc, i) || token_span(tc, i) do
       {elem(elem(tc, s), 1), elem(elem(tc, e), 2)}
-    else
-      _ -> nil
     end
   end
 
@@ -64,7 +63,7 @@ defmodule HerdrServer.Client.Words do
   def url_span(tc, i), do: url_scan(tc, i, 0)
 
   defp url_scan(tc, i, start) when start <= i do
-    if prefix?(tc, start, "http://") or prefix?(tc, start, "https://"),
+    if prefix?(tc, start, @http) or prefix?(tc, start, @https),
       do: url_from(tc, i, start, extend_right(tc, start, &blank?/1)),
       else: url_scan(tc, i, start + 1)
   end
@@ -167,7 +166,6 @@ defmodule HerdrServer.Client.Words do
 
   defp prefix?(tc, start, prefix) do
     prefix
-    |> String.graphemes()
     |> Enum.with_index(start)
     |> Enum.all?(fn {ch, k} -> k < tuple_size(tc) and g(tc, k) == ch end)
   end
