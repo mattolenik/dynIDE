@@ -31,7 +31,7 @@ The reload pipeline runs only in the primary VM. The warm standby VM does not ru
 |---|---|
 | any `.ex` under `live/apps/*/lib` (server, term, scene, reload) | save; hot reload |
 | `herdr_reload` itself | save; it is reloadable, but a mistake in it is not guarded by itself |
-| NIF Rust code (`live/native/herdr_kernel`, `herdr_term`), libghostty-vt | rebuild, then `live/bin/herdr-live kernel-restart` (graceful handoff to a fresh VM, children keep running; input is queued and replayed. The handoff window was 8-12 ms (results/m6-gate.md); the whole `kernel-restart` took 1417 ms wall in the typing bench under load, results/m5.md `restart_wall_ms`) |
+| NIF Rust code (`live/native/herdr_kernel`, `herdr_term`), libghostty-vt | rebuild, then `live/bin/herdr-live kernel-restart` (graceful handoff to a fresh VM, children keep running; input is queued and replayed. The handoff window was 7-12 ms (results/m6-gate.md); the whole `kernel-restart` took 1417 ms wall in the typing bench under load, results/m5.md `restart_wall_ms`) |
 | `live/native/herdr_broker` | restart herdr-live (the broker is the process supervising the VMs) |
 | `config/*.exs`, `mix.exs`, new deps | restart herdr-live (a dep added mid-session needs a VM restart) |
 | Elixir tests only (`apps/*/test`) | not watched; run `mix test` yourself |
