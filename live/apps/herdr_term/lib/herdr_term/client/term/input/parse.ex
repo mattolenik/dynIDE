@@ -46,7 +46,7 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
   @type item :: Event.t() | {:reply, atom, term}
   @type t :: %__MODULE__{
           buffer: binary,
-          paste: nil | iodata,
+          paste: nil | binary,
           windows: map,
           kitty: boolean,
           skip: boolean | :osc
@@ -336,8 +336,9 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
     with [b, x, y] <- String.split(body, ";"),
          b when is_integer(b) <- int(b),
          x when is_integer(x) <- int(x),
-         y when is_integer(y) <- int(y) do
-      [{:mouse, mouse_map(b, f, max(x - 1, 0), max(y - 1, 0))}]
+         y when is_integer(y) <- int(y),
+         true <- b < 128 and (b &&& 96) != 96 and x >= 1 and y >= 1 do
+      [{:mouse, mouse_map(b, f, x - 1, y - 1)}]
     else
       _ -> []
     end
