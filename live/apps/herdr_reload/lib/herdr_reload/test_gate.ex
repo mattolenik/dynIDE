@@ -61,18 +61,17 @@ defmodule HerdrReload.TestGate do
 
   # lib/<app>/x.ex is tested by test/x_test.exs (the repo's convention) or test/<app>/x_test.exs
   defp lib_test(root, app, rest) do
-    if String.ends_with?(List.last(rest), ".ex") do
-      stem = rest |> Path.join() |> String.replace_suffix(".ex", "_test.exs")
-      flat = if hd(rest) == app and length(rest) > 1, do: [Path.join(tl(rest))], else: []
-      flat = Enum.map(flat, &String.replace_suffix(&1, ".ex", "_test.exs"))
+    stem = rest |> Path.join() |> String.replace_suffix(".ex", "_test.exs")
+    flat = if hd(rest) == app and length(rest) > 1, do: [Path.join(tl(rest))], else: []
+    flat = Enum.map(flat, &String.replace_suffix(&1, ".ex", "_test.exs"))
 
-      Enum.find_value([stem | flat], [], fn cand ->
-        with [] <- test_file(root, app, [cand]), do: nil
-      end)
-    else
-      []
-    end
+    if String.ends_with?(stem, "_test.exs"),
+      do: Enum.find_value([stem | flat], [], &nonempty(test_file(root, app, [&1]))),
+      else: []
   end
+
+  defp nonempty([]), do: nil
+  defp nonempty(found), do: found
 
   defp test_file(root, app, rest) do
     rel = Path.join(["test" | rest])
