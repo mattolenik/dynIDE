@@ -147,6 +147,48 @@ defmodule HerdrTerm.Tty.OwnerTest do
       assert Process.whereis(Protocol.local_client_name()) == nil
     end
 
+    test "a crashed local client is restarted, up to the limit", %{ep: ep} do
+      on_exit(fn -> Supervisor.terminate_child(HerdrTerm.Supervisor, HerdrTerm.LocalClient) end)
+      opts = [endpoint: ep, restart_delay_ms: 100, max_restarts: 3, restart_window_ms: 60_000]
+
+      log =
+        capture_log([level: :info], fn ->
+          starter = Task.async(fn -> HerdrTerm.Application.run_local(opts) end)
+
+          for _ <- 1..3 do
+            assert_receive {:attached, _, _}, 1000
+            # a late crash: the client has finished starting
+            Process.sleep(50)
+            old = Process.whereis(Protocol.local_client_name())
+            ref = Process.monitor(old)
+            Process.exit(old, :kill)
+            assert_receive {:DOWN, ^ref, _, _, _}
+          end
+
+          # the fourth crash is past the limit
+          assert_receive {:attached, _, _}, 1000
+          Process.sleep(50)
+          Process.exit(Process.whereis(Protocol.local_client_name()), :kill)
+          assert Task.await(starter) == :ok
+        end)
+
+      assert Process.whereis(Protocol.local_client_name()) == nil
+      assert length(Regex.scan(~r/crash ts=\d+ proc=local_client action=restarted/, log)) == 3
+      assert log =~ ~r/crash ts=\d+ proc=local_client action=gave_up/
+    end
+
+    test "a normal stop of the local client is not restarted", %{ep: ep} do
+      starter =
+        Task.async(fn -> HerdrTerm.Application.run_local(endpoint: ep, restart_delay_ms: 20) end)
+
+      assert_receive {:attached, _, _}, 1000
+      Process.sleep(50)
+      Supervisor.terminate_child(HerdrTerm.Supervisor, HerdrTerm.LocalClient)
+      assert Task.await(starter) == :ok
+      refute_receive {:attached, _, _}, 100
+      assert Process.whereis(Protocol.local_client_name()) == nil
+    end
+
     test "other clients ignore a handoff", %{ep: ep} do
       %{sup: sup} = start(ep)
       send(Client.render(sup), {:handoff, %{phase: :begin, gen: 1, panes: []}})

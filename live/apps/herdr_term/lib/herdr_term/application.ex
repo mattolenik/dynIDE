@@ -47,21 +47,63 @@ defmodule HerdrTerm.Application do
 
   @doc false
   # The local starter: starts the client when the endpoint exists. A client stopped by a
-  # handoff `:begin` is started again (it repaints) if the handoff is aborted; the
-  # starter ends when the client stops for any other reason or the handoff completes.
+  # handoff `:begin` is started again (it repaints) if the handoff is aborted; a client
+  # that crashed (any reason but normal/shutdown) is restarted after `restart_delay_ms`
+  # (200), at most `max_restarts` (3) per `restart_window_ms` (60 000), then the VM runs
+  # headless. The starter ends when the client stops otherwise or the handoff completes.
   @spec run_local(keyword) :: :ok
-  def run_local(opts) do
+  def run_local(opts), do: run_local(opts, [])
+
+  # restarts: monotonic ms timestamps of the restarts inside the window
+  defp run_local(opts, restarts) do
     with {:ok, pid} <- start_when_ready(opts) do
       ref = Process.monitor(pid)
 
-      receive do
-        {:DOWN, ^ref, :process, _, _} -> :ok
-      end
+      reason =
+        receive do
+          {:DOWN, ^ref, :process, _, reason} -> reason
+        end
 
-      if handoff_phase() == :begin, do: await_abort(opts)
+      cond do
+        handoff_phase() == :begin -> await_abort(opts)
+        crash?(reason) -> restart_local(opts, restarts, reason)
+        true -> :ok
+      end
     end
 
     :ok
+  end
+
+  defp crash?(:normal), do: false
+  defp crash?(:shutdown), do: false
+  defp crash?({:shutdown, _}), do: false
+  defp crash?(_), do: true
+
+  defp restart_local(opts, restarts, reason) do
+    now = System.monotonic_time(:millisecond)
+    window = Keyword.get(opts, :restart_window_ms, 60_000)
+    recent = Enum.filter(restarts, &(now - &1 < window))
+
+    if length(recent) >= Keyword.get(opts, :max_restarts, 3) do
+      Logger.error(
+        "terminal client crashed again (#{inspect(reason)}), giving up; running headless"
+      )
+
+      HerdrReload.Telemetry.event(:crash,
+        proc: :local_client,
+        action: :gave_up,
+        reason: inspect(reason)
+      )
+    else
+      HerdrReload.Telemetry.event(:crash,
+        proc: :local_client,
+        action: :restarted,
+        reason: inspect(reason)
+      )
+
+      Process.sleep(Keyword.get(opts, :restart_delay_ms, 200))
+      run_local(opts, [now | recent])
+    end
   end
 
   # ponytail: polls every 20 ms like start_when_ready/1
