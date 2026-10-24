@@ -28,7 +28,8 @@ defmodule HerdrServer.App.Store do
     * A repeat failure of `Actions.apply` (the guard rolled back batch K and the old code
       failed on the same event too) restores the `state_at_load` of the reload server's
       `last_rolled_back/1` batch when it is K or older, reconciled with the keeper as
-      above (`Store.Mirror.keep_monotonic/2`), and warns every subscriber. Without such a
+      above (`Store.Mirror.keep_monotonic/2`), and warns every subscriber (an origin that is
+      not one, such as an API request, gets the error notice). Without such a
       state, or on an unattributed failure, the event is discarded with an error notice.
       The reload server is `config :herdr_server, :reload_server` (default
       `HerdrReload.Server`).
@@ -112,6 +113,10 @@ defmodule HerdrServer.App.Store do
 
   @spec subscribe(pid) :: :ok
   def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
+
+  @doc "Stops sending `pid` `{:app_changed, app}` (a no-op for a non-subscriber)."
+  @spec unsubscribe(pid) :: :ok
+  def unsubscribe(pid), do: GenServer.call(__MODULE__, {:unsubscribe, pid})
 
   @doc "Test helper: closes every pane and forgets the app; the next event re-initialises."
   @spec reset() :: :ok
@@ -236,6 +241,13 @@ defmodule HerdrServer.App.Store do
   def handle_call({:subscribe, pid}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     subs = Map.put_new_lazy(state.subs, pid, fn -> Process.monitor(pid) end)
+    {:reply, :ok, %{state | subs: subs}}
+  end
+
+  def handle_call({:unsubscribe, pid}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {ref, subs} = Map.pop(state.subs, pid)
+    if ref, do: Process.demonitor(ref, [:flush])
     {:reply, :ok, %{state | subs: subs}}
   end
 
@@ -368,6 +380,7 @@ defmodule HerdrServer.App.Store do
       {:failed, reason, batch} ->
         case restore(state, batch) do
           {:ok, state} ->
+            restored_origin(state, origin, reason)
             {:halt, {:restored, state}}
 
           :none ->
@@ -375,6 +388,13 @@ defmodule HerdrServer.App.Store do
             {:halt, :failed}
         end
     end
+  end
+
+  # subscribers got the restore warning; an origin that is not one (an API request)
+  # learns that its action failed
+  defp restored_origin(state, origin, reason) do
+    if is_pid(origin) and not is_map_key(state.subs, origin),
+      do: notice(origin, %{level: :error, text: "action failed: #{Guard.message(reason)}"})
   end
 
   @doc false

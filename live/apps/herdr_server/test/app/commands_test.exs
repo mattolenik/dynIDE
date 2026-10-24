@@ -39,6 +39,15 @@ defmodule HerdrServer.App.CommandsTest do
     assert b.focus.pane == 2
   end
 
+  test "a background split does not become the previous pane" do
+    {a, _} = Commands.split_pane(app(), 1, :horizontal, 0.5, true)
+    # focus 2, previous 1; a background split of 2 keeps both
+    {b, _} = Commands.split_pane(a, 2, :vertical, 0.5, false)
+    l = hd(ws(b, 1).tabs).layout
+    assert {l.focus, l.prev_focus} == {2, 1}
+    assert Layout.close(l, 2) |> elem(1) |> Map.fetch!(:focus) == 1
+  end
+
   test "split in a non-active workspace changes only that workspace" do
     {a, _} = Commands.create_workspace(app(), nil, false)
     {b, [{:spawn, 3, _}]} = Commands.split_pane(a, 2, :horizontal, 0.5, true)

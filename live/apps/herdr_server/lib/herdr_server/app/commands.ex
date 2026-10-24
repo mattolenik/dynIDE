@@ -215,7 +215,9 @@ defmodule HerdrServer.App.Commands do
     put_in(app.focus.pane, tab.layout.focus)
   end
 
-  defp restore_focus(split_layout, old), do: Layout.focus(split_layout, old.focus)
+  # a background split leaves focus history alone: the new pane is not "previous"
+  defp restore_focus(split_layout, old),
+    do: %{split_layout | focus: old.focus, prev_focus: old.prev_focus}
 
   defp take_id(app), do: {app.session.next_id, update_in(app.session.next_id, &(&1 + 1))}
 

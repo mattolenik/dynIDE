@@ -477,6 +477,20 @@ defmodule HerdrServer.ServerTest do
     assert Map.has_key?(Store.snapshot().session.panes, 3)
   end
 
+  test "a restore after a request's repeat failure tells the requester it failed" do
+    {c, _s} = client()
+    assert_receive {^c, {:scene, _}}, 500
+    Process.sleep(50)
+    fake_reload({:ok, 7, HerdrServer.Mirror.app()})
+
+    # the test process is not a Store subscriber (an API connection is not either)
+    assert {:ok, _, _} = Store.request({HerdrServer.ServerTest.Boom, :boom, []})
+    assert_received {:notice, %{level: :error, text: "action failed: " <> _}}
+    # the subscribed session gets the restore warning as before
+    assert_receive {^c, {:notice, %{level: :warning, text: "state restored to batch 7" <> _}}},
+                   500
+  end
+
   test "session guarded calls attribute to the configured reload server" do
     {c, s} = client()
     scene(c)
