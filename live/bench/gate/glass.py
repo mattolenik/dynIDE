@@ -85,9 +85,12 @@ class Term:
         pgroups.add(pid)
         self.carry = b""
         self.alive = True
+        self.reaped = False  # waitpid has collected the child
+        self.hup = False  # the last read hit EIO with the child still running
 
     def read(self, wait):
         """One read of at most `wait` seconds; answers probes. Returns the bytes."""
+        self.hup = False
         if not self.alive or not select.select([self.master], [], [], wait)[0]:
             return b""
         try:
@@ -99,9 +102,10 @@ class Term:
             # the log before it opens /dev/tty, while it builds); macOS just blocks. Only a
             # child that has exited ends the session.
             if os.waitpid(self.pid, os.WNOHANG)[0] == 0:
+                self.hup = True
                 time.sleep(min(wait, 0.01))
                 return b""
-            pgroups.discard(self.pid)
+            self.reaped = True  # pgroups keeps the pid: the final killpg reaches survivors
             self.alive = False
             return b""
         self.answer(data)
@@ -120,7 +124,7 @@ class Term:
         """Reads until no output for `secs` (at most `cap` seconds). True when quiet."""
         end = time.monotonic() + cap
         while time.monotonic() < end:
-            if not self.read(secs):
+            if not self.read(secs) and not self.hup:
                 return self.alive
         return False
 
@@ -184,7 +188,7 @@ def herdr_live(tmp, bin_, cols, rows):
         end = time.monotonic() + 10
         while time.monotonic() < end:
             term.read(0.05)
-            if os.waitpid(term.pid, os.WNOHANG)[0]:
+            if term.reaped or os.waitpid(term.pid, os.WNOHANG)[0]:
                 pgroups.discard(term.pid)
                 return
 
