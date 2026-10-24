@@ -89,9 +89,15 @@ defmodule HerdrServer.Client.Endpoint do
 
     cond do
       # a client already dead (or dying) never gets a client DOWN we would act on later
-      not Process.alive?(client) -> Mirror.delete({:client, client}) && state
-      client in Map.values(state.orphans) -> state
-      true -> %{state | orphans: Map.put(state.orphans, Process.monitor(client), client)}
+      not Process.alive?(client) ->
+        Mirror.delete({:client, client})
+        state
+
+      client in Map.values(state.orphans) ->
+        state
+
+      true ->
+        %{state | orphans: Map.put(state.orphans, Process.monitor(client), client)}
     end
   end
 
