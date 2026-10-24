@@ -5,8 +5,10 @@
 //! the BEAM's own thread priority preempt scheduler threads for tens of milliseconds
 //! (M6 task 4c: probe overshoot 80 ms with only `script`-driven ptys, no BEAM work).
 //! A reader whose output rate stays above `DEMOTE_BYTES` per `WINDOW` is moved to a
-//! lower OS priority until a window drops under `PROMOTE_BYTES`; interactive panes
-//! (echo, prompts, TUI redraws) never get there and keep the default.
+//! lower OS priority until a window drops under `PROMOTE_BYTES` or the output pauses for
+//! a `WINDOW`. Echo, prompts and occasional redraws never get there and keep the default;
+//! a full-screen TUI redrawing at high frame rates (about 300 KiB per window) is bulk
+//! output and is demoted like a flood.
 
 use std::time::{Duration, Instant};
 
@@ -22,6 +24,7 @@ pub const PROMOTE_BYTES: usize = 32 * 1024;
 #[derive(Debug)]
 pub struct Pacer {
     start: Instant,
+    last: Instant,
     bytes: usize,
     bulk: bool,
 }
@@ -30,6 +33,7 @@ impl Pacer {
     pub fn new(now: Instant) -> Pacer {
         Pacer {
             start: now,
+            last: now,
             bytes: 0,
             bulk: false,
         }
@@ -40,9 +44,18 @@ impl Pacer {
     }
 
     /// Records `n` bytes read at `now`; returns `Some(bulk)` when the priority changes.
-    /// Call before parsing, so the first read after a quiet spell runs at the default.
+    /// Call before parsing, so the first read after a quiet spell of at least `WINDOW`
+    /// runs at the default. Reads closer than that to the burst (a prompt printed as the
+    /// flood ends) still count as the burst.
     pub fn observe(&mut self, n: usize, now: Instant) -> Option<bool> {
         let was = self.bulk;
+        let idle = now.duration_since(self.last) >= WINDOW;
+        self.last = now;
+        if idle {
+            self.bulk = false;
+            self.start = now;
+            self.bytes = 0;
+        }
         let elapsed = now.duration_since(self.start);
         if elapsed >= WINDOW {
             // The closed window's rate (idle time included) decides promotion.
@@ -101,7 +114,8 @@ mod tests {
     fn interactive_output_never_demotes() {
         let t0 = Instant::now();
         let mut p = Pacer::new(t0);
-        // a 50 KiB redraw every 10 ms is 500 KiB/s, under the demote rate
+        // a 50 KiB redraw every 100 ms plus 100 B every 10 ms is about 510 KiB/s, under the
+        // demote rate
         for i in 0..100 {
             let now = t0 + MS * (i * 10);
             let n = if i % 10 == 0 { 50 * 1024 } else { 100 };
@@ -127,6 +141,27 @@ mod tests {
     }
 
     #[test]
+    fn post_flood_sequence_promotes_on_the_first_read_after_an_idle_window() {
+        let t0 = Instant::now();
+        let mut p = Pacer::new(t0);
+        // a 0.95 s flood at 16 KiB every 2 ms, ending mid-window (400 KiB into it)
+        let mut t = t0;
+        for i in 0..475u32 {
+            t = t0 + MS * (i * 2);
+            p.observe(16 * 1024, t);
+        }
+        assert!(p.bulk());
+        // cat exits; the prompt follows 3 ms after the last flood read: still the burst
+        assert_eq!(p.observe(2, t + MS * 3), None);
+        // the user types 150 ms later (idle gap >= WINDOW): promoted before this parse,
+        // whatever the closed window read
+        assert_eq!(p.observe(1, t + MS * 153), Some(false));
+        // further echoes stay interactive
+        assert_eq!(p.observe(1, t + MS * 200), None);
+        assert_eq!(p.observe(1, t + MS * 400), None);
+    }
+
+    #[test]
     fn quiet_window_or_idle_promotes_before_the_next_parse() {
         let t0 = Instant::now();
         let mut p = Pacer::new(t0);
@@ -134,10 +169,13 @@ mod tests {
         // idle 2 s, then a keystroke echo: promoted on that read
         assert_eq!(p.observe(3, t0 + MS * 2000), Some(false));
         assert!(!p.bulk());
-        // a trickle under PROMOTE_BYTES per window also promotes
+        // a trickle under PROMOTE_BYTES per window (no idle gap) promotes when a window
+        // closes under it
         assert_eq!(p.observe(DEMOTE_BYTES, t0 + MS * 2010), Some(true));
-        assert_eq!(p.observe(1024, t0 + MS * 2150), None);
-        assert_eq!(p.observe(1024, t0 + MS * 2260), Some(false));
+        assert_eq!(p.observe(1024, t0 + MS * 2060), None);
+        assert_eq!(p.observe(1024, t0 + MS * 2110), None);
+        assert_eq!(p.observe(1024, t0 + MS * 2160), None);
+        assert_eq!(p.observe(1024, t0 + MS * 2215), Some(false));
     }
 
     #[cfg(target_os = "macos")]
