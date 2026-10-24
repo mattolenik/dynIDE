@@ -257,6 +257,7 @@ defmodule HerdrCli.ArgvTest do
     assert {:usage, text} = p("")
     assert text =~ "usage: herdr-live"
     assert {:usage, _} = p("help")
+    assert {:usage, "herdr-live: empty command\n" <> _} = Argv.parse([""], %{})
     assert {:usage, _} = p("frobnicate")
   end
 

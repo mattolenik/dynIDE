@@ -315,6 +315,7 @@ defmodule HerdrCli.Argv do
 
   defp unknown([]), do: ""
   defp unknown(["help" | _]), do: ""
+  defp unknown(["" | _]), do: "herdr-live: empty command\n"
   defp unknown(argv), do: "herdr-live: unknown command #{Enum.join(Enum.take(argv, 2), " ")}\n"
 
   # longest match first: two-word commands before one-word ones

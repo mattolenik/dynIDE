@@ -56,10 +56,13 @@ cli() { # runs in the caller's cwd, so a relative HERDR_LIVE_API keeps its meani
   # no crash dump in the caller's cwd if the VM cannot boot
   ERL_CRASH_DUMP_SECONDS=0 exec erl -noinput -boot no_dot_erlang -pa "$exs" -pa "$ebin" -run Elixir.HerdrCli main_erl -extra "$@"
 }
-case ${1:-} in
-  kernel-restart | status | '') ;;
-  *) cli "$@" ;;
-esac
+# dispatch on $#: only no argument at all starts a server (an empty verb is usage)
+if [ $# -gt 0 ]; then
+  case $1 in
+    kernel-restart | status) ;;
+    *) cli "$@" ;;
+  esac
+fi
 log=${HERDR_LIVE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/herdr-live.log}
 case $log in /*) ;; *) log=$PWD/$log ;; esac
 case ${HERDR_LIVE_RUNTIME_DIR:-} in /* | '') ;; *) HERDR_LIVE_RUNTIME_DIR=$PWD/$HERDR_LIVE_RUNTIME_DIR ;; esac

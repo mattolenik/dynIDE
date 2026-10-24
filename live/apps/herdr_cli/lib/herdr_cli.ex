@@ -19,14 +19,12 @@ defmodule HerdrCli do
   end
 
   @doc false
-  # erts hands argv and env over as raw bytes under a latin1 filename encoding (no
-  # UTF-8 locale) and as code points under UTF-8; both become the UTF-8 string.
-  @spec chars(charlist()) :: String.t()
-  def chars(list) do
-    bin = if Enum.all?(list, &(&1 < 256)), do: :erlang.list_to_binary(list)
-
-    if is_binary(bin) and String.valid?(bin), do: bin, else: List.to_string(list)
-  end
+  # erts hands argv and env over as code points under a utf8 native name encoding and
+  # as raw bytes under latin1; the encoding decides, never the content.
+  @spec chars(charlist(), :utf8 | :latin1) :: String.t()
+  def chars(list, encoding \\ :file.native_name_encoding())
+  def chars(list, :utf8), do: List.to_string(list)
+  def chars(list, :latin1), do: :erlang.list_to_binary(list)
 
   defp env, do: Map.new(:os.env(), fn {k, v} -> {chars(k), chars(v)} end)
 
@@ -36,6 +34,9 @@ defmodule HerdrCli do
     # Output is UTF-8 bytes written raw; a unicode-mode device would encode them again.
     :ok = :io.setopts(:standard_io, encoding: :latin1)
     :ok = :io.setopts(:standard_error, encoding: :latin1)
+    # Crash reports go to stderr: stdout carries only the reply (callers parse it).
+    _ = :logger.remove_handler(:default)
+    _ = :logger.add_handler(:default, :logger_std_h, %{config: %{type: :standard_error}})
 
     # In its own process so a crash prints one line and exits 1, without a
     # blanket rescue here or an init crash dump.

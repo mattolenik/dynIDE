@@ -106,5 +106,23 @@ for p in $(vm_pids); do
 done
 echo "PASS: no vm left"
 
+# An explicit empty verb is a usage error, never a (nested) server start.
+HERDR_LIVE_HEADLESS=1 HERDR_LIVE_API="$tmp/e/api.sock" HERDR_LIVE_RUNTIME_DIR="$tmp/e/rt" \
+  HERDR_LIVE_LOG="$tmp/e/herdr-live.log" "$root/bin/herdr-live" "" </dev/null >"$tmp/empty" 2>&1 &
+epid=$!
+i=0
+while kill -0 "$epid" 2>/dev/null && [ "$i" -lt 120 ]; do i=$((i + 1)); sleep 0.5; done
+if kill -0 "$epid" 2>/dev/null; then
+  kill -KILL "$epid" 2>/dev/null
+  fail "herdr-live \"\" still running after 60 s (started a server?)"
+fi
+wait "$epid"
+estatus=$?
+if [ "$estatus" != 2 ] || ! grep -q '^usage: herdr-live' "$tmp/empty"; then
+  fail "herdr-live \"\": exit $estatus, $(cat "$tmp/empty")"
+fi
+[ ! -e "$tmp/e/herdr-live.log" ] || fail "herdr-live \"\" wrote a server log"
+echo "PASS: herdr-live \"\" is a usage error (exit 2)"
+
 [ "$verbose" = 1 ] && dump
 exit 0
