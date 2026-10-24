@@ -59,7 +59,13 @@ defmodule HerdrScene.ProtocolTest do
           {:detached, :requested},
           {:input_mode, :terminal},
           {:input_mode, :prefix},
-          {:input_mode, :resize}
+          {:input_mode, :resize},
+          {:input_mode, :copy},
+          {:clipboard, %{text: "x", source: :selection}},
+          {:clipboard, %{text: "x", source: :pane}},
+          {:bell, 1},
+          {:open_url, "http://a.b"},
+          {:open_url, "https://a.b/c"}
         ] do
       assert Protocol.validate_server_msg(m) == :ok, inspect(m)
     end
@@ -75,11 +81,22 @@ defmodule HerdrScene.ProtocolTest do
           {:detached, "requested"},
           {:input_mode, :bogus},
           {:input_mode, "prefix"},
+          {:open_url, "file:///etc"},
+          {:open_url, 1},
+          {:clipboard, %{text: 1, source: :pane}},
+          {:clipboard, %{text: "x", source: :other}},
+          {:bell, 0},
           :junk
         ] do
       assert {:error, msg} = Protocol.validate_server_msg(m), inspect(m)
       assert is_binary(msg)
     end
+  end
+
+  test "caps message" do
+    assert Protocol.validate_client_msg({:caps, %{}}) == :ok
+    assert Protocol.validate_client_msg({:caps, %{scheme: :dark, extra: 1}}) == :ok
+    assert {:error, _} = Protocol.validate_client_msg({:caps, 1})
   end
 
   test "validators are total and open" do

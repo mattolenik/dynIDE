@@ -11,6 +11,9 @@ defmodule HerdrScene.Protocol do
       `cursor` pane-relative `%{x, y, shape, visible}`)
     * `{:input, from_pid, seq, event}` (event per `HerdrScene.Event`)
     * `{:detach}`
+    * `{:caps, map}`: caps update after attach. Documented keys (the map is open):
+      `colors: %{fg: rgb | nil, bg: rgb | nil, palette: %{0..255 => rgb}}`,
+      `scheme: :dark | :light | nil`; `rgb` is `{r, g, b}`, each 0..255
 
   Server to client:
 
@@ -19,9 +22,13 @@ defmodule HerdrScene.Protocol do
     * `{:notice, %{level: :info | :warning | :error, text: binary}}`
     * `{:ack, seq}`
     * `{:handoff, map}`
+    * `{:clipboard, %{text: binary, source: :selection | :pane}}`: text for the client to put
+      on its host clipboard
+    * `{:bell, pane_id}`
+    * `{:open_url, binary}`: only `http://` and `https://` URLs are valid
     * `{:detached, reason :: atom}`: the server ended this client's session (`:requested`:
       the client's own detach binding or `{:detach}`); the session is gone after it
-    * `{:input_mode, :terminal | :prefix | :resize}`: this client's own input mode
+    * `{:input_mode, :terminal | :prefix | :resize | :copy}`: this client's own input mode
       changed (input modes are per client). Sent to the `from_pid` of the `{:input, ...}`
       that caused it, before that input's `{:ack, seq}`; a session starts in `:terminal`,
       except a re-attach that restores a mirrored mode, which sends it to the attach's
@@ -72,6 +79,7 @@ defmodule HerdrScene.Protocol do
   end
 
   def validate_client_msg({:detach}), do: :ok
+  def validate_client_msg({:caps, %{}}), do: :ok
   def validate_client_msg(other), do: {:error, "unknown client message #{inspect(other)}"}
 
   @spec validate_server_msg(term) :: :ok | {:error, binary}
@@ -103,7 +111,18 @@ defmodule HerdrScene.Protocol do
   def validate_server_msg({:handoff, %{}}), do: :ok
   def validate_server_msg({:detached, reason}) when is_atom(reason), do: :ok
 
-  def validate_server_msg({:input_mode, m}) when m in [:terminal, :prefix, :resize], do: :ok
+  def validate_server_msg({:input_mode, m}) when m in [:terminal, :prefix, :resize, :copy],
+    do: :ok
+
+  def validate_server_msg({:clipboard, %{text: t, source: s}})
+      when is_binary(t) and s in [:selection, :pane],
+      do: :ok
+
+  def validate_server_msg({:bell, id}) when is_integer(id) and id > 0, do: :ok
+
+  def validate_server_msg({:open_url, <<"http://", _::binary>>}), do: :ok
+  def validate_server_msg({:open_url, <<"https://", _::binary>>}), do: :ok
+
   def validate_server_msg(other), do: {:error, "unknown server message #{inspect(other)}"}
 
   @doc "Validates the reply to `{:attach, _}`."

@@ -79,6 +79,39 @@ defmodule HerdrScene.SceneTest do
     assert errors(%{s | cursor: %{x: 0, y: 0, shape: :blob}}) =~ "cursor"
   end
 
+  test "m9 overlays and cursor shapes" do
+    s = HerdrScene.SceneSample.build()
+    put = fn o -> %{s | panes: List.update_at(s.panes, 1, &%{&1 | overlays: [o]})} end
+
+    for o <- [
+          %Overlay{kind: :copy_cursor, args: %{at: {0, 3}}},
+          %Overlay{kind: :search_match, args: %{from: {0, 0}, to: {4, 0}, current: true}},
+          %Overlay{kind: :search_match, args: %{from: {0, 0}, to: {4, 0}, current: false}}
+        ] do
+      assert Scene.validate(put.(o)) == :ok, inspect(o)
+    end
+
+    for o <- [
+          %Overlay{kind: :copy_cursor, args: %{at: {-1, 0}}},
+          %Overlay{kind: :search_match, args: %{from: {0, 0}, to: {4, 0}}},
+          %Overlay{kind: :search_match, args: %{from: {0, 0}, to: {4, 0}, current: 1}}
+        ] do
+      assert errors(put.(o)) =~ "panes[1].overlays[0]", inspect(o)
+    end
+
+    assert Scene.validate(%{s | cursor: %{x: 0, y: 0, shape: :default}}) == :ok
+    assert Scene.validate(%{s | cursor: %{x: 0, y: 0, shape: :bar, blinking: true}}) == :ok
+    assert errors(%{s | cursor: %{x: 0, y: 0, shape: :bar, blinking: 1}}) =~ "cursor"
+
+    pc = fn c -> %{s | panes: List.update_at(s.panes, 1, &%{&1 | cursor: c})} end
+    assert Scene.validate(pc.(%{x: 0, y: 0, shape: :default, visible: true})) == :ok
+
+    assert Scene.validate(pc.(%{x: 0, y: 0, shape: :block, visible: true, blinking: true})) ==
+             :ok
+
+    assert errors(pc.(%{x: 0, y: 0, shape: :block, visible: true, blinking: 1})) =~ "cursor"
+  end
+
   test "non scene" do
     assert {:error, [_]} = Scene.validate(:nope)
   end

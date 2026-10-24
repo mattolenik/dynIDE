@@ -35,7 +35,7 @@ defmodule HerdrScene.Scene do
     :modal
   ]
   @tokens [:default, :accent, :muted, :focus, :warning, :error, :inverse]
-  @shapes [:block, :underline, :bar]
+  @shapes [:block, :underline, :bar, :default]
   @edges [:top, :bottom, :left, :right]
 
   @type role ::
@@ -51,14 +51,14 @@ defmodule HerdrScene.Scene do
           | :sidebar
           | :modal
   @type token :: :default | :accent | :muted | :focus | :warning | :error | :inverse
-  @type shape :: :block | :underline | :bar
+  @type shape :: :block | :underline | :bar | :default
   @type rect :: %{x: non_neg_integer, y: non_neg_integer, w: non_neg_integer, h: non_neg_integer}
   @type t :: %__MODULE__{
           size: %{cols: pos_integer, rows: pos_integer},
           panes: [Pane.t()],
           chrome: Node.t() | nil,
           focus: %{pane: pos_integer | nil, chrome: [term] | nil},
-          cursor: %{x: non_neg_integer, y: non_neg_integer, shape: shape} | nil
+          cursor: %{x: non_neg_integer, y: non_neg_integer, shape: shape, blinking: boolean} | nil
         }
 
   @enforce_keys [:size]
@@ -191,11 +191,13 @@ defmodule HerdrScene.Scene do
 
   defp cursor_errors(_, nil), do: []
 
-  defp cursor_errors(_path, %{x: x, y: y, shape: s})
-       when is_integer(x) and x >= 0 and is_integer(y) and y >= 0 and s in @shapes,
+  defp cursor_errors(_path, %{x: x, y: y, shape: s} = c)
+       when is_integer(x) and x >= 0 and is_integer(y) and y >= 0 and s in @shapes and
+              (not is_map_key(c, :blinking) or is_boolean(:erlang.map_get(:blinking, c))),
        do: []
 
-  defp cursor_errors(path, _), do: ["#{path}: expected %{x, y, shape: #{inspect(@shapes)}}"]
+  defp cursor_errors(path, _),
+    do: ["#{path}: expected %{x, y, shape: #{inspect(@shapes)}, blinking: boolean (optional)}"]
 
   defp overlays_errors(path, overlays) when is_list(overlays) do
     overlays
@@ -217,6 +219,11 @@ defmodule HerdrScene.Scene do
 
   defp overlay_ok?(%Overlay{kind: :scrollbar, args: %{total: a, viewport: b, offset: c}}),
     do: nat?(a) and nat?(b) and nat?(c)
+
+  defp overlay_ok?(%Overlay{kind: :copy_cursor, args: %{at: at}}), do: pos?(at)
+
+  defp overlay_ok?(%Overlay{kind: :search_match, args: %{from: f, to: t, current: c}}),
+    do: pos?(f) and pos?(t) and is_boolean(c)
 
   defp overlay_ok?(_), do: false
 

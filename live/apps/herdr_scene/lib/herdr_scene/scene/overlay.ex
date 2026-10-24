@@ -5,11 +5,15 @@ defmodule HerdrScene.Scene.Overlay do
 
     * `:selection` - `%{from: {x, y}, to: {x, y}}`
     * `:dim` - `%{reason: :inactive}`
-    * `:link_hover` - `%{id: non_neg_integer, from: {x, y}, to: {x, y}}`
-    * `:scrollbar` - `%{total: n, viewport: n, offset: n}`
+    * `:link_hover` - `%{id: non_neg_integer, from: {x, y}, to: {x, y}}`; id 0 is a
+      detected text URL, `from`/`to` a stream range that may wrap rows
+    * `:scrollbar` - `%{total: n, viewport: n, offset: n}` in rows; `offset` is rows from
+      the top of history to the viewport top; emitted only while scrolled back
+    * `:copy_cursor` - `%{at: {x, y}}`
+    * `:search_match` - `%{from: {x, y}, to: {x, y}, current: boolean}`
   """
 
-  @type kind :: :selection | :dim | :link_hover | :scrollbar
+  @type kind :: :selection | :dim | :link_hover | :scrollbar | :copy_cursor | :search_match
   @type t :: %__MODULE__{kind: kind, args: map}
 
   @enforce_keys [:kind]

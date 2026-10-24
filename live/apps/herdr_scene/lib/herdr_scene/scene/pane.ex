@@ -15,7 +15,9 @@ defmodule HerdrScene.Scene.Pane do
   The two are unrelated; never compare one with the other.
 
   `cursor` is relative to `rect`. Inline scenes carry it; ref scenes leave it
-  nil (the client reads it from the row cache with the rows).
+  nil (the client reads it from the row cache with the rows). `shape` is `:block`,
+  `:underline`, `:bar` or `:default` (the host terminal's own cursor style); `blinking`
+  is optional.
   """
 
   alias HerdrScene.Scene.Overlay
