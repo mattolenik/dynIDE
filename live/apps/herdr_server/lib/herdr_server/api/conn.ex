@@ -29,6 +29,8 @@ defmodule HerdrServer.Api.Conn do
   @max_line 1_048_576
   @poll_ms 100
   @max_pending 16
+  @drain_ms 1000
+  @drain_bytes 8_388_608
   @max_queue 1000
   @send_timeout_ms 5000
   @denied ~w(parse_error invalid_request unknown_method invalid_params not_available)a
@@ -95,7 +97,26 @@ defmodule HerdrServer.Api.Conn do
   defp line(s, line, _ctx)
        when byte_size(line) >= @max_line and binary_part(line, byte_size(line) - 1, 1) != "\n" do
     _ = :gen_tcp.send(s, reply("", "", {:error, :invalid_request, "line over 1 MiB"}))
-    :gen_tcp.close(s)
+    # Closing with the rest of the line unread resets the peer on Linux and the reply is
+    # lost: end our side, then read and discard until the peer closes (bounded).
+    _ = :gen_tcp.shutdown(s, :write)
+    _ = :inet.setopts(s, active: false, packet: :raw)
+    __MODULE__.drain(s, System.monotonic_time(:millisecond) + @drain_ms, @drain_bytes)
+  end
+
+  @doc false
+  # Discards input until the peer closes, #{@drain_ms} ms pass or #{@drain_bytes} bytes
+  # were read, then closes. A remote call per read, like `loop/2`.
+  @spec drain(:gen_tcp.socket(), integer(), integer()) :: :ok
+  def drain(s, deadline, left) do
+    wait = deadline - System.monotonic_time(:millisecond)
+
+    with true <- wait > 0 and left > 0,
+         {:ok, data} <- :gen_tcp.recv(s, 0, wait) do
+      __MODULE__.drain(s, deadline, left - byte_size(data))
+    else
+      _ -> :gen_tcp.close(s)
+    end
   end
 
   defp line(s, line, ctx) do
