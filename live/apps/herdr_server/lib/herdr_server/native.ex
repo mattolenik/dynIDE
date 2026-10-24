@@ -49,6 +49,9 @@ defmodule HerdrServer.Native do
   @spec vt_scrollbar(term) :: map
   def vt_scrollbar(_vt), do: err()
   @doc false
+  @spec vt_size(term) :: {pos_integer, pos_integer}
+  def vt_size(_vt), do: err()
+  @doc false
   @spec vt_scroll_to(term, term) :: :ok
   def vt_scroll_to(_vt, _offset), do: err()
   @doc false

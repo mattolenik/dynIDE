@@ -22,6 +22,9 @@ config :herdr_reload, HerdrReload,
   enabled: config_env() == :dev,
   scan_local_funs: config_env() != :prod
 
+# Handoff (M5): with a broker, changed panes are snapshotted to it this often.
+config :herdr_server, HerdrServer.Handoff, snapshot_ms: 1000
+
 # Kernel modules used by herdr_server (see HerdrServer.Kernel): M1's NIF-backed
 # HerdrServer.Native.* in dev and prod, the in-memory fakes (the test double) in
 # test. Read once when herdr_server starts; restart the app after changing them.

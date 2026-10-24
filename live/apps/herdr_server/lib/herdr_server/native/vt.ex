@@ -131,6 +131,10 @@ defmodule HerdrServer.Native.Vt do
         }
   def scrollbar(vt), do: Native.vt_scrollbar(vt)
 
+  @doc "`{cols, rows}` as of the last snapshot."
+  @spec size(vt) :: {pos_integer, pos_integer}
+  def size(vt), do: Native.vt_size(vt)
+
   @doc "Scrolls the viewport to `offset` rows from the top of the scrollback. Raises on a ghostty error."
   @spec scroll_to(vt, non_neg_integer) :: :ok
   def scroll_to(vt, offset), do: Native.vt_scroll_to(vt, offset)

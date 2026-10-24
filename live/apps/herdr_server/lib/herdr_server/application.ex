@@ -7,6 +7,8 @@ defmodule HerdrServer.Application do
 
   require Logger
 
+  alias HerdrServer.Handoff
+
   @impl true
   def start(_type, _args) do
     :ok = HerdrServer.Kernel.load()
@@ -16,8 +18,16 @@ defmodule HerdrServer.Application do
 
     # Order follows design.md "Supervision trees": Keeper, the table owner, then the app. Reload is
     # its own app (herdr_reload), started before this one as a dependency.
+    # The handoff Link comes first: with a broker it blocks until FRESH or an adoption,
+    # which the Keeper claims in its init. Snapshotter ignores itself without a broker.
     children =
-      [HerdrServer.Native.Keeper, HerdrServer.Mirror] ++
+      [
+        Handoff.Notice,
+        Handoff.Link,
+        HerdrServer.Native.Keeper,
+        HerdrServer.Mirror,
+        Handoff.Snapshotter
+      ] ++
         fake_keeper ++
         [
           {Registry, keys: :duplicate, name: HerdrServer.Client.Registry},
@@ -44,6 +54,7 @@ defmodule HerdrServer.Application do
     )
 
     with {:ok, pid} <- Supervisor.start_link(children, opts) do
+      :ok = Handoff.Link.restored()
       Logger.info("herdr-live started")
       {:ok, pid}
     end

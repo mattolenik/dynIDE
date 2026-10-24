@@ -365,6 +365,13 @@ fn vt_scrollbar(vt: ResourceArc<VtRes>) -> ScrollbarMap {
     }
 }
 
+/// `{cols, rows}` of the last snapshot (no core lock).
+#[rustler::nif]
+fn vt_size(vt: ResourceArc<VtRes>) -> (u16, usize) {
+    let s = vt.0.snapshot();
+    (s.cols, s.rows.len())
+}
+
 // ponytail: takes the blocking core lock and rebuilds the snapshot, so DirtyCpu; upgrade path is applying it on the reader thread between chunks.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn vt_scroll_to(vt: ResourceArc<VtRes>, offset: usize) -> NifResult<Atom> {
