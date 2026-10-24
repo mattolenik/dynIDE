@@ -15,7 +15,6 @@ defmodule HerdrServer.Client.Endpoint do
 
   alias HerdrScene.Protocol
   alias HerdrServer.Client.Supervisor, as: Sessions
-
   alias HerdrServer.Mirror
 
   # sessions: session monitor ref -> client pid; orphans: client monitor ref -> client pid
@@ -41,6 +40,7 @@ defmodule HerdrServer.Client.Endpoint do
            info = Map.put(info, :mirrored, Mirror.client(info.client)),
            {:ok, pid} <- Sessions.start_session(info) do
         state = forget_orphans(state, info.client)
+        # a session already dead here still gets a :DOWN (:noproc), handled like a crash
         ref = Process.monitor(pid)
         state = %{state | sessions: Map.put(state.sessions, ref, info.client)}
         {{:ok, pid, %{rows: {HerdrServer.Pane.Rows, :fetch, []}}}, state}
@@ -79,7 +79,7 @@ defmodule HerdrServer.Client.Endpoint do
   def handle_info(_other, state), do: {:noreply, Map.merge(%__MODULE__{}, state)}
 
   defp session_crashed(state, client, reason) do
-    if not match?(r when r == :shutdown or (is_tuple(r) and elem(r, 0) == :shutdown), reason),
+    unless shutdown?(reason),
       do:
         HerdrReload.Telemetry.event(:crash,
           proc: :session,
@@ -87,13 +87,17 @@ defmodule HerdrServer.Client.Endpoint do
           reason: inspect(reason)
         )
 
-    if Process.alive?(client) and client not in Map.values(state.orphans) do
-      %{state | orphans: Map.put(state.orphans, Process.monitor(client), client)}
-    else
-      if not Process.alive?(client), do: Mirror.delete({:client, client})
-      state
+    cond do
+      # a client already dead (or dying) never gets a client DOWN we would act on later
+      not Process.alive?(client) -> Mirror.delete({:client, client}) && state
+      client in Map.values(state.orphans) -> state
+      true -> %{state | orphans: Map.put(state.orphans, Process.monitor(client), client)}
     end
   end
+
+  defp shutdown?(:shutdown), do: true
+  defp shutdown?({:shutdown, _}), do: true
+  defp shutdown?(_), do: false
 
   defp forget_orphans(state, client) do
     {gone, kept} = Enum.split_with(state.orphans, fn {_ref, c} -> c == client end)

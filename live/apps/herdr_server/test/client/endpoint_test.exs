@@ -4,6 +4,7 @@ defmodule HerdrServer.Client.EndpointTest do
   import ExUnit.CaptureLog
 
   alias HerdrScene.Protocol
+  alias HerdrServer.Client.Endpoint
   alias HerdrServer.Mirror
 
   defp info(client),
@@ -24,9 +25,15 @@ defmodule HerdrServer.Client.EndpointTest do
 
   defp wait_until(fun, n \\ 50) do
     cond do
-      fun.() -> :ok
-      n == 0 -> flunk("condition not reached")
-      true -> Process.sleep(5) && wait_until(fun, n - 1)
+      fun.() ->
+        :ok
+
+      n == 0 ->
+        flunk("condition not reached")
+
+      true ->
+        Process.sleep(5)
+        wait_until(fun, n - 1)
     end
   end
 
@@ -80,7 +87,7 @@ defmodule HerdrServer.Client.EndpointTest do
     Mirror.put({:client, dead}, %{})
     Mirror.put({:client, live}, %{})
 
-    {:ok, _} = HerdrServer.Client.Endpoint.init(:ok) |> then(fn {:ok, s} -> {:ok, s} end)
+    {:ok, _} = Endpoint.init(:ok)
     assert Mirror.client(dead) == nil
     assert Mirror.client(live) == %{}
     Mirror.delete({:client, live})
