@@ -83,9 +83,11 @@ attrs:
   are scene overlays.
 - Link ids are interned per `Vt` and stable for its life; they mean nothing
   outside their pane. Chrome cells use 0. Resolve with `Native.Vt.link_at/3`.
-- Slicing or concatenating rows that carry overflow refs rebuilds the trailer
-  and rewrites offsets (`HerdrScene.Cell.slice/3`, `concat/1`). Rows with an
-  empty trailer need no rewriting.
+- Cut and join rows only with `HerdrScene.Cell.slice/3` and `concat/1` (or
+  their Rust ports). They are the only sanctioned way to cut rows: a raw
+  `binary_part` of records that carry overflow refs produces a row whose
+  refs point at the wrong trailer. Both take a plain-binary fast path when
+  the trailer is empty and rebuild the trailer otherwise.
 
 ## Rulings
 
