@@ -91,6 +91,54 @@ defmodule HerdrServer.Api.ListenerTest do
              ApiClient.once(p, "reload.rollback", %{"n" => 1})
   end
 
+  test "a reload server exiting mid-call is a failed reply, and the rollback runs once" do
+    reload_enabled(true)
+    p = path()
+    me = self()
+
+    dying =
+      spawn(fn ->
+        receive do
+          {:"$gen_call", _from, {:rollback, _}} ->
+            send(me, :rollback_called)
+            exit(:boom)
+        end
+      end)
+
+    start_supervised!({Listener, path: p, reload_server: dying})
+
+    assert %{"error" => %{"code" => "failed", "message" => "rollback failed: " <> _}} =
+             ApiClient.once(p, "reload.rollback", %{"n" => 1})
+
+    assert_received :rollback_called
+    refute_received :rollback_called
+  end
+
+  test "a reload of Listener and Conn moves the acceptor and an idle conn off old code" do
+    p = path()
+    pid = start_supervised!({Listener, path: p})
+    s = ApiClient.connect(p)
+    assert ApiClient.call(s, "ping")["result"]["type"] == "pong"
+    %{acceptor: acceptor, conns: conns} = :sys.get_state(pid)
+    [conn] = MapSet.to_list(conns)
+
+    for mod <- [Listener, HerdrServer.Api.Conn] do
+      {^mod, bin, file} = :code.get_object_code(mod)
+      {:module, ^mod} = :code.load_binary(mod, file, bin)
+    end
+
+    wait_until(fn ->
+      not :erlang.check_process_code(acceptor, Listener) and
+        not :erlang.check_process_code(conn, HerdrServer.Api.Conn)
+    end)
+
+    assert :code.soft_purge(Listener)
+    assert :code.soft_purge(HerdrServer.Api.Conn)
+    # both still serve
+    assert ApiClient.call(s, "ping")["result"]["type"] == "pong"
+    assert ApiClient.once(p, "ping")["result"]["type"] == "pong"
+  end
+
   test "a stale socket is replaced; a live one, a regular file or a dir is left alone" do
     p = path()
     # a listener closed without unlinking leaves a stale socket file behind

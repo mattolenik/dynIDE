@@ -77,7 +77,7 @@ defmodule HerdrServer.Api.Listener do
         _ = File.chmod(path, 0o600)
         Process.flag(:trap_exit, true)
         me = self()
-        acceptor = spawn_link(fn -> accept(listen, me) end)
+        acceptor = spawn_link(__MODULE__, :accept, [listen, me])
         {:ok, %__MODULE__{path: path, listen: listen, acceptor: acceptor, ctx: ctx}}
 
       {:error, reason} ->
@@ -90,7 +90,7 @@ defmodule HerdrServer.Api.Listener do
   def handle_call(:conn, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     ctx = state.ctx
-    conn = spawn_link(fn -> Conn.serve(ctx) end)
+    conn = spawn_link(Conn, :serve, [ctx])
     conns = MapSet.put(state.conns, conn)
     HerdrReload.Telemetry.event(:api_connect, conns: MapSet.size(conns))
     {:reply, conn, %{state | conns: conns}}
@@ -121,8 +121,12 @@ defmodule HerdrServer.Api.Listener do
   @impl true
   def code_change(_old, state, _extra), do: {:ok, Map.merge(%__MODULE__{}, state)}
 
-  defp accept(listen, owner) do
-    case :gen_tcp.accept(listen) do
+  @doc false
+  # A remote call per loop, with a 1 s accept timeout, so a reload of this module moves
+  # the acceptor onto the new code within a second (a soft purge is never blocked).
+  @spec accept(:gen_tcp.socket(), pid()) :: :ok
+  def accept(listen, owner) do
+    case :gen_tcp.accept(listen, 1000) do
       {:ok, s} ->
         conn = GenServer.call(owner, :conn)
 
@@ -131,7 +135,10 @@ defmodule HerdrServer.Api.Listener do
           {:error, _} -> :gen_tcp.close(s)
         end
 
-        accept(listen, owner)
+        __MODULE__.accept(listen, owner)
+
+      {:error, :timeout} ->
+        __MODULE__.accept(listen, owner)
 
       {:error, :closed} ->
         :ok

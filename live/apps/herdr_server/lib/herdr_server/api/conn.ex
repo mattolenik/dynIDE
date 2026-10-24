@@ -27,14 +27,18 @@ defmodule HerdrServer.Api.Conn do
   @spec serve(map()) :: :ok
   def serve(ctx) do
     receive do
-      {:socket, s} -> loop(s, Map.put(ctx, :conn, self()))
+      {:socket, s} -> __MODULE__.loop(s, Map.put(ctx, :conn, self()))
     after
       5000 -> :ok
     end
   end
 
-  defp loop(s, ctx) do
-    case :gen_tcp.recv(s, 0) do
+  @doc false
+  # A remote call per line and per idle second, so a reload of this module moves an idle
+  # connection onto the new code within a second (a soft purge is never blocked).
+  @spec loop(:gen_tcp.socket(), map()) :: :ok | {:error, term()}
+  def loop(s, ctx) do
+    case :gen_tcp.recv(s, 0, 1000) do
       {:ok, line}
       when byte_size(line) >= @max_line and binary_part(line, byte_size(line) - 1, 1) != "\n" ->
         _ = :gen_tcp.send(s, reply("", "", {:error, :invalid_request, "line over 1 MiB"}))
@@ -44,9 +48,12 @@ defmodule HerdrServer.Api.Conn do
         {id, method, outcome} = answer(line, ctx)
 
         case :gen_tcp.send(s, reply(id, method, outcome)) do
-          :ok -> loop(s, ctx)
+          :ok -> __MODULE__.loop(s, ctx)
           {:error, _} -> :gen_tcp.close(s)
         end
+
+      {:error, :timeout} ->
+        __MODULE__.loop(s, ctx)
 
       {:error, _} ->
         :gen_tcp.close(s)

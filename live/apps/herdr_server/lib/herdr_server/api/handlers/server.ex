@@ -40,20 +40,33 @@ defmodule HerdrServer.Api.Handlers.Server do
      }}
   end
 
-  # Server.rollback only answers {:ok, ids}; a missing server is `failed`, a slow one
-  # `timeout`, any other exit reaches the Guard (`internal`)
   @spec rollback(map(), map()) :: {:ok, map()} | {:error, atom(), String.t()}
   def rollback(params, ctx) do
     if reload?() do
       n = Map.get(params, :n, 1)
-      {:ok, ids} = HerdrReload.Server.rollback(ctx.reload_server, n, ctx.rollback_timeout_ms)
-      {:ok, %{type: "reload_rollback", batches: ids}}
+
+      case call_rollback(ctx.reload_server, n, ctx.rollback_timeout_ms) do
+        {:ok, ids} -> {:ok, %{type: "reload_rollback", batches: ids}}
+        {:error, _, _} = e -> e
+      end
     else
       disabled()
     end
+  end
+
+  # Every exit of the call is an answer here, never a Guard failure: a Guard failure
+  # that rolled back a batch would re-run the handler, and so the rollback, again.
+  defp call_rollback(server, n, timeout) do
+    HerdrReload.Server.rollback(server, n, timeout)
   catch
-    :exit, {:timeout, _} -> {:error, :timeout, "rollback timed out"}
-    :exit, {:noproc, _} -> {:error, :failed, "the reload server is not running"}
+    :exit, {:timeout, _} ->
+      {:error, :timeout, "rollback timed out"}
+
+    :exit, {:noproc, _} ->
+      {:error, :failed, "the reload server is not running"}
+
+    :exit, reason ->
+      {:error, :failed, "rollback failed: " <> String.slice(inspect(reason), 0, 200)}
   end
 
   @spec test_on_save(map()) :: {:ok, map()} | {:error, atom(), String.t()}
