@@ -31,15 +31,16 @@ then quits.
 selfhost: the self-hosting loop through the real launcher. The same launch
 (120x40), prefix v, then writes a new module file
 apps/herdr_server/lib/herdr_server/selfhost_probe.ex and waits for the
-status row to show `r1 1m`; `bin/herdr-live rollback` shows
-`r1 rolled back: manual`; `bin/herdr-live kernel-restart` shows
+status row to show `r<n> 1m` (rewritten every 2 s until a batch shows: no
+log line marks the status bridge subscribed); `bin/herdr-live rollback` shows
+`r<n> rolled back: manual`; `bin/herdr-live kernel-restart` shows
 `handoff graceful g<gen>` and both panes still answer an `echo` (clicked to
 focus); the probe file is deleted (the status settles), prefix q exits 0, and
 log_summary.py on the run's log reports reloads >= 1, rollbacks manual 1,
 handoffs graceful 1, session_losses 0. The probe file is removed in a
 `finally` (also on Ctrl-C); afterwards no probe beam is left in
 _build/dev/lib/herdr_server/ebin and `git status --porcelain -- live/apps`
-is empty.
+equals its value at the start.
 
 Every herdr-live launch gets its own HERDR_LIVE_LOG, HERDR_LIVE_CONTROL and
 HERDR_LIVE_RUNTIME_DIR under the run's temp dir, so the CLI calls address
@@ -535,14 +536,22 @@ class Herdr:
         out = os.path.join(self.tmp, "cli.out")
         with open(out, "w") as f:
             p = subprocess.Popen([os.path.join(LIVE, "bin", "herdr-live"), *args], cwd=LIVE,
-                                 env=self.env, stdin=subprocess.DEVNULL, stdout=f, stderr=f)
-        end = min(DEADLINE, time.monotonic() + timeout)
-        while p.poll() is None:
-            if time.monotonic() > end:
-                p.kill()
-                fail(f"herdr-live {' '.join(args)} timed out")
-            self.pump()
-        return p.returncode, open(out).read()
+                                 env=self.env, stdin=subprocess.DEVNULL, stdout=f, stderr=f,
+                                 start_new_session=True)
+        pgroups.add(p.pid)
+        try:
+            end = min(DEADLINE, time.monotonic() + timeout)
+            while p.poll() is None:
+                if time.monotonic() > end:
+                    fail(f"herdr-live {' '.join(args)} timed out")
+                self.pump()
+        finally:
+            if p.poll() is None:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.wait()
+            pgroups.discard(p.pid)
+        with open(out) as f:
+            return p.returncode, f.read()
 
     def click(self, x, y):
         at = f"{x + 1};{y + 1}".encode()
@@ -672,10 +681,24 @@ def settle(h, quiet=3.0, timeout=30):
     fail("the log did not settle after deleting the probe")
 
 
+def write_probe(n):
+    """Writes the probe atomically: the watcher ignores the .tmp name, then sees one .ex event."""
+    tmp = PROBE_SRC + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(f"defmodule HerdrServer.SelfhostProbe, do: def(v, do: {n})\n")
+    os.replace(tmp, PROBE_SRC)
+
+
+def git_apps():
+    return subprocess.run(["git", "status", "--porcelain", "--", "apps"], cwd=LIVE,
+                          capture_output=True, text=True, check=True).stdout
+
+
 def selfhost():
     global DEADLINE
     if os.path.exists(PROBE_SRC):
-        fail(f"{PROBE_SRC} already exists")
+        fail(f"{PROBE_SRC} already exists (left by an interrupted run?): delete it, then rerun")
+    before = git_apps()
     with tempfile.TemporaryDirectory() as tmp:
         compile_then_start_clock(tmp)
         DEADLINE += 120
@@ -686,18 +709,30 @@ def selfhost():
             h.send(b"\x02v")
             h.until(lambda: h.prompts() >= 2, "second prompt after prefix v")
             ok(True, "selfhost: prefix v split (two prompts)")
-            # the reload pipeline starts after the fresh start
+            # the reload pipeline starts after the fresh start, but ReloadNotices (the status
+            # line's bridge) subscribes up to 500 ms later and no log line marks it: a batch
+            # loaded before that never shows, so rewrite the probe (new value) every 2 s
             h.until(lambda: "herdr-event vm_start" in open(h.log).read(), "vm_start in the log")
-            h.pump(1.0)
             n = int(time.time() * 1000) % 1_000_000_000
-            with open(PROBE_SRC, "w") as f:
-                f.write(f"defmodule HerdrServer.SelfhostProbe, do: def(v, do: {n})\n")
-            h.until(lambda: h.shows("r1 1m"), "r1 1m after writing the probe", timeout=60)
-            ok(True, "selfhost: new module file reloads, status shows r1 1m")
+            loaded = lambda: re.search(r"\br(\d+) 1m\b", h.screen.text())
+            writes = 0
+            while not loaded():
+                if writes >= 30 or time.monotonic() > DEADLINE:
+                    fail(f"no r<n> 1m after {writes} probe writes")
+                write_probe(n + writes)
+                writes += 1
+                end = time.monotonic() + 2
+                while not loaded() and time.monotonic() < end:
+                    h.pump()
+            # a rewrite that crossed the first load makes one more batch: take the newest
+            settle(h, quiet=1.5)
+            batch = int(h.until(loaded, "r<n> 1m after the log settled", timeout=5).group(1))
+            ok(True, f"selfhost: new module file reloads, status shows r{batch} 1m ({writes} write(s))")
             code, out = h.cli("rollback")
             ok(code == 0, f"selfhost: herdr-live rollback exits 0 ({out.strip()})")
-            h.until(lambda: h.shows("r1 rolled back: manual"), "r1 rolled back: manual", timeout=20)
-            ok(True, "selfhost: status shows r1 rolled back: manual")
+            h.until(lambda: h.shows(f"r{batch} rolled back: manual"), f"r{batch} rolled back: manual",
+                    timeout=20)
+            ok(True, f"selfhost: status shows r{batch} rolled back: manual")
             code, out = h.cli("kernel-restart", timeout=90)
             ok(code == 0, f"selfhost: herdr-live kernel-restart exits 0 ({out.strip()})")
             m = h.until(lambda: re.search(r"handoff graceful g\d+", h.screen.text()),
@@ -715,11 +750,16 @@ def selfhost():
             ok(True, f"selfhost: probe deleted, status settled ({last!r})")
             h.quit()
         finally:
-            if os.path.exists(PROBE_SRC):
-                os.remove(PROBE_SRC)
+            for f in (PROBE_SRC, PROBE_SRC + ".tmp"):
+                if os.path.exists(f):
+                    os.remove(f)
         summary = subprocess.run([sys.executable, os.path.join(LIVE, "scripts", "log_summary.py"), h.log],
                                  capture_output=True, text=True)
         print(summary.stdout, end="")
+        if verbose:
+            with open(h.log) as f:
+                print("--- reload events", *[l.rstrip() for l in f if re.search(r"herdr-event (reload|rollback)", l)],
+                      sep="\n")
 
         s = json.loads(subprocess.run([sys.executable, os.path.join(LIVE, "scripts", "log_summary.py"),
                                        h.log, "--json"], capture_output=True, text=True, check=True).stdout)
@@ -728,9 +768,10 @@ def selfhost():
         ok(s["handoffs"]["graceful"] == 1, f"selfhost: log summary handoffs graceful 1 ({s['handoffs']})")
         ok(s["session_losses"] == 0, f"selfhost: log summary session_losses 0 ({s['session_losses']})")
     ok(not os.path.exists(PROBE_BEAM), "selfhost: no probe beam left in _build/dev/lib/herdr_server/ebin")
-    dirty = subprocess.run(["git", "status", "--porcelain", "--", "apps"], cwd=LIVE,
-                           capture_output=True, text=True).stdout
-    ok(dirty == "", f"selfhost: git status --porcelain -- live/apps is empty ({dirty.strip()!r})")
+    after = git_apps()
+    ok(after == before and not os.path.exists(PROBE_SRC),
+       f"selfhost: the harness must leave live/apps as it found it (git status before {before.strip()!r},"
+       f" after {after.strip()!r})")
     if verbose:
         print("--- screen", h.screen.text(), sep="\n")
 
