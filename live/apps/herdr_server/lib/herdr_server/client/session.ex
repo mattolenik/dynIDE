@@ -63,13 +63,19 @@ defmodule HerdrServer.Client.Session do
   (`Client.Foreground`) on attach and on each slow-path input; pane bells and child clipboard writes sent to it
   go to the client as `{:bell, id}` and `{:clipboard, %{source: :pane}}`, and
   `{:pane_facts, id}` repaints when the pane is in the last scene.
+
+  Copy mode (M9): entering mode `:copy` starts a `Client.CopyMode` (`state.copy`) on the
+  focused pane and clears the pointer selection; in that mode `Client.Keys` consumes
+  every key and the session hands presses to `CopyMode.key/3` (guarded, context from
+  `PointerIo.copy_context/2`), executing its actions with `PointerIo.run/3`. Its exit,
+  a failure, or the copy pane losing the app focus sets the mode back to `:terminal`.
   """
   use GenServer, restart: :temporary
 
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
   alias HerdrServer.App.{Actions, Keybinds, Modal, Store}
-  alias HerdrServer.Client.{Foreground, Keys, Pointer, PointerIo, State, Toasts}
+  alias HerdrServer.Client.{CopyMode, Foreground, Keys, Pointer, PointerIo, State, Toasts}
   alias HerdrServer.Handoff.Notice
   alias HerdrServer.Layout
   alias HerdrServer.Mirror
@@ -105,6 +111,8 @@ defmodule HerdrServer.Client.Session do
     }
 
     state = struct(state, Map.take(info[:mirrored] || %{}, @presentation))
+    # copy mode's state is not mirrored: a re-attach starts outside it
+    state = if state.mode == :copy, do: %{state | mode: :terminal}, else: state
 
     {:ok, state, {:continue, :attach}}
   end
@@ -408,7 +416,9 @@ defmodule HerdrServer.Client.Session do
            server: Store.reload_server()
          ) do
       {:ok, {%{mode: mode, swallow: swallow}, result}} ->
-        keyed(%{state | mode: mode, swallow: swallow}, state.mode, result, from)
+        new = copy_mode(%{state | mode: mode, swallow: swallow}, state.mode, ev)
+        new = keyed(new, state.mode, result, from)
+        if new.mode == state.mode and new.copy != state.copy, do: repaint(new), else: new
 
       # a broken resolver (failure or bad shape) still lets the client type
       other ->
@@ -514,6 +524,76 @@ defmodule HerdrServer.Client.Session do
   end
 
   defp driving_size(state), do: Map.put(state.size, :cell_px, state.cell_px)
+
+  # --- copy mode ---
+
+  # entering: start on the focused pane, or stay out of copy mode
+  defp copy_mode(%{mode: :copy, copy: nil} = state, _old, _ev) do
+    with %{focus: %{pane: id}} = scene when id != nil <- state.last_scene,
+         {:ok, %{} = ctx} <- Guard.run_twice(PointerIo, :copy_context, [id, scene], guard()),
+         {:ok, %CopyMode{} = copy} <- Guard.run_twice(CopyMode, :enter, [id, ctx], guard()) do
+      %{state | copy: copy, pointer: %{state.pointer | selection: nil}}
+    else
+      _ -> %{state | mode: :terminal}
+    end
+  end
+
+  defp copy_mode(%{mode: :copy, copy: copy} = state, :copy, {:key, %{event: e}} = ev)
+       when e != :release do
+    ctx = Guard.run_twice(PointerIo, :copy_context, [copy.pane, state.last_scene], guard())
+
+    with {:ok, %{} = ctx} <- ctx,
+         {:ok, result} <- Guard.run_twice(CopyMode, :key, [copy, ev, ctx], guard()) do
+      case result do
+        {%CopyMode{} = copy, actions} when is_list(actions) ->
+          copy_run(%{state | copy: copy}, actions)
+
+        {:exit, actions} when is_list(actions) ->
+          copy_left(state, actions)
+
+        _bad ->
+          copy_left(state, [])
+      end
+    else
+      _pane_gone_or_failed -> copy_left(state, [])
+    end
+  end
+
+  defp copy_mode(state, _old, _ev), do: state
+
+  defp copy_left(state, actions), do: copy_run(%{state | mode: :terminal, copy: nil}, actions)
+
+  defp copy_run(state, []), do: state
+
+  defp copy_run(state, actions) do
+    io = %{client: state.client, size: driving_size(state)}
+
+    # impure: never re-run
+    case Guard.run(PointerIo, :run, [actions, state.pointer, io], guard()) do
+      {:ok, {%Pointer{} = p, notices}} when is_list(notices) ->
+        Enum.reduce(notices, %{state | pointer: p}, &notice(&2, &1))
+
+      other ->
+        notice(state, %{level: :error, text: "copy mode failed: #{inspect(other)}"})
+    end
+  end
+
+  # the copy pane lost the app focus (focus moved, pane closed, tab switched): leave
+  defp copy_follow(%{copy: %CopyMode{pane: id} = copy} = state, %{focus: %{pane: focus}})
+       when focus != id do
+    actions =
+      case Guard.run_twice(CopyMode, :leave, [copy], guard()) do
+        {:ok, actions} when is_list(actions) -> actions
+        _failed -> []
+      end
+
+    send(state.client, {:input_mode, :terminal})
+    state = copy_left(state, actions)
+    Mirror.put({:client, state.client}, presentation(state))
+    state
+  end
+
+  defp copy_follow(state, _app), do: state
 
   defp guard, do: [server: Store.reload_server()]
 
@@ -672,7 +752,7 @@ defmodule HerdrServer.Client.Session do
 
   defp push(state, app) do
     # every app the session sees, before View reads the pointer
-    state = focus_moved(state, app)
+    state = state |> focus_moved(app) |> copy_follow(app)
 
     # outside the guard: an app without keybinds (a broken Store) must not crash us
     state =
@@ -717,6 +797,7 @@ defmodule HerdrServer.Client.Session do
       runtime: state.runtime,
       toasts: state.toasts,
       pointer: state.pointer,
+      copy: state.copy,
       facts: facts(state, app)
     }
 
@@ -727,7 +808,8 @@ defmodule HerdrServer.Client.Session do
     )
   end
 
-  # scrolled panes (scrollbar) and the selection's pane (offset), one Facts read per pane
+  # scrolled panes (scrollbar), the selection's and copy mode's pane (offset), one Facts
+  # read per pane
   defp facts(state, app) do
     ids =
       with %{session: %{workspaces: wss, active_workspace: aw}} <- app,
@@ -739,9 +821,9 @@ defmodule HerdrServer.Client.Session do
       end
 
     sel = state.pointer.selection
-    sel_pane = sel && sel.pane
+    live = for %{pane: id} <- [sel, state.copy], do: id
 
-    case Guard.run_twice(PointerIo, :scene_facts, [ids, sel_pane], guard()) do
+    case Guard.run_twice(PointerIo, :scene_facts, [ids, live], guard()) do
       {:ok, %{} = facts} -> facts
       _failed -> %{}
     end

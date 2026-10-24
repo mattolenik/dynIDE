@@ -279,4 +279,14 @@ defmodule HerdrServer.ViewTest do
       assert :ok = Scene.validate(s), "#{c}x#{r}"
     end
   end
+
+  test "copy mode shows COPY, or the open search prompt" do
+    app = fresh(80, 24)
+    s = View.compute(app, client(80, 24, :ref, :copy))
+    assert %{text: "COPY", token: :accent} = child(s, :mode)
+
+    copy = %HerdrServer.Client.CopyMode{pane: 1, prompt: %{dir: :backward, query: "ab"}}
+    s = View.compute(app, %{client(80, 24, :ref, :copy) | copy: copy})
+    assert %{text: "?ab", token: :accent} = child(s, :mode)
+  end
 end

@@ -7,6 +7,7 @@ defmodule HerdrServer.Client.PointerIo do
   kernel or client, and returns the pointer (changed only when a ctrl+click found no
   link: the swallowed press is replayed and its release no longer swallowed) and the
   notices for the session to show. Timers and repaints stay in the session.
+  `copy_context/2` is the same for `Client.CopyMode`, whose actions `run/3` executes too.
   """
 
   alias HerdrServer.App.{Actions, Store}
@@ -83,19 +84,22 @@ defmodule HerdrServer.Client.PointerIo do
 
   @doc """
   `pane_id => %{scrolled, scroll, alt_screen}` for `ids` that are scrolled (one ETS read
-  each) plus `sel_pane`, whose live scrollbar is read when it is not scrolled (its
-  `Facts.scroll` is stale). Everything else is left out.
+  each) plus `live` (a pane or a list: the selection's and copy mode's), whose live
+  scrollbar is read when it is not scrolled (its `Facts.scroll` is stale). Everything
+  else is left out.
   """
-  @spec scene_facts([term], term) :: map
-  def scene_facts(ids, sel_pane) do
-    Enum.reduce(Enum.uniq(ids ++ List.wrap(sel_pane)), %{}, fn id, acc ->
-      case Facts.get(id) do
-        %{scrolled: true} = f -> Map.put(acc, id, Map.take(f, [:scrolled, :scroll, :alt_screen]))
-        %{} = f when id == sel_pane -> Map.put(acc, id, live(f, id))
-        _ -> acc
-      end
-    end)
+  @spec scene_facts([term], term | [term]) :: map
+  def scene_facts(ids, live) do
+    live = List.wrap(live)
+
+    Enum.reduce(Enum.uniq(ids ++ live), %{}, &scene_fact(&2, &1, Facts.get(&1), &1 in live))
   end
+
+  defp scene_fact(acc, id, %{scrolled: true} = f, _live?),
+    do: Map.put(acc, id, Map.take(f, [:scrolled, :scroll, :alt_screen]))
+
+  defp scene_fact(acc, id, %{} = f, true), do: Map.put(acc, id, live(f, id))
+  defp scene_fact(acc, _id, _f, _live?), do: acc
 
   defp live(f, id) do
     scroll =
@@ -111,6 +115,29 @@ defmodule HerdrServer.Client.PointerIo do
     case vt(id) do
       {:ok, vt} -> Map.put(facts, :offset, Kernel.vt().scrollbar(vt).offset)
       :error -> facts
+    end
+  end
+
+  @doc """
+  `Client.CopyMode`'s context for pane `id` of `scene`: its size, live scrollbar, a
+  `screen_rows` reader `{m, f, a}` and the visible terminal cursor (viewport cell, nil
+  when hidden or scrolled back); nil when the pane or its vt is gone.
+  """
+  @spec copy_context(term, map | nil) :: map | nil
+  def copy_context(id, scene) do
+    with %{rect: r} <- scene && Enum.find(scene.panes, &(&1.id == id)),
+         {:ok, vt} <- vt(id) do
+      scroll = Kernel.vt().scrollbar(vt)
+
+      cursor =
+        case Kernel.vt().cursor(vt) do
+          %{visible: true, x: x, y: y} when scroll.offset >= scroll.total - r.h -> {x, y}
+          _ -> nil
+        end
+
+      %{scroll: scroll, h: r.h, w: r.w, read: {Kernel.vt(), :screen_rows, [vt]}, cursor: cursor}
+    else
+      _ -> nil
     end
   end
 
@@ -133,6 +160,8 @@ defmodule HerdrServer.Client.PointerIo do
   defp act({:focus, id}, _p, io), do: Store.run({Actions, :focus_pane, [id]}, io.size)
   defp act({:scroll, id, delta}, _p, _io), do: Server.scroll(id, {:delta, delta})
   defp act({:scroll_top, id, row}, _p, _io), do: Server.scroll(id, {:top, row})
+  defp act({:scroll_bottom, id}, _p, _io), do: Server.scroll(id, :bottom)
+  defp act({:notice, n}, _p, _io), do: {:notice, n}
   defp act({:keys, id, keys}, _p, _io), do: Enum.each(keys, &Input.key(&1, id))
 
   defp act({:copy, id, from, to}, _p, io) do

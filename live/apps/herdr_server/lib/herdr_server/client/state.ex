@@ -12,7 +12,8 @@ defmodule HerdrServer.Client.State do
   `pointer_refs` the session's pointer timers (`:autoscroll` ref, `:expire` `{ref, selection}`).
   `facts` is `pane_id => %{scrolled, scroll, alt_screen}` that the session gathers
   (`PointerIo.scene_facts/2`) before `View.compute`, only for scrolled panes and the
-  selection's pane, so the pure View reads no ETS.
+  selection's pane, so the pure View reads no ETS. `copy` is this client's
+  `Client.CopyMode` while its mode is `:copy` (not mirrored).
   """
 
   defstruct [
@@ -38,7 +39,8 @@ defmodule HerdrServer.Client.State do
     focused: nil,
     pointer: %HerdrServer.Client.Pointer{},
     pointer_refs: %{},
-    facts: %{}
+    facts: %{},
+    copy: nil
   ]
 
   @type t :: %__MODULE__{
@@ -50,7 +52,7 @@ defmodule HerdrServer.Client.State do
           client: pid() | nil,
           viewports: map(),
           hover: term(),
-          mode: :terminal | :prefix | :resize,
+          mode: :terminal | :prefix | :resize | :copy,
           swallow: MapSet.t(),
           keybinds: HerdrServer.App.Keybinds.t() | nil,
           capture: boolean(),
@@ -64,6 +66,7 @@ defmodule HerdrServer.Client.State do
           focused: boolean() | nil,
           pointer: HerdrServer.Client.Pointer.t(),
           pointer_refs: map(),
-          facts: map()
+          facts: map(),
+          copy: HerdrServer.Client.CopyMode.t() | nil
         }
 end

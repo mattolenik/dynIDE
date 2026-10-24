@@ -8,7 +8,8 @@ defmodule HerdrServer.Client.Keys do
     * `{:forward, key_event}`: the key goes to the focused pane (through `App.Store`);
     * `{:run, {m, f, a}}`: an app action, applied by the Store as `apply(m, f, [app | a])`.
 
-  Modes are `:terminal`, `:prefix` and `:resize`. A binding whose module is this module
+  Modes are `:terminal`, `:prefix`, `:resize` and `:copy` (every key consumed here; the
+  session hands presses to `Client.CopyMode`). A binding whose module is this module
   (`enter_mode/2`) is a per-client effect: it is applied here, to the input state, and
   never reaches the app. Presses that are not forwarded are remembered in `swallow`
   (keyed by the key alone, case-insensitive) so their later release is consumed too;
@@ -17,7 +18,7 @@ defmodule HerdrServer.Client.Keys do
 
   alias HerdrServer.App.Keybinds
 
-  @type mode :: :terminal | :prefix | :resize
+  @type mode :: :terminal | :prefix | :resize | :copy
   @type input :: %{mode: mode(), swallow: MapSet.t()}
   @type result :: :consumed | {:forward, tuple()} | {:run, Keybinds.mfa_t()}
 
@@ -54,6 +55,8 @@ defmodule HerdrServer.Client.Keys do
 
   defp swallow_key({k, _mods}) when is_binary(k), do: String.downcase(k)
   defp swallow_key({k, _mods}), do: k
+
+  defp dispatch(%{mode: :copy} = st, _kb, _event, _key), do: {st, :consumed}
 
   defp dispatch(st, kb, event, key) do
     key_in(st.mode, st, event, Keybinds.lookup(kb, st.mode, key), Keybinds.prefix?(kb, key))

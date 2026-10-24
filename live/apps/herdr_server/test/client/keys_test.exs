@@ -73,4 +73,13 @@ defmodule HerdrServer.Client.KeysTest do
     {st, _} = keys(fresh(), [{"b", [:ctrl]}, {"X", [:shift]}])
     assert {_, :consumed} = key(st, "x", event: :release)
   end
+
+  test "prefix [ enters copy mode; copy mode consumes presses and their releases" do
+    assert {%{mode: :copy} = st, :consumed} = keys(fresh(), [{"b", [:ctrl]}, "["])
+    assert {%{mode: :copy} = st, :consumed} = key(st, "j")
+    assert MapSet.member?(st.swallow, "j")
+    assert {%{mode: :copy} = st, :consumed} = key(st, "q")
+    st = Keys.enter_mode(st, :terminal)
+    assert {%{mode: :terminal}, :consumed} = key(st, "q", event: :release)
+  end
 end

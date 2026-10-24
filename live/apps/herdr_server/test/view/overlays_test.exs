@@ -5,7 +5,7 @@ defmodule HerdrServer.View.OverlaysTest do
 
   alias HerdrScene.Scene
   alias HerdrScene.Scene.Overlay
-  alias HerdrServer.Client.{Pointer, Selection, State}
+  alias HerdrServer.Client.{CopyMode, Pointer, Selection, State}
   alias HerdrServer.View
   alias HerdrServer.View.Overlays
 
@@ -67,5 +67,29 @@ defmodule HerdrServer.View.OverlaysTest do
     scene = View.compute(app, c)
     assert [%Overlay{kind: :scrollbar}, %Overlay{kind: :link_hover}] = hd(scene.panes).overlays
     assert :ok = Scene.validate(scene)
+  end
+
+  test "copy mode: cursor and matches through the facts offset, else its own top" do
+    copy = %CopyMode{
+      pane: 2,
+      cursor: {4, 12},
+      top: 5,
+      search: %{dir: :forward, query: "x"},
+      match: {{4, 12}, {5, 12}},
+      matches: [{{4, 12}, {5, 12}}, {{0, 30}, {1, 30}}]
+    }
+
+    c = %{client(%Pointer{}, %{2 => facts(10, true)}) | copy: copy}
+
+    assert [
+             %Overlay{kind: :scrollbar},
+             %Overlay{kind: :search_match, args: %{from: {4, 2}, to: {5, 2}, current: true}},
+             %Overlay{kind: :copy_cursor, args: %{at: {4, 2}}}
+           ] = Overlays.pane(2, @rect, c)
+
+    assert Overlays.pane(1, @rect, c) == []
+
+    assert [%Overlay{kind: :search_match}, %Overlay{kind: :copy_cursor, args: %{at: {4, 7}}}] =
+             Overlays.pane(2, @rect, %{c | facts: %{}})
   end
 end

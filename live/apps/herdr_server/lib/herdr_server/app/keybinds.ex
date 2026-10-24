@@ -52,6 +52,7 @@ defmodule HerdrServer.App.Keybinds do
         {"-", []} => a(:split, [:vertical]),
         {"x", []} => {Confirm, :close_pane, []},
         {"r", []} => {Keys, :enter_mode, [:resize]},
+        {"[", []} => {Keys, :enter_mode, [:copy]},
         {"q", []} => a(:detach),
         {"b", []} => a(:toggle_sidebar),
         {"N", []} => a(:new_workspace),

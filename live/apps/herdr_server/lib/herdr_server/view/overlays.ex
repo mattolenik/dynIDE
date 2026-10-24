@@ -4,13 +4,14 @@ defmodule HerdrServer.View.Overlays do
 
   Order: `:scrollbar` (pane scrolled back, from `client.facts`), `:selection`
   (`Client.Selection.overlay/4` through the facts' scroll offset), `:link_hover`
-  (`pointer.hover` on this pane). Copy mode overlays (search matches, copy cursor, from
-  `client.copy`) go in `copy/3`, the extension point for the copy-mode task.
+  (`pointer.hover` on this pane), then copy mode's selection, search matches and cursor
+  (`Client.CopyMode.overlays/4` from `client.copy`, through the facts' offset or the
+  mode's own viewport top).
   No state for the pane means `[]` without any per-row work.
   """
 
   alias HerdrScene.Scene.Overlay
-  alias HerdrServer.Client.Selection
+  alias HerdrServer.Client.{CopyMode, Selection}
 
   @spec pane(term, %{w: integer, h: integer}, map) :: [Overlay.t()]
   def pane(id, rect, client) do
@@ -36,6 +37,15 @@ defmodule HerdrServer.View.Overlays do
 
   defp hover(_p, _id), do: []
 
-  # extension point: search matches and the copy cursor from `client.copy` (Task 8)
+  defp copy(%{copy: %CopyMode{pane: id} = copy, facts: facts}, id, rect) do
+    offset =
+      case facts do
+        %{^id => %{scroll: %{offset: o}}} -> o
+        _ -> copy.top
+      end
+
+    CopyMode.overlays(copy, offset, rect.w, rect.h)
+  end
+
   defp copy(_client, _id, _rect), do: []
 end

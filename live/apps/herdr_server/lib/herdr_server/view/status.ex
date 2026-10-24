@@ -1,6 +1,7 @@
 defmodule HerdrServer.View.Status do
   @moduledoc """
-  The status row region (pure): `:mode` (the client's own input mode, `props: %{mode}`),
+  The status row region (pure): `:mode` (the client's own input mode, `props: %{mode}`,
+  or an open copy-mode search prompt),
   herdr's mode-bar hints in prefix and resize modes (`:keycap` `{:key, n}` with
   `props: %{key, mods}` and its label as text, then a `:muted` `:text` `{:hint_text, n}`),
   the runtime status `:reload`, `:tests`, `:handoff` from `client.runtime`
@@ -10,11 +11,12 @@ defmodule HerdrServer.View.Status do
   """
 
   alias HerdrScene.Scene.Node
+  alias HerdrServer.Client.CopyMode
   alias HerdrServer.RuntimeStatus
 
   @spec node(map, HerdrServer.Client.State.t(), HerdrScene.Scene.rect()) :: Node.t()
   def node(app, client, rect) do
-    left = [mode(client.mode) | hints(client.mode, app.ui)]
+    left = [mode(client.mode, client.copy) | hints(client.mode, app.ui)]
     hint = hint(client.mode, app.ui)
     free = rect.w - width(left) - width([hint])
     runtime = RuntimeStatus.nodes(client.runtime, free)
@@ -28,12 +30,17 @@ defmodule HerdrServer.View.Status do
     }
   end
 
-  defp mode(m) do
+  # an open copy-mode search prompt shows as the label (`/query`, `?query`)
+  defp mode(:copy, %CopyMode{} = copy) when copy.prompt != nil,
+    do: %{text(:mode, CopyMode.label(copy), :accent) | props: %{mode: :copy}}
+
+  defp mode(m, _copy) do
     {label, token} =
       case m do
         :terminal -> {"TERMINAL", :default}
         :prefix -> {"PREFIX", :accent}
         :resize -> {"RESIZE", :warning}
+        :copy -> {"COPY", :accent}
       end
 
     %{text(:mode, label, token) | props: %{mode: m}}
