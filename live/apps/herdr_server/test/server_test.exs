@@ -927,7 +927,7 @@ defmodule HerdrServer.ServerTest do
     assert %{:sys.get_state(store) | clients: nil} == %{before | clients: nil}
   end
 
-  test "View.compute's budgeted worker gets only size and transport of the client state" do
+  test "View.compute's budgeted worker gets only size, transport and runtime of the client state" do
     {c, s} = client(%{cols: 80, rows: 24}, :inline)
     scene(c)
     assert %{last_scene: %Scene{}} = :sys.get_state(s)
@@ -937,7 +937,12 @@ defmodule HerdrServer.ServerTest do
     try do
       send(s, {:app_changed, Store.snapshot()})
       assert_receive {:trace, _, :call, {HerdrServer.View, :compute, [_, st]}}, 500
-      assert st == %HerdrServer.Client.State{size: %{cols: 80, rows: 24}, transport: :inline}
+      # runtime: whatever status the session holds (the mirror may carry one from a test)
+      assert st == %HerdrServer.Client.State{
+               size: %{cols: 80, rows: 24},
+               transport: :inline,
+               runtime: :sys.get_state(s).runtime
+             }
     after
       :erlang.trace(:new_processes, false, [:call])
       :erlang.trace_pattern({HerdrServer.View, :compute, 2}, false, [:local])

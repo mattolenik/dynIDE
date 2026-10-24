@@ -7,6 +7,7 @@ defmodule HerdrServer.ViewTest do
   alias HerdrScene.Scene.Node
   alias HerdrServer.App.Actions
   alias HerdrServer.Client.State
+  alias HerdrServer.RuntimeStatus
   alias HerdrServer.View
 
   defp client(c, r, transport \\ :ref, mode \\ :terminal),
@@ -130,5 +131,43 @@ defmodule HerdrServer.ViewTest do
     assert child(tiny, :notice) == nil
     info = View.compute(fresh(80, 24), %{client(80, 24) | notice: %{notice | level: :info}})
     assert child(info, :notice).token == :muted
+  end
+
+  defp tabs(app, n), do: Enum.reduce(2..n//1, app, fn _, a -> pfx(a, "c") end)
+
+  test "runtime status sits after the tabs, before the notice, and the hint stays at 80 cols" do
+    rt =
+      Enum.reduce(
+        [
+          {:herdr_reload, {:loaded, 3, [A, B]}},
+          {:herdr_reload, {:tests, :failed, %{files: 2, failures: 1, ms: 40}}},
+          {:handoff, %{phase: :adopted, gen: 2, panes: [1], kind: :graceful}}
+        ],
+        RuntimeStatus.new(),
+        &RuntimeStatus.apply(&2, &1, 0)
+      )
+
+    notice = %{level: :warning, text: String.duplicate("w", 200)}
+    c = %{client(80, 24) | notice: notice, runtime: rt}
+    s = View.compute(tabs(fresh(80, 24), 6), c)
+    assert :ok = Scene.validate(s)
+    ids = Enum.map(status(s).children, & &1.id)
+    # 6 tabs leave 80 - 9 - 36 - 7 = 28: reload (6) and tests (15) fit, handoff (20) not
+    assert ids == [:mode, :tabs, :reload, :tests, :notice, :title, :hint]
+    assert %Node{text: "r3 2m", props: %{batch: 3, fanout: 2}} = child(s, :reload)
+    assert child(s, :hint).text == "ctrl+b"
+    assert String.length(child(s, :notice).text) == 28 - 6 - 15
+    # width/1 counts a gap after the last node (the hint) that is never drawn
+    assert View.width(status(s).children) - 1 <= 80
+
+    # a wide client shows all three
+    s = View.compute(tabs(fresh(200, 24), 6), %{client(200, 24) | runtime: rt})
+
+    assert [:mode, :tabs, :reload, :tests, :handoff, :title, :hint] ==
+             Enum.map(status(s).children, & &1.id)
+
+    # no runtime, no nodes
+    s = View.compute(fresh(80, 24), client(80, 24))
+    assert [:mode, :tabs, :title, :hint] == Enum.map(status(s).children, & &1.id)
   end
 end

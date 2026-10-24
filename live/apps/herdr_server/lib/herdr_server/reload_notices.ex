@@ -1,8 +1,17 @@
 defmodule HerdrServer.ReloadNotices do
   @moduledoc """
-  Bridges `HerdrReload.Notices` to the attached clients: every reload event becomes
-  `{:notice, %{level, text, source: :reload}}` sent to each `Client.Session` (which
-  renders it in the status line and forwards it to its client).
+  Bridges `HerdrReload.Notices` and `Handoff.Notice` to the attached clients.
+
+    * Notices: every reload event becomes `{:notice, %{level, text, source: :reload}}` sent
+      to each `Client.Session` (which renders it in the status line and forwards it to its
+      client). Test-on-save results (`{:tests, ...}`) are status only, no notice.
+    * Runtime status: reload, test and handoff events are folded into a
+      `HerdrServer.RuntimeStatus` (shared session facts, held here); each change is written
+      to `Mirror.put(:runtime_status, st)` (a new session reads it in init) and sent as
+      `{:runtime_status, st}` to each session. Each handoff event arms an `:expire` tick
+      30 s later; `:adopted` takes its kind from `Handoff.Link.adopt_reason/0`. On subscribe
+      the modules the promotion sync loaded (`HerdrReload.Server.synced/0`) are applied as
+      `{:synced, mods}` when non-empty, so a promoted standby shows them.
 
   Always started. Subscribes when the `HerdrReload.Notices` registry runs (reload is
   enabled), else retries every 500 ms; a registry restart is followed the same way
@@ -11,10 +20,17 @@ defmodule HerdrServer.ReloadNotices do
   """
   use GenServer
 
-  alias HerdrReload.Guard
+  alias HerdrServer.Handoff.{Link, Notice}
+  alias HerdrServer.{Mirror, RuntimeStatus}
 
   @retry_ms 500
   @max 80
+  @expire_ms 30_000
+
+  # ref: the monitor of the reload registry we are subscribed to, or nil
+  defstruct ref: nil, status: %{reload: nil, tests: nil, handoff: nil}
+
+  @type t :: %__MODULE__{ref: reference() | nil, status: RuntimeStatus.t()}
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -22,42 +38,97 @@ defmodule HerdrServer.ReloadNotices do
   def init(nil) do
     # Registry.register links us to the registry: its exit must not take us down
     Process.flag(:trap_exit, true)
-    {:ok, subscribe(nil)}
+    :ok = Notice.subscribe()
+    status = Mirror.get(:runtime_status) || RuntimeStatus.new()
+    {:ok, subscribe(%__MODULE__{status: status})}
   end
 
   @impl true
-  # state: the monitor of the registry we are subscribed to, or nil
-  def handle_info(:subscribe, ref), do: {:noreply, subscribe(ref)}
-
-  def handle_info({:DOWN, ref, :process, _, _}, ref), do: {:noreply, subscribe(nil)}
-
-  def handle_info({:herdr_reload, event}, ref) do
-    {level, text} = format(event)
-    n = %{level: level, text: text, source: :reload}
-
-    Registry.dispatch(
-      HerdrServer.Client.Registry,
-      :clients,
-      &for({pid, _} <- &1, do: send(pid, {:notice, n}))
-    )
-
-    {:noreply, ref}
+  def handle_info(:subscribe, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, subscribe(state)}
   end
 
-  def handle_info(_, ref), do: {:noreply, ref}
+  def handle_info({:DOWN, ref, :process, _, _}, %{ref: ref} = state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, subscribe(%{state | ref: nil})}
+  end
 
-  defp subscribe(ref) when is_reference(ref), do: ref
+  def handle_info({:herdr_reload, event} = msg, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    unless match?({:tests, _, _}, event), do: notify(event)
+    {:noreply, status(state, msg)}
+  end
 
-  defp subscribe(nil) do
+  def handle_info({:handoff, %{phase: phase} = m}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    Process.send_after(self(), :expire, @expire_ms)
+    m = if phase == :adopted, do: Map.put(m, :kind, Link.adopt_reason()), else: m
+    {:noreply, status(state, {:handoff, m})}
+  end
+
+  def handle_info(:expire, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    now = System.monotonic_time(:millisecond)
+    {:noreply, publish(state, RuntimeStatus.expire(state.status, now))}
+  end
+
+  def handle_info(_, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, state}
+  end
+
+  @impl true
+  # before the runtime status the state was the bare registry monitor (or nil)
+  def code_change(_old, ref, _extra) when is_reference(ref) or is_nil(ref),
+    do: {:ok, %__MODULE__{ref: ref, status: Mirror.get(:runtime_status) || RuntimeStatus.new()}}
+
+  def code_change(_old, state, _extra), do: {:ok, Map.merge(%__MODULE__{}, state)}
+
+  defp notify(event) do
+    {level, text} = format(event)
+    n = %{level: level, text: text, source: :reload}
+    sessions(&send(&1, {:notice, n}))
+  end
+
+  defp status(state, event), do: publish(state, RuntimeStatus.apply(state.status, event))
+
+  defp publish(%{status: st} = state, st), do: state
+
+  defp publish(state, st) do
+    Mirror.put(:runtime_status, st)
+    sessions(&send(&1, {:runtime_status, st}))
+    %{state | status: st}
+  end
+
+  defp sessions(f),
+    do:
+      Registry.dispatch(HerdrServer.Client.Registry, :clients, &for({pid, _} <- &1, do: f.(pid)))
+
+  defp subscribe(%{ref: ref} = state) when is_reference(ref), do: state
+
+  defp subscribe(state) do
     case Process.whereis(HerdrReload.Notices) do
       nil ->
         Process.send_after(self(), :subscribe, @retry_ms)
-        nil
+        state
 
       pid ->
         :ok = HerdrReload.Notices.subscribe()
-        Process.monitor(pid)
+        state = %{state | ref: Process.monitor(pid)}
+
+        case synced() do
+          [] -> state
+          mods -> status(state, {:herdr_reload, {:synced, mods}})
+        end
     end
+  end
+
+  # the promotion sync's modules; the reload server may not run (reload disabled, tests)
+  defp synced do
+    if Process.whereis(HerdrReload.Server), do: HerdrReload.Server.synced(), else: []
+  catch
+    :exit, _ -> []
   end
 
   @doc "The notice level and text for a reload event."
@@ -72,10 +143,15 @@ defmodule HerdrServer.ReloadNotices do
   defp raw({:loaded, _id, mods}), do: {:info, "reloaded #{length(mods)} modules"}
 
   defp raw({:rolled_back, id, mods, reason}),
-    do: {:warning, "rolled back batch #{id} (#{length(mods)} modules): #{summary(reason)}"}
+    do:
+      {:warning,
+       "rolled back batch #{id} (#{length(mods)} modules): #{RuntimeStatus.reason(reason)}"}
 
   defp raw({:rejected, mod, path}),
     do: {:warning, "rejected: local fun from #{inspect(mod)} at #{inspect(path)}"}
+
+  defp raw({:synced, mods}),
+    do: {:warning, "synced #{length(mods)} modules from disk, no rollback"}
 
   defp raw({:purge_blocked, mod, holders}),
     do: {:warning, "purge blocked: #{inspect(mod)} still running in #{length(holders)} processes"}
@@ -89,12 +165,4 @@ defmodule HerdrServer.ReloadNotices do
 
   defp line({l, _col}), do: l
   defp line(l), do: l
-
-  defp summary(:manual), do: "manual"
-  defp summary({reason, errs}) when is_list(errs), do: summary(reason) <> " (load errors)"
-
-  defp summary({k, _, _} = reason) when k in [:raise, :throw, :exit, :timeout, :local_fun],
-    do: Guard.message(reason)
-
-  defp summary(reason), do: inspect(reason)
 end

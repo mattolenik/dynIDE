@@ -5,6 +5,8 @@ defmodule HerdrServer.ReloadNoticesTest do
 
   alias HerdrScene.{Protocol, Scene}
   alias HerdrServer.App.Store
+  alias HerdrServer.Handoff.{Link, Notice}
+  alias HerdrServer.{Mirror, RuntimeStatus}
   alias HerdrServer.ReloadNotices
 
   setup do
@@ -29,6 +31,9 @@ defmodule HerdrServer.ReloadNoticesTest do
         do: DynamicSupervisor.terminate_child(HerdrServer.Client.Supervisor, pid)
 
     Store.reset()
+    # the runtime status outlives a test: start each from an empty one
+    Mirror.delete(:runtime_status)
+    :sys.replace_state(ReloadNotices, &%{&1 | status: RuntimeStatus.new()})
   end
 
   defp client do
@@ -73,6 +78,9 @@ defmodule HerdrServer.ReloadNoticesTest do
     notice_node(s)
   end
 
+  # a reload event that changes the runtime status repaints once more, after its notice
+  defp status_scene(c), do: assert_receive({^c, {:scene, _}}, 500)
+
   defp diag,
     do: %{file: Path.join(File.cwd!(), "lib/foo.ex"), position: {12, 3}, message: "undefined x"}
 
@@ -92,7 +100,10 @@ defmodule HerdrServer.ReloadNoticesTest do
       assert_receive {^c, {:notice, %{text: text, source: :reload}}}, 500
       assert String.starts_with?(text, prefix), "#{inspect(event)}: #{text}"
       assert String.length(text) <= 80
-      assert %{role: :text, token: ^token, text: ^text} = next_notice(c)
+      # the status line clips it to the cells left beside the runtime status
+      assert %{role: :text, token: ^token, text: shown} = next_notice(c)
+      assert String.starts_with?(text, shown) and String.length(shown) >= 18
+      status_scene(c)
     end
   end
 
@@ -109,14 +120,17 @@ defmodule HerdrServer.ReloadNoticesTest do
 
     HerdrReload.Notices.broadcast({:loaded, 1, [A]})
     assert %{token: :muted} = next_notice(c)
+    status_scene(c)
     assert next_notice(c) == nil
 
     HerdrReload.Notices.broadcast({:compile_error, [diag()]})
     assert %{token: :error} = next_notice(c)
+    status_scene(c)
     refute_receive {^c, {:scene, _}}, 150
 
     HerdrReload.Notices.broadcast({:loaded, 2, [A]})
     assert %{token: :muted, text: "reloaded 1 modules"} = next_notice(c)
+    status_scene(c)
     assert next_notice(c) == nil
   end
 
@@ -136,11 +150,97 @@ defmodule HerdrServer.ReloadNoticesTest do
     c = client()
     HerdrReload.Notices.broadcast({:loaded, 1, [A]})
     assert %{token: :muted} = next_notice(c)
+    status_scene(c)
     Process.sleep(70)
     HerdrReload.Notices.broadcast({:loaded, 2, [A]})
     assert_receive {^c, {:notice, %{text: "reloaded 1 modules"}}}, 500
+    # only the status changed (r2): one scene, the notice did not repaint
+    status_scene(c)
     # the first timer would have fired 50 ms from now
-    refute_receive {^c, {:scene, _}}, 100
+    refute_receive {^c, {:scene, _}}, 50
     assert next_notice(c) == nil
+  end
+
+  describe "runtime status" do
+    # a process registered as a session: gets what ReloadNotices fans out to clients
+    defp fake_session do
+      parent = self()
+
+      pid =
+        spawn(fn ->
+          {:ok, _} = Registry.register(HerdrServer.Client.Registry, :clients, nil)
+          send(parent, :registered)
+          relay(parent)
+        end)
+
+      on_exit(fn -> Process.exit(pid, :kill) end)
+      assert_receive :registered
+      pid
+    end
+
+    defp next_status(pid) do
+      assert_receive {^pid, {:runtime_status, st}}, 500
+      st
+    end
+
+    test "a reload event reaches every session and the mirror" do
+      s = fake_session()
+      HerdrReload.Notices.broadcast({:loaded, 1, [M]})
+      st = next_status(s)
+      assert %{reload: %{state: :loaded, batch: 1, fanout: 1, modules: [M]}} = st
+      assert Mirror.get(:runtime_status) == st
+      # the notice still goes out too
+      assert_receive {^s, {:notice, %{source: :reload}}}
+
+      HerdrReload.Notices.broadcast({:tests, :failed, %{files: 1, failures: 2, ms: 9}})
+      assert %{reload: %{batch: 1}, tests: %{result: :failed, failures: 2}} = next_status(s)
+      refute_receive {^s, {:notice, _}}, 50
+    end
+
+    test "a handoff sets the handoff entry, kind from Handoff.Link.adopt_reason/0, and expires" do
+      s = fake_session()
+      :ok = Link.put_adopted_for_test([])
+      on_exit(fn -> if p = GenServer.whereis(Link), do: GenServer.stop(p) end)
+      assert Link.adopt_reason() == :graceful
+
+      Notice.broadcast({:handoff, %{phase: :adopted, gen: 2, panes: [1, 2]}})
+      st = next_status(s)
+      assert %{phase: :adopted, kind: :graceful, gen: 2, panes: 2} = st.handoff
+      assert Mirror.get(:runtime_status) == st
+
+      # the :expire tick after 30 s: simulate by ageing the entry
+      :sys.replace_state(ReloadNotices, fn state ->
+        put_in(state.status.handoff.at, state.status.handoff.at - 30_000)
+      end)
+
+      send(ReloadNotices, :expire)
+      assert next_status(s).handoff == nil
+    end
+
+    test "sessions receive the status in their scene" do
+      c = client()
+      HerdrReload.Notices.broadcast({:loaded, 3, [A, B]})
+      assert_receive {^c, {:notice, _}}, 500
+      wait_reload(c, "r3 2m")
+    end
+
+    test "a state from before the status (a bare monitor ref) converts on code_change" do
+      ref = make_ref()
+
+      assert {:ok, %ReloadNotices{ref: ^ref, status: %{reload: nil}}} =
+               ReloadNotices.code_change(nil, ref, nil)
+
+      assert {:ok, %ReloadNotices{ref: nil}} = ReloadNotices.code_change(nil, nil, nil)
+    end
+  end
+
+  defp wait_reload(c, text) do
+    assert_receive {^c, {:scene, s}}, 500
+    status = Enum.find(s.chrome.children, &(&1.id == :status))
+
+    case Enum.find(status.children, &(&1.id == :reload)) do
+      %{text: ^text} -> :ok
+      _ -> wait_reload(c, text)
+    end
   end
 end

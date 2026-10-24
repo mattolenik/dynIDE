@@ -31,6 +31,10 @@ defmodule HerdrServer.Client.Session do
   If the restarted Store dies while the session re-subscribes, the client gets
   `{:detached, :store_restart}`.
 
+  Runtime status: `{:runtime_status, st}` from `ReloadNotices` (seeded in init from
+  `Mirror.get(:runtime_status)`) is kept in `state.runtime` for View's status line; a
+  changed status repaints (the scene is pushed only if it differs).
+
   Handoff (M5): every `Handoff.Notice` event is forwarded verbatim (`{:handoff, map}`).
   From `:begin` input is held: it gets no ack (one warning notice per handoff), so the
   client keeps it unacked (at-least-once: resent first to its next session, in the new
@@ -78,7 +82,8 @@ defmodule HerdrServer.Client.Session do
       caps: info.caps,
       client: info.client,
       monitor: Process.monitor(info.client),
-      store_monitor: Process.monitor(Store)
+      store_monitor: Process.monitor(Store),
+      runtime: Mirror.get(:runtime_status)
     }
 
     state = struct(state, Map.take(info[:mirrored] || %{}, @presentation))
@@ -153,6 +158,15 @@ defmodule HerdrServer.Client.Session do
     {:noreply, notice(state, n)}
   end
 
+  # the runtime status line (`ReloadNotices`): repaint only when it changed
+  def handle_info({:runtime_status, st}, state) do
+    state = Map.merge(%State{}, state)
+
+    if st == state.runtime,
+      do: {:noreply, state},
+      else: {:noreply, repaint(%{state | runtime: st})}
+  end
+
   def handle_info({:notice_expired, ref}, %{notice: %{ref: ref}} = state) do
     state = Map.merge(%State{}, state)
     {:noreply, repaint(%{state | notice: nil})}
@@ -202,6 +216,9 @@ defmodule HerdrServer.Client.Session do
     state = Map.merge(%State{}, state)
     {:noreply, state}
   end
+
+  @impl true
+  def code_change(_old, state, _extra), do: {:ok, Map.merge(%State{}, state)}
 
   # the new Store may die too while we call it
   defp follow do
@@ -430,7 +447,8 @@ defmodule HerdrServer.Client.Session do
       size: state.size,
       transport: state.transport,
       mode: state.mode,
-      notice: state.notice
+      notice: state.notice,
+      runtime: state.runtime
     }
 
     case Guard.run_twice(View, :compute, [app, view_state],

@@ -12,7 +12,8 @@ defmodule HerdrServer.Mirror do
     * `:herdr_mirror`: state a restarted process reads back. Keys:
       `{:app, :session | :focus | :ui}` and `{:store, key}` (written by `App.Store`,
       debounced), `{:pane, id}` (`Pane.Server`, `%{hidden: boolean}`),
-      `{:client, client_pid}` (`Client.Session`, presentation fields of `Client.State`).
+      `{:client, client_pid}` (`Client.Session`, presentation fields of `Client.State`),
+      `:runtime_status` (`ReloadNotices`, the `RuntimeStatus` a new session starts with).
 
   The functions below are plain ETS reads and writes; they run in the caller.
   """

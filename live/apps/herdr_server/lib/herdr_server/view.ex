@@ -8,8 +8,9 @@ defmodule HerdrServer.View do
     * Panes follow `Layout.panes` preorder. `Pane.rect` is the content rect, the border
       carries the outer rect (see `Layout.borders/2`). Rows are `{:ref, id, layout_gen}`
       (or `{:inline, []}` for inline clients; the caller fills rows). Cursors are nil here.
-    * Chrome: `:root` holding a `:status` node (`:mode`, `:tabs`, `:notice` when the client
-      has one, `:title`, `:hint`) and one
+    * Chrome: `:root` holding a `:status` node (`:mode`, `:tabs`, the runtime status
+      `:reload`, `:tests`, `:handoff` from `client.runtime` (`RuntimeStatus.nodes/2`, those
+      that fit), `:notice` when the client has one, `:title`, `:hint`) and one
       `:divider` node per split, in `Layout.splits` preorder, after the status.
     * Divider rect choice: with borders on, a split's boundary is `pos`, the first cell of
       the second child. The divider is the 1-cell line at `pos` (second child's leading
@@ -28,6 +29,7 @@ defmodule HerdrServer.View do
   alias HerdrScene.Scene.{Node, Pane}
   alias HerdrServer.Client.State
   alias HerdrServer.Layout
+  alias HerdrServer.RuntimeStatus
 
   @spec compute(map, State.t()) :: Scene.t()
   def compute(app, %State{size: %{cols: cols, rows: rows} = size, transport: transport} = client) do
@@ -45,7 +47,7 @@ defmodule HerdrServer.View do
     %Scene{
       size: %{cols: cols, rows: rows},
       panes: panes,
-      chrome: chrome(app, client.mode, ws, layout, size, area, client.notice),
+      chrome: chrome(app, client, ws, layout, size, area),
       focus: %{pane: app.focus.pane, chrome: nil}
     }
   end
@@ -61,15 +63,18 @@ defmodule HerdrServer.View do
     }
   end
 
-  defp chrome(app, mode, ws, layout, %{cols: cols, rows: rows}, area, notice) do
-    left = [mode(mode), tabs(ws)]
-    hint = hint(mode, app.ui)
+  defp chrome(app, client, ws, layout, %{cols: cols, rows: rows}, area) do
+    left = [mode(client.mode), tabs(ws)]
+    hint = hint(client.mode, app.ui)
+    free = cols - width(left) - width([hint])
+    runtime = RuntimeStatus.nodes(client.runtime, free)
+    left = left ++ runtime
 
     status = %Node{
       role: :status,
       id: :status,
       rect: %{x: 0, y: rows - 1, w: cols, h: 1},
-      children: left ++ notice(notice, cols - width(left) - width([hint])) ++ [title(app), hint]
+      children: left ++ notice(client.notice, free - width(runtime)) ++ [title(app), hint]
     }
 
     dividers =
@@ -135,7 +140,7 @@ defmodule HerdrServer.View do
   end
 
   # before the title so a long title cannot hide it; clipped to the cells left after the
-  # mode, tabs and hint, dropped below 4 cells
+  # mode, tabs, runtime status and hint, dropped below 4 cells
   defp notice(nil, _free), do: []
   defp notice(_n, free) when free < 4, do: []
 
@@ -144,8 +149,9 @@ defmodule HerdrServer.View do
     [text(:notice, String.slice(text, 0, free), token)]
   end
 
-  # cells a status renderer gives these nodes: text, tabs as " i:name ", one gap after each
-  defp width(nodes) do
+  @doc "Cells a status renderer gives these nodes: text, tabs as \" i:name \", one gap after each."
+  @spec width([Node.t()]) :: integer
+  def width(nodes) do
     nodes
     |> Enum.map(fn
       %Node{role: :tabs, children: tabs} ->
