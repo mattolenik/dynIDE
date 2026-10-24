@@ -82,6 +82,76 @@ defmodule HerdrReload.ServerTest do
     assert Server.reload([path(dir, "v")]) == :noop
   end
 
+  # counts the server's Compiler.compile/4 calls (each one is a Mix run)
+  defp trace_compiles(srv) do
+    :erlang.trace_pattern({Compiler, :compile, 4}, true, [:local])
+    :erlang.trace(srv, true, [:call])
+  end
+
+  defp compiles(n \\ 0) do
+    receive do
+      {:trace, _, :call, {Compiler, :compile, _}} -> compiles(n + 1)
+    after
+      0 -> n
+    end
+  end
+
+  defp posix_mtime(p), do: File.stat!(p, time: :posix).mtime
+
+  test "a path unchanged since its last compile is dropped without a Mix run" do
+    {dir, srv} = toy!(:toy_s_digest)
+    p = path(dir, "v")
+    # a same-second edit: the compiler back-dates the source once
+    m = posix_mtime(p)
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    File.touch!(p, m)
+    trace_compiles(srv)
+    assert {:ok, %Batch{id: 2}} = Server.reload([p])
+    assert posix_mtime(p) == m - 1
+
+    # our own back-date (or a duplicate event) arrives: no Mix run, no further touch
+    assert Server.reload([p]) == :noop
+    assert posix_mtime(p) == m - 1
+    assert compiles() == 1
+
+    # a real edit, even in the same second, still compiles
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(3))
+    File.touch!(p, m - 1)
+    assert {:ok, %Batch{id: 3}} = Server.reload([p])
+    assert v() == 3
+  end
+
+  test "watcher + server: one same-second save is one compile, our touch does not loop" do
+    start_supervised!(Notices)
+    {dir, srv} = toy!(:toy_s_watch)
+    p = path(dir, "v")
+    m = posix_mtime(p)
+
+    # the backend reports realpaths (tmp is a symlink on macOS); the server's paths are
+    # spelled from project_dir, as the real watcher's are in a non-symlinked project
+    {real, 0} = System.cmd("pwd", ["-P"], cd: dir)
+    real = String.trim(real)
+    respell = fn ps -> Enum.map(ps, &String.replace_prefix(&1, real, dir)) end
+
+    start_supervised!(
+      {HerdrReload.Watcher,
+       dirs: [Path.join(dir, "lib")], on_batch: &Server.reload(srv, respell.(&1))}
+    )
+
+    # let the OS backend arm before the first write
+    Process.sleep(300)
+    Notices.subscribe()
+    trace_compiles(srv)
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    File.touch!(p, m)
+    assert_receive {:herdr_reload, {:loaded, 2, [Toy.V]}}, 3000
+    # well past the 50ms debounce: the back-date's own event must not compile again
+    Process.sleep(1500)
+    refute_received {:herdr_reload, {:loaded, _, _}}
+    assert compiles() == 1
+    assert posix_mtime(p) == m - 1
+  end
+
   test "ring evicts beyond depth" do
     {dir, _} = toy!(:toy_s_ring, ring_depth: 2)
 
@@ -111,6 +181,20 @@ defmodule HerdrReload.ServerTest do
     assert b2.rolled_back and b2.failures == 1
     refute b3.rolled_back
     assert Server.fail([Elixir.Nope], :boom) == :unattributed
+  end
+
+  test "a failure stamped before a batch's load cannot blame that batch" do
+    {dir, _} = toy!(:toy_s_stamp, exercise_n: 2, exercise_floor_ms: 0)
+    # batch 1 is exercised past its window: only batch 2 could be blamed
+    :ets.update_counter(Server, :total, 2, {:total, 0})
+    before = System.monotonic_time(:millisecond)
+    Process.sleep(2)
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "v")])
+
+    assert Server.fail(Server, [Toy.V], :boom, before) == :unattributed
+    assert v() == 2
+    assert Server.fail([Toy.V], :boom) == {:rolled_back, 2}
   end
 
   test "a batch whose modules are never guarded closes after floor and total" do

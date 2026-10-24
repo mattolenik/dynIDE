@@ -226,6 +226,23 @@ defmodule HerdrReload.GuardTest do
     assert {:ok, %Batch{id: 2}} = Task.await(reload, 30_000)
   end
 
+  test "a failure during a compile never blames the batch that compile then loads" do
+    dir = toy!(:toy_g_window_fail, %{"lib/a.ex" => a_src(1)}, exercise_n: 3, exercise_floor_ms: 0)
+    # batch 1 is exercised past its window: only batch 2 could be blamed
+    for _ <- 1..3, do: assert({:ok, 1} = Guard.run(Toy.A, :f, [:ok]))
+    slow = String.replace(a_src(2), "defmodule Toy.A do\n", "defmodule Toy.A do\n  Process.sleep(300)\n")
+    HerdrReload.ReloadCase.write_source!(dir, "lib/a.ex", slow)
+    reload = Task.async(fn -> Server.reload([path(dir, "a")]) end)
+    Process.sleep(50)
+
+    # fails mid-compile (old code, or no code at all while Mix rebuilds Toy.A); its
+    # attribution waits for the compile, then must not land on batch 2
+    assert {:failed, _} = Guard.run(Toy.A, :f, [:boom])
+    assert {:ok, %Batch{id: 2}} = Task.await(reload, 30_000)
+    assert [%Batch{id: 2, rolled_back: false, failures: 0} | _] = Server.batches()
+    assert Guard.run(Toy.A, :f, [:ok]) == {:ok, 2}
+  end
+
   test "a trapping caller gets no stray messages from budgeted calls" do
     Process.flag(:trap_exit, true)
     assert {:ok, :fine} = Guard.run(Fixture, :f, [:ok], [budget_ms: 1_000] ++ @nosrv)

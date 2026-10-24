@@ -201,13 +201,16 @@ defmodule HerdrReload.Guard do
     end
   end
 
-  defp failed(stack_modules, failure, server),
-    do: {:failed, failure, attribute(server, stack_modules, failure)}
+  # stamped now: the Server may be mid-compile and only answers once it has loaded
+  defp failed(stack_modules, failure, server) do
+    at = System.monotonic_time(:millisecond)
+    {:failed, failure, attribute(server, stack_modules, failure, at)}
+  end
 
   # A server dying between whereis and the call must not crash the caller.
-  defp attribute(server, stack_modules, failure) do
+  defp attribute(server, stack_modules, failure, at) do
     if GenServer.whereis(server),
-      do: Server.fail(server, stack_modules, failure),
+      do: Server.fail(server, stack_modules, failure, at),
       else: :unattributed
   catch
     :exit, _ -> :unattributed

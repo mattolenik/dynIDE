@@ -14,7 +14,7 @@ defmodule HerdrReload.Server do
   value read at each batch, which the app owning the state sets at its start) runs
   inside the Server's reload call. It must not raise, and it must not
   `GenServer.call` a process that may itself be blocked in a guarded call
-  waiting on `fail/3` (that deadlocks); read an ETS mirror instead.
+  waiting on `fail/4` (that deadlocks); read an ETS mirror instead.
   """
 
   use GenServer
@@ -32,7 +32,10 @@ defmodule HerdrReload.Server do
     GenServer.start_link(__MODULE__, opts, name: opts[:name])
   end
 
-  @doc "Compiles and loads `paths` as one batch."
+  @doc """
+  Compiles and loads `paths` as one batch. Paths whose content is unchanged since this
+  server last compiled them are skipped (`:noop`, no Mix run, when none remain).
+  """
   @spec reload(server(), [Path.t()]) ::
           {:ok, Batch.t()} | :noop | {:error, list()} | {:blocked, module(), [Loader.pid_info()]}
   def reload(server \\ __MODULE__, paths), do: GenServer.call(server, {:reload, paths}, :infinity)
@@ -45,10 +48,20 @@ defmodule HerdrReload.Server do
   def rollback(server, n, timeout \\ :infinity),
     do: GenServer.call(server, {:rollback, n}, timeout)
 
-  @doc "Blames a failure on the newest live batch touching `stack_modules` and rolls it back."
+  @doc """
+  Blames a failure on the newest live batch touching `stack_modules` and rolls it back.
+  Only batches loaded at or before `failed_at` (monotonic ms, default now) are blamed: a
+  failure during a compile (when Mix has deleted the modules it rebuilds) waits here for
+  that compile, and must not land on the batch it then loads.
+  """
+  @spec fail(server(), [module()], term(), integer()) ::
+          {:rolled_back, pos_integer()} | :unattributed
+  def fail(server, stack_modules, reason, failed_at),
+    do: GenServer.call(server, {:fail, stack_modules, reason, failed_at}, :infinity)
+
   @spec fail(server(), [module()], term()) :: {:rolled_back, pos_integer()} | :unattributed
   def fail(server \\ __MODULE__, stack_modules, reason),
-    do: GenServer.call(server, {:fail, stack_modules, reason}, :infinity)
+    do: fail(server, stack_modules, reason, System.monotonic_time(:millisecond))
 
   @doc """
   The batch whose `state_at_load` precedes the newest rollback that had one: the
@@ -90,6 +103,8 @@ defmodule HerdrReload.Server do
        # batch ids restart per VM run: the stamp keeps an earlier run's rejects
        vm_stamp: System.os_time(:millisecond),
        mtimes: Compiler.source_mtimes(compile_opts),
+       # path => content digest when we last compiled it
+       digests: %{},
        ring: Ring.new(Keyword.get(opts, :ring_depth, 8)),
        last_rolled_back: :none,
        next_id: 1
@@ -98,17 +113,27 @@ defmodule HerdrReload.Server do
 
   @impl true
   def handle_call({:reload, paths}, _from, s) do
-    case Compiler.compile(s.cache, paths, s.mtimes, s.compile_opts) do
+    # Read before Mix runs: a write during the compile then differs and compiles next time.
+    digests = Map.new(paths, &{&1, digest(&1)})
+    # Unchanged since we last compiled it: a duplicate event, or the event of the
+    # compiler's own back-date touch, which would otherwise back-date and fire again.
+    fresh = Enum.reject(paths, &(digests[&1] != nil and digests[&1] == s.digests[&1]))
+    s_done = %{s | digests: Map.merge(s.digests, Map.take(digests, fresh))}
+
+    case fresh != [] && Compiler.compile(s.cache, fresh, s.mtimes, s.compile_opts) do
+      false ->
+        {:reply, :noop, s}
+
       {:ok, %{changed: c, removed: [], mtimes: m}} when c == %{} ->
-        {:reply, :noop, %{s | mtimes: m}}
+        {:reply, :noop, %{s_done | mtimes: m}}
 
       {:ok, res} ->
-        {batch, s} = record(res, %{s | mtimes: res.mtimes})
+        {batch, s} = record(res, %{s_done | mtimes: res.mtimes})
         {:reply, {:ok, batch}, s}
 
       {:error, diags, mtimes} ->
         Notices.broadcast({:compile_error, diags})
-        {:reply, {:error, diags}, %{s | mtimes: mtimes}}
+        {:reply, {:error, diags}, %{s_done | mtimes: mtimes}}
 
       {:blocked, _, _} = blocked ->
         {:reply, blocked, s}
@@ -121,14 +146,14 @@ defmodule HerdrReload.Server do
     {:reply, {:ok, Enum.map(targets, & &1.id)}, s}
   end
 
-  def handle_call({:fail, stack_modules, reason}, _from, s) do
+  def handle_call({:fail, stack_modules, reason, failed_at}, _from, s) do
     now = System.monotonic_time(:millisecond)
     total = count(s.table, :total)
 
     # only modules a guarded call has entered: the rest must not hold a batch open
     live? = fn b ->
       counters = for m <- b.modules, [{^m, c}] <- [:ets.lookup(s.table, m)], into: %{}, do: {m, c}
-      Ring.live?(b, counters, total, now, s.live_opts)
+      b.loaded_at <= failed_at and Ring.live?(b, counters, total, now, s.live_opts)
     end
 
     case Ring.attribute(s.ring, stack_modules, live?) do
@@ -150,22 +175,25 @@ defmodule HerdrReload.Server do
   defp record(res, s) do
     modules = Map.keys(res.changed) ++ res.removed
 
+    state = state_at_load(s.state_at_load)
+    beams = Map.merge(res.changed, Map.new(res.removed, &{&1, nil}))
+
+    for {mod, e} <- load_all(beams, s.loader_opts),
+        do: Logger.warning("reload load of #{inspect(mod)} failed: #{inspect(e)}")
+
+    # stamped once loaded: a failure before this ran the old code (or none)
     batch = %Batch{
       id: s.next_id,
       modules: modules,
       previous_beams: res.previous,
       beam_paths: res.paths,
-      state_at_load: state_at_load(s.state_at_load),
+      state_at_load: state,
       loaded_at: System.monotonic_time(:millisecond),
       baseline: Map.new(modules, &{&1, count(s.table, &1)}),
       total_baseline: count(s.table, :total)
     }
 
     {ring, _evicted} = Ring.push(s.ring, batch)
-    beams = Map.merge(res.changed, Map.new(res.removed, &{&1, nil}))
-
-    for {mod, e} <- load_all(beams, s.loader_opts),
-        do: Logger.warning("reload load of #{inspect(mod)} failed: #{inspect(e)}")
 
     Notices.broadcast({:loaded, batch.id, modules})
     {batch, %{s | ring: ring, next_id: s.next_id + 1, cache: apply_cache(s.cache, beams, [])}}
@@ -239,6 +267,13 @@ defmodule HerdrReload.Server do
       {mod, nil}, acc -> Map.delete(acc, mod)
       {mod, bin}, acc -> Map.put(acc, mod, bin)
     end)
+  end
+
+  defp digest(path) do
+    case File.read(path) do
+      {:ok, bin} -> :erlang.md5(bin)
+      {:error, _} -> nil
+    end
   end
 
   defp count(table, key) do

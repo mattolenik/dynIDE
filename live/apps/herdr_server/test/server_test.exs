@@ -395,7 +395,7 @@ defmodule HerdrServer.ServerTest do
 
   defp fake_reload_loop(last) do
     receive do
-      {:"$gen_call", from, {:fail, _, _}} -> GenServer.reply(from, {:rolled_back, 7})
+      {:"$gen_call", from, {:fail, _, _, _}} -> GenServer.reply(from, {:rolled_back, 7})
       {:"$gen_call", from, :last_rolled_back} -> GenServer.reply(from, last)
     end
 
