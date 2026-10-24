@@ -9,10 +9,8 @@ defmodule HerdrServer.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      # Starts a worker by calling: HerdrServer.Worker.start_link(arg)
-      # {HerdrServer.Worker, arg}
-    ]
+    reload = Application.get_env(:herdr_server, HerdrServer.Reload, [])
+    children = if reload[:enabled], do: [HerdrServer.Reload.Supervisor], else: []
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
