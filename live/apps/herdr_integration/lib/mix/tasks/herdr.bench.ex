@@ -2,25 +2,32 @@
 # in the dev PLT. Outside MIX_ENV=test the task does not exist.
 if Mix.env() == :test do
   defmodule Mix.Tasks.Herdr.Bench do
-    @shortdoc "Runs the herdr-live M3 benchmarks (MIX_ENV=test, fake kernel)"
+    @shortdoc "Runs the herdr-live M3 benchmarks (MIX_ENV=test; fake or real server kernel)"
     @moduledoc """
-    M3 benchmark harness behind `just live-bench`. Everything runs against
-    `Kernel.Fake`, so it measures the Elixir side only; targets are judged at M6.
+    M3 benchmark harness behind `just live-bench`. By default everything runs against
+    `Kernel.Fake` (Elixir side only); `--kernel real` restarts herdr_server on M1's
+    `HerdrServer.Native.*` with `/bin/sh` panes (the terminal client stays on its fakes
+    until M2). Targets are judged at M6.
 
       1. keystroke -> glass, idle, fast path and forced slow path
       2. frame cost (`Compose.frame/3` + `Fake.Blit.frame/3`) at 200x50, 1 vs 15 full panes
       3. scheduler stall and typing latency while 15 panes each get 100MiB of output
 
-    Prints a markdown table and writes `_build/bench/m3.json` (quick runs:
-    `m3-quick.json`). `--quick` (or `HERDR_BENCH_QUICK=1`) shrinks every metric
-    10x. Compiled only in `:test` because it drives the clients with
+    Prints a markdown table and writes `_build/bench/m3.json` (`m3-real.json` with
+    `--kernel real`, `-quick` suffix for quick runs). `--quick` (or `HERDR_BENCH_QUICK=1`)
+    shrinks every metric 10x. `--flood-mb N` sets the bytes per flooded pane (MiB,
+    default 100). With `--kernel real` the typed pane runs `cat` (tty echo) and each
+    flooded pane runs `cat` of one generated file (in `HERDR_REAL_KERNEL_TMP`, default
+    the system tmp dir). Compiled only in `:test` because it drives the clients with
     `HerdrIntegration.Driver` (test/support).
     """
     use Mix.Task
 
     alias HerdrIntegration.Driver
     alias HerdrScene.{Cell, Protocol}
+    alias HerdrServer.Kernel
     alias HerdrServer.Kernel.Fake.{Keeper, Pty}
+    alias HerdrServer.Pane.Rows
     alias HerdrTerm.Client
     alias HerdrTerm.Client.Term.Render.Compose
     alias HerdrTerm.Client.Term.Theme
@@ -30,24 +37,34 @@ if Mix.env() == :test do
     @chunk 65_536
     @key_timeout_ms 5000
     @mailbox_limit 100
+    @flood_end "FLOOD-END"
 
     @impl Mix.Task
     def run(args) do
       Mix.Task.run("app.start")
-      quick? = "--quick" in args or System.get_env("HERDR_BENCH_QUICK") == "1"
+
+      {opts, _, _} =
+        OptionParser.parse(args, strict: [quick: :boolean, kernel: :string, flood_mb: :integer])
+
+      quick? = opts[:quick] == true or System.get_env("HERDR_BENCH_QUICK") == "1"
       s = if quick?, do: 10, else: 1
+      kernel = if opts[:kernel] == "real", do: :real, else: :fake
 
       cfg = %{
         quick: quick?,
+        kernel: kernel,
         keys: div(1000, s),
         warmup: div(20, s),
         iters: div(200, s),
-        flood_bytes: div(100 * 1024 * 1024, s),
-        flood_min_keys: div(200, s)
+        flood_bytes: div(Keyword.get(opts, :flood_mb, 100) * 1024 * 1024, s),
+        flood_min_keys: div(200, s),
+        file: nil
       }
 
+      cfg = if kernel == :real, do: real_kernel(cfg), else: cfg
       Driver.reset()
       client = start_client(@size)
+      if kernel == :real, do: exec_cat(client)
 
       result =
         try do
@@ -55,13 +72,61 @@ if Mix.env() == :test do
         after
           Supervisor.stop(client)
           Driver.reset()
+          if cfg.file, do: File.rm(cfg.file)
         end
 
       report(result, cfg)
     end
 
+    # Restarts herdr_server on the real kernel (Kernel.load reads the env at app start).
+    # Children inherit the VM's OS environment, so PS1 goes through :pane_env.
+    defp real_kernel(cfg) do
+      :ok = Application.stop(:herdr_server)
+      native = [vt: HerdrServer.Native.Vt, pty: HerdrServer.Native.Pty]
+      Application.put_env(:herdr_server, :kernel, native ++ [keeper: HerdrServer.Native.Keeper])
+      System.put_env("SHELL", "/bin/sh")
+
+      Application.put_env(:herdr_server, :pane_env, [
+        {"PS1", "$ "},
+        {"BASH_SILENCE_DEPRECATION_WARNING", "1"}
+      ])
+
+      {:ok, _} = Application.ensure_all_started(:herdr_server)
+      %{cfg | file: flood_file(cfg.flood_bytes)}
+    end
+
+    # one file of numbered 64-byte lines, `bytes` long, ending in a marker line
+    defp flood_file(bytes) do
+      dir = System.get_env("HERDR_REAL_KERNEL_TMP", System.tmp_dir!())
+      path = Path.join(dir, "herdr-bench-flood-#{System.unique_integer([:positive])}")
+      line = fn n -> String.pad_trailing(Integer.to_string(n), 62, ".") <> "\r\n" end
+      lines = div(bytes, 64) - 1
+
+      File.write!(
+        path,
+        Enum.map(1..lines//1, line) ++ [String.pad_trailing(@flood_end, 62) <> "\r\n"]
+      )
+
+      path
+    end
+
+    # the typed pane echoes keys through the tty line discipline: `exec cat` at the prompt
+    defp exec_cat(client) do
+      [%{id: id}] = Driver.scene(client).panes
+      until(fn -> text(id) =~ "$" end, 5000)
+      Driver.type(client, "exec cat\r")
+      until(fn -> match?({_, _, %{x: 0, y: 1}}, Rows.fetch(id)) end, 5000)
+      :ok = Driver.quiesce(client)
+    end
+
+    defp text(id) do
+      {:ok, %{vt: vt}} = Kernel.keeper().lookup(Rows.kernel_id(id))
+      Kernel.vt().read_text(vt, :viewport)
+    end
+
     defp measure(client, cfg) do
       [pane] = Driver.scene(client).panes
+      Process.put({__MODULE__, :kernel}, cfg.kernel)
       fast = keystrokes(client, pane, cfg.keys)
       slow = slow_path(fn -> keystrokes(client, pane, cfg.keys) end)
       paced = type_loop(client, pane, &(&1 >= cfg.keys), :paced)
@@ -127,49 +192,68 @@ if Mix.env() == :test do
 
     defp keystrokes(client, pane, n), do: type_loop(client, pane, &(&1 >= n), :idle)
 
-    # Types one char at a time on the pane's first row (clearing the pane when the
-    # row is full) until `stop?.(count)`. Each sample waits for its frame; `:idle` then
-    # waits until no frame came for longer than the client's frame pacing (a keystroke
-    # makes one frame: rows and cursor travel together), `:paced` does not; both sleep 2ms.
+    # Types one char at a time at the pane's cursor (from the row cache), clearing the
+    # pane (fake) or pressing enter (real, `cat`) when the row is full, until
+    # `stop?.(count)`. Each sample waits for its frame; `:idle` then waits until no frame
+    # came for longer than the client's frame pacing (a keystroke makes one frame: rows
+    # and cursor travel together), `:paced` does not; both sleep 2ms.
     defp type_loop(client, pane, stop?, mode),
-      do: type_loop(client, pane, {stop?, mode}, pane.rect.w, [], 0)
+      do: type_loop(client, pane, {stop?, mode}, [], 0)
 
-    defp type_loop(client, pane, {stop?, mode} = how, col, acc, done) do
+    defp type_loop(client, pane, {stop?, mode} = how, acc, done) do
+      {x, y} = at = cursor(pane)
+
       cond do
         stop?.(done) ->
           summarize(acc)
 
-        col >= pane.rect.w - 1 ->
-          clear(client, pane)
-          type_loop(client, pane, how, 0, acc, done)
+        x >= pane.rect.w - 1 or y >= pane.rect.h ->
+          clear(client, pane, at)
+          type_loop(client, pane, how, acc, done)
 
         true ->
-          sample = keystroke(client, pane, col, <<?a + rem(done, 26)>>)
+          sample = keystroke(client, pane, at, <<?a + rem(done, 26)>>)
           if mode == :idle, do: quiet(Driver.tty(client))
           Process.sleep(2)
-          type_loop(client, pane, how, col + 1, [sample | acc], done + 1)
+          type_loop(client, pane, how, [sample | acc], done + 1)
       end
     end
 
-    defp keystroke(client, %{rect: r}, col, ch) do
+    defp cursor(%{id: id}) do
+      case Rows.fetch(id) do
+        {_, _, %{x: x, y: y}} -> {x, y}
+        _ -> {0, 0}
+      end
+    end
+
+    defp keystroke(client, %{rect: r}, {x, y}, ch) do
       tty = Driver.tty(client)
       drain(tty)
       before_key()
       t0 = :erlang.monotonic_time(:nanosecond)
       Driver.type(client, ch)
 
-      case await_cell(tty, {r.x + col, r.y}, [ch], deadline()) do
+      case await_cell(tty, {r.x + x, r.y + y}, [ch], deadline()) do
         :timeout -> :timeout
         at when at < t0 -> :invalid
         at -> (at - t0) / 1000
       end
     end
 
-    defp clear(client, %{id: id, rect: r}) do
+    defp clear(client, %{id: id, rect: r} = pane, at) do
       tty = Driver.tty(client)
       drain(tty)
-      Driver.output(id, "\e[2J\e[1;1H")
-      :timeout != await_cell(tty, {r.x, r.y}, ["", " "], deadline()) or Mix.raise("bench: clear")
+
+      if Process.get({__MODULE__, :kernel}) == :real do
+        Driver.type(client, "\r")
+        until(fn -> elem(cursor(pane), 0) == 0 and cursor(pane) != at end, @key_timeout_ms)
+        quiet(tty)
+      else
+        Driver.output(id, "\e[2J\e[1;1H")
+
+        :timeout != await_cell(tty, {r.x, r.y}, ["", " "], deadline()) or
+          Mix.raise("bench: clear")
+      end
     end
 
     # On each frame notification, reads the cell and the latest logged frame's `at` in one
@@ -285,7 +369,11 @@ if Mix.env() == :test do
 
       try do
         feeders =
-          Enum.map(flooded, fn %{id: id} -> Task.async(fn -> feed(id, chunk, chunks) end) end)
+          Enum.map(flooded, fn %{id: id} ->
+            Task.async(fn ->
+              if cfg.file, do: cat(id, cfg.file), else: feed(id, chunk, chunks)
+            end)
+          end)
 
         stop? = &(&1 >= cfg.flood_min_keys and done?(feeders))
         typing = type_loop(client, typed, stop?, :paced)
@@ -294,7 +382,7 @@ if Mix.env() == :test do
 
         %{
           panes: length(flooded),
-          bytes_per_pane: chunks * @chunk,
+          bytes_per_pane: if(cfg.file, do: File.stat!(cfg.file).size, else: chunks * @chunk),
           wall_ms: wall,
           throttle_sleeps: throttled,
           typing: typing,
@@ -311,9 +399,26 @@ if Mix.env() == :test do
     defp restore_monitor({pid, opts}), do: :erlang.system_monitor(pid, opts)
     defp restore_monitor(:undefined), do: :erlang.system_monitor(:undefined)
 
+    # real kernel: the pane's shell runs `cat file` (input written to its pty); done once
+    # the marker line is on screen. Returns 0 (no throttling).
+    defp cat(id, file) do
+      {:ok, %{pty: pty}} = Kernel.keeper().lookup(Rows.kernel_id(id))
+      until(fn -> text(id) =~ "$" end, 5000)
+      :ok = Kernel.pty().write(pty, "cat #{file}\r")
+      wait_for(fn -> text(id) =~ @flood_end end)
+      0
+    end
+
+    defp wait_for(check) do
+      unless check.() do
+        Process.sleep(20)
+        wait_for(check)
+      end
+    end
+
     # Fake.Pty applies no backpressure; yield 1ms while its or the vt's mailbox is deep.
     defp feed(id, chunk, n) do
-      {:ok, %{pty: pty, vt: vt}} = Keeper.lookup(id)
+      {:ok, %{pty: pty, vt: vt}} = Keeper.lookup(Rows.kernel_id(id))
 
       Enum.reduce(1..n//1, 0, fn _, sleeps ->
         sleeps = throttle(pty, vt, sleeps)
@@ -354,8 +459,9 @@ if Mix.env() == :test do
 
     defp collect(acc) do
       receive do
-        {:monitor, _who, kind, info} when kind in [:long_schedule, :long_gc] ->
-          collect(Map.update!(acc, kind, &[{Keyword.get(info, :timeout, 0), info[:in]} | &1]))
+        {:monitor, who, kind, info} when kind in [:long_schedule, :long_gc] ->
+          ev = {Keyword.get(info, :timeout, 0), info[:in], info[:out], who(who)}
+          collect(Map.update!(acc, kind, &[ev | &1]))
 
         {:stop, from} ->
           send(from, {:stopped, self(), Map.new(acc, fn {k, ms} -> {k, events(ms)} end)})
@@ -366,9 +472,20 @@ if Mix.env() == :test do
     end
 
     defp events(evs) do
-      {max, at} = Enum.max_by(evs, &elem(&1, 0), fn -> {0, nil} end)
-      %{count: length(evs), max_ms: max, max_in: inspect(at)}
+      {max, at, out, who} = Enum.max_by(evs, &elem(&1, 0), fn -> {0, nil, nil, nil} end)
+      %{count: length(evs), max_ms: max, max_in: inspect(at), max_out: inspect(out), max_who: who}
     end
+
+    # the process's initial call (registered name if any), resolved when the event arrives
+    defp who(pid) when is_pid(pid) do
+      case Process.info(pid, [:registered_name, :dictionary]) do
+        [registered_name: name, dictionary: _] when name != [] -> inspect(name)
+        [registered_name: _, dictionary: d] -> inspect(d[:"$initial_call"])
+        nil -> "dead"
+      end
+    end
+
+    defp who(port), do: inspect(port)
 
     defp stop(pid) do
       send(pid, {:stop, self()})
@@ -415,6 +532,7 @@ if Mix.env() == :test do
         long_schedule_count: st.monitor.long_schedule.count,
         typing_during_flood_p95_us: st.typing.p95,
         quick: cfg.quick,
+        kernel: cfg.kernel,
         keystroke_fast: r.fast,
         keystroke_slow: r.slow,
         keystroke_paced: r.paced,
@@ -424,7 +542,9 @@ if Mix.env() == :test do
         environment: environment()
       }
 
-      name = if cfg.quick, do: "bench/m3-quick.json", else: "bench/m3.json"
+      name =
+        "bench/m3#{if cfg.kernel == :real, do: "-real"}#{if cfg.quick, do: "-quick"}.json"
+
       path = Mix.Project.build_path() |> Path.dirname() |> Path.join(name)
       File.mkdir_p!(Path.dirname(path))
       File.write!(path, JSON.encode!(json))
@@ -437,7 +557,7 @@ if Mix.env() == :test do
       env = environment()
 
       """
-      ## herdr-live M3 bench: against Kernel.Fake: Elixir side only; targets judged at M6
+      ## herdr-live M3 bench: #{title(cfg)}; targets judged at M6
 
       #{if cfg.quick, do: "**QUICK run (every metric 10x smaller)**\n", else: ""}
       | metric | value | target (design.md, judged at M6) |
@@ -451,7 +571,7 @@ if Mix.env() == :test do
       | frame cost 200x50, #{f15.panes} panes, 1 pane dirty (full compose, no repaint) | #{frame(f15.dirty)} | reference |
       | flood: #{st.panes} panes x #{div(st.bytes_per_pane, 1024 * 1024)}MiB, wall time | #{st.wall_ms} ms | |
       | flood: Process.sleep(1) probe max overshoot | #{fmt(st.probe_max_ms)} ms | no stall > 10ms |
-      | flood: long_schedule >= 5ms events (max) | #{st.monitor.long_schedule.count} (#{st.monitor.long_schedule.max_ms} ms in #{st.monitor.long_schedule.max_in}) | |
+      | flood: long_schedule >= 5ms events (max) | #{st.monitor.long_schedule.count} (#{st.monitor.long_schedule.max_ms} ms, #{st.monitor.long_schedule.max_who}, in #{st.monitor.long_schedule.max_in}, out #{st.monitor.long_schedule.max_out}) | |
       | flood: long_gc >= 5ms events (max) | #{st.monitor.long_gc.count} (#{st.monitor.long_gc.max_ms} ms) | |
       | flood: typing in a 16th pane (n=#{st.typing.n}) | #{keys(st.typing)} | <= 20ms |
 
@@ -465,12 +585,33 @@ if Mix.env() == :test do
       `:persistent_term` republished with `passthrough: false` (re-asserted before each key),
       so keys go client Input -> Client.Session -> App.Store. Client frames are paced at
       min_frame_interval_ms. Frame cost = `Compose.frame/3` + `Fake.Blit.frame/3`,
-      #{cfg.warmup} warmup + #{cfg.iters} iterations, on a dedicated fake tty. Flood = 15
+      #{cfg.warmup} warmup + #{cfg.iters} iterations, on a dedicated fake tty. #{String.trim_trailing(flood_method(cfg, st))}
+
+      Environment: OTP #{env.otp}, Elixir #{env.elixir}, #{env.schedulers} schedulers, #{env.os}
+      """
+    end
+
+    defp title(%{kernel: :real}),
+      do: "real server kernel (HerdrServer.Native.*, /bin/sh panes), fake terminal client"
+
+    defp title(_cfg), do: "against Kernel.Fake: Elixir side only"
+
+    defp flood_method(%{kernel: :real}, _st) do
+      """
+      Real kernel: keys are typed at the pane's cursor (from the row cache); the typed pane
+      runs `exec cat` (echo by the tty line discipline), enter when its row is full. Flood =
+      each of 15 `/bin/sh` panes runs `cat` of one generated file of 64-byte lines (input
+      written to its pty), done when the end marker is on its screen; the kernel's own
+      damage coalescing and pty backpressure apply.
+      """
+    end
+
+    defp flood_method(_cfg, st) do
+      """
+      Flood = 15
       feeder processes pushing 64KiB chunks of one binary via `Fake.Pty.output/2`; the fake
       applies no real backpressure, feeders sleep 1ms while pty+vt mailboxes exceed
       #{@mailbox_limit} (#{st.throttle_sleeps} sleeps); the fake vt keeps only the tail of each chunk.
-
-      Environment: OTP #{env.otp}, Elixir #{env.elixir}, #{env.schedulers} schedulers, #{env.os}
       """
     end
 
