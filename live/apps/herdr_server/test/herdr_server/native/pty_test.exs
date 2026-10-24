@@ -36,10 +36,12 @@ defmodule HerdrServer.Native.PtyTest do
   test "exit criterion 1: echo then exit" do
     {vt, pty} = spawn_sh(1)
     assert Pty.subscribe(pty, self()) == :ok
-    assert Pty.write(pty, "echo hi\n") == :ok
+    # `h''i` keeps the echoed command line from matching. Typeahead can put the
+    # output after the prompt (dash on Linux), so "hi" may follow "$ ".
+    assert Pty.write(pty, "echo h''i\n") == :ok
     assert_receive {:damage, 1, _}, 2000
     deadline = System.monotonic_time(:millisecond) + 2000
-    assert poll_rows(vt, &String.starts_with?(&1, "hi"), deadline)
+    assert poll_rows(vt, &(String.trim_trailing(&1) =~ ~r/(^|\$ )hi$/), deadline)
     assert Pty.write(pty, ["ex", ~c"it", ?\n]) == :ok
     assert_receive {:exit, 1, 0}, 5000
     assert Pty.write(pty, "x") == {:error, :closed}
