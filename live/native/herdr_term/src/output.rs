@@ -26,25 +26,6 @@ pub trait Encoder {
     fn reset(&mut self);
 }
 
-/// Placeholder until Task 3's `BlitEncoder`: `ESC[2J` on repaint, then the
-/// row bytes as given.
-pub struct StubEncoder;
-
-impl Encoder for StubEncoder {
-    fn encode(&mut self, job: &FrameJob) -> Option<Vec<u8>> {
-        let mut out = Vec::new();
-        if job.repaint {
-            out.extend_from_slice(b"\x1b[2J");
-        }
-        for (_, row) in &job.rows {
-            out.extend_from_slice(row);
-        }
-        Some(out)
-    }
-
-    fn reset(&mut self) {}
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, rustler::NifMap)]
 pub struct OutputStats {
     pub frames_written: u64,
@@ -114,8 +95,6 @@ impl Output {
 
     /// Queues a frame behind everything already queued. A frame still
     /// pending is replaced (counted dropped) and its `repaint` carried over.
-    // Task 3's `Blit.frame/3` NIF is the first production caller.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn submit_frame(&self, mut job: FrameJob) {
         let mut q = lock(&self.queue);
         if q.closed {
@@ -180,7 +159,14 @@ impl Output {
                     continue;
                 }
                 Item::Frame(job) => match encoder.encode(&job) {
-                    Some(bytes) => matches!(flush(&bytes), Flushed::Done),
+                    Some(bytes) => {
+                        let done = matches!(flush(&bytes), Flushed::Done);
+                        if !done {
+                            // The host may hold part of the frame: repaint next time.
+                            encoder.reset();
+                        }
+                        done
+                    }
                     None => false,
                 },
             };
@@ -251,5 +237,25 @@ mod tests {
         out.close();
         assert_eq!(thread.join().unwrap(), ["reset", "encode"]);
         assert_eq!(out.stats().frames_written, 0);
+    }
+
+    #[test]
+    fn failed_flush_resets_encoder() {
+        let out = Arc::new(Output::new());
+        out.submit_frame(FrameJob {
+            rows: vec![(0, vec![0])],
+            ..FrameJob::default()
+        });
+        let runner = Arc::clone(&out);
+        let thread = std::thread::spawn(move || {
+            let mut rec = Recorder(Vec::new());
+            runner.run(&mut rec, Duration::from_millis(10), |_| Flushed::Failed);
+            rec.0
+        });
+        while out.stats().frames_dropped == 0 {
+            std::thread::yield_now();
+        }
+        out.close();
+        assert_eq!(thread.join().unwrap(), ["encode", "reset"]);
     }
 }

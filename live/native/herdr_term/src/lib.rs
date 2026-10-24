@@ -2,6 +2,10 @@
 //! which is tested without the BEAM.
 
 #[cfg(unix)]
+mod blit;
+#[cfg(unix)]
+mod cell;
+#[cfg(unix)]
 mod output;
 #[cfg(unix)]
 mod probe;
@@ -10,14 +14,15 @@ mod tty;
 
 #[cfg(unix)]
 mod nif {
-    use crate::output::{OutputStats, WRITE_QUEUE_BYTES};
+    use crate::blit::validate_rows;
+    use crate::output::{FrameJob, OutputStats, WRITE_QUEUE_BYTES};
     use crate::tty::{Event, Inner, Sink, TtyResource};
     use rustler::types::binary::{Binary, OwnedBinary};
     use rustler::{Atom, Encoder, Env, LocalPid, OwnedEnv, ResourceArc, Term};
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
     mod atoms {
-        rustler::atoms! { ok, error, tty_input, exit, tty, hangup, panic, backpressure }
+        rustler::atoms! { ok, error, tty_input, exit, tty, hangup, panic, backpressure, bad_frame }
     }
 
     impl rustler::Resource for TtyResource {}
@@ -137,6 +142,33 @@ mod nif {
     #[rustler::nif]
     fn tty_stats(tty: ResourceArc<TtyResource>) -> OutputStats {
         tty.inner.output.stats()
+    }
+
+    /// Validates the frame's shape, copies the rows and hands them to the
+    /// output thread (latest wins). Rows that pass the shape check but do not
+    /// decode are dropped there and counted in `frames_dropped`.
+    #[rustler::nif]
+    fn blit_frame<'a>(
+        env: Env<'a>,
+        tty: ResourceArc<TtyResource>,
+        rows: Vec<(u16, Binary)>,
+        cursor: Option<(u16, u16)>,
+        shape: u8,
+        repaint: bool,
+    ) -> Term<'a> {
+        let slices: Vec<(u16, &[u8])> = rows.iter().map(|(i, r)| (*i, r.as_slice())).collect();
+        if shape > 6 || validate_rows(&slices).is_err() {
+            return (atoms::error(), atoms::bad_frame()).encode(env);
+        }
+        // ponytail: memcpy per frame; hold owned env binaries if profiling says so.
+        let rows = slices.iter().map(|(i, r)| (*i, r.to_vec())).collect();
+        tty.inner.output.submit_frame(FrameJob {
+            rows,
+            cursor,
+            shape,
+            repaint,
+        });
+        atoms::ok().encode(env)
     }
 
     #[rustler::nif]

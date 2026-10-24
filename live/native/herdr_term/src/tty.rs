@@ -5,7 +5,8 @@
 //! `Drop` restores the terminal without waiting and raises `shutdown`; each
 //! detached thread re-checks it at least every `POLL_MS` and drops its `Arc`.
 
-use crate::output::{Flushed, Output, StubEncoder};
+use crate::blit::BlitEncoder;
+use crate::output::{Flushed, Output};
 use crate::probe::{self, ProbeState};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -348,7 +349,7 @@ impl Inner {
     }
 
     fn output_loop(&self) {
-        let mut encoder = StubEncoder;
+        let mut encoder = BlitEncoder::default();
         let poll = Duration::from_millis(POLL_MS as u64);
         self.output
             .run(&mut encoder, poll, |bytes| self.write_output(bytes));
@@ -772,9 +773,11 @@ mod tests {
         assert!(same_termios(&termios(&p.slave), &before));
     }
 
-    fn frame(bytes: &[u8], repaint: bool) -> FrameJob {
+    /// A one-row frame drawing `text` (blit output contains it verbatim on
+    /// a full redraw).
+    fn frame(text: &str, repaint: bool) -> FrameJob {
         FrameJob {
-            rows: vec![(0, bytes.to_vec())],
+            rows: vec![(0, crate::cell::ascii_row(text))],
             repaint,
             ..FrameJob::default()
         }
@@ -830,16 +833,21 @@ mod tests {
             let start = Instant::now();
             tty.inner
                 .output
-                .submit_frame(frame(format!("<F{i:04}>").as_bytes(), false));
+                .submit_frame(frame(&format!("<F{i:04}>"), true));
             let took = start.elapsed();
             assert!(took < Duration::from_millis(5), "submit took {took:?}");
         }
         assert!(tty.inner.output.stats().frames_dropped >= 990);
-        let out = read_until(&p.master, b"<F0999>", Duration::from_secs(5));
-        let tail = read_until(&p.master, b"", Duration::from_millis(200));
-        assert!(contains(&out, b"<F0999>"), "last frame written");
-        assert!(tail.is_empty(), "nothing after the last frame: {tail:?}");
-        assert!(out.ends_with(b"<F0999>"));
+        let mut out = read_until(&p.master, b"<F0999>", Duration::from_secs(5));
+        out.extend(read_until(&p.master, b"", Duration::from_millis(200)));
+        let last = out.windows(7).rposition(|w| w == b"<F0999>");
+        let tail = &out[last.expect("last frame written") + 7..];
+        // Only the last frame's cursor epilogue follows its cells.
+        assert!(
+            !contains(tail, b"<F"),
+            "nothing after the last frame: {tail:?}"
+        );
+        assert!(tail.ends_with(b"\x1b[?2026l\x1b[1;7H\x1b[?25l"), "{tail:?}");
         assert!(wait_for(|| {
             let st = tty.inner.output.stats();
             st.frames_written + st.frames_dropped == 1000
@@ -851,17 +859,15 @@ mod tests {
         let p = pty();
         let tty = TtyResource::new(Inner::open_path(&p.path, 0, None).unwrap());
         fill(&tty);
-        tty.inner.output.submit_frame(frame(b"<A>", false));
+        tty.inner.output.submit_frame(frame("<A>", false));
         // Let the output thread take <A> so it is in flight, not pending.
         std::thread::sleep(Duration::from_millis(50));
-        tty.inner.output.submit_frame(frame(b"<B>", true));
-        tty.inner.output.submit_frame(frame(b"<C>", false));
+        tty.inner.output.submit_frame(frame("<B>", true));
+        tty.inner.output.submit_frame(frame("<C>", false));
         let out = read_until(&p.master, b"<C>", Duration::from_secs(5));
-        assert!(
-            out.ends_with(b"<A>\x1b[2J<C>"),
-            "{:?}",
-            &out[out.len().saturating_sub(16)..]
-        );
+        // <C> inherits <B>'s repaint: a full redraw, not a one-cell diff.
+        assert!(contains(&out, b"<A>") && !contains(&out, b"<B>"));
+        assert!(contains(&out, b"\x1b[1;1H\x1b[0;39;49m<C>"), "{out:?}");
         assert_eq!(tty.inner.output.stats().frames_dropped, 1);
     }
 
@@ -871,10 +877,12 @@ mod tests {
         let tty = TtyResource::new(Inner::open_path(&p.path, 0, None).unwrap());
         read_until(&p.master, b"\x1b[c", Duration::from_secs(1));
         tty.inner.output.write(b"<A>".to_vec()).unwrap();
-        tty.inner.output.submit_frame(frame(b"<B>", false));
+        tty.inner.output.submit_frame(frame("<B>", false));
         tty.inner.output.write(b"<C>".to_vec()).unwrap();
         let out = read_until(&p.master, b"<C>", Duration::from_secs(2));
-        assert_eq!(out, b"<A><B><C>");
+        let frame = &out[3..out.len() - 3];
+        assert!(out.starts_with(b"<A>") && out.ends_with(b"<C>"), "{out:?}");
+        assert!(frame.starts_with(b"\x1b[?2026h") && contains(frame, b"<B>"));
     }
 
     #[test]
@@ -885,7 +893,7 @@ mod tests {
         for _ in 0..64 {
             let _ = tty.inner.output.write(vec![b'w'; 64 * 1024]);
         }
-        tty.inner.output.submit_frame(frame(b"<F>", true));
+        tty.inner.output.submit_frame(frame("<F>", true));
         let start = Instant::now();
         drop(tty);
         let took = start.elapsed();
@@ -900,7 +908,7 @@ mod tests {
         tty.inner.restore().unwrap();
         read_until(&p.master, b"\x1b[?1049l", Duration::from_secs(1));
         assert_eq!(tty.inner.output.write(b"late".to_vec()), Ok(()));
-        tty.inner.output.submit_frame(frame(b"late", false));
+        tty.inner.output.submit_frame(frame("late", false));
         let out = read_until(&p.master, b"", Duration::from_millis(300));
         assert!(out.is_empty(), "{out:?}");
     }
