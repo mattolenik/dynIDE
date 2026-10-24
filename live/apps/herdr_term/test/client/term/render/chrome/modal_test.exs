@@ -89,7 +89,9 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.ModalTest do
   end
 
   test "tiny modals and menus clip, keep the backdrop and compose to full-width rows" do
-    for name <- ["modal_prompt_80x24", "modal_confirm_80x24", "menu_tab_80x24"],
+    for name <-
+          ["modal_prompt_80x24", "modal_confirm_80x24", "menu_tab_80x24"] ++
+            ["modal_settings_120x40", "modal_onboarding_80x24", "modal_keybinds_120x40"],
         cols <- [1, 3, 6, 20],
         rows <- [1, 3, 5] do
       sc = Fixture.load(name)
@@ -107,6 +109,73 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.ModalTest do
       assert length(frame) == rows
       assert Enum.all?(frame, fn {_, b} -> Cell.cols(b) == cols end), "#{name} #{cols}x#{rows}"
     end
+  end
+
+  # inner text of a 76-wide panel at x 22 (120 columns)
+  defp inner(t, y), do: t |> Enum.at(y) |> String.slice(23, 74) |> String.trim_trailing()
+
+  test "modal_settings_120x40: section tabs and rule, heading, choices with marker, check and glyphs" do
+    sc = Fixture.load("modal_settings_120x40")
+    l = layout(sc)
+    t = texts(sc)
+    assert inner(t, 10) == " settings"
+    assert inner(t, 11) == " theme   indicators   sound   toasts"
+    assert inner(t, 12) == String.duplicate("─", 74)
+    assert inner(t, 14) == " agent status indicators"
+    assert inner(t, 15) == " choose color dots or distinct symbols for each state"
+    assert inner(t, 17) == " ▸ color dots  ● ● ● ○ · ✓"
+    assert inner(t, 18) == "   distinct symbols  × ◐ ✓ ○ ·"
+    assert inner(t, 28) == " ↑↓ select  tab section"
+    assert inner(t, 29) =~ "↵ apply    esc close"
+
+    # active tab and the selected choice on :selected, the others on the surface
+    assert Enum.at(cells(sc, 11), 31).bg == Theme.style(@theme, :selected).bg
+    assert Enum.at(cells(sc, 11), 24).bg == Theme.style(@theme, :surface).bg
+    assert Enum.at(cells(sc, 17), 30).bg == Theme.style(@theme, :selected).bg
+    assert Enum.at(cells(sc, 18), 30).bg == Theme.style(@theme, :surface).bg
+
+    assert hit(l, [{:modal, 0}, :sections, {:section, :indicators}]).rect ==
+             %{x: 31, y: 11, w: 12, h: 1}
+
+    assert hit(l, [{:modal, 0}, :list, {:choice, 1}]).rect == %{x: 23, y: 18, w: 74, h: 1}
+    assert hit(l, [{:modal, 0}, :actions, :apply])
+  end
+
+  test "modal_onboarding_80x24: herdr-live lines, prefix keycaps in the accent, continue" do
+    sc = Fixture.load("modal_onboarding_80x24")
+    t = texts(sc)
+    box = Enum.map(4..19, &String.slice(Enum.at(t, &1), 8, 64))
+    assert Enum.at(box, 1) == "│" <> String.pad_trailing(" herdr-live", 62) <> "│"
+    assert Enum.at(box, 4) =~ "│ this is a mouse-first terminal."
+    line = " ctrl+b enters prefix mode · ? shows keybinds and settings"
+    assert Enum.at(box, 8) == "│" <> String.pad_trailing(line, 62) <> "│"
+    assert Enum.at(box, 14) =~ "↵ continue"
+    assert Enum.at(cells(sc, 12), 10).fg == Theme.style(@theme, :accent).fg
+    assert :bold in Enum.at(cells(sc, 12), 10).attrs
+    assert hit(layout(sc), [{:modal, 0}, :actions, :continue]).rect.y == 18
+  end
+
+  test "modal_keybinds_120x40: group headings, shortcut column, rows as hits" do
+    sc = Fixture.load("modal_keybinds_120x40")
+    t = texts(sc)
+    assert inner(t, 10) == " keybinds"
+    assert inner(t, 11) == " press / to filter by command or shortcut"
+    assert inner(t, 13) == " global"
+    assert inner(t, 14) == " prefix+?         keybinds"
+    assert inner(t, 23) == " prefix+shift+tab cycle pane previous"
+    assert inner(t, 28) == " search / · scroll j/k/↑↓/pgup/pgdn · rebind enter · close esc"
+    # the second action is selected
+    assert Enum.at(cells(sc, 15), 30).bg == Theme.style(@theme, :selected).bg
+    assert Enum.at(cells(sc, 14), 24).fg == Theme.style(@theme, :accent).fg
+
+    assert hit(layout(sc), [{:modal, 0}, :list, {:action, "detach"}]).rect ==
+             %{x: 23, y: 16, w: 74, h: 1}
+  end
+
+  test "modal_keybind_capture_120x40: the capture subtitle" do
+    t = texts(Fixture.load("modal_keybind_capture_120x40"))
+    assert inner(t, 11) == " press a key for rename_tab · esc cancels"
+    assert Enum.any?(t, &(&1 =~ "prefix+shift+t   rename tab"))
   end
 
   defp base(sc),
