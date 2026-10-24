@@ -17,7 +17,7 @@ use rustler::{
 };
 
 use crate::input::{Key, KeyAction, KeyInput, Mods, MouseButton, MouseInput, MouseKind, NamedKey};
-use crate::link::{Frame, Link, LinkSink};
+use crate::link::{Frame, Link, LinkSink, SEND_TIMEOUT};
 use crate::pty::{
     AdoptOptions, Event, EventSink, ExitStatus, Pty, SpawnOptions, ThawError, WriteError,
 };
@@ -794,7 +794,7 @@ fn link_connect(env: Env, path: String, owner: LocalPid) -> Term {
         };
         (atoms::error(), r).encode(env)
     };
-    let link = match Link::connect(Path::new(&path)) {
+    let link = match Link::connect(Path::new(&path), SEND_TIMEOUT) {
         Ok(l) => l,
         Err(e) => return fail(&e),
     };

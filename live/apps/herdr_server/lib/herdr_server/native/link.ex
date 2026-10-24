@@ -8,6 +8,12 @@ defmodule HerdrServer.Native.Link do
       {:herdr_link_closed, link, reason}     once, last; reason :: :eof | binary
 
   The owner is monitored: its exit closes the link.
+
+  Senders queue on one mutex per link, so a send waits behind any frame in flight.
+  The 5 s timeout applies per `sendmsg` call, not per frame. A send that fails
+  after writing may have left a partial frame, so it closes the link (the reader
+  then reports `:herdr_link_closed`); only `:too_large`, rejected before any write,
+  leaves it open.
   """
 
   alias HerdrServer.Native
@@ -69,9 +75,10 @@ defmodule HerdrServer.Native.Link do
   @spec frame_key(binary, iodata) :: iodata
   def frame_key(key, blob), do: [<<byte_size(key)::16>>, key, blob]
 
-  @doc "Inverse of `frame_key/2`."
-  @spec parse_key(binary) :: {binary, binary}
+  @doc "Inverse of `frame_key/2`; `:error` for a body too short for its key."
+  @spec parse_key(binary) :: {binary, binary} | :error
   def parse_key(<<n::16, key::binary-size(n), rest::binary>>), do: {key, rest}
+  def parse_key(_), do: :error
 
   @doc "The wire byte for a VM link frame kind."
   @spec kind(kind_name) :: byte

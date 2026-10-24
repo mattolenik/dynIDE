@@ -16,7 +16,7 @@ use herdr_fdpass::{recv_frame, send_frame};
 use crate::pty::panic_msg;
 use crate::vt::lock;
 
-const SEND_TIMEOUT: Duration = Duration::from_secs(5);
+pub const SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Receives what the reader thread reads.
 pub trait LinkSink: Send + 'static {
@@ -32,10 +32,11 @@ pub struct Link {
 }
 
 impl Link {
-    /// Connects (CLOEXEC, via std) with a 5 s send timeout; receives have none.
-    pub fn connect(path: &Path) -> io::Result<Link> {
+    /// Connects (CLOEXEC, via std) with `send_timeout` per `sendmsg` (`SEND_TIMEOUT` in the
+    /// VM); receives have none.
+    pub fn connect(path: &Path, send_timeout: Duration) -> io::Result<Link> {
         let sock = UnixStream::connect(path)?;
-        sock.set_write_timeout(Some(SEND_TIMEOUT))?;
+        sock.set_write_timeout(Some(send_timeout))?;
         no_sigpipe(sock.as_fd())?;
         Ok(Link {
             sock,
@@ -59,14 +60,23 @@ impl Link {
                 .unwrap_or_else(|p| Some(format!("panic: {}", panic_msg(p))));
                 // A bad frame ends the stream: later sends fail too, never half-open.
                 let _ = sock.shutdown(Shutdown::Both);
-                sink.closed(reason);
+                let _ = catch_unwind(AssertUnwindSafe(|| sink.closed(reason)));
             })
             .map(drop)
     }
 
+    /// Sends one frame. An io error may have left a partial frame on the stream, so it closes
+    /// the link (the reader then reports the close); a frame rejected as too large before any
+    /// write (`InvalidInput`) does not.
+    // ponytail: senders queue on one mutex, each bounded by the timeout per sendmsg (not per
+    // frame); a send queue on a writer thread if callers must never wait behind a big frame.
     pub fn send(&self, kind: u8, body: &[u8], fds: &[BorrowedFd<'_>]) -> io::Result<()> {
         let _g = lock(&self.send);
-        send_frame(self.sock.as_fd(), kind, body, fds)
+        send_frame(self.sock.as_fd(), kind, body, fds).inspect_err(|e| {
+            if e.kind() != io::ErrorKind::InvalidInput {
+                self.close();
+            }
+        })
     }
 
     /// Shuts the socket down both ways; the reader then sees EOF. Idempotent.
@@ -127,16 +137,16 @@ mod tests {
         }
     }
 
-    fn listener() -> (UnixListener, std::path::PathBuf) {
-        let path = std::env::temp_dir().join(format!("hl-link-{}.sock", std::process::id()));
+    fn listener(name: &str) -> (UnixListener, std::path::PathBuf) {
+        let path = std::env::temp_dir().join(format!("hl-{name}-{}.sock", std::process::id()));
         let _ = std::fs::remove_file(&path);
         (UnixListener::bind(&path).unwrap(), path)
     }
 
     #[test]
     fn frames_and_fds_reach_the_sink() {
-        let (l, path) = listener();
-        let link = Link::connect(&path).unwrap();
+        let (l, path) = listener("frames");
+        let link = Link::connect(&path, SEND_TIMEOUT).unwrap();
         let (tx, rx) = mpsc::channel();
         link.start(TestSink(Mutex::new(tx))).unwrap();
         let (peer, _) = l.accept().unwrap();
@@ -177,5 +187,23 @@ mod tests {
         drop(peer);
         assert!(matches!(rx.recv_timeout(t).unwrap(), Seen::Closed(None)));
         assert!(rx.recv_timeout(Duration::from_millis(100)).is_err());
+    }
+
+    #[test]
+    fn failed_send_closes_the_link() {
+        let (l, path) = listener("stall");
+        let link = Link::connect(&path, Duration::from_millis(100)).unwrap();
+        let (tx, rx) = mpsc::channel();
+        link.start(TestSink(Mutex::new(tx))).unwrap();
+        let (_peer, _) = l.accept().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        // The peer never reads: 16 MiB overflows the socket buffer, so the send times out
+        // part-way through the frame.
+        let body = vec![0u8; 16 << 20];
+        assert!(link.send(kind::HOLD, &body, &[]).is_err());
+        let closed = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(closed, Seen::Closed(_)));
+        assert!(link.send(kind::FRESH, b"", &[]).is_err());
     }
 }

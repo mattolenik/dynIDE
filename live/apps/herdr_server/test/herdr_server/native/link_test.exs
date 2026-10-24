@@ -44,5 +44,7 @@ defmodule HerdrServer.Native.LinkTest do
   test "keys roundtrip" do
     assert "k1" |> Link.frame_key("blob") |> IO.iodata_to_binary() |> Link.parse_key() ==
              {"k1", "blob"}
+
+    assert Link.parse_key(<<0, 9, 1>>) == :error
   end
 end
