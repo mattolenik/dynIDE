@@ -23,6 +23,17 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
       through its final byte (state `skip`); it is never buffered unboundedly.
     * `flush/1` of ESC plus a partial UTF-8 character emits `:escape` and drops
       the partial bytes.
+    * SGR mouse (`\\e[<b;x;y M|m`), focus (`\\e[I`/`\\e[O`) and bracketed paste are
+      always parsed. Paste bodies are buffered (unbounded, across chunks) until
+      `\\e[201~` and never parsed as keys; the 64-byte CSI cap does not apply.
+    * Query replies (DA1, kitty flags, OSC 10/11 colours, cursor position) are
+      emitted as `{:reply, kind, data}` only while a window opened with
+      `open_window/3` is live, else dropped. A DA1 reply closes all windows.
+      An OSC reply body over 256 bytes without terminator is dropped.
+    * Ambiguity: a cursor-position reply `\\e[row;colR` looks like legacy F3 with
+      modifiers `\\e[1;modsR`. With a `:cpr` window open it is a reply; outside a
+      window `\\e[1;<mods>R` is F3 and any other two-number `R` is dropped
+      (a CPR for row 1 outside a window is therefore read as F3).
     * Unknown sequences (including unknown SS3 finals such as `\\eOz`) and unmapped kitty functional codes are dropped.
   """
 
@@ -38,7 +49,7 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
           paste: nil | iodata,
           windows: map,
           kitty: boolean,
-          skip: boolean
+          skip: boolean | :osc
         }
 
   @mod_bits [
@@ -115,6 +126,15 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
   @spec events(binary, t) :: {[item], t}
   def events(bin, %__MODULE__{} = t), do: drain(t.buffer <> bin, [], t)
 
+  @spec open_window(t, :da1 | :kitty_flags | :colors | :cpr, integer) :: t
+  def open_window(%__MODULE__{} = t, kind, deadline_ms)
+      when kind in [:da1, :kitty_flags, :colors, :cpr],
+      do: %{t | windows: Map.put(t.windows, kind, deadline_ms)}
+
+  @spec expire_windows(t, integer) :: t
+  def expire_windows(%__MODULE__{} = t, now_ms),
+    do: %{t | windows: Map.reject(t.windows, fn {_, d} -> d <= now_ms end)}
+
   @spec flush(t) :: {[item], t}
   def flush(%__MODULE__{buffer: "\e"} = t), do: {[Event.key(:escape)], %{t | buffer: ""}}
 
@@ -128,6 +148,33 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
   def flush(%__MODULE__{} = t), do: {[], %{t | buffer: "", skip: false}}
 
   defp drain("", acc, t), do: {Enum.reverse(acc), %{t | buffer: ""}}
+
+  # Inside bracketed paste: accumulate until the end marker.
+  defp drain(buf, acc, %__MODULE__{paste: p} = t) when is_binary(p) do
+    all = p <> buf
+    start = max(byte_size(p) - 5, 0)
+
+    case :binary.match(all, "\e[201~", scope: {start, byte_size(all) - start}) do
+      {pos, 6} ->
+        rest = binary_part(all, pos + 6, byte_size(all) - pos - 6)
+        drain(rest, [{:paste, binary_part(all, 0, pos)} | acc], %{t | paste: nil})
+
+      :nomatch ->
+        {Enum.reverse(acc), %{t | buffer: "", paste: all}}
+    end
+  end
+
+  # Inside an over-long OSC reply: swallow up to BEL / ST.
+  defp drain(buf, acc, %__MODULE__{skip: :osc} = t) do
+    case :binary.match(buf, ["\a", "\e\\"]) do
+      {pos, len} ->
+        rest = binary_part(buf, pos + len, byte_size(buf) - pos - len)
+        drain(rest, acc, %{t | skip: false})
+
+      :nomatch ->
+        {Enum.reverse(acc), %{t | buffer: keep_esc(buf)}}
+    end
+  end
 
   # Inside an over-long CSI: swallow parameter bytes up to and including the final byte.
   defp drain(buf, acc, %__MODULE__{skip: true} = t) do
@@ -146,8 +193,13 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
 
   # One sequence off the front of the buffer: :more | {items, rest, t}.
   defp next("\e", _t), do: :more
+  defp next("\e[200~" <> rest, t), do: {[], rest, %{t | paste: ""}}
   defp next("\e[" <> rest, t), do: csi_scan(rest, 0, t)
   defp next("\eO", _t), do: :more
+  defp next("\e]" <> rest, _t) when rest in ["", "1", "10", "11"], do: :more
+
+  defp next(<<"\e]", n::binary-size(2), ";", rest::binary>>, t) when n in ["10", "11"],
+    do: osc(n, rest, t)
 
   defp next(<<"\eO", c, rest::binary>>, t),
     do: {List.wrap(named(@ss3_finals[c], [], :press)), rest, t}
@@ -218,7 +270,7 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
         csi_scan(bin, n + 1, t)
 
       <<body::binary-size(^n), f, rest::binary>> when f in 0x40..0x7E ->
-        {csi(body, f, t), rest, t}
+        reply(body, f, rest, t)
 
       # malformed: drop the introducer, resume at the offending byte
       <<_::binary-size(^n), _::binary>> ->
@@ -226,7 +278,12 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
     end
   end
 
-  # Task 9 adds clauses here for "<" (mouse), "200~" (paste), "I"/"O" (focus), "?" replies.
+  defp csi("", ?I, _t), do: [{:focus, true}]
+  defp csi("", ?O, _t), do: [{:focus, false}]
+  defp csi("<" <> body, f, _t) when f in [?M, ?m], do: mouse(body, f)
+
+  # DA1 reply: sentinel, closes every window (handled in csi_scan, which owns t).
+  defp csi("?" <> _, _f, _t), do: []
   defp csi(body, ?u, _t), do: kitty(fields(body))
   defp csi(_body, ?Z, _t), do: [Event.key(:tab, [:shift])]
 
@@ -241,6 +298,101 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
   end
 
   defp csi(_body, _f, _t), do: []
+
+  # Replies need window state; everything else is stateless via csi/3.
+  defp reply("?" <> p, ?c, rest, t) do
+    items = if is_map_key(t.windows, :da1), do: [{:reply, :da1, params(p)}], else: []
+    {items, rest, %{t | windows: %{}}}
+  end
+
+  defp reply("?" <> p, ?u, rest, t) do
+    with true <- is_map_key(t.windows, :kitty_flags), n when is_integer(n) <- int(p) do
+      {[{:reply, :kitty_flags, n}], rest, %{t | kitty: true}}
+    else
+      _ -> {[], rest, t}
+    end
+  end
+
+  defp reply(body, ?R, rest, t) do
+    case Regex.run(~r/\A(\d+);(\d+)\z/, body) do
+      [_, r, c] ->
+        cond do
+          is_map_key(t.windows, :cpr) -> {[{:reply, :cpr, {int(r), int(c)}}], rest, t}
+          r == "1" -> {csi(body, ?R, t), rest, t}
+          true -> {[], rest, t}
+        end
+
+      _ ->
+        {csi(body, ?R, t), rest, t}
+    end
+  end
+
+  defp reply(body, f, rest, t), do: {csi(body, f, t), rest, t}
+
+  defp params(p), do: p |> String.split(";") |> Enum.flat_map(&List.wrap(int(&1)))
+
+  # -- mouse ------------------------------------------------------------------
+  defp mouse(body, f) do
+    with [b, x, y] <- String.split(body, ";"),
+         b when is_integer(b) <- int(b),
+         x when is_integer(x) <- int(x),
+         y when is_integer(y) <- int(y) do
+      [{:mouse, mouse_map(b, f, max(x - 1, 0), max(y - 1, 0))}]
+    else
+      _ -> []
+    end
+  end
+
+  defp mouse_map(b, f, x, y) do
+    mods = for {bit, m} <- [{4, :shift}, {8, :alt}, {16, :ctrl}], (b &&& bit) != 0, do: m
+    low = b &&& 3
+    btn = Enum.at([:left, :middle, :right, :none], low)
+
+    {kind, button} =
+      cond do
+        (b &&& 64) != 0 ->
+          {:scroll, Enum.at([:wheel_up, :wheel_down, :wheel_left, :wheel_right], low)}
+
+        (b &&& 32) != 0 ->
+          {if(btn == :none, do: :move, else: :drag), btn}
+
+        f == ?m ->
+          {:release, btn}
+
+        true ->
+          {:press, btn}
+      end
+
+    %{kind: kind, button: button, x: x, y: y, mods: Enum.sort(mods), px: nil}
+  end
+
+  # -- OSC 10/11 colour replies ----------------------------------------------
+  @max_osc 256
+
+  defp osc(n, rest, t) do
+    case :binary.match(rest, ["\a", "\e\\"]) do
+      {pos, len} ->
+        after_term = binary_part(rest, pos + len, byte_size(rest) - pos - len)
+
+        items =
+          if pos <= @max_osc,
+            do: colors(String.to_integer(n), binary_part(rest, 0, pos), t),
+            else: []
+
+        {items, after_term, t}
+
+      :nomatch when byte_size(rest) > @max_osc ->
+        {[], keep_esc(rest), %{t | skip: :osc}}
+
+      :nomatch ->
+        :more
+    end
+  end
+
+  defp colors(n, d, t),
+    do: if(is_map_key(t.windows, :colors), do: [{:reply, :colors, {n, d}}], else: [])
+
+  defp keep_esc(bin), do: if(String.ends_with?(bin, "\e"), do: "\e", else: "")
 
   defp legacy(name, fs) do
     {mods, event} = mods_event(Enum.at(fs, 1))
