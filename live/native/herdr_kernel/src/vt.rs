@@ -11,6 +11,7 @@ use ghostty_vt::{
 };
 
 use crate::cell::RowEncoder;
+use crate::input::Encoders;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VtError {
@@ -191,9 +192,11 @@ pub struct Vt {
     core: Mutex<VtCore>,
     snapshot: Mutex<Arc<Snapshot>>,
     read_cursor: AtomicU64,
+    /// Lock order: core, then encoders. Only `write`/`resize` hold both.
+    pub(crate) encoders: Mutex<Encoders>,
 }
 
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -221,6 +224,14 @@ fn attrs(s: &CellStyle) -> u16 {
         .enumerate()
         .fold(0u16, |a, (i, &f)| a | (f as u16) << i);
     bits | (s.underline as u16 & 0b111) << 8
+}
+
+fn blank_row(cols: u16) -> Vec<u8> {
+    let mut enc = RowEncoder::with_cols(cols as usize);
+    for _ in 0..cols {
+        enc.push(b"", 0, 0, 0, 0, 1, 0);
+    }
+    enc.finish()
 }
 
 impl VtCore {
@@ -323,7 +334,7 @@ impl VtCore {
                     (None, Some(o)) => o.clone(),
                     (None, None) => Row {
                         gen,
-                        bytes: RowEncoder::with_cols(0).finish().into(),
+                        bytes: blank_row(cols).into(),
                     },
                 }
             })
@@ -389,7 +400,9 @@ impl Vt {
             }),
             snapshot: Mutex::new(empty),
             read_cursor: AtomicU64::new(0),
+            encoders: Mutex::new(Encoders::new()?),
         });
+        vt.refresh_encoders(&lock(&vt.core));
         vt.try_refresh()?;
         Ok(vt)
     }
@@ -411,8 +424,10 @@ impl Vt {
         fx
     }
 
-    /// Task 3 reconfigures the cached key and mouse encoders here.
-    fn refresh_encoders(&self, _core: &VtCore) {}
+    /// Reconfigures the cached key and mouse encoders from the live terminal.
+    fn refresh_encoders(&self, core: &VtCore) {
+        lock(&self.encoders).configure(&core.terminal, core.cell_px);
+    }
 
     pub fn refresh(&self) -> u64 {
         match self.try_refresh() {
@@ -462,7 +477,8 @@ impl Vt {
 
     pub fn dirty_rows(&self) -> RowBatch {
         let out = self.rows_since(self.read_cursor.load(Ordering::Acquire));
-        self.read_cursor.store(out.0, Ordering::Release);
+        // fetch_max: a concurrent caller must never move the cursor backwards.
+        self.read_cursor.fetch_max(out.0, Ordering::AcqRel);
         out
     }
 
@@ -488,6 +504,7 @@ impl Vt {
             let (w, h) = core.cell_px;
             core.terminal.resize(cols, rows, w, h)?;
             core.dirty_all = true;
+            self.refresh_encoders(&core);
         }
         self.try_refresh()
     }
@@ -826,6 +843,15 @@ mod tests {
         assert_eq!(fx.bells, 2);
         assert_eq!(fx.pwd, vec![b"file://h/tmp".to_vec()]);
         assert_eq!(rx.try_recv().expect("dsr reply"), b"\x1b[1;1R".to_vec());
+    }
+
+    #[test]
+    fn blank_row_is_cols_wide() {
+        // build()'s (None, None) arm is unreachable through the public API (a size change
+        // forces a full encode), so the helper it calls is tested directly.
+        let cells = decode_row(&blank_row(7)).expect("decode");
+        assert_eq!(cells.len(), 7);
+        assert!(cells.iter().all(|c| c.glyph.is_empty() && c.width == 1));
     }
 
     #[test]
