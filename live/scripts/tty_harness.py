@@ -732,7 +732,7 @@ def selfhost():
             # ReloadNotices (the status line's bridge) subscribes right after the reload
             # pipeline starts and seeds from the newest batch (b30f3505), so the first write
             # normally shows; rewriting the probe (new value) every 2 s stays as a defense
-            h.until(lambda: "herdr-event vm_start" in open(h.log).read(), "vm_start in the log")
+            h.until(lambda: "herdr-event vm_start" in read_text(h.log), "vm_start in the log")
             n = int(time.time() * 1000) % 1_000_000_000
             loaded = lambda: re.search(r"\br(\d+) 1m\b", h.screen.text())
             writes = 0
@@ -800,15 +800,24 @@ def selfhost():
         print("--- screen", h.screen.text(), sep="\n")
 
 
+def read_text(path):
+    with open(path) as f:
+        return f.read()
+
+
 def persist_dump(path):
-    """persist_dump.exs lines for a session file (fails on a missing or bad file)."""
+    """(saved_at ms, persist_dump.exs lines without saved_at) for a session file; fails on
+    a missing or bad file."""
     if not os.path.exists(path):
         fail(f"no session file {path}")
     r = subprocess.run(["elixir", os.path.join(LIVE, "scripts", "persist_dump.exs"), path],
                        capture_output=True, text=True, timeout=180)
     if r.returncode != 0:
         fail(f"persist_dump.exs {path} exited {r.returncode}: {r.stderr.strip()}")
-    return r.stdout
+    first, _, rest = r.stdout.partition("\n")
+    if not first.startswith("saved_at="):
+        fail(f"persist_dump.exs: no saved_at line first ({first!r})")
+    return int(first[len("saved_at="):]), rest
 
 
 def log_json(log):
@@ -849,7 +858,7 @@ def persist():
             h.pump(0.1)
         h.quit()
         session = os.path.join(h.state, "session.default.etf")
-        a = persist_dump(session)
+        saved_a, a = persist_dump(session)
         if verbose:
             print("--- dump A", a, sep="\n", end="")
         ok(f'cwd="{dir_b}"' in a and f'cwd="{dir_c}"' in a,
@@ -866,9 +875,9 @@ def persist():
         del transcript[:]
         h = Herdr(tmp, cols, rows, run=".2")
         h.start()
-        h.until(lambda: re.search(r"herdr-event persist_restore .*source=disk", open(h.log).read()),
+        h.until(lambda: re.search(r"herdr-event persist_restore .*source=disk", read_text(h.log)),
                 "persist_restore source=disk in the run 2 log", timeout=60)
-        line = re.search(r"herdr-event persist_restore .*", open(h.log).read()).group(0)
+        line = re.search(r"herdr-event persist_restore .*", read_text(h.log)).group(0)
         ok("reason=boot" in line, f"persist run 2: log has {line.strip()}")
         h.until(lambda: h.shows("m8-marker-b"), "m8-marker-b replayed in run 2", timeout=60)
         ok(True, "persist run 2: m8-marker-b from run 1's scrollback is on screen")
@@ -881,13 +890,16 @@ def persist():
         while time.monotonic() < end:
             h.pump(0.1)
         h.quit()
-        b = persist_dump(session)
+        saved_b, b = persist_dump(session)
         if verbose:
             print("--- dump B", b, sep="\n", end="")
         if a != b:
             print("--- dump A", a, "--- dump B", b, sep="\n", end="", file=sys.stderr)
         ok(a == b, "persist: stop, start, identical layout and cwds (dump A == dump B)")
         s2 = log_json(h.log)
+        ok(s2["persist_writes"] >= 1 and saved_b > saved_a,
+           f"persist run 2: wrote the session file again (writes {s2['persist_writes']},"
+           f" saved_at {saved_a} -> {saved_b})")
         ok(s2["restores"] == {"disk": 1, "boot": 1, "fallback": 0, "none": 0}
            and s2["persist_errors"] == 0 and s2["session_losses"] == 0,
            f"persist run 2: log summary restores {s2['restores']}, errors {s2['persist_errors']},"

@@ -155,9 +155,9 @@ class LogSummaryTest(unittest.TestCase):
 
 
 LIVE = os.path.dirname(HERE)
-# a launch of bin/herdr-live in code: a quoted path ending in bin/herdr-live (sh, exs) or
-# os.path.join(..., "bin", "herdr-live") (python); prose mentions use backticks or no quote
-LAUNCH = re.compile(r'bin/herdr-live"|"bin", "herdr-live"')
+# a launch of bin/herdr-live on a non-comment line: the path followed by a quote, space or
+# end of line (sh, exs), or os.path.join(..., "bin", "herdr-live") (python)
+LAUNCH = re.compile(r"""bin/herdr-live(['"]|\s|$)""" + r'|"bin", "herdr-live"')
 
 
 def launchers():
@@ -171,7 +171,7 @@ def launchers():
                     text = f.read()
                 code = [l for l in text.splitlines() if not l.lstrip().startswith("#")]
                 if any(LAUNCH.search(l) for l in code):
-                    yield os.path.relpath(path, LIVE), text
+                    yield os.path.relpath(path, LIVE), "\n".join(code)
 
 
 class LaunchIsolationTest(unittest.TestCase):
@@ -182,7 +182,7 @@ class LaunchIsolationTest(unittest.TestCase):
         for known in ("scripts/launcher_smoke.sh", "scripts/attached_smoke.sh",
                       "scripts/tty_harness.py", "bench/handoff/driver.exs", "bench/gate/glass.py"):
             self.assertIn(known, found, "launch detection missed a known launcher")
-        missing = sorted(p for p, text in found.items() if "HERDR_LIVE_STATE_DIR" not in text)
+        missing = sorted(p for p, code in found.items() if "HERDR_LIVE_STATE_DIR" not in code)
         self.assertEqual(missing, [], "these launch bin/herdr-live without HERDR_LIVE_STATE_DIR")
 
 

@@ -1,16 +1,19 @@
 # Prints a herdr-live session file (M8, `<state dir>/session.<name>.etf`) as canonical
 # k=v lines, so two snapshots compare as text (tty_harness.py persist):
+#   saved_at=<ms>    (first line; drop it to compare layouts)
 #   session active_workspace=<id> next_id=<n> size=<cols>x<rows> focus=<pane>
 #   workspace=<id> name=<name> active_tab=<id>
 #   tab=<ws>/<id> name=<name> root=<tree> focus=<pane> prev_focus=<pane>
 #   pane=<id> cwd=<cwd>
 # Trees: p<id> for a pane, h(<ratio>,a,b) / v(<ratio>,a,b) for a split. Names and cwds
-# are inspect/1-quoted. Left out: saved_at, area, ui, titles, commands, hidden.
+# are inspect/1-quoted. Left out: area, ui, titles, commands, hidden.
 # Usage: elixir persist_dump.exs FILE    (exit 2 on an unreadable or malformed file)
 defmodule PersistDump do
   def main([path]) do
     with {:ok, bin} <- File.read(path),
-         {:ok, %{format: :herdr_live_session, v: v, snapshot: s}} when is_integer(v) <- decode(bin) do
+         {:ok, %{format: :herdr_live_session, v: v, snapshot: s} = env} when is_integer(v) <-
+           decode(bin) do
+      IO.puts("saved_at=#{env.saved_at}")
       s |> lines() |> Enum.each(&IO.puts/1)
     else
       other -> bad(path, other)
