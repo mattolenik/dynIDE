@@ -117,7 +117,9 @@ def spawn(master, slave, env):
             os.dup2(slave, 2)
             os.close(master)
             os.chdir(LIVE)
-            os.execvpe("mix", ["mix", "run", "--no-start", "scripts/tty_destructor.exs"], env)
+            # Launched like bin/herdr-live, so the BEAM never drives the tty itself.
+            os.execvpe("elixir", ["elixir", "--erl", "-noshell -noinput", "-S", "mix", "run",
+                                  "--no-start", "scripts/tty_destructor.exs"], env)
         finally:
             os._exit(127)
     return pid
