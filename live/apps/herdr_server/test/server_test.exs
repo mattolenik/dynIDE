@@ -837,19 +837,41 @@ defmodule HerdrServer.ServerTest do
     assert Fake.Pty.writes(pty(1)) == ["x", "y"]
   end
 
-  test "input whose write finds the pane frozen is held, not acked" do
+  test "input whose write finds the pane frozen during a handoff is held, not acked" do
     {c, s} = client()
     scene(c)
-    # the pane froze (take_pending) before this session saw the :begin notice
-    :sys.replace_state(pty(1), &%{&1 | closed: true})
+    on_exit(fn -> :persistent_term.erase(Protocol.handoff_key()) end)
+    # :begin is published after this session's own check, while the write runs
+    fast = :persistent_term.get(Protocol.fast_path_key())
+    :persistent_term.put(Protocol.fast_path_key(), %{fast | write: {__MODULE__, :freezing, []}})
     input(s, c, 5, Event.key("x"))
     assert_receive {^c, {:notice, %{level: :warning}}}
     refute_receive {^c, {:ack, 5}}, 100
 
-    :sys.replace_state(pty(1), &%{&1 | closed: false})
+    :persistent_term.put(Protocol.fast_path_key(), fast)
+    :persistent_term.put(Protocol.handoff_key(), :aborted)
     Notice.broadcast({:handoff, %{phase: :aborted, gen: 3, panes: [1]}})
     assert_receive {^c, {:ack, 5}}
     assert Fake.Pty.writes(pty(1)) == ["x"]
+  end
+
+  def freezing(_ev) do
+    :persistent_term.put(Protocol.handoff_key(), :begin)
+    {:error, :closed}
+  end
+
+  test "a write to an exited pane outside a handoff is dropped and acked" do
+    {c, s} = client()
+    scene(c)
+    # the pane exited: its pty refuses writes, and no handoff is in progress
+    :sys.replace_state(pty(1), &%{&1 | closed: true})
+    input(s, c, 5, Event.key("x"))
+    assert_receive {^c, {:ack, 5}}
+    # the session is not wedged: later input is still processed and acked
+    input(s, c, 6, Event.key("y"))
+    assert_receive {^c, {:ack, 6}}
+    refute_received {^c, {:notice, %{text: "input held" <> _}}}
+    assert Fake.Pty.writes(pty(1)) == []
   end
 
   test "input is held from the published :begin, before the notice arrives" do

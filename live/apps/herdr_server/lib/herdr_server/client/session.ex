@@ -36,7 +36,8 @@ defmodule HerdrServer.Client.Session do
   client keeps it unacked (at-least-once: resent first to its next session, in the new
   VM). `:aborted` runs the held input in order, acking each. Holding starts as soon as
   the Link publishes `:begin` (before the notice reaches this mailbox), and an input
-  whose fast-path write finds its pane frozen (`:closed`) is held instead of acked.
+  whose fast-path write finds its pane frozen (`:closed` while the published phase is
+  `:begin`) is held instead of acked; `:closed` otherwise (an exited pane) is dropped and acked.
   ponytail: a slow-path write (through `App.Store`) racing the freeze is still acked
   and lost; route Store writes' results back if that window matters. The in-VM local client stops
   on `:begin`: keystrokes it already read between `:begin` and its stop are dropped (a
@@ -364,8 +365,13 @@ defmodule HerdrServer.Client.Session do
   defp fast_path(_ev), do: false
 
   defp fast_write({:ok, :ok}), do: true
-  # frozen for a handoff: the caller holds the input unacked
-  defp fast_write({:ok, {:error, :closed}}), do: :closed
+
+  # frozen for a handoff: the caller holds the input unacked. Outside a handoff `:closed`
+  # is an exited pane: drop and ack like any write error, or the session would wedge.
+  defp fast_write({:ok, {:error, :closed}}) do
+    if :persistent_term.get(Protocol.handoff_key(), nil) == :begin, do: :closed, else: true
+  end
+
   # another write error dropped the input already (as before)
   defp fast_write({:ok, {:error, _}}), do: true
   defp fast_write(_failed), do: false
