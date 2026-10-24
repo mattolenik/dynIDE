@@ -94,8 +94,10 @@ defmodule HerdrServer.Handoff.Snapshotter do
     }
   end
 
+  # `last` is the mark last sent, or `{:failed, mark}` while encoding fails
   defp snap(id, row, last, sent, bytes) do
-    {gen, _} = Vt.rows_since(row.vt, if(last, do: elem(last, 0), else: 0))
+    prev = with {:failed, p} <- last, do: p
+    {gen, _} = Vt.rows_since(row.vt, if(prev, do: elem(prev, 0), else: 0))
     mark = {gen, Map.take(Pty.info(row.pty), [:title, :pwd, :hidden, :exited])}
 
     if mark == last do
@@ -106,9 +108,12 @@ defmodule HerdrServer.Handoff.Snapshotter do
       {Map.put(sent, id, mark), bytes + byte_size(blob)}
     end
   rescue
-    # ghostty refused the snapshot (e.g. an unfinished escape over 64 KiB): try next tick
+    # ghostty refused the snapshot (e.g. an unfinished escape over 64 KiB): retry each
+    # tick, warn once
     e in ErlangError ->
-      Logger.warning("handoff snapshot of pane #{id} skipped: #{Exception.message(e)}")
-      {if(last, do: Map.put(sent, id, last), else: sent), bytes}
+      if not match?({:failed, _}, last),
+        do: Logger.warning("handoff snapshot of pane #{id} failing: #{Exception.message(e)}")
+
+      {Map.put(sent, id, {:failed, with({:failed, p} <- last, do: p)}), bytes}
   end
 end

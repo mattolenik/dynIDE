@@ -23,7 +23,8 @@ defmodule HerdrServer.Native.Keeper do
 
   # closing: id => pty, kept after `close/1` until the SIGKILL escalation.
   # pending: id => input taken by `prepare/0`, written back by `thaw/0`.
-  defstruct next_id: 1, closing: %{}, pending: %{}
+  # carried: id => input an adopted pane brought along, written by `write_carried/0`.
+  defstruct next_id: 1, closing: %{}, pending: %{}, carried: %{}
 
   @type id :: pos_integer
   @typedoc "`max_scrollback` is in bytes (e.g. 10_000_000); cols and rows are in 1..65535."
@@ -87,6 +88,14 @@ defmodule HerdrServer.Native.Keeper do
   @spec release() :: :ok
   def release, do: GenServer.call(__MODULE__, :release, :infinity)
 
+  @doc """
+  New VM, called by `Handoff.Link` right after RESTORED: writes the input adopted panes
+  carried over. Before RESTORED the broker holds blobs with that input cleared (staged
+  by `init`), so the bytes reach the child at most once whatever fails.
+  """
+  @spec write_carried() :: :ok
+  def write_carried, do: GenServer.call(__MODULE__, :write_carried, :infinity)
+
   @doc false
   # Adopts `{"pane/<id>", blob, [fd]}` entries as `init` does (no redraw nudge).
   @spec adopt_entries([{binary, binary, [Pty.fd()]}]) :: :ok
@@ -134,6 +143,16 @@ defmodule HerdrServer.Native.Keeper do
 
   def handle_call({:adopt, entries, reason}, _from, state) do
     {:reply, :ok, adopt(entries, reason, Map.merge(%__MODULE__{}, state))}
+  end
+
+  def handle_call(:write_carried, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+
+    for {id, bytes} <- state.carried,
+        {:ok, row} <- [lookup(id)],
+        do: write_pending(id, row.pty, bytes)
+
+    {:reply, :ok, %{state | carried: %{}}}
   end
 
   def handle_call(:prepare, _from, state) do
@@ -189,9 +208,10 @@ defmodule HerdrServer.Native.Keeper do
   defp final_update(id, row, pending) do
     Link.update(key(id), State.encode(State.build(id, row, pending_input: pending)))
   rescue
-    # ghostty refused the snapshot: the broker keeps the last periodic one
+    # ghostty refused the snapshot: the screen is lost, the input must not be
     e in ErlangError ->
-      Logger.warning("handoff: final state of pane #{id} lost: #{Exception.message(e)}")
+      Logger.warning("handoff: final screen of pane #{id} lost: #{Exception.message(e)}")
+      Link.update(key(id), State.encode(State.build(id, row, vt: false, pending_input: pending)))
   end
 
   defp write_pending(id, pty, bytes) do
@@ -206,7 +226,7 @@ defmodule HerdrServer.Native.Keeper do
            {:ok, %{id: ^id} = st} <- State.decode(blob),
            [fd] <- fds,
            :ok <- adopt_one(id, st, fd, reason) do
-        %{state | next_id: max(state.next_id, id + 1)}
+        carry(id, st, %{state | next_id: max(state.next_id, id + 1)})
       else
         err ->
           Logger.warning("handoff: pane #{key} not adopted: #{inspect(err, limit: 5)}")
@@ -226,12 +246,19 @@ defmodule HerdrServer.Native.Keeper do
       )
 
       if st.hidden, do: Pty.set_hidden(pty, true)
-      if st.pending_input != "", do: write_pending(id, pty, st.pending_input)
-      if reason == :crash, do: nudge(vt, pty, st.cell_px)
+      if reason == :crash and st.exited == nil, do: nudge(vt, pty, st.cell_px)
       :ok
     end
   rescue
     e in [ArgumentError, ErlangError] -> {:error, {:raise, Exception.message(e)}}
+  end
+
+  defp carry(_id, %{pending_input: ""}, state), do: state
+
+  defp carry(id, st, state) do
+    # staged by the broker, applied atomically with our RESTORED
+    Link.update(key(id), State.encode(%{st | pending_input: ""}))
+    %{state | carried: Map.put(state.carried, id, st.pending_input)}
   end
 
   defp restore_vt(id, %{vt: snap} = st) do

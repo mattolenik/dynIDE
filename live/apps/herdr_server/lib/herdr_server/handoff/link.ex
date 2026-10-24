@@ -17,13 +17,21 @@ defmodule HerdrServer.Handoff.Link do
 
   require Logger
 
-  alias HerdrServer.Handoff.{Ctl, Notice, Snapshotter}
+  alias HerdrServer.Handoff.{Ctl, Notice}
   alias HerdrServer.Native.{Keeper, Pty}
   alias HerdrServer.Native.Link, as: NLink
 
   @key {__MODULE__, :link}
 
-  defstruct link: nil, gen: 0, reason: nil, adopted: [], claimed: 0, rejected: [], released: false
+  defstruct link: nil,
+            gen: 0,
+            reason: nil,
+            adopted: [],
+            claimed: 0,
+            rejected: [],
+            released: false,
+            ctl: :queue.new(),
+            worker: nil
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -142,17 +150,21 @@ defmodule HerdrServer.Handoff.Link do
     {:reply, state.reason, state}
   end
 
-  def handle_call(:restored, _from, %{reason: nil} = state), do: {:reply, :ok, state}
-
   def handle_call(:restored, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    :ok = send_frame(:restored, <<state.claimed::32>>, [])
-    for {k, _, _} <- state.adopted, do: drop(k)
-    for k <- state.rejected, do: drop(k)
-    # first UPDATEs now that the broker takes ours (it ignored them before RESTORED)
-    Snapshotter.tick()
-    notice(:adopted, state)
-    {:reply, :ok, %{state | adopted: [], rejected: []}}
+
+    if state.reason == nil do
+      {:reply, :ok, state}
+    else
+      # staged by the broker with the Keeper's UPDATEs, applied at RESTORED
+      for {k, _, _} <- state.adopted, do: drop(k)
+      for k <- state.rejected, do: drop(k)
+      :ok = send_frame(:restored, <<state.claimed::32>>, [])
+      # after RESTORED (at most once) and before any queued ctl request runs
+      :ok = Keeper.write_carried()
+      notice(:adopted, state)
+      {:reply, :ok, %{state | adopted: [], rejected: []}}
+    end
   end
 
   @request NLink.kind(:request)
@@ -163,12 +175,24 @@ defmodule HerdrServer.Handoff.Link do
   @impl true
   def handle_info({:herdr_link, _, @request, <<ref::64, payload::binary>>, _}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    # in a Task: a slow request never holds up PREPARE; the broker matches replies by ref
-    Task.start(fn ->
-      send_frame(:reply, [<<ref::64>>, :erlang.term_to_binary(request(payload))], [])
-    end)
+    state = ensure_worker(state)
+    send(elem(state.worker, 0), {:req, ref, payload})
+    {:noreply, %{state | ctl: :queue.in({ref, payload}, state.ctl)}}
+  end
 
-    {:noreply, state}
+  def handle_info({:ctl_done, ref}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {{:value, {^ref, _}}, ctl} = :queue.out(state.ctl)
+    {:noreply, %{state | ctl: ctl}}
+  end
+
+  def handle_info({:DOWN, mref, :process, _, reason} = msg, state) do
+    state = Map.merge(%__MODULE__{}, state)
+
+    case state.worker do
+      {_, ^mref} -> {:noreply, worker_down(reason, state)}
+      _ -> unexpected(msg, state)
+    end
   end
 
   def handle_info({:herdr_link, _, @prepare, _, _}, state) do
@@ -202,15 +226,62 @@ defmodule HerdrServer.Handoff.Link do
     {:noreply, state}
   end
 
-  def handle_info(msg, state) do
+  def handle_info(msg, state), do: unexpected(msg, Map.merge(%__MODULE__{}, state))
+
+  defp unexpected(msg, state) do
     Logger.warning("handoff link: unexpected #{inspect(msg, limit: 5)}")
-    {:noreply, Map.merge(%__MODULE__{}, state)}
+    {:noreply, state}
   end
 
-  defp request(payload) do
-    Ctl.handle(:erlang.binary_to_term(payload, [:safe]))
+  # ctl requests run FIFO in one worker: a slow one never holds up PREPARE, pipelined
+  # writes keep their order, and the broker gets exactly one REPLY per ref.
+  defp worker_down(reason, state) do
+    # the head of the queue was in flight: answer it, rerun the rest in order
+    ctl =
+      case :queue.out(state.ctl) do
+        {{:value, {ref, _}}, rest} ->
+          reply(ref, {:error, {:crashed, reason}})
+          rest
+
+        {:empty, rest} ->
+          rest
+      end
+
+    state = ensure_worker(%{state | worker: nil, ctl: ctl})
+
+    for {ref, payload} <- :queue.to_list(ctl),
+        do: send(elem(state.worker, 0), {:req, ref, payload})
+
+    state
+  end
+
+  defp ensure_worker(%{worker: nil} = state) do
+    link = self()
+    handler = Application.get_env(:herdr_server, HerdrServer.Handoff, [])[:ctl] || Ctl
+    pid = spawn(fn -> worker(Process.monitor(link), link, handler) end)
+    %{state | worker: {pid, Process.monitor(pid)}}
+  end
+
+  defp ensure_worker(state), do: state
+
+  defp worker(mref, link, handler) do
+    receive do
+      {:req, ref, payload} ->
+        reply(ref, handler.handle(decode(payload)))
+        send(link, {:ctl_done, ref})
+        worker(mref, link, handler)
+
+      {:DOWN, ^mref, _, _, _} ->
+        :ok
+    end
+  end
+
+  defp reply(ref, term), do: send_frame(:reply, [<<ref::64>>, :erlang.term_to_binary(term)], [])
+
+  defp decode(payload) do
+    :erlang.binary_to_term(payload, [:safe])
   rescue
-    ArgumentError -> {:error, :bad_request}
+    ArgumentError -> {:bad_request, byte_size(payload)}
   end
 
   defp notice(phase, state),
