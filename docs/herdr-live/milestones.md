@@ -564,20 +564,20 @@ modals, settings, onboarding, consistent affordances.
 ## M14: plugins
 
 **Goal.** herdr's plugin model (installation, commands, link handlers, pane
-messaging) available to herdr-live plugins, with the BEAM's reload applying to
-plugins too.
+messaging) available to herdr-live plugins, unchanged: plugins stay external
+processes driven through the manifest, environment, and socket API.
 
 **Depends on.** M12, M13.
 
 **Scope.**
 - Plugin discovery and installation paths; plugin command execution; link
   handler protocol with click modifiers; pane-to-pane messaging.
-- Decide the plugin language story: BEAM modules loaded from plugin
-  directories (hot-reloadable), plus the existing external-process protocol
-  for non-BEAM plugins.
+- Out of scope: BEAM plugins (modules loaded from plugin directories into
+  the VM). Deferred by the human on 2026-10-24; revisit only with a new
+  milestone.
 
 **Exit criteria.**
-- Two of herdr's existing plugins ported or bridged and working.
+- Two of herdr's existing plugins installed and working unmodified.
 
 ---
 

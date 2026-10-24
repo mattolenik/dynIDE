@@ -113,3 +113,6 @@ what it costs if wrong.
   `HerdrServer.Mirror` owns the ETS tables; the dev-only control socket is a
   stopgap until M12; local-client crash restart deferred to M7. Cost if
   wrong: one of these becomes an M6 gate finding.
+- 2026-10-24 (human): M14 ports only herdr's existing external-process
+  plugin model; BEAM plugins are out of scope. Cost if wrong: a later
+  milestone adds an in-VM plugin path beside the external one.
