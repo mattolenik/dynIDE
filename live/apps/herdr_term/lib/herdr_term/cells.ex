@@ -59,11 +59,11 @@ defmodule HerdrTerm.Cells do
     pad = w - n
 
     if n == 0 do
-      blank(w, %Cell{})
+      Cell.blank_row(w)
     else
       piece = Cell.slice(row, x, n)
-      piece = if pad == 0 and edge_ok?(piece), do: piece, else: fix_edges(piece)
-      if pad == 0, do: piece, else: Cell.concat([piece, blank(pad, %Cell{})])
+      piece = if edge_ok?(piece), do: piece, else: fix_edges(piece)
+      if pad == 0, do: piece, else: Cell.concat([piece, Cell.blank_row(pad)])
     end
   end
 
