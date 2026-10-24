@@ -23,6 +23,11 @@ defmodule HerdrReload.TestGate do
   whatever is on disk at the next save. The runtime mode does not survive a VM handoff
   (the new VM reads the config / `HERDR_LIVE_TEST_ON_SAVE`).
 
+  The gate holds only for loads in this VM. A blocked (failing-tests) source is still on
+  disk: a new standby VM (`mix run`) compiles it, and a crash promotion's sync or the
+  next ungated batch in a new VM loads it; the blocked set does not survive a handoff.
+  Fix or revert a blocked source before `kernel-restart`.
+
   A crash of this process loses the blocked set (and restarts the Watcher, supervisor
   `rest_for_one`); a start in `:gate` mode logs a warning so a restart is visible.
 

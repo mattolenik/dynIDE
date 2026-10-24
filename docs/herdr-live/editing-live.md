@@ -189,6 +189,10 @@ Off by default. It adds about a second per save, so it is for risky edits.
   does nothing: re-save a lib file.
 - If a source under `apps/*/lib` changes while the tests run, the pass is not loaded
   (`tests result=stale`) and the newer save's batch gates it.
+- The gate holds only inside the VM that ran it. A blocked (failing-tests) source is
+  still on disk: a new standby VM (`mix run`) compiles it, and a crash promotion's sync
+  or the next ungated batch in a new VM loads it; the blocked set does not survive a
+  handoff. Fix or revert a blocked source before `kernel-restart`.
 - The runtime setting does not survive a VM handoff; the new VM falls back to
   `HERDR_LIVE_TEST_ON_SAVE` or config. After `kernel-restart` or a crash, run
   `test-on-save on` again. Turning it off clears the blocked set (the next save loads
