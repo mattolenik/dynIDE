@@ -3,6 +3,7 @@ defmodule HerdrServer.Pane.State do
 
   defstruct [
     :id,
+    kernel_id: nil,
     pty: nil,
     vt: nil,
     gen: 0,
@@ -15,6 +16,7 @@ defmodule HerdrServer.Pane.State do
 
   @type t :: %__MODULE__{
           id: pos_integer() | nil,
+          kernel_id: pos_integer() | nil,
           pty: term(),
           vt: term(),
           gen: non_neg_integer(),

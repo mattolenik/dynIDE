@@ -32,7 +32,7 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   @doc "Makes the next `dirty_rows/1` return every row."
   def force_full(vt), do: GenServer.cast(vt, :force_full)
 
-  @doc "Test hook."
+  @doc "Test hook: `mode` is an M1 mode atom (e.g. `:bracketed_paste`)."
   def set_mode(vt, mode, on?), do: GenServer.call(vt, {:set_mode, mode, on?})
 
   @doc "Test hook."
@@ -66,18 +66,20 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   def link_at(_vt, _x, _y), do: nil
 
   @impl HerdrServer.Kernel.Vt
-  def graphics_placements(_vt, _viewport), do: []
+  def graphics_placements(_vt), do: []
 
   @impl HerdrServer.Kernel.Vt
   def cursor(vt), do: GenServer.call(vt, :cursor)
 
   @impl HerdrServer.Kernel.Vt
-  def encode_key(vt, {:key, %{event: :press} = k}), do: key_bytes(k, kitty_keyboard_flags(vt))
-  def encode_key(_vt, {:key, _}), do: ""
+  def encode_key(vt, %{event: :press} = k), do: key_bytes(k, kitty_keyboard_flags(vt))
+  def encode_key(_vt, %{event: _}), do: ""
+
+  @tracking [:mouse_x10, :mouse_normal, :mouse_button, :mouse_any]
 
   @impl HerdrServer.Kernel.Vt
-  def encode_mouse(vt, {:mouse, m}) do
-    if mode(vt, 1000) do
+  def encode_mouse(vt, m) do
+    if Enum.any?(@tracking, &mode(vt, &1)) do
       {b, final} = mouse_code(m)
       "\e[<#{b};#{m.x + 1};#{m.y + 1}#{final}"
     end
@@ -86,7 +88,7 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   @impl HerdrServer.Kernel.Vt
   def encode_focus(vt, focused?) do
     cond do
-      not mode(vt, 1004) -> ""
+      not mode(vt, :focus_events) -> ""
       focused? -> "\e[I"
       true -> "\e[O"
     end
@@ -170,7 +172,7 @@ defmodule HerdrServer.Kernel.Fake.Vt do
 
   def handle_call(:cursor, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:reply, %{x: state.cx, y: state.cy, shape: :block, visible: true}, state}
+    {:reply, %{x: state.cx, y: state.cy, shape: :block, visible: true, blinking: false}, state}
   end
 
   def handle_call({:resize, cols, rows}, _from, state) do
@@ -360,7 +362,6 @@ defmodule HerdrServer.Kernel.Fake.Vt do
     left: 0,
     middle: 1,
     right: 2,
-    none: 3,
     wheel_up: 64,
     wheel_down: 65,
     wheel_left: 66,
@@ -370,6 +371,6 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   defp mouse_code(m) do
     mods = Enum.sum(for {mod, bit} <- [shift: 4, alt: 8, ctrl: 16], mod in m.mods, do: bit)
     motion = if m.kind in [:move, :drag], do: 32, else: 0
-    {@buttons[m.button] + mods + motion, if(m.kind == :release, do: "m", else: "M")}
+    {Map.get(@buttons, m.button, 3) + mods + motion, if(m.kind == :release, do: "m", else: "M")}
   end
 end

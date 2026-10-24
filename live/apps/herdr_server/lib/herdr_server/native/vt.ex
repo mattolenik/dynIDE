@@ -4,6 +4,8 @@ defmodule HerdrServer.Native.Vt do
   (`HerdrScene.Cell`). Row reads come from the snapshot and never wait on the
   parser; `feed/2` is for tests and replay (live panes are fed by their `Pty`).
   """
+  @behaviour HerdrServer.Kernel.Vt
+
   alias HerdrServer.Native
 
   @opaque vt :: reference

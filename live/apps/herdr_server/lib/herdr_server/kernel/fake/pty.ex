@@ -11,6 +11,8 @@ defmodule HerdrServer.Kernel.Fake.Pty do
   alias HerdrServer.Kernel.Fake.Vt
 
   @interval 4
+  @max_write 1_048_576
+  @signals %{hup: 1, int: 2, kill: 9, term: 15}
 
   defstruct id: nil,
             vt: nil,
@@ -19,29 +21,29 @@ defmodule HerdrServer.Kernel.Fake.Pty do
             gen: 0,
             last_sent: 0,
             timer: nil,
-            backpressure: false
+            backpressure: false,
+            closed: false
 
   @impl HerdrServer.Kernel.Pty
-  def spawn(vt, _cmd, _args, _env, _cwd, _cols, _rows), do: start(nil, vt)
-
-  @doc "Keeper entry point: like `spawn/7` but the pty knows its pane id (events carry it)."
-  def spawn(id, vt, cmd, args, env, cwd, cols, rows) do
-    _ = {cmd, args, env, cwd, cols, rows}
-    start(id, vt)
-  end
-
-  defp start(id, vt) do
+  def spawn(vt, id, _cmd, _args, _env, _cwd, _cols, _rows) do
     {:ok, pty} = GenServer.start_link(__MODULE__, {id, vt})
-    {:ok, pty, -System.unique_integer([:positive])}
+    {:ok, pty, System.unique_integer([:positive])}
   end
 
   @doc "Test/bench hook: feed bytes as program output. Never blocks on the vt."
   def output(pty, bin), do: GenServer.cast(pty, {:output, bin})
 
   @impl HerdrServer.Kernel.Pty
-  def write(pty, bin), do: GenServer.call(pty, {:write, bin})
+  def write(pty, data) do
+    if IO.iodata_length(data) > @max_write,
+      do: {:error, :too_large},
+      else: GenServer.call(pty, {:write, data})
+  end
 
-  @doc "Test hook: while on, `write/2` drops input and returns `{:error, :backpressure}`."
+  @doc """
+  Test hook: while on, `write/2` drops input and returns `{:error, :backpressure}`.
+  After `kill/2` (which sends `{:exit, id, {:signal, n}}` once) writes are `{:error, :closed}`.
+  """
   def set_backpressure(pty, on?), do: GenServer.call(pty, {:backpressure, on?})
 
   @impl HerdrServer.Kernel.Pty
@@ -69,13 +71,21 @@ defmodule HerdrServer.Kernel.Fake.Pty do
     {:noreply, damage(%{state | gen: gen})}
   end
 
+  def handle_cast({:kill, _signal}, %{closed: true} = state),
+    do: {:noreply, Map.merge(%__MODULE__{}, state)}
+
   def handle_cast({:kill, signal}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    notify(state, {:exit, state.id, {:signal, signal}})
-    {:noreply, state}
+    notify(state, {:exit, state.id, {:signal, Map.get(@signals, signal, signal)}})
+    {:noreply, %{state | closed: true}}
   end
 
   @impl GenServer
+  def handle_call({:write, _bin}, _from, %{closed: true} = state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, {:error, :closed}, state}
+  end
+
   def handle_call({:write, _bin}, _from, %{backpressure: true} = state) do
     state = Map.merge(%__MODULE__{}, state)
     {:reply, {:error, :backpressure}, state}
@@ -83,7 +93,7 @@ defmodule HerdrServer.Kernel.Fake.Pty do
 
   def handle_call({:write, bin}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, state} = handle_cast({:output, bin}, state)
+    {:noreply, state} = handle_cast({:output, IO.iodata_to_binary(bin)}, state)
     {:reply, :ok, state}
   end
 

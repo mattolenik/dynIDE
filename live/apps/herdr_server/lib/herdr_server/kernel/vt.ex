@@ -1,28 +1,58 @@
 defmodule HerdrServer.Kernel.Vt do
-  @moduledoc "Terminal state kernel (design.md, Native.Vt). `cursor/1` is a recorded addition."
+  @moduledoc """
+  Terminal state kernel: the API of `HerdrServer.Native.Vt` (M1), which implements it.
+  `Kernel.Fake.Vt` is the test double. Shapes are M1's (docs/herdr-live/results/m1.md).
+
+  `dirty_rows/1` has ONE shared read cursor per vt: `Pane.Server` is its only consumer
+  (sessions read the `Pane.Rows` cache). Never call it anywhere else.
+  """
 
   @type vt :: term
   @type row :: HerdrScene.Cell.row()
-  @type rows :: {gen :: integer, [{non_neg_integer, row}]}
+  @type rows :: {gen :: non_neg_integer, [{non_neg_integer, row}]}
+  @type cell_px :: {pos_integer, pos_integer} | nil
+  @type mod :: :shift | :ctrl | :alt | :super
+  @type key_event :: %{
+          key: atom | binary,
+          mods: [mod],
+          event: :press | :release | :repeat,
+          text: binary | nil
+        }
+  @type mouse_event :: %{
+          kind: :press | :release | :move | :drag | :scroll,
+          button:
+            :left | :middle | :right | :wheel_up | :wheel_down | :wheel_left | :wheel_right | nil,
+          x: non_neg_integer,
+          y: non_neg_integer,
+          mods: [mod],
+          px: {number, number} | nil
+        }
+  @type cursor :: %{
+          x: non_neg_integer,
+          y: non_neg_integer,
+          visible: boolean,
+          blinking: boolean,
+          shape: :block | :bar | :underline | :block_hollow
+        }
 
   @callback new(pos_integer, pos_integer, non_neg_integer) :: {:ok, vt}
-  @callback resize(vt, pos_integer, pos_integer, {pos_integer, pos_integer} | nil) :: :ok
+  @callback resize(vt, pos_integer, pos_integer, cell_px) :: :ok
   @callback dirty_rows(vt) :: rows
   @callback full_rows(vt) :: rows
   @callback read_text(vt, :viewport | :screen | {:rows, Range.t()}) :: binary
-  @callback scrollbar(vt) :: %{total: non_neg_integer, viewport: non_neg_integer, offset: integer}
-  @callback scroll_to(vt, non_neg_integer) :: :ok
-  @callback mode(vt, integer) :: boolean | {:stale, boolean}
-  @callback kitty_keyboard_flags(vt) :: integer
-  @callback link_at(vt, non_neg_integer, non_neg_integer) :: nil | %{uri: binary, kind: atom}
-  @callback encode_key(vt, HerdrScene.Event.t()) :: binary
-  @callback encode_mouse(vt, HerdrScene.Event.t()) :: binary | nil
-  @callback encode_focus(vt, boolean) :: binary
-  @callback graphics_placements(vt, term) :: [term]
-  @callback cursor(vt) :: %{
-              x: non_neg_integer,
-              y: non_neg_integer,
-              shape: :block | :underline | :bar,
-              visible: boolean
+  @callback scrollbar(vt) :: %{
+              total: non_neg_integer,
+              viewport: non_neg_integer,
+              offset: non_neg_integer
             }
+  @callback scroll_to(vt, non_neg_integer) :: :ok
+  @callback mode(vt, atom) :: boolean | {:stale, boolean}
+  @callback kitty_keyboard_flags(vt) :: non_neg_integer | {:stale, non_neg_integer}
+  @callback link_at(vt, non_neg_integer, non_neg_integer) ::
+              nil | %{uri: binary, kind: :hyperlink | :text}
+  @callback graphics_placements(vt) :: [map]
+  @callback cursor(vt) :: cursor | nil
+  @callback encode_key(vt, key_event) :: binary
+  @callback encode_mouse(vt, mouse_event) :: binary | nil
+  @callback encode_focus(vt, boolean) :: binary
 end

@@ -1,25 +1,36 @@
 defmodule HerdrServer.Kernel.Pty do
   @moduledoc """
-  PTY kernel (design.md, Native.Pty). Subscribers receive `{:damage, id, gen}`,
-  `{:exit, id, status}`, `{:title, id, binary}`, `{:bell, id}`,
-  `{:osc, id, code, payload}` and `{:pwd, id, binary}`; `id` is the pane id.
-  Subscribing forces full damage on the vt.
+  PTY kernel: the API of `HerdrServer.Native.Pty` (M1). Subscribers receive (`id` is the
+  kernel id given to `spawn/8`, allocated by the keeper; `Pane.Server` translates it to
+  the pane id):
+
+      {:damage, id, gen}
+      {:exit, id, non_neg_integer | {:signal, n} | {:panic, binary} | :unknown}
+      {:osc, id, code, binary | {:truncated, binary}}
+      {:dcs, id, binary | {:truncated, binary}}
+      {:bell, id}
+      {:title, id, binary}
+      {:pwd, id, binary}
+
+  Every `subscribe/2` resets the vt's `dirty_rows` cursor and resends full damage.
   """
 
   @type pty :: term
+  @type signal :: :hup | :term | :kill | :int | pos_integer
 
   @callback spawn(
               vt :: term,
+              id :: non_neg_integer,
               cmd :: binary,
               args :: [binary],
               env :: [{binary, binary}],
-              cwd :: binary,
+              cwd :: binary | nil,
               pos_integer,
               pos_integer
-            ) :: {:ok, pty, integer}
-  @callback write(pty, binary) :: :ok | {:error, :backpressure}
+            ) :: {:ok, pty, pos_integer} | {:error, term}
+  @callback write(pty, iodata) :: :ok | {:error, :backpressure | :closed | :too_large}
   @callback resize(pty, pos_integer, pos_integer, {pos_integer, pos_integer} | nil) :: :ok
-  @callback kill(pty, atom) :: :ok
+  @callback kill(pty, signal) :: :ok
   @callback subscribe(pty, pid) :: :ok
   @callback set_hidden(pty, boolean) :: :ok
 end

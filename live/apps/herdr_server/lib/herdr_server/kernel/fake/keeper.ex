@@ -1,42 +1,55 @@
 defmodule HerdrServer.Kernel.Fake.Keeper do
-  @moduledoc "In-memory keeper. Resources are linked to it, so a restart wipes them."
+  @moduledoc """
+  In-memory keeper with `Native.Keeper`'s API (allocates ids from 1). Resources are
+  linked to it, so a restart wipes them.
+  """
   use GenServer
 
   @behaviour HerdrServer.Kernel.Keeper
 
   alias HerdrServer.Kernel.Fake.{Pty, Vt}
 
-  defstruct panes: %{}
+  defstruct panes: %{}, next_id: 1, fail: nil
 
   def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
 
   @impl HerdrServer.Kernel.Keeper
-  def open(pane_id, opts), do: GenServer.call(__MODULE__, {:open, pane_id, opts})
+  def open(spec), do: GenServer.call(__MODULE__, {:open, spec})
 
   @impl HerdrServer.Kernel.Keeper
-  def lookup(pane_id), do: GenServer.call(__MODULE__, {:lookup, pane_id})
+  def lookup(id), do: GenServer.call(__MODULE__, {:lookup, id})
 
   @impl HerdrServer.Kernel.Keeper
-  def close(pane_id), do: GenServer.call(__MODULE__, {:close, pane_id})
+  def close(id), do: GenServer.call(__MODULE__, {:close, id})
 
   @impl HerdrServer.Kernel.Keeper
-  def pane_ids, do: GenServer.call(__MODULE__, :pane_ids)
+  def ids, do: GenServer.call(__MODULE__, :ids)
+
+  @doc "Test hook: the next `open/1` returns `{:error, reason}`."
+  def fail_next_open(reason), do: GenServer.call(__MODULE__, {:fail, reason})
 
   @impl GenServer
   def init(:ok), do: {:ok, %__MODULE__{}}
 
   @impl GenServer
-  def handle_call({:open, id, o}, _from, state) do
+  def handle_call({:open, _spec}, _from, %{fail: reason} = state) when reason != nil do
     state = Map.merge(%__MODULE__{}, state)
+    {:reply, {:error, reason}, %{state | fail: nil}}
+  end
 
-    if Map.has_key?(state.panes, id) do
-      {:reply, {:error, :already_open}, state}
-    else
-      {:ok, vt} = Vt.new(o.cols, o.rows, 0)
-      {:ok, pty, os_pid} = Pty.spawn(id, vt, o.cmd, o.args, o.env, o.cwd, o.cols, o.rows)
-      res = %{vt: vt, pty: pty, os_pid: os_pid}
-      {:reply, {:ok, res}, %{state | panes: Map.put(state.panes, id, res)}}
-    end
+  def handle_call({:open, o}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    id = state.next_id
+    {:ok, vt} = Vt.new(o.cols, o.rows, o.max_scrollback)
+    {:ok, pty, os_pid} = Pty.spawn(vt, id, o.cmd, o.args, o.env, o.cwd, o.cols, o.rows)
+    if o.subscriber, do: Pty.subscribe(pty, o.subscriber)
+    res = %{vt: vt, pty: pty, os_pid: os_pid}
+    {:reply, {:ok, id}, %{state | panes: Map.put(state.panes, id, res), next_id: id + 1}}
+  end
+
+  def handle_call({:fail, reason}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, %{state | fail: reason}}
   end
 
   def handle_call({:lookup, id}, _from, state) do
@@ -58,8 +71,8 @@ defmodule HerdrServer.Kernel.Fake.Keeper do
     end
   end
 
-  def handle_call(:pane_ids, _from, state) do
+  def handle_call(:ids, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:reply, Map.keys(state.panes), state}
+    {:reply, state.panes |> Map.keys() |> Enum.sort(), state}
   end
 end

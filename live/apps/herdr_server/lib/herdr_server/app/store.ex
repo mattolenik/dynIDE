@@ -32,6 +32,9 @@ defmodule HerdrServer.App.Store do
   alias HerdrServer.Pane.{Input, Rows, Server}
   alias HerdrServer.Pane.Supervisor, as: Panes
 
+  # bytes of scrollback per pane
+  @max_scrollback 10_000_000
+
   defstruct app: nil,
             subs: %{},
             driver: nil,
@@ -70,7 +73,7 @@ defmodule HerdrServer.App.Store do
   @impl true
   def init(:ok) do
     # a restarted Store forgets the app: close what the previous incarnation left open
-    Enum.each(Kernel.keeper().pane_ids(), &close/1)
+    close_all()
     :persistent_term.erase(Protocol.fast_path_key())
     {:ok, %__MODULE__{}}
   end
@@ -94,7 +97,7 @@ defmodule HerdrServer.App.Store do
 
   def handle_call(:reset, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    Enum.each(Kernel.keeper().pane_ids(), &close/1)
+    close_all()
     :persistent_term.erase(Protocol.fast_path_key())
     {:reply, :ok, %__MODULE__{subs: state.subs}}
   end
@@ -199,16 +202,22 @@ defmodule HerdrServer.App.Store do
   end
 
   defp effect(state, {:spawn, id, %{cols: c, rows: r}}, origin) do
-    opts = %{
+    # The kernel sets TERM=xterm-256color; Pane.Server subscribes when it starts. Children
+    # inherit the OS environment of the VM, not `System.put_env/2` changes: extra
+    # variables go in `config :herdr_server, :pane_env` (a list of {name, value}).
+    spec = %{
       cmd: System.get_env("SHELL", "/bin/sh"),
       args: [],
-      env: [],
+      env: Application.get_env(:herdr_server, :pane_env, []),
       cwd: File.cwd!(),
       cols: c,
-      rows: r
+      rows: r,
+      max_scrollback: @max_scrollback,
+      subscriber: nil
     }
 
-    with {:ok, _} <- Kernel.keeper().open(id, opts),
+    with {:ok, kid} <- Kernel.keeper().open(spec),
+         :ok <- Rows.put_kernel_id(id, kid),
          {:ok, _} <- Panes.start_pane(id) do
       put_in(state.sizes[id], {c, r})
     else
@@ -242,8 +251,16 @@ defmodule HerdrServer.App.Store do
   # idempotent: closing an already-gone pane is a no-op everywhere
   defp close(id) do
     Panes.stop_pane(id)
-    Kernel.keeper().close(id)
+    kid = Rows.kernel_id(id)
+    if kid, do: Kernel.keeper().close(kid)
     Rows.delete(id)
+  end
+
+  # every pane this Store mapped, then anything else the keeper still holds
+  defp close_all do
+    Enum.each(Rows.kernel_ids(), fn {id, _kid} -> close(id) end)
+    keeper = Kernel.keeper()
+    Enum.each(keeper.ids(), &keeper.close/1)
   end
 
   defp notice(origin, n) when is_pid(origin), do: send(origin, {:notice, n})

@@ -45,7 +45,7 @@ defmodule HerdrIntegration.Driver do
 
   @doc "Feeds `bin` as program output of pane `pane_id`."
   def output(pane_id, bin) do
-    {:ok, %{pty: pty}} = Keeper.lookup(pane_id)
+    {:ok, %{pty: pty}} = Keeper.lookup(Rows.kernel_id(pane_id))
     Pty.output(pty, bin)
   end
 

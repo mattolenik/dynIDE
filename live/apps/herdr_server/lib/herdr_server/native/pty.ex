@@ -16,6 +16,8 @@ defmodule HerdrServer.Native.Pty do
   excess is dropped), and `:bell` is at most one per read chunk. Hidden panes
   still send these events.
   """
+  @behaviour HerdrServer.Kernel.Pty
+
   alias HerdrServer.Native
   alias HerdrServer.Native.Vt
 

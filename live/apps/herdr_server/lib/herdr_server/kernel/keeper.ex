@@ -1,27 +1,30 @@
 defmodule HerdrServer.Kernel.Keeper do
   @moduledoc """
-  Owns the vt/pty resources per pane. Callers never hold a resource past a
-  `lookup/1`. Not in design.md; proposed to M1.
+  Owns the vt/pty resources per kernel id: the API of `HerdrServer.Native.Keeper` (M1).
+  `open/1` allocates the id. Pane ids are allocated by `App.Actions`; the
+  pane id -> kernel id map lives in `Pane.Rows`.
 
-  `lookup/1` is on the keystroke path (`Pane.Input` runs it for every fast-path key, in
-  the client's process): it must be callable from any process and must not serialize
-  through one GenServer (e.g. a `read_concurrency` ETS table written by the keeper).
-  `Kernel.Fake.Keeper` answers with a `GenServer.call`, which is acceptable for tests only.
+  `lookup/1` is on the keystroke path (`Pane.Input` runs it in the client's process):
+  `Native.Keeper` reads a `read_concurrency` ETS table. `Kernel.Fake.Keeper` answers with
+  a `GenServer.call`, acceptable for tests only.
   """
 
+  @type id :: pos_integer
   @type resources :: %{vt: term, pty: term, os_pid: integer}
-  @type opts :: %{
+  @type spec :: %{
           cmd: binary,
           args: [binary],
           env: [{binary, binary}],
-          cwd: binary,
+          cwd: binary | nil,
           cols: pos_integer,
-          rows: pos_integer
+          rows: pos_integer,
+          max_scrollback: non_neg_integer,
+          subscriber: pid | nil
         }
 
   @callback child_spec(term) :: Supervisor.child_spec()
-  @callback open(pane_id :: term, opts) :: {:ok, resources} | {:error, term}
-  @callback lookup(pane_id :: term) :: {:ok, resources} | :error
-  @callback close(pane_id :: term) :: :ok
-  @callback pane_ids() :: [term]
+  @callback open(spec) :: {:ok, id} | {:error, term}
+  @callback lookup(id) :: {:ok, resources} | :error
+  @callback close(id) :: :ok
+  @callback ids() :: [id]
 end

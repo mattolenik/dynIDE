@@ -79,12 +79,12 @@ defmodule HerdrServer.ServerTest do
     do: row |> Cell.decode_row() |> Enum.map_join(&if(&1.glyph == "", do: " ", else: &1.glyph))
 
   defp vt(id) do
-    {:ok, %{vt: vt}} = Fake.Keeper.lookup(id)
+    {:ok, %{vt: vt}} = Fake.Keeper.lookup(Rows.kernel_id(id))
     vt
   end
 
   defp pty(id) do
-    {:ok, %{pty: pty}} = Fake.Keeper.lookup(id)
+    {:ok, %{pty: pty}} = Fake.Keeper.lookup(Rows.kernel_id(id))
     pty
   end
 
@@ -236,8 +236,9 @@ defmodule HerdrServer.ServerTest do
         assert %Scene{panes: [%{id: 1}]} = scene(c2)
       end)
 
-    refute log =~ "already_open"
-    assert Fake.Keeper.pane_ids() == [1]
+    refute log =~ "could not start"
+    assert [_] = Fake.Keeper.ids()
+    assert [{1, _}] = Rows.kernel_ids()
     assert [{new_pane, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
     assert new_pane != old_pane
     assert Registry.lookup(HerdrServer.Pane.Registry, 2) == []
@@ -269,13 +270,14 @@ defmodule HerdrServer.ServerTest do
   test "a failed spawn warns the client and closes the pane again" do
     {c, s} = client()
     scene(c)
-    opts = %{cmd: "sh", args: [], env: [], cwd: ".", cols: 10, rows: 5}
-    {:ok, _} = Fake.Keeper.open(2, opts)
+    before = Fake.Keeper.ids()
+    :ok = Fake.Keeper.fail_next_open({:spawn, "no such shell"})
     input(s, c, 1, Event.key("b", [:ctrl]))
     input(s, c, 2, Event.key("v"))
     assert_receive {^c, {:notice, %{level: :warning, text: "could not start pane 2" <> _}}}, 500
     assert eventually(fn -> Map.keys(Store.snapshot().session.panes) == [1] end)
-    assert Fake.Keeper.lookup(2) == :error
+    assert Fake.Keeper.ids() == before
+    assert Rows.kernel_id(2) == nil
   end
 
   test "a failing Keybinds.intercept_set keeps the Store alive and its fast path" do
@@ -396,9 +398,11 @@ defmodule HerdrServer.ServerTest do
     input(s, c, 1, Event.key("b", [:ctrl]))
     input(s, c, 2, Event.key("v"))
     scene_until(c, &(length(&1.panes) == 2))
+    kid = Rows.kernel_id(2)
     Fake.Pty.kill(pty(2), :term)
     assert %Scene{panes: [%{id: 1}]} = scene_until(c, &(length(&1.panes) == 1))
-    assert Fake.Keeper.lookup(2) == :error
+    assert Fake.Keeper.lookup(kid) == :error
+    assert Rows.kernel_id(2) == nil
   end
 
   test "inactive tabs are hidden" do

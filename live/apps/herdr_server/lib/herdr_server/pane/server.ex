@@ -4,7 +4,10 @@ defmodule HerdrServer.Pane.Server do
   full damage), drains `dirty_rows` on `{:damage, ...}` into the shared row cache
   (`Pane.Rows`, with the cursor read on the same damage) and tells every registered client session `{:pane_damage, id, gen}`.
   Pane exit and title events go to `App.Store` by cast (the Store calls this process, so
-  calling back would be a cycle).
+  calling back would be a cycle). Kernel events carry the keeper id (`state.kernel_id`,
+  from `Pane.Rows.kernel_id/1`); this process translates them to its pane id.
+
+  This is the only caller of `dirty_rows/1` (one shared read cursor per vt).
   """
   use GenServer, restart: :transient
 
@@ -41,13 +44,12 @@ defmodule HerdrServer.Pane.Server do
 
   @impl true
   def init(id) do
-    case Kernel.keeper().lookup(id) do
-      {:ok, %{vt: vt, pty: pty}} ->
-        kernel_ok(id, :subscribe, Kernel.pty().subscribe(pty, self()))
-        {:ok, reload(%State{id: id, vt: vt, pty: pty})}
-
-      :error ->
-        :ignore
+    with kid when kid != nil <- Rows.kernel_id(id),
+         {:ok, %{vt: vt, pty: pty}} <- Kernel.keeper().lookup(kid) do
+      kernel_ok(id, :subscribe, Kernel.pty().subscribe(pty, self()))
+      {:ok, reload(%State{id: id, kernel_id: kid, vt: vt, pty: pty})}
+    else
+      _ -> :ignore
     end
   end
 
@@ -67,14 +69,14 @@ defmodule HerdrServer.Pane.Server do
   end
 
   @impl true
-  def handle_info({:damage, id, _gen}, state) do
+  def handle_info({:damage, kid, _gen}, %{kernel_id: kid} = state) do
     state = Map.merge(%State{}, state)
-    drain(id)
+    drain(kid)
 
     case Kernel.vt().dirty_rows(state.vt) do
       # no row changed: publish only if the cursor moved
       {gen, []} ->
-        cursor = Kernel.vt().cursor(state.vt)
+        cursor = read_cursor(state.vt)
 
         {:noreply,
          if(cursor == state.cursor, do: state, else: publish(%{state | gen: gen}, cursor))}
@@ -84,15 +86,15 @@ defmodule HerdrServer.Pane.Server do
     end
   end
 
-  def handle_info({:exit, id, _status}, state) do
+  def handle_info({:exit, kid, _status}, %{kernel_id: kid} = state) do
     state = Map.merge(%State{}, state)
-    Store.event_async({:pane_exited, id})
+    Store.event_async({:pane_exited, state.id})
     {:noreply, state}
   end
 
-  def handle_info({:title, id, title}, state) do
+  def handle_info({:title, kid, title}, %{kernel_id: kid} = state) do
     state = Map.merge(%State{}, state)
-    Store.event_async({:pane_title, id, title})
+    Store.event_async({:pane_title, state.id, title})
     {:noreply, state}
   end
 
@@ -107,6 +109,14 @@ defmodule HerdrServer.Pane.Server do
   defp kernel_ok(id, op, other) do
     Logger.warning("pane #{id}: #{op} failed: #{inspect(other)}")
     :error
+  end
+
+  # the scene's shapes are :block | :underline | :bar; a hollow block (unfocused) is a block
+  defp read_cursor(vt) do
+    case Kernel.vt().cursor(vt) do
+      %{shape: :block_hollow} = c -> %{c | shape: :block}
+      c -> c
+    end
   end
 
   defp put_row({n, b}, t) when n < tuple_size(t), do: put_elem(t, n, b)
@@ -127,7 +137,7 @@ defmodule HerdrServer.Pane.Server do
   end
 
   defp publish(state, cursor \\ nil) do
-    cursor = cursor || Kernel.vt().cursor(state.vt)
+    cursor = cursor || read_cursor(state.vt)
     :ok = Rows.put(state.id, state.gen, state.rows, cursor)
     msg = {:pane_damage, state.id, state.gen}
 
