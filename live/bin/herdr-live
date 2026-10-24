@@ -17,7 +17,8 @@
 # herdr-live test-on-save [on|off]: switch the test-on-save gate (a save runs the changed
 # module's tests in a separate mix test first; failing tests block the reload). No
 # argument prints the current mode (ok gate | ok off). Off by default; it adds seconds
-# per save. HERDR_LIVE_TEST_ON_SAVE=1 starts it on.
+# per save. HERDR_LIVE_TEST_ON_SAVE=1 starts it on. The runtime setting does not survive
+# a VM handoff (the new VM falls back to HERDR_LIVE_TEST_ON_SAVE / config).
 control() { # control <command line>
   sock=${HERDR_LIVE_CONTROL:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/control.sock}
   [ -S "$sock" ] || { echo "herdr-live is not running" >&2; exit 1; }

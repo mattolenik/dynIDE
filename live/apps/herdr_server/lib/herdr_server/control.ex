@@ -205,14 +205,9 @@ defmodule HerdrServer.Control do
 
   defp reply(_, _), do: "error unknown command\n"
 
-  # the reload app owns the mode; it may be absent (reload disabled): then an error
   defp gate(mode) do
-    if Code.ensure_loaded?(HerdrReload.TestGate) do
-      if mode, do: HerdrReload.TestGate.set_mode(mode)
-      if HerdrReload.TestGate.mode() == :gate, do: "ok gate\n", else: "ok off\n"
-    else
-      "error test gate unavailable\n"
-    end
+    if mode, do: HerdrReload.TestGate.set_mode(mode)
+    if HerdrReload.TestGate.mode() == :gate, do: "ok gate\n", else: "ok off\n"
   end
 
   defp rollback(n, owner) do

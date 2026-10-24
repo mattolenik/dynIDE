@@ -6,13 +6,27 @@ defmodule HerdrReload.TestGate do
   With `:gate`, a save first runs the changed module's ExUnit file (`apps/<app>/lib/x.ex`
   maps to `apps/<app>/test/x_test.exs` when it exists; a saved test file maps to itself)
   in a separate `mix test` OS process (`MIX_ENV=test`, the live VM's broker/control env
-  removed), and only a pass reloads. A failed or errored gate never calls the reload, so
-  its digest is not recorded and the next save of the same bytes retries. No mapped
-  tests: reload as usual (telemetry `tests result=none` only). It adds seconds of
-  latency, which is why it is off by default.
+  removed), and only a pass reloads. It adds seconds of latency, which is why it is off
+  by default. No mapped tests and nothing blocked: reload as usual (telemetry
+  `tests result=none`).
+
+  Batches are gated one at a time in this process (a named GenServer, `reload/1` is a
+  call). `Server.reload` compiles every stale source, so a failed save must not be
+  loaded by a later batch: the paths of a failed or errored gate are kept in a blocked
+  set (the reload fun is not called, so the digest stays unrecorded). Every later batch
+  in `:gate` mode also runs the blocked paths' tests, reloads only if all pass, and a
+  pass clears the set. So fixing the code and saving any file retries the blocked
+  tests. The Watcher watches `apps/*/lib` only: saving a test file alone triggers
+  nothing; re-save a lib file. If a tested path changed while its tests ran, that
+  reload is skipped (`tests result=stale` in telemetry) and the newer save's batch,
+  queued behind, gates it. `set_mode(:off)` clears the blocked set: `:off` loads
+  whatever is on disk at the next save. The runtime mode does not survive a VM handoff
+  (the new VM reads the config / `HERDR_LIVE_TEST_ON_SAVE`).
 
   Notices: `{:tests, :running | :passed | :failed | :error, %{files, failures, ms}}`.
   """
+
+  use GenServer
 
   alias HerdrReload.{Notices, Server, Telemetry}
 
@@ -37,6 +51,8 @@ defmodule HerdrReload.TestGate do
   def set_mode(mode) when mode in [:off, :gate] do
     env = Application.get_env(:herdr_reload, HerdrReload, [])
     Application.put_env(:herdr_reload, HerdrReload, Keyword.put(env, :test_on_save, mode))
+    if mode == :off and GenServer.whereis(__MODULE__), do: GenServer.cast(__MODULE__, :clear)
+    :ok
   end
 
   @doc """
@@ -61,17 +77,12 @@ defmodule HerdrReload.TestGate do
 
   # lib/<app>/x.ex is tested by test/x_test.exs (the repo's convention) or test/<app>/x_test.exs
   defp lib_test(root, app, rest) do
-    stem = rest |> Path.join() |> String.replace_suffix(".ex", "_test.exs")
-    flat = if hd(rest) == app and length(rest) > 1, do: [Path.join(tl(rest))], else: []
-    flat = Enum.map(flat, &String.replace_suffix(&1, ".ex", "_test.exs"))
-
-    if String.ends_with?(stem, "_test.exs"),
-      do: Enum.find_value([stem | flat], [], &nonempty(test_file(root, app, [&1]))),
-      else: []
+    [rest, if(hd(rest) == app, do: tl(rest), else: [])]
+    |> Enum.reject(&(&1 == []))
+    |> Enum.map(&(&1 |> Path.join() |> String.replace_suffix(".ex", "_test.exs")))
+    |> Enum.flat_map(&test_file(root, app, [&1]))
+    |> Enum.take(1)
   end
-
-  defp nonempty([]), do: nil
-  defp nonempty(found), do: found
 
   defp test_file(root, app, rest) do
     rel = Path.join(["test" | rest])
@@ -82,38 +93,86 @@ defmodule HerdrReload.TestGate do
       else: []
   end
 
-  @doc "`reload/2` with the default reload, runner and umbrella root (the Watcher's `on_batch`)."
+  @doc "Starts the gate process (`name:` option for tests, default the module name)."
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []),
+    do: GenServer.start_link(__MODULE__, nil, name: Keyword.get(opts, :name, __MODULE__))
+
+  @doc "`reload/2` with the defaults (the Watcher's `on_batch`)."
   @spec reload([Path.t()]) :: term()
   def reload(paths), do: reload(paths, [])
 
   @doc """
   Reloads `paths`, behind the gate when the mode is `:gate`. Options (for tests):
-  `reload` (fun, default `Server.reload/1`), `runner`, `root`, `mode`.
+  `reload` (fun, default `Server.reload/1`), `runner`, `root`, `mode`, `server` (the gate
+  process, default the module name).
   """
   @spec reload([Path.t()], keyword()) :: term()
   def reload(paths, opts) do
-    reload_fun = Keyword.get(opts, :reload, &Server.reload/1)
-
     case Keyword.get_lazy(opts, :mode, &mode/0) do
-      :off -> reload_fun.(paths)
-      :gate -> gated(paths, reload_fun, opts)
+      :off -> Keyword.get(opts, :reload, &Server.reload/1).(paths)
+      :gate -> GenServer.call(Keyword.get(opts, :server, __MODULE__), {:reload, paths, opts}, :infinity)
     end
   end
 
-  defp gated(paths, reload_fun, opts) do
+  # blocked: paths whose gate failed or errored, not yet passed
+  defstruct blocked: MapSet.new()
+
+  @impl true
+  def init(nil), do: {:ok, %__MODULE__{}}
+
+  @impl true
+  def handle_call({:reload, paths, opts}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {reply, blocked} = gated(paths, state.blocked, opts)
+    {:reply, reply, %{state | blocked: blocked}}
+  end
+
+  @impl true
+  def handle_cast(:clear, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, %{state | blocked: MapSet.new()}}
+  end
+
+  @impl true
+  def code_change(_old, state, _extra), do: {:ok, Map.merge(%__MODULE__{}, state)}
+
+  defp gated(paths, blocked, opts) do
+    reload_fun = Keyword.get(opts, :reload, &Server.reload/1)
     root = Keyword.get_lazy(opts, :root, &root/0)
+    all = Enum.uniq(paths ++ MapSet.to_list(blocked))
+    tests = tests_for(all, root)
 
-    case tests_for(paths, root) do
-      tests when map_size(tests) == 0 ->
-        Telemetry.event(:tests, result: :none, files: 0)
-        reload_fun.(paths)
+    if map_size(tests) == 0 do
+      Telemetry.event(:tests, result: :none, files: 0, failures: 0, ms: 0)
+      {reload_fun.(paths), MapSet.new()}
+    else
+      digests = Map.new(all, &{&1, digest(&1)})
+      n = tests |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
+      Notices.broadcast({:tests, :running, %{files: n}})
+      {result, info} = run(tests, opts)
+      Notices.broadcast({:tests, result, info})
+      after_run(result, info, paths, all, digests, blocked, reload_fun)
+    end
+  end
 
-      tests ->
-        n = tests |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
-        Notices.broadcast({:tests, :running, %{files: n}})
-        {result, info} = run(tests, opts)
-        Notices.broadcast({:tests, result, info})
-        if result == :passed, do: reload_fun.(paths), else: {:tests, result, info}
+  defp after_run(:passed, info, paths, all, digests, blocked, reload_fun) do
+    if Map.new(all, &{&1, digest(&1)}) == digests do
+      {reload_fun.(paths), MapSet.new()}
+    else
+      # saved again while the tests ran: the newer batch, queued behind, gates it
+      Telemetry.event(:tests, result: :stale, files: info.files, failures: 0, ms: info.ms)
+      {{:tests, :stale, info}, blocked}
+    end
+  end
+
+  defp after_run(result, info, paths, _all, _digests, blocked, _reload_fun),
+    do: {{:tests, result, info}, MapSet.union(blocked, MapSet.new(paths))}
+
+  defp digest(path) do
+    case File.read(path) do
+      {:ok, bin} -> :erlang.md5(bin)
+      _ -> nil
     end
   end
 
@@ -121,12 +180,14 @@ defmodule HerdrReload.TestGate do
 
   @doc """
   Runs `mix test <files>` in each app dir (stops at the first app that does not pass).
-  Option `runner`: `(app_dir, args, env, timeout_ms -> {output, status} | :timeout)`.
+  Options: `runner` `(app_dir, args, env, timeout_ms -> {output, status} | :timeout)`, `exe`
+  (the executable the default runner starts, default `mix`), `timeout_ms`.
   """
   @spec run(%{Path.t() => [Path.t()]}, keyword()) ::
           {result(), %{files: integer(), failures: integer(), ms: integer()}}
   def run(tests, opts \\ []) do
-    runner = Keyword.get(opts, :runner, &port_runner/4)
+    exe = Keyword.get(opts, :exe)
+    runner = Keyword.get(opts, :runner, &port_runner(&1, &2, &3, &4, exe))
     timeout = Keyword.get(opts, :timeout_ms, @timeout_ms)
     started = System.monotonic_time(:millisecond)
     files = tests |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
@@ -161,8 +222,8 @@ defmodule HerdrReload.TestGate do
   end
 
   # System.cmd has no timeout: a port, so the OS pid can be killed when it runs over
-  defp port_runner(dir, args, env, timeout) do
-    case System.find_executable("mix") do
+  defp port_runner(dir, args, env, timeout, exe) do
+    case exe || System.find_executable("mix") do
       nil ->
         {"mix not found", 127}
 
@@ -193,7 +254,8 @@ defmodule HerdrReload.TestGate do
         {IO.iodata_to_binary(acc), s}
     after
       left ->
-        # exactly the pid we started, never by name
+        # exactly the pid we started, never by name. kill -9 of the BEAM itself can orphan
+        # mix's children; acceptable for a 120 s safety net.
         System.cmd("kill", ["-9", Integer.to_string(pid)], stderr_to_stdout: true)
         # the port closes itself on the exit status
         receive do

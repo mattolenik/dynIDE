@@ -1,5 +1,5 @@
 # Test-on-save gate latency. Run: cd live && HERDR_LIVE_HEADLESS=1 mix run bench/reload/test_gate_bench.exs
-# (dev env: the app's own reload pipeline and watcher run). Gate on, appends a unique comment to
+# (dev env: the app's own reload pipeline and watcher run). Gate on, adds a marker function to
 # view.ex (it has test/view_test.exs), times save -> {:tests, :passed} and save -> {:loaded}, 5
 # iterations, restores the file byte for byte, prints a RESULT line with medians.
 alias HerdrReload.{Notices, TestGate}
@@ -24,7 +24,10 @@ await = fn pred ->
 end
 
 measure = fn i ->
-  File.write!(file, original <> "\n# gate-bench-#{i}-#{System.unique_integer([:positive])}\n")
+  # a comment would not change the beam (no {:loaded}): add a function with a unique body
+  body = String.replace_suffix(original, "end\n", "\n  def gate_bench_marker, do: #{i}_#{System.unique_integer([:positive])}\nend\n")
+  true = body != original
+  File.write!(file, body)
   t0 = System.monotonic_time(:millisecond)
   {:herdr_reload, {:tests, :passed, _}} = await.(&match?({:tests, r, _} when r != :running, &1))
   t1 = System.monotonic_time(:millisecond)

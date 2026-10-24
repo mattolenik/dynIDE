@@ -12,8 +12,9 @@ defmodule HerdrReload.TestGateTest do
     end
 
     start_supervised!(Notices)
+    gate = start_supervised!({TestGate, name: :gate_under_test})
     on_exit(fn -> File.rm_rf!(root) end)
-    {:ok, root: root}
+    {:ok, root: root, gate: gate}
   end
 
   defp p(root, rel), do: Path.join(root, rel)
@@ -48,6 +49,7 @@ defmodule HerdrReload.TestGateTest do
     [
       mode: mode,
       root: root,
+      server: :gate_under_test,
       reload: fn paths -> send(me, {:reload, paths}) && :reloaded end,
       runner: fn dir, args, env, _t ->
         send(me, {:ran, dir, args, env})
@@ -109,11 +111,58 @@ defmodule HerdrReload.TestGateTest do
         do: assert({v, nil} in env)
   end
 
-  test "the default runner kills a command over the timeout" do
-    # real port runner with a tiny timeout against a dir where mix test is slow to start
-    dir = System.tmp_dir!()
+  test "the default runner kills a command over the timeout", %{root: root} do
+    pidfile = Path.join(root, "pid")
+    exe = Path.join(root, "slow.sh")
+    File.write!(exe, "#!/bin/sh\necho $$ > #{pidfile}\nexec sleep 30\n")
+    File.chmod!(exe, 0o755)
     t0 = System.monotonic_time(:millisecond)
-    assert {:error, _} = TestGate.run(%{dir => ["test/x_test.exs"]}, timeout_ms: 1)
+    t = %{root => ["test/x_test.exs"]}
+    assert {:error, _} = TestGate.run(t, exe: exe, timeout_ms: 500)
     assert System.monotonic_time(:millisecond) - t0 < 5_000
+    pid = pidfile |> File.read!() |> String.trim()
+    {_, status} = System.cmd("kill", ["-0", pid], stderr_to_stdout: true)
+    assert status != 0
+  end
+
+  describe "blocked set" do
+    test "a failed save blocks the next batch of an unmapped file until its tests pass", %{root: root} do
+      Notices.subscribe()
+      x = p(root, "apps/a/lib/a/x.ex")
+      y = p(root, "apps/a/lib/a/y.ex")
+      fail = {"1 test, 1 failure\n", 2}
+      assert {:tests, :failed, _} = TestGate.reload([x], opts(root, fail, :gate))
+
+      # y has no tests but x's are blocked: they run, and still fail
+      assert {:tests, :failed, _} = TestGate.reload([y], opts(root, fail, :gate))
+      refute_received {:reload, _}
+
+      # fixed: the blocked tests pass, the batch reloads, the set is cleared
+      assert TestGate.reload([y], opts(root, {"1 test, 0 failures\n", 0}, :gate)) == :reloaded
+      assert_received {:reload, [^y]}
+      assert TestGate.reload([y], opts(root, fail, :gate)) == :reloaded
+    end
+
+    test "set_mode(:off) clears the blocked set", %{root: root} do
+      old = TestGate.mode()
+      on_exit(fn -> TestGate.set_mode(old) end)
+      start_supervised!(TestGate, id: :named)
+      x = p(root, "apps/a/lib/a/x.ex")
+      y = p(root, "apps/a/lib/a/y.ex")
+      o = Keyword.put(opts(root, {"1 test, 1 failure\n", 2}, :gate), :server, TestGate)
+      assert {:tests, :failed, _} = TestGate.reload([x], o)
+      TestGate.set_mode(:off)
+      _ = :sys.get_state(TestGate)
+      assert TestGate.reload([y], o) == :reloaded
+    end
+
+    test "a path saved again while its tests ran is not reloaded", %{root: root} do
+      Notices.subscribe()
+      x = p(root, "apps/a/lib/a/x.ex")
+      o = opts(root, {"1 test, 0 failures\n", 0}, :gate)
+      runner = fn _, _, _, _ -> File.write!(x, "changed") && {"1 test, 0 failures\n", 0} end
+      assert {:tests, :stale, _} = TestGate.reload([x], Keyword.put(o, :runner, runner))
+      refute_received {:reload, _}
+    end
   end
 end
