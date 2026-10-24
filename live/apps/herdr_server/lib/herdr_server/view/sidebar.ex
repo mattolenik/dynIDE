@@ -27,7 +27,12 @@ defmodule HerdrServer.View.Sidebar do
       id: :spaces,
       text: label.("spaces"),
       children: [
-        %Node{role: :list, id: :list, props: %{offset: 0}, children: workspaces(app)},
+        %Node{
+          role: :list,
+          id: :list,
+          props: %{offset: offset(app, :spaces_offset)},
+          children: workspaces(app)
+        },
         %Node{role: :button, id: :new, text: "new", props: %{action: :new_workspace}},
         %Node{
           role: :button,
@@ -42,7 +47,14 @@ defmodule HerdrServer.View.Sidebar do
       role: :section,
       id: :agents,
       text: label.("agents"),
-      children: [%Node{role: :list, id: :list, children: agents(app)}]
+      children: [
+        %Node{
+          role: :list,
+          id: :list,
+          props: %{offset: offset(app, :agents_offset)},
+          children: agents(app)
+        }
+      ]
     }
 
     toggle = %Node{
@@ -120,6 +132,9 @@ defmodule HerdrServer.View.Sidebar do
       }
     end
   end
+
+  # the client skips `offset` items (one owner of the skip: the rasterizer)
+  defp offset(app, key), do: Map.get(app.ui.sidebar, key, 0)
 
   defp pane_ids(ws), do: Enum.flat_map(ws.tabs, &Layout.pane_ids(&1.layout))
 

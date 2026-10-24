@@ -115,7 +115,7 @@
                 rect: nil,
                 text: nil,
                 token: nil,
-                props: %{},
+                props: %{offset: 0},
                 children: [
                   %HerdrScene.Scene.Node{
                     role: :item,

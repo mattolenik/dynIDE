@@ -19,6 +19,10 @@ defmodule HerdrTerm.Client.Term.Input do
   Parse runs through `HerdrReload.Guard`: a failing chunk is dropped (logged) and the parser
   state, queue and in-flight event stay as they were. `{:tty_resumed}` and
   `{:exit, :tty, _}` are forwarded to `Tty.Owner` (modes, repaint, local exit).
+
+  Mouse events go through `Hit.route/4` (guarded; a failure passes the event unchanged)
+  against Render's latest `{:chrome_hits, hits}` before they are queued: over chrome they
+  become `{:chrome, path, action}`, elsewhere they pass byte-for-byte as `{:mouse, ...}`.
   """
 
   use GenServer
@@ -28,6 +32,7 @@ defmodule HerdrTerm.Client.Term.Input do
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
   alias HerdrTerm.Client
+  alias HerdrTerm.Client.Term.Hit
   alias HerdrTerm.Client.Term.Input.Parse
   alias HerdrTerm.Tty.Owner
 
@@ -44,7 +49,10 @@ defmodule HerdrTerm.Client.Term.Input do
     seq: 0,
     mode: :terminal,
     queue: [],
-    replies: %{}
+    replies: %{},
+    # chrome hit testing (`Hit.route/4`): Render's hits and the grab / last left press
+    hits: [],
+    grab: nil
   ]
 
   def start_link(opts),
@@ -144,6 +152,11 @@ defmodule HerdrTerm.Client.Term.Input do
     {:noreply, drain(%{state | session: pid, inflight: nil, queue: queue, mode: :terminal})}
   end
 
+  def handle_info({:chrome_hits, hits}, state) when is_list(hits) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, %{state | hits: hits}}
+  end
+
   def handle_info({:tty_resumed} = msg, state), do: to_owner(msg, state)
   def handle_info({:exit, :tty, _} = msg, state), do: to_owner(msg, state)
 
@@ -176,8 +189,19 @@ defmodule HerdrTerm.Client.Term.Input do
         Map.put(acc, kind, data)
       end)
 
+    {events, state} = Enum.flat_map_reduce(events, state, &hit/2)
     drain(%{state | replies: replies, queue: state.queue ++ events})
   end
+
+  # mouse over chrome becomes `{:chrome, ...}`; a failing Hit passes the event unchanged
+  defp hit({:mouse, _} = ev, %{hits: hits, grab: grab} = state) when hits != [] or grab != nil do
+    case Guard.run_twice(Hit, :route, [hits, grab, ev, now()]) do
+      {:ok, {events, grab}} -> {events, %{state | grab: grab}}
+      {:failed, _} -> {[ev], state}
+    end
+  end
+
+  defp hit(ev, state), do: {[ev], state}
 
   defp drain(%{session: s, inflight: nil, queue: [ev | rest]} = state) when is_pid(s) do
     state = %{state | queue: rest}

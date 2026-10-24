@@ -1,7 +1,8 @@
 defmodule HerdrServer.App.Ui do
   @moduledoc """
   UI configuration carried in app state, with herdr's defaults: sidebar geometry
-  (`width` clamped to `min..max` while expanded, `split` the spaces/agents ratio), tab bar
+  (`width` clamped to `min..max` while expanded, `split` the spaces/agents ratio, the
+  lists' scroll `spaces_offset` / `agents_offset`), tab bar
   position, theme names, agent state indicators, confirmations, toast and sound delivery.
   Older apps get the new keys from `App.Upgrade.app/1`.
   """
@@ -15,7 +16,16 @@ defmodule HerdrServer.App.Ui do
       light: "catppuccin-latte",
       dark: "catppuccin"
     },
-    sidebar: %{visible: true, collapsed: false, width: 26, min: 18, max: 36, split: 0.5},
+    sidebar: %{
+      visible: true,
+      collapsed: false,
+      width: 26,
+      min: 18,
+      max: 36,
+      split: 0.5,
+      spaces_offset: 0,
+      agents_offset: 0
+    },
     tab_bar: %{position: :top},
     indicators: :dots,
     confirm_close: true,
@@ -35,7 +45,9 @@ defmodule HerdrServer.App.Ui do
             width: pos_integer(),
             min: pos_integer(),
             max: pos_integer(),
-            split: float()
+            split: float(),
+            spaces_offset: non_neg_integer(),
+            agents_offset: non_neg_integer()
           },
           tab_bar: %{position: :top | :bottom},
           indicators: :dots | :symbols,

@@ -17,7 +17,7 @@ defmodule HerdrServer.App.Actions do
   Ponytail: panes' `layout_gen` is not bumped here; the Store owns resize bookkeeping.
   """
 
-  alias HerdrServer.App.{Commands, Focus, Keybinds, Session, Ui, Workspaces}
+  alias HerdrServer.App.{Chrome, Commands, Focus, Keybinds, Session, Ui, Workspaces}
   alias HerdrServer.Layout
   alias HerdrServer.View.Frame
 
@@ -81,6 +81,8 @@ defmodule HerdrServer.App.Actions do
         {app, []}
     end
   end
+
+  def apply(app, {:chrome, path, action}), do: Chrome.apply(app, path, action)
 
   def apply(app, {:pane_exited, id}), do: Commands.close_pane(app, id)
 
@@ -235,7 +237,9 @@ defmodule HerdrServer.App.Actions do
     %{r | w: max(r.w, 1), h: max(r.h, 1)}
   end
 
-  defp reframe(app), do: put_in(app.session.area, area(app.session.size, app.ui))
+  @doc false
+  # `session.area` from `session.size` and the ui (also used by `App.Chrome`)
+  def reframe(app), do: put_in(app.session.area, area(app.session.size, app.ui))
 
   defp ws(%{session: s}), do: Enum.find(s.workspaces, &(&1.id == s.active_workspace))
 
