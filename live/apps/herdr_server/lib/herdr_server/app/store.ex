@@ -17,38 +17,24 @@ defmodule HerdrServer.App.Store do
       its value changed. It carries no input mode: modes are per client.
     * A spawn that fails (keeper open or pane server start) sends the origin a warning
       notice and closes the pane again, as `{:pane_exited, id}`.
-    * `app.session`, `app.focus`, `app.ui` and the bookkeeping below (`@book`) are
-      mirrored to `HerdrServer.Mirror`, debounced (one 20 ms timer; only changed entries
-      are written). `terminate/2` flushes, but it only runs when a callback raises: the
-      Store does not trap exits, so a kill or a supervisor shutdown loses the window
-      (Reconcile adopts its panes). A restarted Store reconciles the mirrored
-      app with the keeper (`App.Reconcile`: panes whose kernel is gone are dropped, live
-      mapped panes the mirror lost, e.g. spawned within the debounce window, are adopted
-      into a "scratch" tab; missing `Pane.Server`s restarted), re-monitors the mirrored
-      sessions and republishes the fast path; sessions re-subscribe and push full scenes.
-      Only an empty mirror (or a failing reconcile) starts fresh, closing whatever the
-      keeper still holds. Other app writes inside the window (focus, titles) are lost.
+    * `app.session`, `app.focus`, `app.ui` and the bookkeeping are mirrored to
+      `HerdrServer.Mirror`, debounced (`Store.Mirror`). A restarted Store reconciles the
+      mirrored app with the keeper (`App.Reconcile`: panes whose kernel is gone are dropped,
+      live mapped panes the mirror lost, e.g. spawned within the debounce window, are
+      adopted into a "scratch" tab; missing `Pane.Server`s restarted), re-monitors the
+      mirrored sessions and republishes the fast path; sessions re-subscribe and push full
+      scenes. Only an empty mirror (or a failing reconcile) starts fresh, closing whatever
+      the keeper still holds.
     * A repeat failure of `Actions.apply` (the guard rolled back batch K and the old code
       failed on the same event too) restores the `state_at_load` of the reload server's
       `last_rolled_back/1` batch when it is K or older, reconciled with the keeper as
-      above (keeping the current pane area, `next_id` and each pane's `layout_gen` at
-      least their current values, so no id or gen is seen twice), and warns every
-      subscriber.
-      Without such a state, or on an unattributed failure, the event is discarded with an
-      error notice.
+      above (`Store.Mirror.keep_monotonic/2`), and warns every subscriber. Without such a
+      state, or on an unattributed failure, the event is discarded with an error notice.
       The reload server is `config :herdr_server, :reload_server` (default
       `HerdrReload.Server`).
-    * Handoff (M5): with a broker, the latest app and the pane/keeper id map are held
-      under `"app/store"` (`Handoff.Link.hold/3`) at most once per 100 ms after events
-      that changed the app; `flush_hold/0` (the Link's PREPARE) holds a pending one now.
-      A new VM's `init/1` that finds that entry adopts it (before looking at the mirror,
-      which is empty in a new VM): it maps the panes the Keeper adopted in
-      `:herdr_pane_kernel`, starts their `Pane.Server`s, and leaves every other keeper
-      pane alone (they belong to whoever opened them, e.g. ctl). A mapped pane the Keeper
-      lost is closed as `{:pane_exited, id}`. The adopted app is mirrored at once, so a
-      later Store restart in this VM restarts from the mirror as above. An unusable entry
-      (its pure part runs through `HerdrReload.Guard`) is logged and unclaimed, and the
-      Store starts with an empty app.
+    * Handoff (M5): the latest app is held with the broker and a new VM's `init/1` adopts
+      it before looking at the mirror (`Store.Carry`). The adopted app is mirrored at once,
+      so a later Store restart in this VM restarts from the mirror as above.
     * In a VM that adopted panes (`Link.adopt_reason/0` not nil) no restart or restore
       closes a keeper pane nothing maps (`App.Restore`): it may be an adopted child.
   """
@@ -59,15 +45,14 @@ defmodule HerdrServer.App.Store do
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
   alias HerdrServer.App.{Actions, Keybinds, Reconcile, Restore}
+  alias HerdrServer.App.Store.{Carry, Mirror}
   alias HerdrServer.Handoff.Link
-  alias HerdrServer.{Kernel, Layout, Mirror}
+  alias HerdrServer.{Kernel, Layout}
   alias HerdrServer.Pane.{Input, Rows, Server}
   alias HerdrServer.Pane.Supervisor, as: Panes
 
   # bytes of scrollback per pane
   @max_scrollback 10_000_000
-  @hold_key "app/store"
-  @hold_ms 100
 
   defstruct app: nil,
             subs: %{},
@@ -80,10 +65,6 @@ defmodule HerdrServer.App.Store do
             hold_timer: nil,
             mirrored: %{},
             flush: nil
-
-  # Store fields mirrored as {:store, key}; `hidden` is recomputed by settle/1
-  @book [:driver, :driver_pid, :clients, :sizes]
-  @flush_ms 20
 
   def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
 
@@ -133,7 +114,7 @@ defmodule HerdrServer.App.Store do
 
   @impl true
   def init(:ok) do
-    case Link.take_adopted(@hold_key) do
+    case Link.take_adopted(Carry.key()) do
       [{_key, blob, _fds}] ->
         :persistent_term.erase(Protocol.fast_path_key())
         {:ok, adopt_carried(blob)}
@@ -144,7 +125,7 @@ defmodule HerdrServer.App.Store do
   end
 
   defp init_local do
-    case Mirror.app() do
+    case HerdrServer.Mirror.app() do
       nil ->
         # a fresh start: close what a previous incarnation without a mirror left open
         Restore.close_all()
@@ -159,8 +140,7 @@ defmodule HerdrServer.App.Store do
   end
 
   defp adopt(app) do
-    book = Map.new(@book, &{&1, Mirror.get({:store, &1})})
-    state = struct(%__MODULE__{}, Enum.reject(book, &(elem(&1, 1) == nil)))
+    state = struct(%__MODULE__{}, Mirror.read_book())
     subs = Map.new(state.clients, fn {pid, _} -> {pid, Process.monitor(pid)} end)
     fast = :persistent_term.get(Protocol.fast_path_key(), nil)
     state = %{state | subs: subs, fast: fast}
@@ -171,9 +151,12 @@ defmodule HerdrServer.App.Store do
         Enum.each(ids, &Restore.ensure_server/1)
         # settle only acts where it disagrees: start from what the pane servers hold
         hidden =
-          for id <- ids, match?(%{hidden: true}, Mirror.pane(id)), into: MapSet.new(), do: id
+          for id <- ids,
+              match?(%{hidden: true}, HerdrServer.Mirror.pane(id)),
+              into: MapSet.new(),
+              do: id
 
-        dirty(%{state | hidden: hidden}) |> settle() |> publish_fast()
+        Mirror.dirty(%{state | hidden: hidden}) |> settle() |> publish_fast()
 
       :failed ->
         Restore.close_all()
@@ -193,12 +176,12 @@ defmodule HerdrServer.App.Store do
   end
 
   @impl true
-  def terminate(_reason, state), do: flush(Map.merge(%__MODULE__{}, state))
+  def terminate(_reason, state), do: Mirror.flush(Map.merge(%__MODULE__{}, state))
 
   @impl true
   def handle_call({:event, ev, size}, {origin, _}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:reply, :ok, state |> handle_event(ev, size, origin) |> dirty()}
+    {:reply, :ok, state |> handle_event(ev, size, origin) |> Mirror.dirty()}
   end
 
   def handle_call(:snapshot, _from, state) do
@@ -214,37 +197,37 @@ defmodule HerdrServer.App.Store do
 
   def handle_call(:flush_hold, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:reply, :ok, if(state.hold_timer, do: hold_now(state), else: state)}
+    {:reply, :ok, if(state.hold_timer, do: Carry.hold_now(state), else: state)}
   end
 
   def handle_call(:reset, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     Restore.close_all()
     :persistent_term.erase(Protocol.fast_path_key())
-    for k <- [:session, :focus, :ui], do: Mirror.delete({:app, k})
+    for k <- [:session, :focus, :ui], do: HerdrServer.Mirror.delete({:app, k})
     {:reply, :ok, %__MODULE__{subs: state.subs, flush: state.flush}}
   end
 
   @impl true
   def handle_cast({:event, ev}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, state |> handle_event(ev, nil, nil) |> dirty()}
+    {:noreply, state |> handle_event(ev, nil, nil) |> Mirror.dirty()}
   end
 
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, handoff(%{state | subs: Map.delete(state.subs, pid)}, pid) |> dirty()}
+    {:noreply, handoff(%{state | subs: Map.delete(state.subs, pid)}, pid) |> Mirror.dirty()}
   end
 
   def handle_info(:flush, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, flush(%{state | flush: nil})}
+    {:noreply, Mirror.flush(%{state | flush: nil})}
   end
 
   def handle_info(:hold, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, hold_now(state)}
+    {:noreply, Carry.hold_now(state)}
   end
 
   def handle_info(_other, state) do
@@ -269,7 +252,7 @@ defmodule HerdrServer.App.Store do
 
     if state.app != old do
       Enum.each(Map.keys(state.subs), &send(&1, {:app_changed, state.app}))
-      hold(state)
+      Carry.hold(state)
     else
       state
     end
@@ -356,45 +339,32 @@ defmodule HerdrServer.App.Store do
   def reload_server, do: Application.get_env(:herdr_server, :reload_server, HerdrReload.Server)
 
   # Batch `k`'s new code corrupted state the old code then failed on: go back to a state
-  # from before `k` was loaded (`k`'s own; the Guard's re-run never rolls back an older
-  # batch), reconciled with the keeper.
-  defp restore(%{app: app} = state, k) when is_integer(k) and app != nil do
-    with {:ok, id, at_load} when id <= k and at_load != nil <- last_rolled_back(),
-         at_load = put_in(at_load.session.area, app.session.area),
-         {:ok, state} <- reconcile(state, at_load) do
-      state = %{state | app: keep_monotonic(state.app, app)}
+  # from before `k` was loaded, reconciled with the keeper.
+  defp restore(state, k) do
+    with {:ok, id, at_load} <- Mirror.rollback_target(state, k),
+         {:ok, restored} <- reconcile(state, at_load) do
+      restored = %{restored | app: Mirror.keep_monotonic(restored.app, state.app)}
       n = %{level: :warning, text: "state restored to batch #{id}; actions since were lost"}
 
-      if state.subs == %{},
+      if restored.subs == %{},
         do: notice(nil, n),
-        else: Enum.each(Map.keys(state.subs), &notice(&1, n))
+        else: Enum.each(Map.keys(restored.subs), &notice(&1, n))
 
-      {:ok, state}
+      {:ok, restored}
     else
       _ -> :none
     end
   end
 
-  defp restore(_state, _k), do: :none
-
-  # A ref client re-fetches a pane only when its layout_gen changes: a restored older gen
-  # (or an adopted pane's 0) would repeat one it has seen, with another size. Pane ids
-  # spawned (and maybe closed) since the load must not be handed out again either.
-  defp keep_monotonic(restored, app) do
-    gens = for {id, %{layout_gen: g}} <- app.session.panes, into: %{}, do: {id, g}
-    restored = update_in(restored.session.next_id, &max(&1, app.session.next_id))
-
-    update_in(restored.session.panes, fn panes ->
-      Map.new(panes, fn {id, m} -> {id, %{m | layout_gen: max(m.layout_gen, gens[id] || 0)}} end)
-    end)
+  defp adopt_carried(blob) do
+    case Carry.adopt_carried(blob) do
+      {:ok, app, sizes} -> Mirror.flush(publish_fast(%__MODULE__{app: app, sizes: sizes}))
+      :failed -> %__MODULE__{}
+    end
   end
 
-  # ponytail: a reload server dying between whereis and the call crashes the Store,
-  # which then restarts from the mirror
-  defp last_rolled_back do
-    server = reload_server()
-    if GenServer.whereis(server), do: HerdrReload.Server.last_rolled_back(server), else: :none
-  end
+  @doc false
+  defdelegate adoption(blob), to: Carry
 
   defp effect(state, {:spawn, id, %{cols: c, rows: r}}, origin) do
     # The kernel sets TERM=xterm-256color; Pane.Server subscribes when it starts. Children
@@ -460,79 +430,6 @@ defmodule HerdrServer.App.Store do
   defp notice(_origin, n), do: Logger.info("notice: #{inspect(n)}")
 
   # --- handoff ---
-
-  # coalesced: one HOLD of the latest app per @hold_ms (the app can change per event)
-  defp hold(%{hold_timer: nil} = state) do
-    if Link.enabled?(),
-      do: %{state | hold_timer: Process.send_after(self(), :hold, @hold_ms)},
-      else: state
-  end
-
-  defp hold(state), do: state
-
-  defp hold_now(state) do
-    if state.hold_timer, do: Process.cancel_timer(state.hold_timer)
-
-    if state.app != nil do
-      blob = :erlang.term_to_binary(%{v: 1, app: state.app, kernel_ids: Rows.kernel_ids()})
-      Link.hold(@hold_key, blob, [])
-    end
-
-    %{state | hold_timer: nil}
-  end
-
-  defp adopt_carried(blob) do
-    case Guard.run_twice(__MODULE__, :adoption, [blob], server: reload_server()) do
-      {:ok, {app, pairs}} ->
-        adopt_carried(app, pairs)
-
-      # the keeper's panes are left alone, as unmapped ones are below
-      {:failed, reason} ->
-        Logger.error("handoff: unusable app/store entry: #{inspect(reason, limit: 5)}")
-        Link.unclaim(@hold_key)
-        %__MODULE__{}
-    end
-  end
-
-  @doc false
-  # The pure part of an adoption: the carried app and `[{pane_id, kernel_id | nil}]` for
-  # its panes. Raises on an entry of the wrong shape.
-  @spec adoption(binary) :: {Actions.app(), [{pos_integer, pos_integer | nil}]}
-  def adoption(blob) do
-    %{v: 1, app: %{session: %{panes: %{} = panes}} = app, kernel_ids: kids} =
-      :erlang.binary_to_term(blob, [:safe])
-
-    kids = Map.new(kids)
-    {app, Enum.map(Map.keys(panes), &{&1, Map.get(kids, &1)})}
-  end
-
-  defp adopt_carried(app, pairs) do
-    keeper = Kernel.keeper()
-    live = Enum.filter(pairs, fn {id, kid} -> start_adopted(id, kid, keeper) end)
-    # after init: drops the pane from the layout and closes whatever is left of it
-    Enum.each(pairs -- live, fn {id, _} -> event_async({:pane_exited, id}) end)
-    unmapped = keeper.ids() -- Enum.map(live, &elem(&1, 1))
-    if unmapped != [], do: Logger.info("handoff: keeper panes left alone: #{inspect(unmapped)}")
-    Logger.info("handoff: adopted app with panes #{inspect(Enum.map(live, &elem(&1, 0)))}")
-    # sizes are unknown here: {0, 0} makes the next settle resize each visible pane to
-    # its rect (the same size it has, so no SIGWINCH)
-    sizes = Map.new(live, fn {id, _} -> {id, {0, 0}} end)
-    # mirrored now: a Store restart in this VM must find the carried app, not close it
-    flush(publish_fast(%__MODULE__{app: app, sizes: sizes}))
-  end
-
-  defp start_adopted(_id, nil, _keeper), do: false
-
-  defp start_adopted(id, kid, keeper) do
-    with {:ok, _} <- keeper.lookup(kid),
-         :ok <- Rows.put_kernel_id(id, kid),
-         {:ok, pid} when is_pid(pid) <- Panes.start_pane(id) do
-      true
-    else
-      _ -> false
-    end
-  end
-
   # --- after every event ---
 
   defp settle(%{app: nil} = state), do: state
@@ -606,22 +503,5 @@ defmodule HerdrServer.App.Store do
       :persistent_term.put(Protocol.fast_path_key(), fast)
       %{state | fast: fast}
     end
-  end
-
-  # --- mirror ---
-
-  defp dirty(%{flush: nil} = state),
-    do: %{state | flush: Process.send_after(self(), :flush, @flush_ms)}
-
-  defp dirty(state), do: state
-
-  defp flush(%{app: nil} = state), do: state
-
-  defp flush(%{app: app} = state) do
-    entries =
-      Map.new(@book, &{{:store, &1}, Map.fetch!(state, &1)})
-      |> Map.merge(Map.new([:session, :focus, :ui], &{{:app, &1}, Map.fetch!(app, &1)}))
-
-    %{state | mirrored: Mirror.put_changed(entries, state.mirrored)}
   end
 end
