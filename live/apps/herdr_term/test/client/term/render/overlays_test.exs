@@ -100,6 +100,10 @@ defmodule HerdrTerm.Client.Term.Render.OverlaysTest do
     assert bar(90, false) == List.duplicate(track, 9) ++ [{"▕", false}]
   end
 
+  test "an offset past the end keeps the thumb on the track" do
+    assert bar(500, true) == List.duplicate({"▕", true}, 9) ++ [{"▐", false}]
+  end
+
   test "scrollbar replaces column w-1 only, keeping the width when a wide char straddles it" do
     o = ov(:scrollbar, %{total: 100, viewport: 10, offset: 0})
     r = Cells.text("abcdefgh日", @s)

@@ -82,7 +82,7 @@ defmodule HerdrTerm.Client.Term.Render.Overlays do
 
   defp scrollbar(row, %{total: total, viewport: vp, offset: off}, y, %{w: w, h: h} = ctx, theme) do
     len = (vp * h / max(total, 1)) |> round() |> max(1) |> min(h)
-    top = round(off * (h - len) / max(total - vp, 1))
+    top = round(off * (h - len) / max(total - vp, 1)) |> max(0) |> min(h - len)
     thumb? = y >= top and y < top + len
 
     cell =

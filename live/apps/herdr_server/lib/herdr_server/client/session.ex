@@ -62,7 +62,8 @@ defmodule HerdrServer.Client.Session do
   before the scene is computed. This session becomes the foreground client
   (`Client.Foreground`) on attach and on each slow-path input; pane bells and child clipboard writes sent to it
   go to the client as `{:bell, id}` and `{:clipboard, %{source: :pane}}`, and
-  `{:pane_facts, id}` repaints when the pane is in the last scene.
+  `{:pane_facts, id}` repaints when the pane is in the last scene. `{:caps, map}` merges
+  into `state.caps`; the foreground session's also go to `Pane.Colors.apply_all/1`.
 
   Copy mode (M9): entering mode `:copy` starts a `Client.CopyMode` (`state.copy`) on the
   focused pane and clears the pointer selection; in that mode `Client.Keys` consumes
@@ -79,7 +80,7 @@ defmodule HerdrServer.Client.Session do
   alias HerdrServer.Handoff.Notice
   alias HerdrServer.Layout
   alias HerdrServer.Mirror
-  alias HerdrServer.Pane.Rows
+  alias HerdrServer.Pane.{Colors, Rows}
   alias HerdrServer.View
 
   @presentation [:viewports, :hover, :mode, :swallow]
@@ -268,6 +269,13 @@ defmodule HerdrServer.Client.Session do
     state = Map.merge(%State{}, state)
     send(state.client, {:clipboard, %{text: text, source: :pane}})
     {:noreply, state}
+  end
+
+  # host colours and scheme (protocol `{:caps, map}`); the foreground client's set every pane
+  def handle_info({:caps, caps}, state) when is_map(caps) do
+    state = Map.merge(%State{}, state)
+    if Foreground.current() == self(), do: Guard.run_twice(Colors, :apply_all, [caps], guard())
+    {:noreply, %{state | caps: Map.merge(state.caps || %{}, caps)}}
   end
 
   def handle_info({:pane_facts, id}, state) do

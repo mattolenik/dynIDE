@@ -34,6 +34,11 @@ defmodule HerdrTerm.Client.Term.Render do
 
   `{:detached, reason}` and
   `{:handoff, map}` go to `Tty.Owner`.
+
+  Desktop: `{:bell, _}` writes one BEL to the host, `{:clipboard, %{text: t}}` goes
+  through `HerdrTerm.Clipboard`, `{:open_url, url}` (http/https only, re-checked here)
+  through `HerdrTerm.Kernel.desktop/0`. `{:host_colors, %{fg, bg}}` (from Input, rgb
+  3-tuples or nil) becomes `theme.host`.
   """
 
   use GenServer
@@ -43,7 +48,7 @@ defmodule HerdrTerm.Client.Term.Render do
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
   alias HerdrScene.Scene
-  alias HerdrTerm.{Client, Kernel}
+  alias HerdrTerm.{Client, Clipboard, Kernel}
   alias HerdrTerm.Client.Term.Alert
   alias HerdrTerm.Client.Term.Render.{Chrome, Compose}
   alias HerdrTerm.Client.Term.Theme
@@ -213,6 +218,36 @@ defmodule HerdrTerm.Client.Term.Render do
     {:noreply, %{state | chrome_retry: nil, repaint: true} |> chrome() |> schedule()}
   end
 
+  def handle_info({:bell, _pane}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    _ = Kernel.tty().write(state.tty, "\a")
+    {:noreply, state}
+  end
+
+  def handle_info({:clipboard, %{text: text}}, state) when is_binary(text) do
+    state = Map.merge(%__MODULE__{}, state)
+    Guard.run_twice(Clipboard, :write, [state.tty, text], scan: false)
+    {:noreply, state}
+  end
+
+  def handle_info({:open_url, url}, state) when is_binary(url) do
+    state = Map.merge(%__MODULE__{}, state)
+
+    with true <- String.starts_with?(url, ["http://", "https://"]),
+         {:error, why} <- Kernel.desktop().open_url(url),
+         do: Logger.warning("open url failed: #{inspect(why)}")
+
+    {:noreply, state}
+  end
+
+  def handle_info({:host_colors, %{fg: fg, bg: bg}}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+
+    if Enum.all?([fg, bg], &(&1 == nil or rgb?(&1))),
+      do: {:noreply, schedule(%{state | theme: Map.put(state.theme, :host, %{fg: fg, bg: bg})})},
+      else: {:noreply, state}
+  end
+
   def handle_info(:frame, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:noreply, render(%{state | timer: nil})}
@@ -352,7 +387,7 @@ defmodule HerdrTerm.Client.Term.Render do
       do: state,
       else: %{
         state
-        | theme: Theme.for_scene(props, appearance),
+        | theme: Map.put(Theme.for_scene(props, appearance), :host, state.theme.host),
           theme_key: key,
           repaint: true
       }
@@ -445,6 +480,9 @@ defmodule HerdrTerm.Client.Term.Render do
         state
     end
   end
+
+  defp rgb?({r, g, b}), do: Enum.all?([r, g, b], &(&1 in 0..255))
+  defp rgb?(_), do: false
 
   defp now, do: System.monotonic_time(:millisecond)
 

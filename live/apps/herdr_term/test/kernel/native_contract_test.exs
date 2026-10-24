@@ -5,7 +5,9 @@ defmodule HerdrTerm.Kernel.NativeContractTest do
         {HerdrTerm.Kernel.Tty, HerdrTerm.Native.Tty},
         {HerdrTerm.Kernel.Blit, HerdrTerm.Native.Blit},
         {HerdrTerm.Kernel.Tty, HerdrTerm.Kernel.Fake.Tty},
-        {HerdrTerm.Kernel.Blit, HerdrTerm.Kernel.Fake.Blit}
+        {HerdrTerm.Kernel.Blit, HerdrTerm.Kernel.Fake.Blit},
+        {HerdrTerm.Kernel.Desktop, HerdrTerm.Native.Desktop},
+        {HerdrTerm.Kernel.Desktop, HerdrTerm.Kernel.Fake.Desktop}
       ] do
     test "#{inspect(native)} exports every #{inspect(behaviour)} callback" do
       Code.ensure_loaded!(unquote(native))
@@ -34,6 +36,7 @@ defmodule HerdrTerm.Kernel.NativeContractTest do
     test "test config selects the fakes, no SIGWINCH" do
       assert HerdrTerm.Kernel.tty() == HerdrTerm.Kernel.Fake.Tty
       assert HerdrTerm.Kernel.blit() == HerdrTerm.Kernel.Fake.Blit
+      assert HerdrTerm.Kernel.desktop() == HerdrTerm.Kernel.Fake.Desktop
       refute HerdrTerm.Kernel.sigwinch?()
     end
 

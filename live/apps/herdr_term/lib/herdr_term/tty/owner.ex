@@ -3,8 +3,9 @@ defmodule HerdrTerm.Tty.Owner do
   Holds the client's tty resource and the host terminal modes. Opens the tty in
   `init/1` (`%{path: "/dev/tty", kitty_flags: 1}` merged with the client's
   `tty_opts`; the kernel pushes the kitty flags, disambiguate, only when its
-  probe found support) and writes the mode enables: SGR mouse (1000, 1002,
-  1006), bracketed paste (2004), focus events (1004). The kernel's open already
+  probe found support) and writes the mode enables: SGR mouse with all motion
+  (1000, 1002, 1003, 1006), bracketed paste (2004), focus events (1004) and colour
+  scheme reports (2031). The kernel's open already
   entered the alternate screen and sent the kitty/DA1 probe. `terminate/2`
   writes the matching disables, then restores (which leaves the alt screen and
   pops the kitty flags).
@@ -37,8 +38,8 @@ defmodule HerdrTerm.Tty.Owner do
   alias HerdrTerm.{Client, Kernel}
   alias HerdrTerm.Client.Term.Input
 
-  @modes_on "\e[?1000h\e[?1002h\e[?1006h\e[?2004h\e[?1004h"
-  @modes_off "\e[?1004l\e[?2004l\e[?1006l\e[?1002l\e[?1000l"
+  @modes_on "\e[?1000h\e[?1002h\e[?1003h\e[?1006h\e[?2004h\e[?1004h\e[?2031h"
+  @modes_off "\e[?2031l\e[?1004l\e[?2004l\e[?1006l\e[?1003l\e[?1002l\e[?1000l"
   @kitty_flags 1
 
   defstruct [:id, :tty, :size, :sigwinch, local: false, remote: false]

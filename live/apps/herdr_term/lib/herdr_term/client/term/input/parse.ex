@@ -30,10 +30,15 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
       `{:paste, binary}` so far and buffering starts over, still in paste mode
       (so the rest of the paste is never typed as keys); one long paste then
       arrives as several `{:paste, _}` events.
-    * Query replies (DA1, kitty flags, OSC 10/11 colours, cursor position) are
-      emitted as `{:reply, kind, data}` only while a window opened with
-      `open_window/3` is live, else dropped. A DA1 reply closes all windows.
-      An OSC reply body over 256 bytes without terminator is dropped.
+    * Query replies (DA1, kitty flags, colours, cursor position) are emitted as
+      `{:reply, kind, data}` only while a window opened with `open_window/3` is
+      live, else dropped. A DA1 reply closes all windows. Colour replies (`:colors`
+      window): OSC 10/11 -> `{:reply, :fg | :bg, {r, g, b}}`, OSC 4 ->
+      `{:reply, :palette, {n, {r, g, b}}}`, from `rgb:` specs of 1-4 hex digits per
+      channel (anything else is dropped). An OSC reply body over 256 bytes without
+      terminator is dropped.
+    * Colour scheme reports `\\e[?997;1n` / `\\e[?997;2n` are always parsed, as
+      `{:reply, :scheme, :dark | :light}` (the host sends them unsolicited in mode 2031).
     * Ambiguity: a cursor-position reply `\\e[row;colR` looks like legacy F3 with
       modifiers `\\e[1;modsR`. With a `:cpr` window open it is a reply; outside a
       window `\\e[1;<mods>R` is F3 and any other two-number `R` is dropped
@@ -212,10 +217,11 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
   defp next("\e[200~" <> rest, t), do: {[], rest, %{t | paste: ""}}
   defp next("\e[" <> rest, t), do: csi_scan(rest, 0, t)
   defp next("\eO", _t), do: :more
-  defp next("\e]" <> rest, _t) when rest in ["", "1", "10", "11"], do: :more
+  defp next("\e]" <> rest, _t) when rest in ["", "1", "4", "10", "11"], do: :more
+  defp next("\e]4;" <> rest, t), do: osc(4, rest, t)
 
   defp next(<<"\e]", n::binary-size(2), ";", rest::binary>>, t) when n in ["10", "11"],
-    do: osc(n, rest, t)
+    do: osc(String.to_integer(n), rest, t)
 
   defp next(<<"\eO", c, rest::binary>>, t),
     do: {List.wrap(named(@ss3_finals[c], [], :press)), rest, t}
@@ -329,6 +335,9 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
     end
   end
 
+  defp reply("?997;" <> s, ?n, rest, t) when s in ["1", "2"],
+    do: {[{:reply, :scheme, if(s == "1", do: :dark, else: :light)}], rest, t}
+
   defp reply(body, ?R, rest, t) do
     case Regex.run(~r/\A(\d+);(\d+)\z/, body) do
       [_, r, c] ->
@@ -383,7 +392,7 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
     %{kind: kind, button: button, x: x, y: y, mods: Enum.sort(mods), px: nil}
   end
 
-  # -- OSC 10/11 colour replies ----------------------------------------------
+  # -- OSC 10/11/4 colour replies --------------------------------------------
   @max_osc 256
 
   defp osc(n, rest, t) do
@@ -393,7 +402,7 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
 
         items =
           if pos <= @max_osc,
-            do: colors(String.to_integer(n), binary_part(rest, 0, pos), t),
+            do: colors(n, binary_part(rest, 0, pos), t),
             else: []
 
         {items, after_term, t}
@@ -407,7 +416,30 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
   end
 
   defp colors(n, d, t),
-    do: if(is_map_key(t.windows, :colors), do: [{:reply, :colors, {n, d}}], else: [])
+    do: if(is_map_key(t.windows, :colors), do: List.wrap(color(n, d)), else: [])
+
+  defp color(4, d) do
+    with [i, spec] <- String.split(d, ";", parts: 2),
+         n when n in 0..255 <- int(i),
+         {_, _, _} = c <- rgb(spec),
+         do: {:reply, :palette, {n, c}},
+         else: (_ -> nil)
+  end
+
+  defp color(n, d), do: if(c = rgb(d), do: {:reply, if(n == 10, do: :fg, else: :bg), c})
+
+  # `rgb:R/G/B`, 1-4 hex digits per channel, scaled to 0..255
+  defp rgb(spec) do
+    case Regex.run(
+           ~r/\Argb:([[:xdigit:]]{1,4})\/([[:xdigit:]]{1,4})\/([[:xdigit:]]{1,4})\z/,
+           spec
+         ) do
+      [_ | hs] -> hs |> Enum.map(&chan/1) |> List.to_tuple()
+      nil -> nil
+    end
+  end
+
+  defp chan(h), do: round(String.to_integer(h, 16) * 255 / (Integer.pow(16, byte_size(h)) - 1))
 
   defp keep_esc(bin), do: if(String.ends_with?(bin, "\e"), do: "\e", else: "")
 

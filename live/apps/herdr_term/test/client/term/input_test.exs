@@ -160,6 +160,73 @@ defmodule HerdrTerm.Client.Term.InputTest do
     assert Client.input(sup) == input
   end
 
+  describe "host colours" do
+    defp palette_replies(range),
+      do: for(n <- range, into: "", do: "\e]4;#{n};rgb:#{hex(n)}/00/00\e\\")
+
+    defp hex(n), do: n |> Integer.to_string(16) |> String.pad_leading(2, "0")
+
+    defp queried(tty, times),
+      do: tty |> Tty.written() |> String.split("\e[?996n") |> length() > times
+
+    test "queries the host after the startup windows and sends the answers as caps",
+         %{sup: sup, tty: tty} do
+      assert wait_until(fn -> queried(tty, 1) end, 200)
+      w = Tty.written(tty)
+      assert w =~ "\e]10;?\e\\\e]11;?\e\\"
+      assert w =~ "\e]4;0;?\e\\" and w =~ "\e]4;255;?\e\\"
+
+      Tty.inject(tty, "\e[?997;1n\e]10;rgb:ffff/ffff/ffff\e\\\e]11;rgb:1e1e/1e1e/2e2e\e\\")
+      Tty.inject(tty, palette_replies(0..255))
+      # all 258 colour replies: no need to wait for the 1 s window
+      assert_receive {:caps,
+                      %{
+                        colors: %{fg: {255, 255, 255}, bg: {30, 30, 46}, palette: p},
+                        scheme: :dark
+                      }},
+                     500
+
+      assert map_size(p) == 256 and p[255] == {255, 0, 0}
+
+      assert :sys.get_state(Client.render(sup)).theme.host == %{
+               fg: {255, 255, 255},
+               bg: {30, 30, 46}
+             }
+
+      refute_receive {:input, _, _, _}, 50
+
+      # a later scheme report alone
+      Tty.inject(tty, "\e[?997;2n")
+      assert_receive {:caps, caps}
+      assert caps == %{scheme: :light}
+
+      # a new session gets the latest caps
+      send(Client.input(sup), {:session, self()})
+      assert_receive {:caps, %{colors: %{fg: {255, 255, 255}}, scheme: :light}}
+    end
+
+    test "a partial answer is sent when the window closes; resume re-queries", %{
+      tty: tty,
+      sup: sup
+    } do
+      assert wait_until(fn -> queried(tty, 1) end, 200)
+      Tty.inject(tty, "\e]11;rgb:ff/ff/ff\a")
+      refute_receive {:caps, _}, 500
+
+      assert_receive {:caps,
+                      %{colors: %{fg: nil, bg: {255, 255, 255}, palette: %{}}, scheme: nil}},
+                     1000
+
+      send(Client.input(sup), {:tty_resumed})
+      assert wait_until(fn -> queried(tty, 2) end, 200)
+    end
+
+    test "no answer sends no caps", %{tty: tty} do
+      assert wait_until(fn -> queried(tty, 1) end, 200)
+      refute_receive {:caps, _}, 1200
+    end
+  end
+
   defp wait_until(f, n \\ 100) do
     case f.() do
       x when x in [nil, false] and n > 0 ->

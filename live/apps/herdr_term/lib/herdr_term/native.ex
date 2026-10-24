@@ -1,7 +1,7 @@
 defmodule HerdrTerm.Native do
   @moduledoc """
   Rustler NIF module backed by the `herdr_term` crate. Use the facades
-  (`HerdrTerm.Native.Tty`, `HerdrTerm.Native.Blit`) rather than calling these directly.
+  (`HerdrTerm.Native.Tty`, `HerdrTerm.Native.Blit`, `HerdrTerm.Native.Desktop`) rather than calling these directly.
   """
   use Rustler, otp_app: :herdr_term, crate: :herdr_term, path: "../../native/herdr_term"
 
@@ -61,4 +61,12 @@ defmodule HerdrTerm.Native do
           boolean()
         ) :: :ok | {:error, :bad_frame}
   def blit_frame(_tty, _rows, _cursor, _shape, _repaint), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  @spec desktop_clipboard_write(binary()) :: :ok | {:error, :unavailable}
+  def desktop_clipboard_write(_text), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  @spec desktop_open_url(binary()) :: :ok | {:error, :unavailable | :bad_url}
+  def desktop_open_url(_url), do: :erlang.nif_error(:nif_not_loaded)
 end

@@ -17,6 +17,14 @@ defmodule HerdrTerm.Client.Term.Input do
   at-least-once: an unacked event is re-sent first to the next session. Events before the first `{:session, pid}` (sent
   by Render after each attach) are queued. A buffered ESC is flushed after 25ms.
 
+  Host colours: after the startup windows (500ms) and on `{:tty_resumed}`, Input asks
+  the host for its colour scheme (`CSI ? 996 n`), default fg/bg (OSC 10/11) and palette
+  (OSC 4, 0..255) with a 1s `:colors` window. When all 258 colours arrived or the window
+  closed, and the host answered anything, the session gets
+  `{:caps, %{colors: %{fg, bg, palette}, scheme}}` (rgb `{r, g, b}`, unanswered fg/bg/
+  scheme nil) and Render `{:host_colors, %{fg, bg}}`; a later unsolicited scheme report
+  (mode 2031) sends `{:caps, %{scheme: s}}`. The latest caps go to every new session.
+
   Parse runs through `HerdrReload.Guard`: a failing chunk is dropped (logged) and the parser
   state, queue and in-flight event stay as they were. `{:tty_resumed}` and
   `{:exit, :tty, _}` are forwarded to `Tty.Owner` (modes, repaint, local exit).
@@ -32,13 +40,18 @@ defmodule HerdrTerm.Client.Term.Input do
 
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
-  alias HerdrTerm.Client
+  alias HerdrTerm.{Client, Kernel}
   alias HerdrTerm.Client.Term.Hit
   alias HerdrTerm.Client.Term.Input.Parse
   alias HerdrTerm.Tty.Owner
 
   @esc_ms 25
   @window_ms 500
+  @colors_ms 1000
+  @color_queries IO.iodata_to_binary([
+                   "\e[?996n\e]10;?\e\\\e]11;?\e\\",
+                   for(n <- 0..255, do: "\e]4;#{n};?\e\\")
+                 ])
 
   defstruct [
     :id,
@@ -46,6 +59,9 @@ defmodule HerdrTerm.Client.Term.Input do
     :session,
     :inflight,
     :esc,
+    # `colors`: the answers so far while a colour query is out; `caps`: the latest sent
+    :colors,
+    :caps,
     parse: Parse.new(),
     seq: 0,
     mode: :terminal,
@@ -78,6 +94,7 @@ defmodule HerdrTerm.Client.Term.Input do
         end
       end)
 
+    Process.send_after(self(), :query_colors, @window_ms)
     # a restarted Input asks Render for the current session
     GenServer.cast(Client.via(opts[:id], :render), {:input_up, self()})
 
@@ -89,6 +106,9 @@ defmodule HerdrTerm.Client.Term.Input do
        inline: Keyword.get(opts, :transport) == :inline
      }}
   end
+
+  @impl true
+  def code_change(_old, state, _extra), do: {:ok, Map.merge(%__MODULE__{}, state)}
 
   @impl true
   def handle_cast({:event, ev}, state) do
@@ -158,7 +178,28 @@ defmodule HerdrTerm.Client.Term.Input do
         nil -> state.queue
       end
 
-    {:noreply, drain(%{state | session: pid, inflight: nil, queue: queue, mode: :terminal})}
+    state = publish(%{state | session: pid}, state.caps)
+    {:noreply, drain(%{state | inflight: nil, queue: queue, mode: :terminal})}
+  end
+
+  def handle_info(:query_colors, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, query_colors(state)}
+  end
+
+  def handle_info({:colors_done, ref}, %{colors: %{ref: ref}} = state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, colors_done(state)}
+  end
+
+  def handle_info({:colors_done, _stale}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, state}
+  end
+
+  def handle_info({:tty_resumed} = msg, state) do
+    {:noreply, state} = to_owner(msg, state)
+    {:noreply, query_colors(state)}
   end
 
   def handle_info({:chrome_hits, hits}, state) when is_list(hits) do
@@ -166,7 +207,6 @@ defmodule HerdrTerm.Client.Term.Input do
     {:noreply, %{state | hits: hits}}
   end
 
-  def handle_info({:tty_resumed} = msg, state), do: to_owner(msg, state)
   def handle_info({:exit, :tty, _} = msg, state), do: to_owner(msg, state)
 
   def handle_info(msg, state) do
@@ -191,6 +231,7 @@ defmodule HerdrTerm.Client.Term.Input do
 
   defp enqueue(state, items) do
     {replies, events} = Enum.split_with(items, &match?({:reply, _, _}, &1))
+    {colors, replies} = Enum.split_with(replies, &(elem(&1, 1) in [:fg, :bg, :palette, :scheme]))
 
     replies =
       Enum.reduce(replies, state.replies, fn {:reply, kind, data}, acc ->
@@ -198,8 +239,71 @@ defmodule HerdrTerm.Client.Term.Input do
         Map.put(acc, kind, data)
       end)
 
+    state = Enum.reduce(colors, %{state | replies: replies}, &color_reply/2)
     {events, state} = Enum.flat_map_reduce(events, state, &hit/2)
-    drain(%{state | replies: replies, queue: state.queue ++ events})
+    drain(%{state | queue: state.queue ++ events})
+  end
+
+  # -- host colours ----------------------------------------------------------
+
+  defp query_colors(state) do
+    _ = Kernel.tty().write(state.tty, @color_queries)
+    ref = make_ref()
+    Process.send_after(self(), {:colors_done, ref}, @colors_ms)
+
+    parse =
+      case Guard.run_twice(Parse, :open_window, [state.parse, :colors, now() + @colors_ms]) do
+        {:ok, p} -> p
+        {:failed, _} -> state.parse
+      end
+
+    colors = %{fg: nil, bg: nil, palette: %{}, scheme: nil, n: 0, ref: ref}
+    %{state | parse: parse, colors: colors}
+  end
+
+  # unsolicited (mode 2031) scheme report
+  defp color_reply({:reply, :scheme, s}, %{colors: nil} = state),
+    do: publish(%{state | caps: Map.put(state.caps || %{}, :scheme, s)}, %{scheme: s})
+
+  defp color_reply({:reply, :scheme, s}, state), do: put_in(state.colors.scheme, s)
+  defp color_reply(_late, %{colors: nil} = state), do: state
+
+  defp color_reply({:reply, kind, v}, %{colors: c} = state) do
+    c =
+      case {kind, v} do
+        {:palette, {n, rgb}} -> %{c | palette: Map.put(c.palette, n, rgb)}
+        {k, rgb} -> Map.put(c, k, rgb)
+      end
+
+    state = %{state | colors: %{c | n: c.n + 1}}
+    if c.n + 1 >= 258, do: colors_done(state), else: state
+  end
+
+  defp colors_done(%{colors: c} = state) do
+    state = %{state | colors: nil}
+
+    if c.fg || c.bg || c.scheme || c.palette != %{} do
+      caps = %{colors: Map.take(c, [:fg, :bg, :palette]), scheme: c.scheme}
+      publish(%{state | caps: caps}, caps)
+    else
+      state
+    end
+  end
+
+  # caps to the session (when there is one), host colours to Render
+  defp publish(state, nil), do: state
+
+  defp publish(state, caps) do
+    if is_pid(state.session), do: send(state.session, {:caps, caps})
+    render = Client.whereis(state.id, :render)
+    # Render's theme appearance (`Theme.Detect`) reads the merged caps
+    if render && state.caps, do: send(render, {:caps, state.caps})
+
+    with %{colors: c} <- caps,
+         true <- render != nil,
+         do: send(render, {:host_colors, Map.take(c, [:fg, :bg])})
+
+    state
   end
 
   # mouse over chrome becomes `{:chrome, ...}`; a failing Hit passes the event unchanged

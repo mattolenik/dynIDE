@@ -11,8 +11,9 @@ defmodule HerdrTerm.Native.Tty do
     * `{:exit, :tty, {:panic, binary}}`
     * `{:tty_resumed}` after `suspend/1` returns `:ok`; send a frame, it
       repaints fully. The restore sequence written before the stop turned off
-      mouse reporting, bracketed paste and focus events: re-send any of those
-      modes the client had enabled (kitty flags are re-pushed for you)
+      mouse reporting, bracketed paste, focus events and colour scheme reports
+      (2031): re-send any of those modes the client had enabled (kitty flags are
+      re-pushed for you)
 
   Probe replies that arrive after the 250 ms deadline are delivered as
   ordinary `{:tty_input, binary}`.

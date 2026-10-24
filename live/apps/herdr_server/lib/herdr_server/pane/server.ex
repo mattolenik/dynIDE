@@ -41,7 +41,7 @@ defmodule HerdrServer.Pane.Server do
   alias HerdrServer.App.Store
   alias HerdrServer.Client.Foreground
   alias HerdrServer.{Kernel, Mirror}
-  alias HerdrServer.Pane.{Facts, Osc, Rows, State}
+  alias HerdrServer.Pane.{Colors, Facts, Osc, Rows, State}
 
   # facts a restarted server reads back from `Pane.Facts`
   @kept [:cwd, :title, :stripped_title, :progress]
@@ -333,17 +333,7 @@ defmodule HerdrServer.Pane.Server do
   end
 
   # the colours applied (nil when none are stored or the vt refused them)
-  defp apply_host_colors(id, vt) do
-    hc = Facts.host_colors() || %{}
-    colors = hc[:colors]
-
-    if Map.has_key?(hc, :scheme),
-      do: kernel(id, :set_color_scheme, fn -> Kernel.vt().set_color_scheme(vt, hc.scheme) end)
-
-    if colors != nil and
-         kernel(id, :set_colors, fn -> Kernel.vt().set_colors(vt, colors) end) == :ok,
-       do: colors
-  end
+  defp apply_host_colors(id, vt), do: Colors.apply(id, vt, Facts.host_colors() || %{})
 
   # -- write queue ----------------------------------------------------------
 

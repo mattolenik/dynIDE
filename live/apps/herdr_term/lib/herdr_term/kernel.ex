@@ -1,7 +1,7 @@
 defmodule HerdrTerm.Kernel do
   @moduledoc """
   The only way terminal-client code reaches the host terminal: the configured
-  `Tty` and `Blit` modules (`config :herdr_term, :kernel`; `HerdrTerm.Native.*`
+  `Tty`, `Blit` and `Desktop` modules (`config :herdr_term, :kernel`; `HerdrTerm.Native.*`
   in dev and prod, `Kernel.Fake.*` in test). `sigwinch` says whether the tty
   kernel is a real terminal whose size changes arrive as SIGWINCH (`Tty.Owner`
   then installs the signal handler). The config is read once at herdr_term
@@ -20,7 +20,10 @@ defmodule HerdrTerm.Kernel do
         :error -> raise "config :herdr_term, :kernel is not set (see live/config/config.exs)"
       end
 
-    :persistent_term.put(@key, Map.new([:tty, :blit, :sigwinch], &{&1, fetch!(env, &1)}))
+    :persistent_term.put(
+      @key,
+      Map.new([:tty, :blit, :desktop, :sigwinch], &{&1, fetch!(env, &1)})
+    )
   end
 
   defp fetch!(env, key) do
@@ -35,6 +38,9 @@ defmodule HerdrTerm.Kernel do
 
   @spec blit() :: module
   def blit, do: :persistent_term.get(@key).blit
+
+  @spec desktop() :: module
+  def desktop, do: :persistent_term.get(@key).desktop
 
   @spec sigwinch?() :: boolean
   def sigwinch?, do: :persistent_term.get(@key).sigwinch

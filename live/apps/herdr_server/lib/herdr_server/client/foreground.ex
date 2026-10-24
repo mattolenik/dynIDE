@@ -13,6 +13,10 @@ defmodule HerdrServer.Client.Foreground do
     if Facts.get(:foreground) == pid, do: :ok, else: Facts.put(:foreground, pid)
   end
 
+  @doc "The foreground client session, or nil."
+  @spec current() :: pid | nil
+  def current, do: Facts.get(:foreground)
+
   @doc "Sends `msg` to the foreground client if it is alive, else drops it."
   @spec send(term) :: :ok
   def send(msg) do

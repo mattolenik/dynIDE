@@ -77,8 +77,18 @@ config :herdr_server,
 config :herdr_term,
        :kernel,
        if(config_env() == :test,
-         do: [tty: HerdrTerm.Kernel.Fake.Tty, blit: HerdrTerm.Kernel.Fake.Blit, sigwinch: false],
-         else: [tty: HerdrTerm.Native.Tty, blit: HerdrTerm.Native.Blit, sigwinch: true]
+         do: [
+           tty: HerdrTerm.Kernel.Fake.Tty,
+           blit: HerdrTerm.Kernel.Fake.Blit,
+           desktop: HerdrTerm.Kernel.Fake.Desktop,
+           sigwinch: false
+         ],
+         else: [
+           tty: HerdrTerm.Native.Tty,
+           blit: HerdrTerm.Native.Blit,
+           desktop: HerdrTerm.Native.Desktop,
+           sigwinch: true
+         ]
        )
 
 # Headless (no terminal client children) in test; HERDR_LIVE_HEADLESS=1 does

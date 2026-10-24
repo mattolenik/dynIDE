@@ -59,7 +59,9 @@ defmodule HerdrTerm.Tty.OwnerTest do
 
   test "writes the host modes after open and their disables before restore", %{ep: ep} do
     %{sup: sup, tty: tty} = start(ep)
-    assert Tty.written(tty) == Owner.modes_on()
+    assert Owner.modes_on() == "\e[?1000h\e[?1002h\e[?1003h\e[?1006h\e[?2004h\e[?1004h\e[?2031h"
+    assert Owner.modes_off() == "\e[?2031l\e[?1004l\e[?2004l\e[?1006l\e[?1003l\e[?1002l\e[?1000l"
+    assert String.starts_with?(Tty.written(tty), Owner.modes_on())
     owner = Client.owner(sup)
     :erlang.trace_pattern({Tty, :_, :_}, true, [:local])
     :erlang.trace(owner, true, [:call])
@@ -76,7 +78,8 @@ defmodule HerdrTerm.Tty.OwnerTest do
     :erlang.trace(Client.render(sup), true, [:receive])
     :ok = Tty.suspend(tty)
     assert_receive {:trace, _, :receive, :repaint}, 500
-    assert Tty.written(tty) == Owner.modes_on() <> Owner.modes_on()
+    # Input re-queries the host colours on resume too
+    assert tty |> Tty.written() |> String.split(Owner.modes_on()) |> length() == 3
   end
 
   test "the local client exits when the host tty hangs up", %{ep: ep} do

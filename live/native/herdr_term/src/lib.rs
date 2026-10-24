@@ -6,6 +6,8 @@ mod blit;
 #[cfg(unix)]
 mod cell;
 #[cfg(unix)]
+mod desktop;
+#[cfg(unix)]
 mod output;
 #[cfg(unix)]
 mod probe;
@@ -25,7 +27,7 @@ mod nif {
         rustler::atoms! {
             ok, error, tty_input, exit, tty, hangup, panic, backpressure, bad_frame, tty_resumed,
             restored, os_error, eperm, enoent, eintr, eio, enxio, ebadf, eagain, enomem, eacces,
-            ebusy, enodev, enotdir, eisdir, einval, enfile, emfile, enotty,
+            ebusy, enodev, enotdir, eisdir, einval, enfile, emfile, enotty, unavailable, bad_url,
         }
     }
 
@@ -222,6 +224,32 @@ mod nif {
             repaint,
         });
         atoms::ok().encode(env)
+    }
+
+    fn desktop_result(env: Env, result: Result<(), crate::desktop::Error>) -> Term {
+        match result {
+            Ok(()) => atoms::ok().encode(env),
+            Err(crate::desktop::Error::Unavailable) => {
+                (atoms::error(), atoms::unavailable()).encode(env)
+            }
+            Err(crate::desktop::Error::BadUrl) => (atoms::error(), atoms::bad_url()).encode(env),
+        }
+    }
+
+    /// Spawns the clipboard tool (fork/exec: dirty) and returns; a kernel thread
+    /// writes `text` to its stdin and reaps it.
+    #[rustler::nif(schedule = "DirtyIo")]
+    fn desktop_clipboard_write<'a>(env: Env<'a>, text: Binary) -> Term<'a> {
+        desktop_result(
+            env,
+            crate::desktop::clipboard_write(text.as_slice().to_vec()),
+        )
+    }
+
+    /// Spawns `open` / `xdg-open` for an http(s) URL; a kernel thread reaps it.
+    #[rustler::nif(schedule = "DirtyIo")]
+    fn desktop_open_url<'a>(env: Env<'a>, url: String) -> Term<'a> {
+        desktop_result(env, crate::desktop::open_url(&url))
     }
 
     #[rustler::nif]

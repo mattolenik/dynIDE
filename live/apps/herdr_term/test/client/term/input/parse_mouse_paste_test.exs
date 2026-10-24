@@ -52,8 +52,8 @@ defmodule HerdrTerm.Client.Term.Input.ParseMousePasteTest do
       {"\e[?62;22c", [:da1], [{:reply, :da1, [62, 22]}]},
       {"\e[?1u", [:kitty_flags], [{:reply, :kitty_flags, 1}]},
       {"\e[5;10R", [:cpr], [{:reply, :cpr, {5, 10}}]},
-      {"\e]10;rgb:ffff/0000/0000\a", [:colors], [{:reply, :colors, {10, "rgb:ffff/0000/0000"}}]},
-      {"\e]11;rgb:0/0/0\e\\", [:colors], [{:reply, :colors, {11, "rgb:0/0/0"}}]},
+      {"\e]10;rgb:ffff/0000/0000\a", [:colors], [{:reply, :fg, {255, 0, 0}}]},
+      {"\e]11;rgb:0/0/0\e\\", [:colors], [{:reply, :bg, {0, 0, 0}}]},
       # outside a window: dropped
       {"\e[?1u", [], []},
       {"\e[?62;22c", [], []},
