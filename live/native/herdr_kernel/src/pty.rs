@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
+use crate::bulk::{set_thread_bulk, Pacer};
 use crate::exitwatch::{self, Watch};
 use crate::splitter::{Seq, Splitter};
 use crate::vt::{lock, Vt};
@@ -538,6 +539,7 @@ fn reader_main(inner: &Inner) {
     let mut eof = false;
     let mut pending = false;
     let mut last: Option<Instant> = None;
+    let mut pacer = Pacer::new(Instant::now());
     loop {
         // Pending damage (or window events, which flush even when hidden) waits at most
         // until the interval since the last flush ends.
@@ -578,6 +580,9 @@ fn reader_main(inner: &Inner) {
             match read_fd(fd, &mut buf) {
                 Ok(0) => eof = true,
                 Ok(n) => {
+                    if let Some(bulk) = pacer.observe(n, Instant::now()) {
+                        set_thread_bulk(bulk);
+                    }
                     inner.feed(&mut sp, &mut seqs, &mut win, &buf[..n]);
                     pending = true;
                 }
