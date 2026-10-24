@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed, 2026-10-24, by the M6 owner agent. The decision belongs to the human.
+Accepted, 2026-10-24, by the human (go with changes). Proposed the same day by the M6 owner agent.
 
 ## Context
 
