@@ -21,6 +21,12 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
           pos_integer => tuple | [{non_neg_integer, binary}] | %{non_neg_integer => binary}
         }
 
+  @doc "`{frame/3, cursor/2}`: one guarded call per frame instead of two."
+  @spec screen(Scene.t(), rows_by_pane, %{pos_integer => map | nil}, Theme.t()) ::
+          {[{non_neg_integer, binary}], {{non_neg_integer, non_neg_integer}, Scene.shape()} | nil}
+  def screen(scene, rows_by_pane, cursors, theme),
+    do: {frame(scene, rows_by_pane, theme), cursor(scene, cursors)}
+
   @spec frame(Scene.t(), rows_by_pane, Theme.t()) :: [{non_neg_integer, binary}]
   def frame(%Scene{size: %{cols: cols, rows: rows}} = scene, rows_by_pane, theme) do
     panes = Enum.map(scene.panes, &prep_pane(&1, scene, rows_by_pane, theme))

@@ -583,7 +583,24 @@ defmodule HerdrServer.ServerTest do
     assert %{:sys.get_state(store) | clients: nil} == %{before | clients: nil}
   end
 
-  test "a failing View.compute is re-run once, then notices and the session survives" do
+  test "View.compute's budgeted worker gets only size and transport of the client state" do
+    {c, s} = client(%{cols: 80, rows: 24}, :inline)
+    scene(c)
+    assert %{last_scene: %Scene{}} = :sys.get_state(s)
+    :erlang.trace_pattern({HerdrServer.View, :compute, 2}, true, [:local])
+    :erlang.trace(:new_processes, true, [:call])
+
+    try do
+      send(s, {:app_changed, Store.snapshot()})
+      assert_receive {:trace, _, :call, {HerdrServer.View, :compute, [_, st]}}, 500
+      assert st == %HerdrServer.Client.State{size: %{cols: 80, rows: 24}, transport: :inline}
+    after
+      :erlang.trace(:new_processes, false, [:call])
+      :erlang.trace_pattern({HerdrServer.View, :compute, 2}, false, [:local])
+    end
+  end
+
+  test "a failing unattributed View.compute is not re-run, notices and the session survives" do
     {c, s} = client()
     scene(c)
 
@@ -593,7 +610,7 @@ defmodule HerdrServer.ServerTest do
         assert_receive {^c, {:notice, %{level: :error, text: "view failed: ** (" <> _}}}, 500
       end)
 
-    assert length(String.split(log, "HerdrServer.View.compute/2 failed")) == 3
+    assert length(String.split(log, "HerdrServer.View.compute/2 failed")) == 2
     assert Process.alive?(s)
     refute_received {^c, {:scene, _}}
   end

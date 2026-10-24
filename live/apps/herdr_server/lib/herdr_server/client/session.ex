@@ -216,6 +216,7 @@ defmodule HerdrServer.Client.Session do
         # a failure in either call sends the event the slow path
         with {:ok, key} <- Guard.run_twice(Keybinds, :normalize, [k, m]),
              false <- MapSet.member?(i, key),
+             # ponytail: a write that writes then raises is re-sent after a rollback
              {:ok, :ok} <- Guard.run_twice(mod, f, [ev | a], scan: false),
              do: true,
              else: (_ -> false)
@@ -270,8 +271,10 @@ defmodule HerdrServer.Client.Session do
 
   defp push(state, app) do
     state = %{state | keybinds: app.ui.keybinds}
+    # the budget copies args into a worker: pass only what View reads, never last_scene
+    view_state = %State{size: state.size, transport: state.transport, mode: state.mode}
 
-    case Guard.run_twice(View, :compute, [app, state], budget_ms: 50, scan: false) do
+    case Guard.run_twice(View, :compute, [app, view_state], budget_ms: 50, scan: false) do
       {:ok, scene} ->
         send_scene(state, if(state.transport == :inline, do: fill(scene), else: scene))
 

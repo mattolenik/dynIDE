@@ -77,6 +77,8 @@ defmodule HerdrReload.Server do
        state_at_load: opts[:state_at_load],
        cache: Compiler.snapshot(compile_opts),
        rejected_dir: Path.join([Compiler.build_path(compile_opts), "herdr_reload", "rejected"]),
+       # batch ids restart per VM run: the stamp keeps an earlier run's rejects
+       vm_stamp: System.os_time(:millisecond),
        mtimes: %{},
        ring: Ring.new(Keyword.get(opts, :ring_depth, 8)),
        next_id: 1
@@ -165,7 +167,7 @@ defmodule HerdrReload.Server do
   defp undo(batches, reason, s) do
     beams = Enum.reduce(batches, %{}, &Map.merge(&2, &1.previous_beams))
     errors = load_all(beams, s.loader_opts)
-    restore_disk(batches, Map.drop(beams, Keyword.keys(errors)), s.rejected_dir)
+    restore_disk(batches, Map.drop(beams, Keyword.keys(errors)), s)
 
     ring =
       Enum.reduce(batches, s.ring, fn batch, ring ->
@@ -178,13 +180,13 @@ defmodule HerdrReload.Server do
     %{s | ring: ring, cache: apply_cache(s.cache, beams, Enum.map(errors, &elem(&1, 0)))}
   end
 
-  # The bad beam moves to `rejected/<newest batch id>/`, so Mix and autoload
+  # The bad beam moves to `rejected/<vm stamp>-<newest batch id>/`, so Mix and autoload
   # see the previous beam (or none, for a module new in the batch).
-  defp restore_disk(batches, beams, rejected_dir) do
+  defp restore_disk(batches, beams, s) do
     for {mod, prev} <- beams,
         %Batch{id: id, beam_paths: %{^mod => path}} when is_binary(path) <-
           [Enum.find(batches, &(mod in &1.modules))] do
-      dest = Path.join([rejected_dir, Integer.to_string(id), Path.basename(path)])
+      dest = Path.join([s.rejected_dir, "#{s.vm_stamp}-#{id}", Path.basename(path)])
 
       with {:error, e} <- swap_beam(path, dest, prev),
            do: Logger.warning("reload disk restore of #{inspect(mod)} failed: #{inspect(e)}")

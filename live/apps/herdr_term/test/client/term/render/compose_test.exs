@@ -154,6 +154,16 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
     assert Compose.cursor(sc, %{p1.id => nil}) == nil
   end
 
+  test "screen/4 is frame/3 and cursor/2 in one call" do
+    sc = Fixture.load("two_pane_split_120x40")
+    [p1 | _] = sc.panes
+    cursors = %{p1.id => %{x: 2, y: 1, shape: :underline, visible: true}}
+    theme = Theme.default()
+
+    assert Compose.screen(sc, %{}, cursors, theme) ==
+             {Compose.frame(sc, %{}, theme), Compose.cursor(sc, cursors)}
+  end
+
   test "partial borders and status overflow" do
     sc = scene()
 

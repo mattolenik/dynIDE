@@ -15,6 +15,11 @@ defmodule HerdrReload.GuardTest do
     def f(:fun), do: %{cb: fn -> 1 end}
     def f(:loop), do: loop()
 
+    def f({:count_boom, calls}) do
+      :counters.add(calls, 1, 1)
+      raise "boom"
+    end
+
     def f({:report, to}) do
       send(to, {:worker, self()})
       loop()
@@ -136,16 +141,36 @@ defmodule HerdrReload.GuardTest do
     assert [%Batch{id: 2, rolled_back: true}, _] = Server.batches()
   end
 
-  test "run_twice returns the second failure and logs both" do
+  test "run_twice does not re-run an unattributed failure and logs it once" do
+    calls = :counters.new(1, [])
+
     log =
       capture_log(fn ->
-        assert {:failed, {:raise, %RuntimeError{}, _} = f} = Guard.run_twice(Fixture, :f, [:boom], @nosrv)
+        assert {:failed, {:raise, %RuntimeError{}, _} = f} =
+                 Guard.run_twice(Fixture, :f, [{:count_boom, calls}], @nosrv)
+
         assert Guard.message(f) == "** (RuntimeError) boom"
       end)
 
-    assert length(String.split(log, "GuardTest.Fixture.f/1 failed")) == 3
+    assert :counters.get(calls, 1) == 1
+    assert length(String.split(log, "GuardTest.Fixture.f/1 failed")) == 2
     assert Guard.message({:timeout, 50, []}) == "timed out after 50ms"
     assert Guard.message({:local_fun, Fixture, [:cb]}) =~ "local fun"
+  end
+
+  test "run_twice re-runs an attributed failure once and returns the second failure" do
+    dir = toy!(:toy_g_twice_fail, %{"lib/a.ex" => a_src(1)})
+    HerdrReload.ReloadCase.write_source!(dir, "lib/a.ex", a_src(2))
+    assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "a")])
+
+    log =
+      capture_log(fn ->
+        assert {:failed, {:raise, %RuntimeError{message: "boom 1"}, _}} =
+                 Guard.run_twice(Toy.A, :f, [:boom])
+      end)
+
+    assert log =~ "boom 2"
+    assert length(String.split(log, "Toy.A.f/1 failed")) == 3
   end
 
   test "an exit nested stack attributes to the modules inside it" do

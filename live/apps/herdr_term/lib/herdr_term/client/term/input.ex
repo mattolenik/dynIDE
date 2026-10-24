@@ -184,6 +184,7 @@ defmodule HerdrTerm.Client.Term.Input do
 
     case fast(ev, state.mode, :persistent_term.get(Protocol.fast_path_key(), nil)) do
       {m, f, a} ->
+        # ponytail: a write that writes then raises is re-sent after a rollback
         Guard.run_twice(m, f, [ev | a], scan: false)
         drain(state)
 

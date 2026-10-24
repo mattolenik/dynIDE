@@ -32,6 +32,10 @@ defmodule HerdrReload.Guard do
   """
   @spec run(module(), atom(), [term()], keyword()) :: {:ok, term()} | {:failed, failure()}
   def run(mod, fun, args, opts \\ []) do
+    mod |> attributed_run(fun, args, opts) |> plain()
+  end
+
+  defp attributed_run(mod, fun, args, opts) do
     server = Keyword.get(opts, :server, Server)
 
     case call(mod, fun, args, opts[:budget_ms]) do
@@ -41,20 +45,29 @@ defmodule HerdrReload.Guard do
   end
 
   @doc """
-  The call-site shape: `run/4`, and on failure a logged error and one re-run
-  (the first failure has already rolled back the attributed batch). Returns
-  the second outcome; a second failure is logged too.
+  The call-site shape: `run/4` with every failure logged. A failure that
+  rolled a batch back is re-run once on the old code; an unattributed one
+  would only fail again, so it is returned at once.
   """
   @spec run_twice(module(), atom(), [term()], keyword()) :: {:ok, term()} | {:failed, failure()}
   def run_twice(mod, fun, args, opts \\ []) do
-    with {:failed, _} = failed <- run(mod, fun, args, opts),
-         :ok <- log(mod, fun, args, failed),
-         {:failed, _} = failed <- run(mod, fun, args, opts),
-         :ok <- log(mod, fun, args, failed),
-         do: failed
+    case logged_run(mod, fun, args, opts) do
+      {:failed, _, {:rolled_back, _}} -> mod |> logged_run(fun, args, opts) |> plain()
+      other -> plain(other)
+    end
   end
 
-  defp log(mod, fun, args, {:failed, failure}) do
+  defp plain({:failed, failure, _attribution}), do: {:failed, failure}
+  defp plain(ok), do: ok
+
+  defp logged_run(mod, fun, args, opts) do
+    with {:failed, failure, _} = failed <- attributed_run(mod, fun, args, opts) do
+      log(mod, fun, args, failure)
+      failed
+    end
+  end
+
+  defp log(mod, fun, args, failure) do
     stack =
       case failure do
         {:local_fun, _, _} -> ""
@@ -165,10 +178,8 @@ defmodule HerdrReload.Guard do
     end
   end
 
-  defp failed(stack_modules, failure, server) do
-    _ = attribute(server, stack_modules, failure)
-    {:failed, failure}
-  end
+  defp failed(stack_modules, failure, server),
+    do: {:failed, failure, attribute(server, stack_modules, failure)}
 
   # A server dying between whereis and the call must not crash the caller.
   defp attribute(server, stack_modules, failure) do

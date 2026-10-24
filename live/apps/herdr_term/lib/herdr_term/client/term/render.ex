@@ -235,20 +235,21 @@ defmodule HerdrTerm.Client.Term.Render do
   defp render(state) do
     state = Enum.reduce(state.dirty, %{state | dirty: MapSet.new()}, &fetch(&2, &1))
     scene = state.scene
+    args = [scene, state.rows, state.cursors, state.theme]
 
-    with {:ok, frame} <-
-           Guard.run_twice(Compose, :frame, [scene, state.rows, state.theme], @compose),
-         {:ok, cursor} <- Guard.run_twice(Compose, :cursor, [scene, state.cursors], @compose) do
-      repaint = state.repaint or scene.size != state.last_size
-      {at, shape} = cursor || {nil, :block}
-      opts = %{cursor: at, shape: shape, repaint: repaint}
+    case Guard.run_twice(Compose, :screen, args, @compose) do
+      {:ok, {frame, cursor}} ->
+        repaint = state.repaint or scene.size != state.last_size
+        {at, shape} = cursor || {nil, :block}
+        opts = %{cursor: at, shape: shape, repaint: repaint}
 
-      with {:error, why} <- Kernel.blit().frame(state.tty, frame, opts),
-           do: Logger.warning("frame refused: #{inspect(why)}")
+        with {:error, why} <- Kernel.blit().frame(state.tty, frame, opts),
+             do: Logger.warning("frame refused: #{inspect(why)}")
 
-      %{state | repaint: false, last_size: scene.size, last_at: now()}
-    else
-      {:failed, _} -> state
+        %{state | repaint: false, last_size: scene.size, last_at: now()}
+
+      {:failed, _} ->
+        state
     end
   end
 

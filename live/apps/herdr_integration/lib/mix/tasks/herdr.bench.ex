@@ -16,7 +16,10 @@ if Mix.env() == :test do
     Prints a markdown table and writes `_build/bench/m3.json` (`m3-real.json` with
     `--kernel real`, `-quick` suffix for quick runs). `--quick` (or `HERDR_BENCH_QUICK=1`)
     shrinks every metric 10x. `--flood-mb N` sets the bytes per flooded pane (MiB,
-    default 100). With `--kernel real` the typed pane runs `cat` (tty echo) and each
+    default 100). `--compose raw|inline|budget` picks how frame cost calls Compose:
+    `raw` (default) is M3's direct `Compose.frame/3`; `inline` and `budget` go through
+    `HerdrReload.Guard.run/4` on `Compose.screen/4` like Render, without and with its
+    50ms budget (a worker per frame). With `--kernel real` the typed pane runs `cat` (tty echo) and each
     flooded pane runs `cat` of one generated file (in `HERDR_REAL_KERNEL_TMP`, default
     the system tmp dir). Compiled only in `:test` because it drives the clients with
     `HerdrIntegration.Driver` (test/support).
@@ -45,7 +48,9 @@ if Mix.env() == :test do
       Mix.Task.run("app.start")
 
       {opts, _, _} =
-        OptionParser.parse(args, strict: [quick: :boolean, kernel: :string, flood_mb: :integer])
+        OptionParser.parse(args,
+          strict: [quick: :boolean, kernel: :string, flood_mb: :integer, compose: :string]
+        )
 
       quick? = opts[:quick] == true or System.get_env("HERDR_BENCH_QUICK") == "1"
       s = if quick?, do: 10, else: 1
@@ -59,6 +64,7 @@ if Mix.env() == :test do
         iters: div(200, s),
         flood_bytes: div(Keyword.get(opts, :flood_mb, 100) * 1024 * 1024, s),
         flood_min_keys: div(200, s),
+        compose: Keyword.get(opts, :compose, "raw"),
         file: nil
       }
 
@@ -312,7 +318,7 @@ if Mix.env() == :test do
       [%{id: one} | _] = scene.panes
 
       blit = fn rows, repaint ->
-        Blit.frame(tty, Compose.frame(scene, rows, theme), %{
+        Blit.frame(tty, compose(cfg.compose, scene, rows, theme), %{
           cursor: nil,
           shape: :block,
           repaint: repaint
@@ -329,6 +335,16 @@ if Mix.env() == :test do
 
       Agent.stop(tty)
       %{panes: length(scene.panes), repaint: repaint, dirty: dirty}
+    end
+
+    defp compose("raw", scene, rows, theme), do: Compose.frame(scene, rows, theme)
+    defp compose("inline", scene, rows, theme), do: guarded(scene, rows, theme, [])
+    defp compose("budget", scene, rows, theme), do: guarded(scene, rows, theme, budget_ms: 50)
+
+    defp guarded(scene, rows, theme, opts) do
+      args = [scene, rows, %{}, theme]
+      {:ok, {frame, _}} = HerdrReload.Guard.run(Compose, :screen, args, [scan: false] ++ opts)
+      frame
     end
 
     # every row of every pane full of text; one packed row per width, built once

@@ -163,7 +163,7 @@ defmodule HerdrReload.ServerTest do
     do: Path.join(Compiler.ebin_dirs(project_dir: dir, app: app)[app], "#{mod}.beam")
 
   defp rejected(dir, id, mod),
-    do: Path.wildcard(Path.join(dir, "**/herdr_reload/rejected/#{id}/#{mod}.beam"))
+    do: Path.wildcard(Path.join(dir, "**/herdr_reload/rejected/*-#{id}/#{mod}.beam"))
 
   defp unload(mod) do
     :code.purge(mod)
@@ -193,6 +193,29 @@ defmodule HerdrReload.ServerTest do
     HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(3))
     assert {:ok, %Batch{id: 4, modules: [Toy.V]}} = Server.reload([path(dir, "v")])
     assert v() == 3
+  end
+
+  test "a restarted server keeps earlier rejects and files its own beside them" do
+    {dir, _} = toy!(:toy_s_disk_vm)
+    HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
+    assert {:ok, %Batch{id: 2}} = Server.reload([path(dir, "v")])
+    assert Server.rollback(1) == {:ok, [2]}
+    [r] = rejected(dir, 2, Toy.V)
+    bad = File.read!(r)
+
+    # a later VM run: batch ids start again at 1, then 2
+    stop_supervised!(Server)
+    Process.sleep(2)
+    start_supervised!({Server, project_dir: dir, app: :toy_s_disk_vm})
+
+    for n <- [3, 4] do
+      HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(n))
+      assert {:ok, _} = Server.reload([path(dir, "v")])
+    end
+
+    assert {:ok, [2, 1]} = Server.rollback(2)
+    assert File.read!(r) == bad
+    assert [_, _] = rejected(dir, 2, Toy.V)
   end
 
   test "a module new in a rolled-back batch leaves only its rejected beam" do
