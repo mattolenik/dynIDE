@@ -9,7 +9,7 @@ defmodule HerdrServer.Kernel.Fake.Keeper do
 
   alias HerdrServer.Kernel.Fake.{Pty, Vt}
 
-  defstruct panes: %{}, next_id: 1, fail: nil
+  defstruct panes: %{}, next_id: 1, fail: nil, last_spec: nil
 
   def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
 
@@ -28,6 +28,9 @@ defmodule HerdrServer.Kernel.Fake.Keeper do
   @doc "Test hook: the next `open/1` returns `{:error, reason}`."
   def fail_next_open(reason), do: GenServer.call(__MODULE__, {:fail, reason})
 
+  @doc "Test hook: the spec of the most recent successful `open/1`, or nil."
+  def last_spec, do: GenServer.call(__MODULE__, :last_spec)
+
   @impl GenServer
   def init(:ok), do: {:ok, %__MODULE__{}}
 
@@ -45,7 +48,14 @@ defmodule HerdrServer.Kernel.Fake.Keeper do
     {:ok, pty, os_pid} = Pty.spawn(vt, id, o.cmd, o.args, o.env, o.cwd, o.cols, o.rows)
     if o.subscriber, do: Pty.subscribe(pty, o.subscriber)
     res = %{vt: vt, pty: pty, os_pid: os_pid, cmd: [o.cmd | o.args]}
-    {:reply, {:ok, id}, %{state | panes: Map.put(state.panes, id, res), next_id: id + 1}}
+
+    {:reply, {:ok, id},
+     %{state | panes: Map.put(state.panes, id, res), next_id: id + 1, last_spec: o}}
+  end
+
+  def handle_call(:last_spec, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, state.last_spec, state}
   end
 
   def handle_call({:fail, reason}, _from, state) do

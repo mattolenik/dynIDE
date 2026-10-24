@@ -95,6 +95,15 @@ defmodule HerdrServer.App.Store do
   def run({m, f, a} = mfa, size) when is_atom(m) and is_atom(f) and is_list(a),
     do: GenServer.call(__MODULE__, {:event, {:run, mfa}, size})
 
+  @doc """
+  Runs `{m, f, a}` like `run/2` with no size, and replies `{:ok, before, after}` (the app
+  before is nil before the first init). Notices for the caller arrive as `{:notice, map}`
+  messages ahead of the reply.
+  """
+  @spec request(Keybinds.mfa_t()) :: {:ok, Actions.app() | nil, Actions.app()}
+  def request({m, f, a} = mfa) when is_atom(m) and is_atom(f) and is_list(a),
+    do: GenServer.call(__MODULE__, {:request, mfa})
+
   @spec event_async(tuple) :: :ok
   def event_async(event), do: GenServer.cast(__MODULE__, {:event, event})
 
@@ -210,6 +219,13 @@ defmodule HerdrServer.App.Store do
   def handle_call({:event, ev, size}, {origin, _}, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:reply, :ok, state |> handle_event(ev, size, origin) |> Mirror.dirty()}
+  end
+
+  def handle_call({:request, mfa}, {origin, _}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    before = state.app
+    state = state |> handle_event({:run, mfa}, nil, origin) |> Mirror.dirty()
+    {:reply, {:ok, before, state.app}, state}
   end
 
   def handle_call(:snapshot, _from, state) do
@@ -416,7 +432,7 @@ defmodule HerdrServer.App.Store do
     spec = %{
       cmd: System.get_env("SHELL", "/bin/sh"),
       args: [],
-      env: Application.get_env(:herdr_server, :pane_env, []),
+      env: Application.get_env(:herdr_server, :pane_env, []) ++ [{"HERDR_PANE_ID", "p#{id}"}],
       cwd: opts.cwd || File.cwd!(),
       cols: c,
       rows: r,

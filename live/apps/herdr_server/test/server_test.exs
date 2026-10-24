@@ -715,6 +715,34 @@ defmodule HerdrServer.ServerTest do
     assert Rows.kernel_id(2) == nil
   end
 
+  test "request/1 runs a command and replies the app before and after" do
+    {c, _s} = client()
+    scene(c)
+    mfa = {HerdrServer.App.Commands, :create_tab, [1, "x", false]}
+    assert {:ok, before, after_app} = Store.request(mfa)
+
+    assert length(hd(after_app.session.workspaces).tabs) ==
+             length(hd(before.session.workspaces).tabs) + 1
+
+    assert {:ok, ^after_app, ^after_app} =
+             Store.request({HerdrServer.App.Commands, :focus_pane, [999]})
+  end
+
+  test "request/1 delivers notices to the caller" do
+    {c, _s} = client()
+    scene(c)
+    assert {:ok, _, _} = Store.request({HerdrServer.App.Commands, :close_workspace, [1]})
+    assert_receive {:notice, %{text: "cannot close the last workspace"}}, 500
+  end
+
+  test "spawned panes carry HERDR_PANE_ID" do
+    {c, _s} = client()
+    scene(c)
+    {:ok, _, app} = Store.request({HerdrServer.App.Commands, :create_tab, [1, nil, false]})
+    id = app.session.next_id - 1
+    assert eventually(fn -> {"HERDR_PANE_ID", "p#{id}"} in Fake.Keeper.last_spec().env end)
+  end
+
   test "a failing Keybinds.intercept_set keeps the Store alive and its fast path" do
     {c, s} = client()
     scene(c)

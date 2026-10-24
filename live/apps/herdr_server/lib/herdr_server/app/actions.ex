@@ -17,7 +17,7 @@ defmodule HerdrServer.App.Actions do
   Ponytail: panes' `layout_gen` is not bumped here; the Store owns resize bookkeeping.
   """
 
-  alias HerdrServer.App.{Focus, Keybinds, Session, Ui}
+  alias HerdrServer.App.{Commands, Focus, Keybinds, Session, Ui}
   alias HerdrServer.Layout
 
   @type app :: %{session: Session.t(), focus: Focus.t(), ui: Ui.t()}
@@ -82,7 +82,7 @@ defmodule HerdrServer.App.Actions do
     end
   end
 
-  def apply(app, {:pane_exited, id}), do: close_pane_id(app, id)
+  def apply(app, {:pane_exited, id}), do: Commands.close_pane(app, id)
 
   def apply(app, {:pane_title, id, title}) do
     case app.session.panes do
