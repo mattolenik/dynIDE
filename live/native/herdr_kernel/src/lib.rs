@@ -1,3 +1,5 @@
+pub mod cell;
+
 use rustler::Error;
 
 /// Constructs and drops a ghostty terminal, returning the proof string.
