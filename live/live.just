@@ -30,9 +30,9 @@ live-run:
 live-demo:
     exec '{{live_dir}}/bin/live-demo'
 
-# Placeholder until slice-1 metrics
+# M3 benchmarks against the fake kernel (Elixir side only; judged at M6)
 live-bench:
-    @echo 'live-bench: no benchmarks yet (M0 placeholder; slice-1 metrics land in M6)'
+    cd '{{live_dir}}' && MIX_ENV=test mix herdr.bench
 
 # Reload latency and guard overhead benchmarks (M4)
 live-bench-reload:
