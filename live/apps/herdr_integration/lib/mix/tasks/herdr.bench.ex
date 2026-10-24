@@ -19,11 +19,10 @@ if Mix.env() == :test do
     runs). `--size COLSxROWS` (default 200x50, at least 60x20 for 16 panes) is client A's
     terminal and the frame-cost geometry. `--quick` (or `HERDR_BENCH_QUICK=1`)
     shrinks every metric 10x. `--flood-mb N` sets the bytes per flooded pane (MiB,
-    default 100). `--compose raw|inline|budget|nif` picks how frame cost calls Compose:
+    default 100). `--compose raw|inline|budget` picks how frame cost calls Compose:
     `raw` (default) is M3's direct `Compose.frame/3`; `inline` and `budget` go through
     `HerdrReload.Guard.run/4` on `Compose.screen/4` like Render, without and with its
-    50ms budget (a worker per frame); `nif` is `Compose.frame/4` with the
-    `HerdrTerm.Native.Compose` row assembler (a prototype Render does not use). With `--kernel real` the typed pane runs `cat` (tty echo) and each
+    50ms budget (a worker per frame). With `--kernel real` the typed pane runs `cat` (tty echo) and each
     flooded pane runs `cat` of one generated file (in `HERDR_REAL_KERNEL_TMP`, default
     the system tmp dir). Compiled only in `:test` because it drives the clients with
     `HerdrIntegration.Driver` (test/support).
@@ -397,7 +396,6 @@ if Mix.env() == :test do
     defp compose("raw", scene, rows, theme), do: Compose.frame(scene, rows, theme)
     defp compose("inline", scene, rows, theme), do: guarded(scene, rows, theme, [])
     defp compose("budget", scene, rows, theme), do: guarded(scene, rows, theme, budget_ms: 50)
-    defp compose("nif", scene, rows, theme), do: Compose.frame(scene, rows, theme, :nif)
 
     defp guarded(scene, rows, theme, opts) do
       args = [scene, rows, %{}, theme]
@@ -601,7 +599,6 @@ if Mix.env() == :test do
         typing_during_flood_p95_us: st.typing.p95,
         quick: cfg.quick,
         kernel: cfg.kernel,
-        compose: cfg.compose,
         keystroke_fast: r.fast,
         keystroke_slow: r.slow,
         keystroke_paced: r.paced,

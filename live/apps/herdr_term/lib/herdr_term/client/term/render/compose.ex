@@ -6,10 +6,6 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   once (plain pieces as sub-binaries, else `Cells.concat/1`); pane content
   is never touched per cell except where an overlay applies.
 
-  Segments are `{x, w, piece, off}`: columns `off..off + w - 1` of `piece`
-  at screen column `x`. For the Elixir assembler every piece is already cut
-  (`off` 0); for `:nif` pane rows go uncut with their offset.
-
   Pieces on a row are expected to be disjoint (borders win over the content
   they overlap; otherwise the leftmost piece wins).
   """
@@ -19,7 +15,6 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   alias HerdrScene.Scene.{Node, Pane}
   alias HerdrTerm.Cells
   alias HerdrTerm.Client.Term.Theme
-  alias HerdrTerm.Native.Compose, as: NativeCompose
 
   @typedoc "Packed rows per pane id; panes absent here fall back to their `{:inline, rows}`."
   @type rows_by_pane :: %{
@@ -32,34 +27,15 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   def screen(scene, rows_by_pane, cursors, theme),
     do: {frame(scene, rows_by_pane, theme), cursor(scene, cursors)}
 
-  @doc """
-  Screen rows `{y, row}`. `assembler` joins each row's pieces: `:elixir`
-  (default, Render's) or `:nif`, the `HerdrTerm.Native.Compose` prototype,
-  which also takes over cutting pane rows; same bytes for canonical rows.
-  """
-  @spec frame(Scene.t(), rows_by_pane, Theme.t(), :elixir | :nif) :: [{non_neg_integer, binary}]
-  def frame(
-        %Scene{size: %{cols: cols, rows: rows}} = scene,
-        rows_by_pane,
-        theme,
-        assembler \\ :elixir
-      ) do
+  @spec frame(Scene.t(), rows_by_pane, Theme.t()) :: [{non_neg_integer, binary}]
+  def frame(%Scene{size: %{cols: cols, rows: rows}} = scene, rows_by_pane, theme) do
     {panes, _cache} =
       Enum.map_reduce(scene.panes, %{}, &prep_pane(&1, &2, scene, rows_by_pane, theme))
 
-    panes = Enum.map(panes, &Map.put(&1, :cut?, assembler == :elixir))
-    by_row = segs_by_row(panes, status_rows(scene.chrome, theme), rows)
-
-    case assembler do
-      :elixir ->
-        by_row |> Enum.map(&assemble(&1, cols)) |> Enum.with_index(fn row, y -> {y, row} end)
-
-      :nif ->
-        by_row
-        |> Enum.map(&List.keysort(&1, 0))
-        |> then(&NativeCompose.rows(cols, &1))
-        |> Enum.with_index(fn row, y -> {y, row} end)
-    end
+    panes
+    |> segs_by_row(status_rows(scene.chrome, theme), rows)
+    |> Enum.map(&assemble(&1, cols))
+    |> Enum.with_index(fn row, y -> {y, row} end)
   end
 
   # per screen row, its segments in pane order then status; a pane is visited only
@@ -106,7 +82,7 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
     {pieces, x} =
       segs
       |> List.keysort(0)
-      |> Enum.reduce({[], 0}, fn {sx, w, bin, 0}, {acc, x} ->
+      |> Enum.reduce({[], 0}, fn {sx, w, bin}, {acc, x} ->
         cond do
           sx >= cols or sx + w <= x -> {acc, x}
           sx >= x -> {[bin | gap(acc, sx - x)], sx + w}
@@ -221,13 +197,13 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   defp border_segs(b, y) do
     cond do
       y < b.oy or y >= b.oy + b.oh -> []
-      b.top? and y == b.oy -> [{b.ox, b.ow, b.top_row, 0}]
-      b.bottom? and y == b.oy + b.oh - 1 -> [{b.ox, b.ow, b.bottom_row, 0}]
+      b.top? and y == b.oy -> [{b.ox, b.ow, b.top_row}]
+      b.bottom? and y == b.oy + b.oh - 1 -> [{b.ox, b.ow, b.bottom_row}]
       true -> side(b.left?, b.ox, b.v) ++ side(b.right?, b.ox + b.ow - 1, b.v)
     end
   end
 
-  defp side(true, x, v), do: [{x, 1, v, 0}]
+  defp side(true, x, v), do: [{x, 1, v}]
   defp side(false, _, _), do: []
 
   defp content_segs(p, y) when y < p.cy or y >= p.cy + p.ch, do: []
@@ -239,14 +215,9 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
       []
     else
       row = content_row(p, y - p.cy)
-      [content_seg(p.cut?, row, lo, hi - lo, lo - p.cx, p.cw)]
+      [{lo, hi - lo, if(hi - lo == p.cw, do: row, else: Cells.fit(row, lo - p.cx, hi - lo))}]
     end
   end
-
-  # cut here for the Elixir assembler; the NIF cuts `row` at `off` itself
-  defp content_seg(true, row, x, cw, _off, cw), do: {x, cw, row, 0}
-  defp content_seg(true, row, x, w, off, _cw), do: {x, w, Cells.fit(row, off, w), 0}
-  defp content_seg(false, row, x, w, off, _cw), do: {x, w, row, off}
 
   # columns [lo, hi) of the content not covered by this pane's border
   defp visible(nil, _, lo, hi), do: {lo, hi}
@@ -333,7 +304,7 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
       end
 
     for y <- r.y..(r.y + r.h - 1)//1 do
-      {y, {r.x, r.w, if(y == r.y, do: first, else: Cells.blank(r.w, base)), 0}}
+      {y, {r.x, r.w, if(y == r.y, do: first, else: Cells.blank(r.w, base))}}
     end
   end
 
