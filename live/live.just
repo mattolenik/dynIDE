@@ -41,6 +41,8 @@ live-demo:
 live-bench:
     cd '{{live_dir}}' && MIX_ENV=test mix herdr.bench
 
-# Reload latency and guard overhead benchmarks (M4)
+# Reload benchmarks (M4): phase 1 latency and guard overhead, then every slice-1
+# reload metric script (bench/reload/*.sh; each prints a RESULT line)
 live-bench-reload:
     cd '{{live_dir}}' && mix run bench/reload/reload_bench.exs && mix run bench/reload/guard_bench.exs
+    for s in render view ui_field session_field scene_field view_loop closure pane_in_window cat15; do '{{live_dir}}'/bench/reload/$s.sh || exit 1; done
