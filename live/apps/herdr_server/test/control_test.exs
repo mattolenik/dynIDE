@@ -94,7 +94,11 @@ defmodule HerdrServer.ControlTest do
     File.mkdir!(ro)
     File.chmod!(ro, 0o500)
     on_exit(fn -> File.chmod(ro, 0o700) end)
-    assert :ignore = Control.init(path: Path.join(ro, "c.sock"), server: nil)
+
+    # root (e.g. the Linux container check) ignores mode bits: nothing is unwritable then
+    if File.write(Path.join(ro, "probe"), "") != :ok do
+      assert :ignore = Control.init(path: Path.join(ro, "c.sock"), server: nil)
+    end
   end
 
   test "the default state dir is created 0700, an existing open one is locked to 0700" do
