@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end host tty checks for HerdrTerm.Native.Tty under a real pty.
 
-Usage: tty_harness.py destructor|demo|herdr|herdr-stress [-v]
+Usage: tty_harness.py destructor|demo|herdr|herdr-stress|selfhost [-v]
 
 destructor: runs scripts/tty_destructor.exs in the BEAM as the pty's session
 leader. Answers each kitty/DA1 probe, then checks: the destructor of a killed
@@ -28,11 +28,29 @@ in a loop in one pane while typing in another, checks the typed echo shows up
 while the loop still runs (it stops only after that) and reports its latency,
 then quits.
 
+selfhost: the self-hosting loop through the real launcher. The same launch
+(120x40), prefix v, then writes a new module file
+apps/herdr_server/lib/herdr_server/selfhost_probe.ex and waits for the
+status row to show `r1 1m`; `bin/herdr-live rollback` shows
+`r1 rolled back: manual`; `bin/herdr-live kernel-restart` shows
+`handoff graceful g<gen>` and both panes still answer an `echo` (clicked to
+focus); the probe file is deleted (the status settles), prefix q exits 0, and
+log_summary.py on the run's log reports reloads >= 1, rollbacks manual 1,
+handoffs graceful 1, session_losses 0. The probe file is removed in a
+`finally` (also on Ctrl-C); afterwards no probe beam is left in
+_build/dev/lib/herdr_server/ebin and `git status --porcelain -- live/apps`
+is empty.
+
+Every herdr-live launch gets its own HERDR_LIVE_LOG, HERDR_LIVE_CONTROL and
+HERDR_LIVE_RUNTIME_DIR under the run's temp dir, so the CLI calls address
+that instance only.
+
 Prints PASS lines; exits 1 on the first failure. Every mode SIGKILLs the
 process groups it started on any exit, including Ctrl-C. The 120 s deadline
 starts after `mix compile` (itself capped at COMPILE_TIMEOUT seconds).
 """
 import fcntl
+import json
 import os
 import pty
 import re
@@ -444,6 +462,7 @@ class Herdr:
 
     def __init__(self, tmp, cols, rows):
         self.log = os.path.join(tmp, "herdr-live.log")
+        self.tmp = tmp
         self.master, slave = os.openpty()
         fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         self.before = config(self.master)
@@ -451,10 +470,12 @@ class Herdr:
         self.answered = 0
         env = {k: v for k, v in os.environ.items()
                if k not in ("ENV", "BASH_ENV", "HERDR_SOCKET_PATH", "HERDR_CLIENT_SOCKET_PATH",
-                            "HERDR_LIVE_HEADLESS")}
-        # the panes' shell: plain sh with a known prompt
+                            "HERDR_LIVE_HEADLESS", "HERDR_LIVE_TEST_ON_SAVE", "HERDR_BROKER_SOCK")}
+        # the panes' shell: plain sh with a known prompt; sockets of this instance only
         env.update(SHELL="/bin/sh", PS1="$ ", HISTFILE="/dev/null", TERM="xterm-256color",
-                   HERDR_LIVE_LOG=self.log)
+                   HERDR_LIVE_LOG=self.log, HERDR_LIVE_CONTROL=os.path.join(tmp, "control.sock"),
+                   HERDR_LIVE_RUNTIME_DIR=os.path.join(tmp, "rt"))
+        self.env = env
         pid = os.fork()
         if pid == 0:
             try:
@@ -507,6 +528,21 @@ class Herdr:
 
     def shows(self, text):
         return text in self.screen.text()
+
+    def cli(self, *args, timeout=60):
+        """Runs `bin/herdr-live args` against this instance, pumping the pty meanwhile;
+        returns (exit status, output)."""
+        out = os.path.join(self.tmp, "cli.out")
+        with open(out, "w") as f:
+            p = subprocess.Popen([os.path.join(LIVE, "bin", "herdr-live"), *args], cwd=LIVE,
+                                 env=self.env, stdin=subprocess.DEVNULL, stdout=f, stderr=f)
+        end = min(DEADLINE, time.monotonic() + timeout)
+        while p.poll() is None:
+            if time.monotonic() > end:
+                p.kill()
+                fail(f"herdr-live {' '.join(args)} timed out")
+            self.pump()
+        return p.returncode, open(out).read()
 
     def click(self, x, y):
         at = f"{x + 1};{y + 1}".encode()
@@ -617,8 +653,91 @@ def herdr_stress():
         print("--- screen", h.screen.text(), sep="\n")
 
 
+PROBE_SRC = os.path.join(LIVE, "apps", "herdr_server", "lib", "herdr_server", "selfhost_probe.ex")
+PROBE_BEAM = os.path.join(LIVE, "_build", "dev", "lib", "herdr_server", "ebin",
+                          "Elixir.HerdrServer.SelfhostProbe.beam")
+
+
+def settle(h, quiet=3.0, timeout=30):
+    """Pumps until the log has not grown for `quiet` seconds."""
+    end = time.monotonic() + timeout
+    size, since = -1, time.monotonic()
+    while time.monotonic() < end:
+        now = os.path.getsize(h.log)
+        if now != size:
+            size, since = now, time.monotonic()
+        elif time.monotonic() - since >= quiet:
+            return
+        h.pump(0.1)
+    fail("the log did not settle after deleting the probe")
+
+
+def selfhost():
+    global DEADLINE
+    if os.path.exists(PROBE_SRC):
+        fail(f"{PROBE_SRC} already exists")
+    with tempfile.TemporaryDirectory() as tmp:
+        compile_then_start_clock(tmp)
+        DEADLINE += 120
+        cols, rows = 120, 40
+        h = Herdr(tmp, cols, rows)
+        try:
+            h.start()
+            h.send(b"\x02v")
+            h.until(lambda: h.prompts() >= 2, "second prompt after prefix v")
+            ok(True, "selfhost: prefix v split (two prompts)")
+            # the reload pipeline starts after the fresh start
+            h.until(lambda: "herdr-event vm_start" in open(h.log).read(), "vm_start in the log")
+            h.pump(1.0)
+            n = int(time.time() * 1000) % 1_000_000_000
+            with open(PROBE_SRC, "w") as f:
+                f.write(f"defmodule HerdrServer.SelfhostProbe, do: def(v, do: {n})\n")
+            h.until(lambda: h.shows("r1 1m"), "r1 1m after writing the probe", timeout=60)
+            ok(True, "selfhost: new module file reloads, status shows r1 1m")
+            code, out = h.cli("rollback")
+            ok(code == 0, f"selfhost: herdr-live rollback exits 0 ({out.strip()})")
+            h.until(lambda: h.shows("r1 rolled back: manual"), "r1 rolled back: manual", timeout=20)
+            ok(True, "selfhost: status shows r1 rolled back: manual")
+            code, out = h.cli("kernel-restart", timeout=90)
+            ok(code == 0, f"selfhost: herdr-live kernel-restart exits 0 ({out.strip()})")
+            m = h.until(lambda: re.search(r"handoff graceful g\d+", h.screen.text()),
+                        "handoff graceful g<gen>", timeout=60)
+            ok(True, f"selfhost: status shows {m.group(0)}")
+            for i, x in enumerate((cols // 4, 3 * cols // 4)):
+                h.click(x, (rows - 1) // 2)
+                mark = f"alive{i}-{n}"
+                h.send(f'echo {mark[:5]}""{mark[5:]}\r'.encode())
+                h.until(lambda: h.shows(mark), f"echo {mark} after the handoff", timeout=20)
+                ok(True, f"selfhost: pane {i + 1} answers an echo after the handoff ({mark})")
+            os.remove(PROBE_SRC)
+            settle(h)
+            last = h.screen.rows()[rows - 1].strip() if len(h.screen.rows()) >= rows else ""
+            ok(True, f"selfhost: probe deleted, status settled ({last!r})")
+            h.quit()
+        finally:
+            if os.path.exists(PROBE_SRC):
+                os.remove(PROBE_SRC)
+        summary = subprocess.run([sys.executable, os.path.join(LIVE, "scripts", "log_summary.py"), h.log],
+                                 capture_output=True, text=True)
+        print(summary.stdout, end="")
+
+        s = json.loads(subprocess.run([sys.executable, os.path.join(LIVE, "scripts", "log_summary.py"),
+                                       h.log, "--json"], capture_output=True, text=True, check=True).stdout)
+        ok(s["reloads"] >= 1, f"selfhost: log summary reloads >= 1 ({s['reloads']})")
+        ok(s["rollbacks"]["manual"] == 1, f"selfhost: log summary rollbacks manual 1 ({s['rollbacks']})")
+        ok(s["handoffs"]["graceful"] == 1, f"selfhost: log summary handoffs graceful 1 ({s['handoffs']})")
+        ok(s["session_losses"] == 0, f"selfhost: log summary session_losses 0 ({s['session_losses']})")
+    ok(not os.path.exists(PROBE_BEAM), "selfhost: no probe beam left in _build/dev/lib/herdr_server/ebin")
+    dirty = subprocess.run(["git", "status", "--porcelain", "--", "apps"], cwd=LIVE,
+                           capture_output=True, text=True).stdout
+    ok(dirty == "", f"selfhost: git status --porcelain -- live/apps is empty ({dirty.strip()!r})")
+    if verbose:
+        print("--- screen", h.screen.text(), sep="\n")
+
+
 if __name__ == "__main__":
-    modes = {"destructor": destructor, "demo": demo, "herdr": herdr, "herdr-stress": herdr_stress}
+    modes = {"destructor": destructor, "demo": demo, "herdr": herdr, "herdr-stress": herdr_stress,
+             "selfhost": selfhost}
     args = [a for a in sys.argv[1:] if a != "-v"]
     if len(args) != 1 or args[0] not in modes:
         sys.exit(__doc__)
