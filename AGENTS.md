@@ -150,6 +150,32 @@ Elixir NIF module, and a facade function in the `Native.*` module it belongs to.
   hold input on `:begin`, replay on `:aborted`, re-attach on `:released`.
   The reload pipeline runs only in the primary VM.
 
+## Editing herdr-live from inside herdr-live
+
+Full guide: `docs/herdr-live/editing-live.md`. Human checks: `docs/herdr-live/results/m7-manual-checklist.md`.
+
+- Edit under `live/apps/*/lib` and save: the Watcher compiles and loads in
+  ~200-500 ms. Edits to `herdr_scene` fan out to server and client, so batch
+  them. NIF crates and `native/` changes need `herdr-live kernel-restart`.
+- A new field in a persisted struct needs a `code_change/3` that merges
+  defaults. No `fn` in state (rejected at the guard). Guarded call sites
+  stay thin; blanket `rescue` stays in `HerdrReload.Guard`.
+- Read the status line: `r<N> <k>m` loaded, `r! compile` compile error,
+  `r<N> rolled back: <reason>`, `synced <k>m, no rollback`, `r rejected`,
+  `r blocked`, `tests ...`, `handoff ...`. The transient notice has detail.
+- A rolled-back source reloads only when its content changes: edit or revert
+  it, a bare re-save does nothing. `herdr-live rollback [n]` rolls back by hand.
+- `herdr-live test-on-save on|off|status` (or `HERDR_LIVE_TEST_ON_SAVE=1`) gates
+  saves on the mapped `*_test.exs`; ~1 s per save, off by default.
+- Every reload, rollback, handoff and crash logs a `herdr-event` line;
+  `just live-log-summary` (`live/scripts/log_summary.py`) summarises the log.
+- Metrics: `just live-bench-reload|handoff|glass|os-floor`;
+  `live/bench/gate_round.sh <tag>` runs the whole slice-1 table. Self-hosted
+  tty check: `python3 live/scripts/tty_harness.py selfhost`.
+- After any change to the snapshot path or a libghostty-vt bump, re-run
+  `cd live && elixir bench/handoff/kill9.exs runs=30` (ADR 0001), and keep or
+  drop vendored patch 0008 deliberately.
+
 ## Kernel (Rust NIFs)
 
 - Blocking work runs on kernel-owned threads; every thread loop runs under
