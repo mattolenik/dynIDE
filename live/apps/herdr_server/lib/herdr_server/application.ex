@@ -10,12 +10,12 @@ defmodule HerdrServer.Application do
   @impl true
   def start(_type, _args) do
     reload = Application.get_env(:herdr_server, HerdrServer.Reload, [])
+    reload_children = if reload[:enabled], do: [HerdrServer.Reload.Supervisor], else: []
 
-    # Keeper holds every kernel resource and is never hot reloaded; it starts
-    # first so nothing that reloads can outlive the resources it refers to.
     children =
-      [HerdrServer.Native.Keeper] ++
-        if reload[:enabled], do: [HerdrServer.Reload.Supervisor], else: []
+      [
+        HerdrServer.Kernel.keeper()
+      ] ++ reload_children
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options

@@ -21,3 +21,17 @@ import Config
 config :herdr_server, HerdrServer.Reload,
   enabled: config_env() == :dev,
   scan_local_funs: config_env() != :prod
+
+# Kernel modules used by herdr_server (see HerdrServer.Kernel). The in-memory
+# fakes are the test double and the default until the Rust NIFs land. To use
+# the real kernel, point these at the NIF-backed modules implementing the
+# HerdrServer.Kernel.{Vt,Pty,Keeper} behaviours, e.g. in config/prod.exs:
+#
+#     config :herdr_server, :kernel, vt: HerdrServer.Native.Vt, ...
+#
+# These are read with Application.compile_env, so recompile herdr_server after
+# changing them.
+config :herdr_server, :kernel,
+  vt: HerdrServer.Kernel.Fake.Vt,
+  pty: HerdrServer.Kernel.Fake.Pty,
+  keeper: HerdrServer.Kernel.Fake.Keeper
