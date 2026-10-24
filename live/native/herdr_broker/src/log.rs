@@ -10,15 +10,17 @@ pub fn line(msg: std::fmt::Arguments<'_>) {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
     let s = (ms / 1000) % 86_400;
-    // A full disk or closed stderr must not take the broker down.
-    let _ = writeln!(
-        std::io::stderr().lock(),
-        "{:02}:{:02}:{:02}.{:03} herdr-broker: {msg}",
+    let text = format!(
+        "{:02}:{:02}:{:02}.{:03} herdr-broker: {msg}\n",
         s / 3600,
         s / 60 % 60,
         s % 60,
         ms % 1000
     );
+    // One write(2) per line: the VMs write to the same file, and a line split
+    // across writes interleaves with theirs. A full disk or closed stderr must
+    // not take the broker down.
+    let _ = std::io::stderr().lock().write_all(text.as_bytes());
 }
 
 macro_rules! log {
