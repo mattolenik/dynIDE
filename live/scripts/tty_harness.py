@@ -35,12 +35,17 @@ status row to show `r<n> 1m` (rewritten every 2 s until a batch shows: no
 log line marks the status bridge subscribed); `bin/herdr-live rollback` shows
 `r<n> rolled back: manual`; `bin/herdr-live kernel-restart` shows
 `handoff graceful g<gen>` and both panes still answer an `echo` (clicked to
-focus); the probe file is deleted (the status settles), prefix q exits 0, and
+focus), and a pane shell has HERDR_BROKER_SOCK set; the probe file is deleted (the status settles), prefix q exits 0, and
 log_summary.py on the run's log reports reloads >= 1, rollbacks manual 1,
 handoffs graceful 1, session_losses 0. The probe file is removed in a
 `finally` (also on Ctrl-C); afterwards no probe beam is left in
 _build/dev/lib/herdr_server/ebin and `git status --porcelain -- live/apps`
 equals its value at the start.
+
+herdr, herdr-stress and selfhost launch bin/herdr-live and compile into the
+shared _build/dev, so they skip (print SKIP, exit 0) inside a herdr-live pane:
+pane shells inherit the VM's HERDR_BROKER_SOCK. Run them outside the dogfood
+instance (another terminal or worktree).
 
 Every herdr-live launch gets its own HERDR_LIVE_LOG, HERDR_LIVE_CONTROL and
 HERDR_LIVE_RUNTIME_DIR under the run's temp dir, so the CLI calls address
@@ -744,6 +749,10 @@ def selfhost():
                 h.send(f'echo {mark[:5]}""{mark[5:]}\r'.encode())
                 h.until(lambda: h.shows(mark), f"echo {mark} after the handoff", timeout=20)
                 ok(True, f"selfhost: pane {i + 1} answers an echo after the handoff ({mark})")
+            # the marker the launcher modes skip on: pane shells inherit the VM's broker socket
+            h.send(b'echo inside-${HERDR_BROKER_SOCK:+herdr}-live\r')
+            h.until(lambda: h.shows("inside-herdr-live"), "HERDR_BROKER_SOCK in a pane's env", timeout=20)
+            ok(True, "selfhost: a pane shell has HERDR_BROKER_SOCK (the harness skip marker)")
             os.remove(PROBE_SRC)
             settle(h)
             last = h.screen.rows()[rows - 1].strip() if len(h.screen.rows()) >= rows else ""
@@ -782,6 +791,11 @@ if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if a != "-v"]
     if len(args) != 1 or args[0] not in modes:
         sys.exit(__doc__)
+    # a pane of a running herdr-live inherits the VM's env: these modes would compile into
+    # and reload that instance's own _build
+    if args[0] in ("herdr", "herdr-stress", "selfhost") and os.environ.get("HERDR_BROKER_SOCK"):
+        print(f"SKIP: {args[0]}: running inside herdr-live (run live-check outside it, see editing-live.md)")
+        sys.exit(0)
     # CI cancellation: let `finally` kill the process groups.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     try:

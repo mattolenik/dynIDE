@@ -263,11 +263,17 @@ grep -E 'herdr-event (session_lost|crash|broker_handoff_failed)' "$L"
 ## Verifying a change you made to the live system
 
 - Focused tests: `cd live && mix test apps/<app>/test/<file>_test.exs`.
+- Inside herdr-live, run `just live-test` and focused tests. The tty harness modes that
+  launch `bin/herdr-live` (`herdr`, `herdr-stress`, `selfhost`) compile into and reload the
+  `_build/dev` the running instance uses, so inside a herdr-live pane (detected by the
+  inherited `HERDR_BROKER_SOCK`) they print `SKIP: <mode>: running inside herdr-live ...`
+  and exit 0.
 - Gate before committing: `just live-check` (format, credo --strict, dialyzer, cargo
-  fmt/clippy, tests, launcher and attached smokes, tty harness). Do not run builds in
-  parallel in one worktree.
+  fmt/clippy, tests, launcher and attached smokes, tty harness), run outside the dogfood
+  instance (another terminal, or another worktree) so the harness modes run too. Do not
+  run builds in parallel in one worktree.
 - Self-hosted tty check: `python3 live/scripts/tty_harness.py selfhost` (drives herdr-live
-  attached to a pty and edits it from inside).
+  attached to a pty and edits it from inside; outside a herdr-live pane only).
 - Reload metrics: `just live-bench-reload` (targets: render < 500 ms p95, view < 500 ms,
   ui_field < 1 s, view_loop <= 150 ms, closure rejected, pane_in_window reconciled).
   Other metrics: `just live-bench-handoff`, `just live-bench-glass`,
