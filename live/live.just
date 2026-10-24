@@ -6,6 +6,7 @@ live_crates := "herdr_kernel herdr_term"
 # Elixir and Rust tests
 live-test:
     cd '{{live_dir}}' && mix test
+    cd '{{live_dir}}/apps/herdr_integration' && mix test --only real_kernel
     for c in {{live_crates}}; do (cd '{{live_dir}}/native'/$c && cargo test --locked) || exit 1; done
 
 # Milestone gate: lint, types, tests, launcher and attached smokes, tty harness
@@ -30,7 +31,8 @@ live-run:
 live-demo:
     exec '{{live_dir}}/bin/live-demo'
 
-# M3 benchmarks against the fake kernel (Elixir side only; judged at M6)
+# M3 benchmarks against the fake kernel (Elixir side only; judged at M6).
+# Real server kernel: MIX_ENV=test mix herdr.bench --kernel real [--flood-mb N]
 live-bench:
     cd '{{live_dir}}' && MIX_ENV=test mix herdr.bench
 
