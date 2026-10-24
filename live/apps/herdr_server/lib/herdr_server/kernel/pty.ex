@@ -35,4 +35,5 @@ defmodule HerdrServer.Kernel.Pty do
   @callback set_hidden(pty, boolean) :: :ok
   @doc "The child's working directory (absolute), or nil when unknown."
   @callback cwd(pty) :: binary | nil
+  @callback info(pty) :: %{optional(atom) => term}
 end

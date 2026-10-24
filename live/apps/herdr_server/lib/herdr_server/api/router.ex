@@ -21,5 +21,16 @@ defmodule HerdrServer.Api.Router do
   def handle("server.status", _params, _ctx), do: Handlers.Server.status()
   def handle("reload.rollback", params, ctx), do: Handlers.Server.rollback(params, ctx)
   def handle("reload.test_on_save", params, _ctx), do: Handlers.Server.test_on_save(params)
+
+  def handle("workspace." <> _ = method, params, _ctx),
+    do: Handlers.Topology.handle(method, params)
+
+  def handle("tab." <> _ = method, params, _ctx), do: Handlers.Topology.handle(method, params)
+
+  def handle(method, params, _ctx)
+      when method in ~w(pane.list pane.get pane.current pane.split pane.close pane.focus
+                        pane.layout pane.process_info),
+      do: Handlers.Topology.handle(method, params)
+
   def handle(method, _params, _ctx), do: {:error, :not_available, "#{method} is not served yet"}
 end

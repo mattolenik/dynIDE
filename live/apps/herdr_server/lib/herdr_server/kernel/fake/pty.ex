@@ -74,6 +74,9 @@ defmodule HerdrServer.Kernel.Fake.Pty do
   def set_cwd(pty, cwd) when is_binary(cwd) or is_nil(cwd),
     do: GenServer.call(pty, {:set_cwd, cwd})
 
+  @impl HerdrServer.Kernel.Pty
+  def info(pty), do: GenServer.call(pty, :info)
+
   @impl GenServer
   def init({id, vt, cwd}) do
     {:ok, %__MODULE__{id: id, vt: vt, cwd: cwd, last_sent: now() - 1000}}
@@ -139,6 +142,22 @@ defmodule HerdrServer.Kernel.Fake.Pty do
   def handle_call(:writes, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:reply, Enum.reverse(state.writes), state}
+  end
+
+  def handle_call(:info, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+
+    info = %{
+      os_pid: 0,
+      adopted: false,
+      hidden: state.hidden,
+      title: nil,
+      pwd: nil,
+      exited: if(state.closed, do: :unknown),
+      start_time: nil
+    }
+
+    {:reply, info, state}
   end
 
   def handle_call({:backpressure, on?}, _from, state) do

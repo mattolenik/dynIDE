@@ -13,6 +13,10 @@ defmodule HerdrServer.App.Commands do
   @type app :: Actions.app()
   @type result :: {app(), [Actions.effect()]}
 
+  @doc "Changes nothing; lets a read initialise the app through `Store.request/1`."
+  @spec noop(app()) :: result()
+  def noop(app), do: {app, []}
+
   @spec create_workspace(app(), String.t() | nil, boolean()) :: result()
   def create_workspace(app, label, focus?) do
     {id, app} = take_id(app)
