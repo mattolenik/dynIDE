@@ -168,6 +168,9 @@ Full guide: `docs/herdr-live/editing-live.md`. Human checks: `docs/herdr-live/re
   saves on the mapped `*_test.exs`; ~1 s per save, off by default.
 - Every reload, rollback, handoff and crash logs a `herdr-event` line;
   `just live-log-summary` (`live/scripts/log_summary.py`) summarises the log.
+  session_losses = `session_lost` lines (broker fallback restore, Store closing
+  or orphaning live panes) + unclean broker restarts; store_restarts are not
+  losses.
 - Metrics: `just live-bench-reload|handoff|glass|os-floor`;
   `live/bench/gate_round.sh <tag>` runs the whole slice-1 table. Self-hosted
   tty check: `python3 live/scripts/tty_harness.py selfhost`.

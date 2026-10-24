@@ -217,15 +217,21 @@ lists are comma-joined.
 | `handoff` | handoff phase | `phase` `gen` `panes` |
 | `crash` | Store/session/local client restarted | `proc` `reason` `action` (`restored`/`restarted`/`gave_up`/`none`) |
 | `broker_handoff`, `broker_handoff_failed` | broker, per handoff | `kind` `from` `to` `entries` `ms` / `reason` `from` `to` |
-| `session_lost` | children not carried | `reason` `gen` |
+| `session_lost` | broker: children not carried (`reason` `gen`); Store: live panes closed or orphaned (`proc=store`, `reason` `fresh_restart`/`reconcile_failed`/`carry_unusable`, `panes`) | `reason` and `gen` or `proc` `panes` |
 | `broker_vm_exit`, `broker_start`, `broker_stop` | broker lifecycle | `gen` `status` `role` / `pid` |
 
 `result=stale` means the reload was skipped because another source changed during the run.
 
 Summary: `just live-log-summary [LOG ...] [--since ISO8601] [--json]`, which runs
 `python3 live/scripts/log_summary.py`. It reports reloads, rollbacks, handoffs, test
-runs and session losses (a `session_lost` line, or a store restored from the mirror,
-which it counts as a layout reset). Exit status is 0 unless a log is unreadable.
+runs and session losses. Exit status is 0 unless a log is unreadable.
+
+The dogfooding exit criterion counts exactly: session_losses = `session_lost` lines
+(broker fallback restore, Store closing or orphaning live panes) + unclean broker
+restarts (a `broker_start` with no `broker_stop` since the previous `broker_start`, i.e.
+the broker died and its children with it). `store_restarts` (`crash proc=store
+action=restored`: the Store restarted from the mirror and kept the layout) are reported
+separately and are not losses.
 
 ## Troubleshooting by log grep
 

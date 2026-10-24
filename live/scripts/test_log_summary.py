@@ -16,8 +16,9 @@ FIXTURE = os.path.join(HERE, "fixtures", "dogfood-sample.log")
 #   compile_errors 1 | rollbacks manual 1 (reason=manual), auto 1 (raise)
 #   guard_failures attributed 1, unattributed 1 | tests passed 1, failed 1, stale 1
 #   syncs 7 modules | handoffs crash 2, graceful 1, failed 1 | handoff ms 15,40,90
-#   crashes local_client 2, session 1, store 1 | layout_resets 1 (store restored)
-#   session_losses 1 | unparsed 1 (ts=oops)
+#   crashes local_client 2, session 1, store 1 | store_restarts 1 (store restored)
+#   session_losses 3 (broker session_lost, store session_lost, unclean broker restart
+#   pid=102 after pid=101 with no broker_stop) | unparsed 1 (ts=oops)
 EXPECTED = {
     "vm_starts": 3,
     "reloads": 2,
@@ -34,8 +35,8 @@ EXPECTED = {
     "handoff_ms_p95": 90,
     "handoff_ms_max": 90,
     "crashes": {"local_client": 2, "session": 1, "store": 1},
-    "layout_resets": 1,
-    "session_losses": 1,
+    "store_restarts": 1,
+    "session_losses": 3,
     "unparsed": 1,
 }
 
@@ -55,7 +56,7 @@ class LogSummaryTest(unittest.TestCase):
         got = json.loads(r.stdout)
         for k, v in EXPECTED.items():
             self.assertEqual(got[k], v, k)
-        self.assertEqual(got["period"], "2026-10-20T09:59:00Z .. 2026-10-20T10:09:00Z")
+        self.assertEqual(got["period"], "2026-10-20T09:59:00Z .. 2026-10-20T10:09:30Z")
 
     def test_text_output_order_and_exit_line(self):
         out = run(FIXTURE).stdout.splitlines()
@@ -64,17 +65,17 @@ class LogSummaryTest(unittest.TestCase):
             "period", "vm_starts", "reloads", "modules_reloaded", "fanout_max",
             "compile_errors", "rollbacks", "rollback_reasons", "guard_failures", "tests",
             "syncs", "handoffs", "handoff_ms_p50", "handoff_ms_p95", "handoff_ms_max",
-            "crashes", "layout_resets", "session_losses", "unparsed", "exit_criterion"])
+            "crashes", "store_restarts", "session_losses", "unparsed", "exit_criterion"])
         self.assertIn("rollbacks: manual 1, auto 1", out)
         self.assertIn("handoffs: crash 2, graceful 1, failed 1", out)
-        self.assertEqual(out[-1], "exit_criterion: session_losses=0 -> FAIL (1)")
+        self.assertEqual(out[-1], "exit_criterion: session_losses=0 -> FAIL (3)")
 
     def test_since_drops_earlier_events(self):
         got = json.loads(run(FIXTURE, "--json", "--since", "2026-10-20T10:05:00Z").stdout)
         self.assertEqual(got["reloads"], 0)
         self.assertEqual(got["rollbacks"], {"manual": 0, "auto": 0})
         self.assertEqual(got["vm_starts"], 2)
-        self.assertEqual(got["session_losses"], 1)
+        self.assertEqual(got["session_losses"], 3)
         self.assertTrue(got["period"].startswith("2026-10-20T10:05:00Z"))
 
     def test_empty_log(self):
@@ -84,6 +85,17 @@ class LogSummaryTest(unittest.TestCase):
             out = run(f.name).stdout
         self.assertIn("reloads: 0\n", out)
         self.assertTrue(out.rstrip().endswith("exit_criterion: session_losses=0 -> OK"))
+
+    def test_clean_broker_restart_is_not_a_loss(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".log") as f:
+            f.write("herdr-event broker_start ts=1 pid=1\n"
+                    "herdr-event broker_stop ts=2 pid=1\n"
+                    "herdr-event broker_start ts=3 pid=2\n"
+                    "herdr-event crash ts=4 proc=store reason=killed action=restored\n")
+            f.flush()
+            got = json.loads(run(f.name, "--json").stdout)
+        self.assertEqual(got["session_losses"], 0)
+        self.assertEqual(got["store_restarts"], 1)
 
     def test_unreadable_log_exits_2(self):
         self.assertEqual(run("/nonexistent/herdr.log").returncode, 2)

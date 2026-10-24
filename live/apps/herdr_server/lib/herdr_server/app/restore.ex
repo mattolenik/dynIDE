@@ -49,18 +49,26 @@ defmodule HerdrServer.App.Restore do
   @doc """
   Closes every pane mapped in `Pane.Rows`, then anything else the keeper holds. In an
   adopted VM it closes no keeper pane: it stops the pane servers and forgets the map.
+  Returns how many live panes it closed or orphaned (keeper panes closed, or in an adopted
+  VM mapped keeper panes forgotten), so the Store can report a session loss.
   """
-  @spec close_all() :: :ok
+  @spec close_all() :: non_neg_integer
   def close_all do
+    mapped = Rows.kernel_ids()
+    keeper = Kernel.keeper()
+    held = keeper.ids()
+
     if adopted?() do
-      Enum.each(Rows.kernel_ids(), fn {id, _kid} ->
+      Enum.each(mapped, fn {id, _kid} ->
         Panes.stop_pane(id)
         Rows.delete(id)
       end)
+
+      Enum.count(mapped, fn {_id, kid} -> kid in held end)
     else
-      Enum.each(Rows.kernel_ids(), fn {id, _kid} -> close(id) end)
-      keeper = Kernel.keeper()
+      Enum.each(mapped, fn {id, _kid} -> close(id) end)
       Enum.each(keeper.ids(), &keeper.close/1)
+      length(held)
     end
   end
 

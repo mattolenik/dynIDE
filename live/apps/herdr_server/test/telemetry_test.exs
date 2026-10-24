@@ -41,6 +41,76 @@ defmodule HerdrServer.TelemetryTest do
     assert log =~ ~r/herdr-event crash ts=\d{13} proc=store reason=restart action=restored/
   end
 
+  describe "session_lost" do
+    setup do
+      Store.reset()
+      on_exit(&Store.reset/0)
+    end
+
+    test "a fresh Store start that closes live panes logs session_lost" do
+      :ok = Store.event({:resize, %{cols: 80, rows: 24, cell_px: nil}}, nil)
+      wait_until(fn -> HerdrServer.Mirror.app() != nil end)
+      for k <- [:session, :focus, :ui], do: HerdrServer.Mirror.delete({:app, k})
+
+      log = capture_log(&restart_store/0)
+
+      assert log =~
+               ~r/herdr-event session_lost ts=\d{13} proc=store reason=fresh_restart panes=1/
+
+      assert HerdrServer.Kernel.Fake.Keeper.ids() == []
+    end
+
+    test "a fresh Store start with no panes logs nothing" do
+      log = capture_log(&restart_store/0)
+      refute log =~ "session_lost"
+    end
+
+    test "a mirrored app that fails to reconcile logs session_lost" do
+      :ok = Store.event({:resize, %{cols: 80, rows: 24, cell_px: nil}}, nil)
+      wait_until(fn -> HerdrServer.Mirror.app() != nil end)
+      # a session Reconcile cannot read: run_twice fails, the Store closes everything
+      HerdrServer.Mirror.put({:app, :session}, %{bogus: true})
+
+      log = capture_log(&restart_store/0)
+
+      assert log =~
+               ~r/herdr-event session_lost ts=\d{13} proc=store reason=reconcile_failed panes=1/
+    end
+
+    test "an unusable carried app beside adopted panes logs session_lost" do
+      {:ok, kid} = HerdrServer.Kernel.Fake.Keeper.open(spec())
+      blob = :erlang.term_to_binary(%{v: 1, app: %{session: %{}}, kernel_ids: [{1, kid}]})
+      :ok = HerdrServer.Handoff.Link.put_adopted_for_test([{"app/store", blob, []}])
+
+      on_exit(fn ->
+        if pid = Process.whereis(HerdrServer.Handoff.Link), do: GenServer.stop(pid)
+      end)
+
+      log = capture_log(&restart_store/0)
+
+      assert log =~
+               ~r/herdr-event session_lost ts=\d{13} proc=store reason=carry_unusable panes=1/
+    end
+  end
+
+  # not a kill: the supervisor's restart intensity is shared with other tests
+  defp restart_store do
+    :ok = Supervisor.terminate_child(HerdrServer.Supervisor, Store)
+    {:ok, _} = Supervisor.restart_child(HerdrServer.Supervisor, Store)
+  end
+
+  defp spec,
+    do: %{
+      cmd: "sh",
+      args: [],
+      env: [],
+      cwd: nil,
+      cols: 10,
+      rows: 5,
+      max_scrollback: 0,
+      subscriber: nil
+    }
+
   defp wait_until(fun, tries \\ 50) do
     cond do
       fun.() -> :ok

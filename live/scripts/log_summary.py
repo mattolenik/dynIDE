@@ -83,6 +83,7 @@ def summarize(events, unparsed=0):
     rb_reasons, crashes, hand_ms = Counter(), Counter(), []
     fanout_max = modules = 0
     syncs = 0
+    broker_up = False
     for kind, _ts, f in events:
         if kind == "vm_start":
             c["vm_starts"] += 1
@@ -116,10 +117,19 @@ def summarize(events, unparsed=0):
             c["h_failed"] += 1
         elif kind == "crash":
             crashes[f.get("proc", "unknown")] += 1
+            # the Store restarted from the mirror: the layout was kept, not a loss
             if f.get("proc") == "store" and f.get("action") == "restored":
-                c["layout_resets"] += 1
+                c["store_restarts"] += 1
         elif kind == "session_lost":
             c["session_losses"] += 1
+        elif kind == "broker_start":
+            # a start with no broker_stop since the last start: the broker died, and its
+            # children with it (reason broker_died)
+            if broker_up:
+                c["session_losses"] += 1
+            broker_up = True
+        elif kind == "broker_stop":
+            broker_up = False
     hand_ms.sort()
     stamps = [e[1] for e in events]
     return {
@@ -139,7 +149,7 @@ def summarize(events, unparsed=0):
         "handoff_ms_p95": pct(hand_ms, 95),
         "handoff_ms_max": hand_ms[-1] if hand_ms else None,
         "crashes": dict(sorted(crashes.items())),
-        "layout_resets": c["layout_resets"],
+        "store_restarts": c["store_restarts"],
         "session_losses": c["session_losses"],
         "unparsed": unparsed,
     }
@@ -169,7 +179,7 @@ def render_text(s):
         ("handoff_ms_p95", na(s["handoff_ms_p95"])),
         ("handoff_ms_max", na(s["handoff_ms_max"])),
         ("crashes", kv(s["crashes"])),
-        ("layout_resets", s["layout_resets"]),
+        ("store_restarts", s["store_restarts"]),
         ("session_losses", n),
         ("unparsed", s["unparsed"]),
         ("exit_criterion", f"session_losses=0 -> {'OK' if n == 0 else f'FAIL ({n})'}"),

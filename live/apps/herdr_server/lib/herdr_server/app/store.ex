@@ -128,7 +128,7 @@ defmodule HerdrServer.App.Store do
     case HerdrServer.Mirror.app() do
       nil ->
         # a fresh start: close what a previous incarnation without a mirror left open
-        Restore.close_all()
+        lost(Restore.close_all(), :fresh_restart)
         :persistent_term.erase(Protocol.fast_path_key())
         {:ok, %__MODULE__{}}
 
@@ -159,7 +159,7 @@ defmodule HerdrServer.App.Store do
         Mirror.dirty(%{state | hidden: hidden}) |> settle() |> publish_fast()
 
       :failed ->
-        Restore.close_all()
+        lost(Restore.close_all(), :reconcile_failed)
         :persistent_term.erase(Protocol.fast_path_key())
         %__MODULE__{subs: subs}
     end
@@ -358,10 +358,21 @@ defmodule HerdrServer.App.Store do
 
   defp adopt_carried(blob) do
     case Carry.adopt_carried(blob) do
-      {:ok, app, sizes} -> Mirror.flush(publish_fast(%__MODULE__{app: app, sizes: sizes}))
-      :failed -> %__MODULE__{}
+      {:ok, app, sizes} ->
+        Mirror.flush(publish_fast(%__MODULE__{app: app, sizes: sizes}))
+
+      :failed ->
+        # the keeper's adopted panes stay open but nothing maps them: an empty app
+        lost(length(Kernel.keeper().ids()), :carry_unusable)
+        %__MODULE__{}
     end
   end
+
+  # live panes closed or orphaned in a running VM: a session loss for the exit criterion
+  defp lost(0, _reason), do: :ok
+
+  defp lost(n, reason),
+    do: HerdrReload.Telemetry.event(:session_lost, proc: :store, reason: reason, panes: n)
 
   @doc false
   defdelegate adoption(blob), to: Carry
