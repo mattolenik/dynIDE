@@ -9,7 +9,10 @@ defmodule HerdrTerm.Native.Tty do
     * `{:tty_input, binary}`
     * `{:exit, :tty, :hangup}` on EOF/EIO
     * `{:exit, :tty, {:panic, binary}}`
-    * `{:tty_resumed}` after `suspend/1` returns; send a frame, it repaints fully
+    * `{:tty_resumed}` after `suspend/1` returns `:ok`; send a frame, it
+      repaints fully. The restore sequence written before the stop turned off
+      mouse reporting, bracketed paste and focus events: re-send any of those
+      modes the client had enabled (kitty flags are re-pushed for you)
 
   Probe replies that arrive after the 250 ms deadline are delivered as
   ordinary `{:tty_input, binary}`.
@@ -50,9 +53,13 @@ defmodule HerdrTerm.Native.Tty do
   process group, like a shell job) and returns once it is continued, back in
   raw mode and the alternate screen with any kitty flags re-pushed. Blocks
   the caller until SIGCONT; queued output waits and is written after resume.
-  Does nothing after `restore/1`.
+
+  Returns `:ok` exactly when `{:tty_resumed}` follows. Returns
+  `{:error, :restored}` (nothing done) after `restore/1`, and
+  `{:error, reason}` when the terminal could not be reset, in which case the
+  process was not stopped and no `{:tty_resumed}` is sent.
   """
-  @spec suspend(t()) :: :ok
+  @spec suspend(t()) :: :ok | {:error, :restored | String.t()}
   def suspend(tty), do: Native.tty_suspend(tty)
 
   @doc "`{cols, rows, pixel_width, pixel_height}` of the host terminal."

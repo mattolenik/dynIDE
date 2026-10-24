@@ -7,7 +7,8 @@ defmodule Live.MixProject do
       version: "0.1.0",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      dialyzer: [plt_core_path: "_build/#{Mix.env()}"]
+      # :mix for the Mix.Task behaviour of `mix herdr_term.demo`.
+      dialyzer: [plt_core_path: "_build/#{Mix.env()}", plt_add_apps: [:mix]]
     ]
   end
 

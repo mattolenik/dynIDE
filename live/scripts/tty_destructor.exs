@@ -2,12 +2,18 @@
 # lines to $TTY_RESULT; $TTY_PATH names the pty (this process's /dev/tty):
 #   destructor  restored | still-raw   (owner killed with :kill, no restore/1)
 #   bad_frame   inspect of Blit.frame/3 on an invalid packed row
+#   suspend_restored  inspect of Tty.suspend/1 after restore/1
 #   suspend     ok | inspect of the failure (the harness drives SIGSTOP/SIGCONT)
 alias HerdrTerm.Native.{Blit, Tty}
 
 defmodule TtyDestructor do
   # Port programs run in their own session (no /dev/tty), so stty gets the path.
-  def stty, do: System.cmd("sh", ["-c", ~s(stty -g <"$TTY_PATH")]) |> elem(0)
+  # PENDIN is BSD tty bookkeeping XNU may leave set when ICANON is re-enabled,
+  # not configuration, so it is masked (the harness does the same).
+  def stty do
+    {out, 0} = System.cmd("sh", ["-c", ~s(stty -a <"$TTY_PATH")])
+    String.replace(out, ~r/(?<![\w-])-?pendin(?!\w)/, "")
+  end
 
   def wait_for(want, tries \\ 20) do
     cond do
@@ -76,11 +82,13 @@ destructor =
 {:ok, t2} = Tty.open()
 bad_frame = Blit.frame(t2, [{0, <<1, 2, 3>>}], TtyDestructor.opts())
 Tty.restore(t2)
+suspend_restored = Tty.suspend(t2)
 
 suspend = TtyDestructor.suspend()
 
 File.write!(System.fetch_env!("TTY_RESULT"), """
 destructor=#{destructor}
 bad_frame=#{inspect(bad_frame)}
+suspend_restored=#{inspect(suspend_restored)}
 suspend=#{if suspend == :ok, do: "ok", else: inspect(suspend)}
 """)

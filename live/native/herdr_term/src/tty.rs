@@ -438,8 +438,10 @@ impl Inner {
 
     /// Restores the terminal, stops the whole process group with SIGSTOP and,
     /// once continued, re-enters raw mode and the alternate screen. Returns
-    /// after SIGCONT. Does nothing after the final `restore`.
-    pub fn suspend(self: &Arc<Self>) -> io::Result<()> {
+    /// `Ok(true)` after SIGCONT, and exactly then `Event::Resumed` follows.
+    /// `Ok(false)` after the final `restore` (nothing done). `Err` when the
+    /// terminal could not be reset; the process is then not stopped.
+    pub fn suspend(self: &Arc<Self>) -> io::Result<bool> {
         self.suspend_with(|| {
             // SAFETY: plain syscall; signals our own process group.
             unsafe { libc::kill(0, libc::SIGSTOP) };
@@ -449,14 +451,15 @@ impl Inner {
     /// `suspend` with the stop injected, so tests can run it in-process.
     /// The write lock is held throughout, so the output thread cannot write
     /// while the host is cooked; it resumes behind the re-enter sequence.
-    pub(crate) fn suspend_with(self: &Arc<Self>, stop: impl FnOnce()) -> io::Result<()> {
+    pub(crate) fn suspend_with(self: &Arc<Self>, stop: impl FnOnce()) -> io::Result<bool> {
         let _guard = lock(&self.write_lock);
         if self.restored.load(Ordering::Acquire) {
-            return Ok(());
+            return Ok(false);
         }
         reset(&self.file, &self.saved, self.kitty_push.is_some(), true)?;
         stop();
-        let raw = set_raw(self.file.as_raw_fd(), &self.saved);
+        // Best effort: the resumed caller repaints either way; nothing else to undo.
+        let _ = set_raw(self.file.as_raw_fd(), &self.saved);
         let mut enter = ENTER.to_vec();
         enter.extend(self.kitty_push.iter().flatten());
         // Best effort, like open: a host that continued us is reading.
@@ -468,7 +471,7 @@ impl Inner {
         let _ = std::thread::Builder::new()
             .name("herdr-tty-resumed".into())
             .spawn(move || inner.run_guarded(|i| lock(&i.sub).deliver(Event::Resumed)));
-        raw
+        Ok(true)
     }
 
     /// Destructor path, never waits: signals the threads (which hold their
@@ -969,7 +972,8 @@ mod tests {
         assert!(wait_for(|| tty.inner.output.stats().frames_written == 1));
 
         let mut stopped_lflag = 0;
-        tty.inner
+        let stopped = tty
+            .inner
             .suspend_with(|| {
                 stopped_lflag = termios(&p.slave).c_lflag;
                 // The output thread must hold this until after resume.
@@ -977,6 +981,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(150));
             })
             .unwrap();
+        assert!(stopped);
         let cooked = libc::ICANON | libc::ECHO;
         assert_eq!(stopped_lflag & cooked, cooked, "cooked while stopped");
         assert_eq!(termios(&p.slave).c_lflag & cooked, 0, "raw after resume");
@@ -1004,13 +1009,30 @@ mod tests {
     }
 
     #[test]
+    fn suspend_that_cannot_reset_neither_stops_nor_resumes() {
+        let p = pty();
+        let (sink, rx) = channel();
+        let tty = TtyResource::new(Inner::open_path(&p.path, 0, Some(sink)).unwrap());
+        // A non-tty behind the fd makes the reset's tcsetattr fail.
+        let null = File::open("/dev/null").unwrap();
+        // SAFETY: both fds are open; dup2 atomically replaces the tty fd.
+        assert!(unsafe { libc::dup2(null.as_raw_fd(), tty.inner.file.as_raw_fd()) } >= 0);
+        let mut called = false;
+        assert!(tty.inner.suspend_with(|| called = true).is_err());
+        assert!(!called);
+        let resumed = std::iter::from_fn(|| rx.recv_timeout(Duration::from_millis(300)).ok())
+            .any(|e| e == Event::Resumed);
+        assert!(!resumed);
+    }
+
+    #[test]
     fn suspend_after_restore_does_nothing() {
         let p = pty();
         let tty = TtyResource::new(Inner::open_path(&p.path, 0, None).unwrap());
         tty.inner.restore().unwrap();
         read_until(&p.master, b"\x1b[?1049l", Duration::from_secs(1));
         let mut called = false;
-        tty.inner.suspend_with(|| called = true).unwrap();
+        assert!(!tty.inner.suspend_with(|| called = true).unwrap());
         assert!(!called);
         let out = read_until(&p.master, b"", Duration::from_millis(200));
         assert!(out.is_empty(), "{out:?}");
