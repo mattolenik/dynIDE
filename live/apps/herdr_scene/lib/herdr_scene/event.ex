@@ -10,6 +10,10 @@ defmodule HerdrScene.Event do
       {:resize, %{cols: n, rows: n, cell_px: {w, h} | nil}}
       {:chrome, path, action}
 
+  Maps are open: required keys must be valid, unknown extra keys are accepted.
+  Mouse `x`/`y` are scene cell coordinates (0-based, the host screen grid,
+  which equals `scene.size`); `px` is the optional pixel position.
+
   `mods` is a sorted, deduplicated subset of `mods/0`. `key` is a named key
   (`named_keys/0`) or a binary of exactly one grapheme.
   """
@@ -39,7 +43,7 @@ defmodule HerdrScene.Event do
   end
 
   @spec validate(term) :: :ok | {:error, binary}
-  def validate({:key, %{key: k, mods: m, event: e, text: t} = map}) when map_size(map) == 4 do
+  def validate({:key, %{key: k, mods: m, event: e, text: t}}) do
     cond do
       not valid_key?(k) -> {:error, "key: expected named key or one grapheme, got #{inspect(k)}"}
       e not in @key_events -> {:error, "key.event: unknown #{inspect(e)}"}
@@ -48,8 +52,7 @@ defmodule HerdrScene.Event do
     end
   end
 
-  def validate({:mouse, %{kind: k, button: b, x: x, y: y, mods: m, px: px} = map})
-      when map_size(map) == 6 do
+  def validate({:mouse, %{kind: k, button: b, x: x, y: y, mods: m, px: px}}) do
     cond do
       k not in @mouse_kinds -> {:error, "mouse.kind: unknown #{inspect(k)}"}
       b not in @buttons -> {:error, "mouse.button: unknown #{inspect(b)}"}
@@ -62,7 +65,7 @@ defmodule HerdrScene.Event do
   def validate({:paste, text}) when is_binary(text), do: :ok
   def validate({:focus, f}) when is_boolean(f), do: :ok
 
-  def validate({:resize, %{cols: c, rows: r, cell_px: px} = map}) when map_size(map) == 3 do
+  def validate({:resize, %{cols: c, rows: r, cell_px: px}}) do
     cond do
       not (is_integer(c) and c > 0 and is_integer(r) and r > 0) ->
         {:error, "resize: cols and rows must be positive integers"}

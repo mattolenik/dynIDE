@@ -2,6 +2,9 @@ defmodule HerdrScene.Scene do
   @moduledoc """
   The frontend-neutral scene a server pushes to every client.
 
+  Maps in the contract are open: required keys must be present and valid,
+  unknown extra keys are accepted so newer clients can add optional fields.
+
   Contract rules:
 
     * Chrome nodes carry roles, text, props and theme tokens, never glyphs,
@@ -86,7 +89,7 @@ defmodule HerdrScene.Scene do
   defp size_errors(_), do: ["size: expected %{cols: pos_integer, rows: pos_integer}"]
 
   defp scene_errors(scene) do
-    ids = Enum.map(scene.panes, & &1.id)
+    ids = for %Pane{id: id} <- List.wrap(scene.panes), do: id
 
     pane_errors(scene) ++
       chrome_errors(scene) ++
@@ -100,20 +103,24 @@ defmodule HerdrScene.Scene do
     panes
     |> Enum.with_index()
     |> Enum.flat_map(fn {pane, i} ->
-      path = "panes[#{i}]"
-      dup = if dup_id?(panes, i), do: ["#{path}.id: duplicate #{inspect(pane.id)}"], else: []
-      dup ++ one_pane_errors(path, pane, scene.size)
+      one_pane_errors("panes[#{i}]", pane, panes, i, scene.size)
     end)
   end
 
   defp pane_errors(_), do: ["panes: not a list"]
 
-  defp dup_id?(panes, i), do: Enum.at(panes, i).id in (panes |> Enum.take(i) |> Enum.map(& &1.id))
+  defp earlier_pane_ids(panes, i), do: for(%Pane{id: id} <- Enum.take(panes, i), do: id)
 
-  defp one_pane_errors(path, %Pane{} = p, size) do
+  defp one_pane_errors(path, %Pane{} = p, panes, i, size) do
     id = if is_integer(p.id) and p.id > 0, do: [], else: ["#{path}.id: expected pos_integer"]
 
+    dup =
+      if p.id in earlier_pane_ids(panes, i),
+        do: ["#{path}.id: duplicate #{inspect(p.id)}"],
+        else: []
+
     id ++
+      dup ++
       rect_errors("#{path}.rect", p.rect, size) ++
       border_errors("#{path}.border", p.border, size) ++
       rows_errors("#{path}.rows", p) ++
@@ -125,10 +132,9 @@ defmodule HerdrScene.Scene do
       )
   end
 
-  defp one_pane_errors(path, _, _), do: ["#{path}: not a %Pane{}"]
+  defp one_pane_errors(path, _, _, _, _), do: ["#{path}: not a %Pane{}"]
 
-  defp rect_errors(path, %{x: x, y: y, w: w, h: h} = r, %{cols: cols, rows: rows})
-       when map_size(r) == 4 do
+  defp rect_errors(path, %{x: x, y: y, w: w, h: h}, %{cols: cols, rows: rows}) do
     cond do
       not Enum.all?([x, y, w, h], &(is_integer(&1) and &1 >= 0)) ->
         ["#{path}: expected non-negative integers x, y, w, h"]
@@ -201,16 +207,16 @@ defmodule HerdrScene.Scene do
 
   defp overlays_errors(path, _), do: ["#{path}: not a list"]
 
-  defp overlay_ok?(%Overlay{kind: :selection, args: %{from: f, to: t} = a}),
-    do: map_size(a) == 2 and pos?(f) and pos?(t)
+  defp overlay_ok?(%Overlay{kind: :selection, args: %{from: f, to: t}}),
+    do: pos?(f) and pos?(t)
 
-  defp overlay_ok?(%Overlay{kind: :dim, args: %{reason: :inactive} = a}), do: map_size(a) == 1
+  defp overlay_ok?(%Overlay{kind: :dim, args: %{reason: :inactive}}), do: true
 
-  defp overlay_ok?(%Overlay{kind: :link_hover, args: %{id: id, from: f, to: t} = a}),
-    do: map_size(a) == 3 and nat?(id) and pos?(f) and pos?(t)
+  defp overlay_ok?(%Overlay{kind: :link_hover, args: %{id: id, from: f, to: t}}),
+    do: nat?(id) and pos?(f) and pos?(t)
 
-  defp overlay_ok?(%Overlay{kind: :scrollbar, args: %{total: a, viewport: b, offset: c} = m}),
-    do: map_size(m) == 3 and nat?(a) and nat?(b) and nat?(c)
+  defp overlay_ok?(%Overlay{kind: :scrollbar, args: %{total: a, viewport: b, offset: c}}),
+    do: nat?(a) and nat?(b) and nat?(c)
 
   defp overlay_ok?(_), do: false
 

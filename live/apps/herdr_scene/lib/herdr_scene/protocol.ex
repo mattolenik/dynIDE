@@ -18,6 +18,8 @@ defmodule HerdrScene.Protocol do
     * `{:ack, seq}`
     * `{:handoff, map}`
 
+  Maps are open: required keys must be valid, unknown extra keys are accepted.
+
   The server publishes the focused-pane fast path under `fast_path_key/0` in
   `:persistent_term`.
   """
@@ -75,10 +77,19 @@ defmodule HerdrScene.Protocol do
   def validate_server_msg({:handoff, %{}}), do: :ok
   def validate_server_msg(other), do: {:error, "unknown server message #{inspect(other)}"}
 
+  @doc "Validates the reply to `{:attach, _}`."
+  @spec validate_attach_reply(term) :: :ok | {:error, binary}
+  def validate_attach_reply({:ok, pid, %{rows: {m, f, a}}})
+      when is_pid(pid) and is_atom(m) and is_atom(f) and is_list(a),
+      do: :ok
+
+  def validate_attach_reply({:error, reasons}) when is_list(reasons), do: :ok
+  def validate_attach_reply(other), do: {:error, "unknown attach reply #{inspect(other)}"}
+
   defp validate_attach(a) do
     cond do
-      Enum.sort(Map.keys(a)) != Enum.sort(@attach_keys) ->
-        {:error, "attach: expected keys #{inspect(@attach_keys)}"}
+      not Enum.all?(@attach_keys, &Map.has_key?(a, &1)) ->
+        {:error, "attach: missing required keys #{inspect(@attach_keys)}"}
 
       a.kind not in [:term, :gui] ->
         {:error, "attach.kind: expected :term or :gui"}

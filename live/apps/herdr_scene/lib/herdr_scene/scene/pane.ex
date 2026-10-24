@@ -18,12 +18,12 @@ defmodule HerdrScene.Scene.Pane do
           id: pos_integer,
           rect: rect,
           border: border | nil,
-          rows: rows | nil,
+          rows: rows,
           cursor: %{x: non_neg_integer, y: non_neg_integer, shape: atom, visible: boolean} | nil,
           overlays: [Overlay.t()],
           graphics: [map]
         }
 
-  @enforce_keys [:id, :rect]
+  @enforce_keys [:id, :rect, :rows]
   defstruct [:id, :rect, :border, :rows, :cursor, overlays: [], graphics: []]
 end

@@ -74,4 +74,21 @@ defmodule HerdrScene.ProtocolTest do
       assert is_binary(msg)
     end
   end
+
+  test "validators are total and open" do
+    for j <- [nil, 1, :x, %{}, {}, {:attach, :x}, {:input, 1}, {:scene, :x}, {:rows, :x}] do
+      assert {:error, _} = Protocol.validate_client_msg(j)
+      assert {:error, _} = Protocol.validate_server_msg(j)
+      assert {:error, _} = Protocol.validate_attach_reply(j)
+    end
+
+    assert Protocol.validate_client_msg({:attach, Map.put(@attach, :extra, 1)}) == :ok
+  end
+
+  test "attach reply" do
+    assert Protocol.validate_attach_reply({:ok, self(), %{rows: {Mod, :f, []}, extra: 1}}) == :ok
+    assert Protocol.validate_attach_reply({:error, ["nope"]}) == :ok
+    assert {:error, _} = Protocol.validate_attach_reply({:ok, self(), %{rows: :x}})
+    assert {:error, _} = Protocol.validate_attach_reply({:ok, :pid, %{rows: {Mod, :f, []}}})
+  end
 end

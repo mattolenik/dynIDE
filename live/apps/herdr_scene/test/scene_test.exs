@@ -89,4 +89,49 @@ defmodule HerdrScene.SceneTest do
     assert Node.find(s.chrome, [:status, :zzz]) == nil
     assert Node.find(s.chrome, []) == s.chrome
   end
+
+  @junk [nil, 1, :x, "s", [], [1 | 2], %{}, {}, {:a, :b}]
+
+  test "validate is total on junk" do
+    for j <- @junk, do: assert({:error, [_ | _]} = Scene.validate(j))
+
+    s = HerdrScene.SceneSample.build()
+    all_x = %Scene{size: :x, panes: :x, chrome: :x, focus: :x, cursor: :x}
+    assert {:error, _} = Scene.validate(all_x)
+
+    ok_size = %Scene{size: s.size, panes: :x, chrome: :x, focus: :x, cursor: :x}
+    assert {:error, msgs} = Scene.validate(ok_size)
+    assert Enum.any?(msgs, &(&1 =~ "panes: not a list"))
+  end
+
+  test "validate is total on malformed members" do
+    s = HerdrScene.SceneSample.build()
+    assert {:error, _} = Scene.validate(%{s | panes: [:x]})
+    assert {:error, _} = Scene.validate(%{s | panes: [:x, hd(s.panes)]})
+
+    plain = %{s | chrome: %{s.chrome | children: [%{id: :a}]}, focus: %{pane: nil, chrome: [:a]}}
+    assert {:error, _} = Scene.validate(plain)
+
+    bad_kids = %{s | chrome: %{s.chrome | children: :x}, focus: %{pane: nil, chrome: [:a]}}
+    assert {:error, _} = Scene.validate(bad_kids)
+    assert Node.find(bad_kids.chrome, [:a]) == nil
+  end
+
+  test "extra keys are accepted" do
+    s = HerdrScene.SceneSample.build()
+    pane = hd(s.panes)
+
+    pane = %{
+      pane
+      | rect: Map.put(pane.rect, :z, 1),
+        overlays: [%Overlay{kind: :dim, args: %{reason: :inactive, extra: 1}}]
+    }
+
+    assert Scene.validate(%{s | size: Map.put(s.size, :dpr, 2), panes: [pane | tl(s.panes)]}) ==
+             :ok
+  end
+
+  test "pane requires rows" do
+    assert_raise ArgumentError, fn -> struct!(HerdrScene.Scene.Pane, id: 1, rect: %{}) end
+  end
 end

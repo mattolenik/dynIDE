@@ -23,10 +23,12 @@ defmodule HerdrScene.Scene.Node do
   @spec find(t(), [term]) :: t() | nil
   def find(node, []), do: node
 
-  def find(%__MODULE__{children: children}, [id | rest]) do
-    case Enum.find(children, &(&1.id == id)) do
+  def find(%__MODULE__{children: children}, [id | rest]) when is_list(children) do
+    case Enum.find(children, &match?(%__MODULE__{id: ^id}, &1)) do
       nil -> nil
       child -> find(child, rest)
     end
   end
+
+  def find(_, _), do: nil
 end

@@ -61,4 +61,13 @@ defmodule HerdrScene.EventTest do
     assert :f1 in Event.named_keys() and :f12 in Event.named_keys()
     assert Event.mods() == Enum.sort(Event.mods())
   end
+
+  test "validate is total and open" do
+    for j <- [nil, 1, :x, "s", [], %{}, {}, {:key, :x}, {:mouse, 1}, {:resize, nil}, {:key, %{}}] do
+      assert {:error, _} = Event.validate(j)
+    end
+
+    assert Event.validate(key(%{extra: 1})) == :ok
+    assert Event.validate(mouse(%{extra: 1})) == :ok
+  end
 end
