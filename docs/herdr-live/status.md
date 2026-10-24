@@ -38,8 +38,8 @@ the recovery map for the coordinating session: trust this file and
 | M1 kernel vt+pty | merged | live/m1 | agent | 95ace52e | 25 commits; results/m1.md; 56 cargo + 26 ExUnit; mode/2 p999 1µs under cat 100MB; live-check verified green |
 | M2 term kernel tty+blit | merged | live/m2 | agent | 4ce76654 | 16 commits; results/m2.md; green on macOS and Linux (podman); manual GUI-terminal check owed by human (steps in results/m2.md) |
 | M3 server core + term client | merged | live/m3 | agent | 1474b6df | 43 commits; results/m3.md; 181/78/51 tests + integration + real_kernel; both kernel swaps done; prefix follow-up merged at 0c773657 |
-| M4 reload + rollback | phase 2 in progress | live/m4 | agent | 54093015 (ph1) | phase 1: Reload.Watcher/Compiler/Ring/Guard, 65 tests; save→loaded ~90ms one module, ~95ms for 21-module fan-out |
-| M5 kernel restart | in progress | live/m5 | agent | | wave 2; dispatched from 95ace52e; rebases when M2/M3 land |
+| M4 reload + rollback | merged | (deleted) | agent | be57f9ff | phase 1 at 54093015; phase 2: 16 commits, results/m4.md; all slice-1 reload targets met (render p95 462ms, view 371ms, ui_field@15 panes 759ms, view_loop 72ms, cat15 588ms); tests 51/80/84/160/11+5; live-check verified green by coordinator |
+| M5 kernel restart | finishing | live/m5 | agent | | 24 commits rebased on 0e6595c5; results/m5.md pending; must rebase onto be57f9ff |
 | M6 gate | not started | | | | human decision |
 | M7 self-hosting | not started | | | | human dogfood week |
 | M8 persistence | not started | | | | |
@@ -69,6 +69,7 @@ the recovery map for the coordinating session: trust this file and
 - 2026-10-23: M2 DONE_WITH_CONCERNS at 6f7e05e3; merged as 4ce76654 (conflict: live/mix.exs dialyzer plt_add_apps, kept :mix and :ex_unit). Linux root causes fixed: ttyname -> ttyname_r in the test helper; Linux-only raise(SIGSTOP) after kill(0, SIGSTOP) returns early. Owed to human: manual live-demo check in a real GUI terminal. Leftovers outside repo: podman image localhost/herdr-m2-check. M3 and M5 informed (Tty/Blit API; stty wrapper belongs in the broker).
 - 2026-10-23: M3 DONE_WITH_CONCERNS at 1474b6df; fast-forwarded. Bench (real kernel, bench client on fake tty): keystroke→glass p95 361µs fast / 424µs slow; frame 80µs @1 pane, 638µs @15 (7.9×); 15×100MiB cat: probe stall max 95ms (target 10ms — gate item), typing p95 12.8ms. Owed to human: GUI-terminal run (procedure in results/m3.md). Known gaps: local client crash not restarted; Pane.Rows restart loses id map (→ M4 ph2). Deviations for M1: pastes >1MiB truncate (needs per-pane retrying write queue); encoders reject some mods; fallback key tables unported. M4 phase 2 started; M5 informed (tty_guard.sh, Client.Session as handoff consumer).
 - 2026-10-23: live-check green on herdr-live with M3. M3 prefix follow-up DONE at 0c773657 (mode moved to Client.State; new additive protocol message {:input_mode, mode}; two-client test fails on old code); fast-forwarded; design.md and AGENTS.md state-layout text corrected.
+- 2026-10-24: M4 phase 2 DONE_WITH_CONCERNS at be57f9ff; fast-forwarded after coordinator live-check (exit 0, no crash dump). New app `herdr_reload` holds the whole reloader (`HerdrReload.*`); `safe_apply` replaced by `HerdrReload.Guard.run_twice/4` (re-run only after an attributed rollback; the re-run never attributes); `HerdrServer.Mirror` owns the ETS tables; rollback restores beams on disk, bad beams kept under `<build>/herdr_reload/rejected/`; `herdr-live rollback [n]` over a dev-only control socket (stopgap until M12). The bench found and fixed four reload bugs with regression tests: touch-triggered perpetual reload loop (now content-unchanged → :noop); failures during Mix's compile window blamed the batch that had just loaded (failure timestamp attribution); the re-run after a rollback blamed an innocent older batch; the first same-second edit after start was missed. Provisional pre-fix numbers (render p95 6.6s, view_loop p95 805ms) were bug 1 contamination. Carried: Store `:kill` inside its 20ms debounce loses that window's focus/mode/tab writes; after a rollback only a content change reloads the source; client mirror entry leaks after a session crash; notice width counts chars not cells (M16); store.ex ~485 lines (split in M7); stall test fails under host load ~21 (podman VM from a sibling owner); local-client crash restart deferred to M7; hangs inside `Actions.apply`/Store are unbudgeted. AGENTS.md "Adding an app" updated for the herdr_reload dependency rule (confirmed). M5 told to rebase.
 
 ## Rulings
 
@@ -104,3 +105,11 @@ what it costs if wrong.
   app to fold back into herdr_server.
 - 2026-10-23: Rollback restores the previous .beam on disk as well as in
   memory, keeping the bad beam inspectable. Cost if wrong: disk churn.
+- 2026-10-24: M4 phase 2 rulings accepted as written in results/m4.md:
+  `Guard.run_twice` re-runs only after an attributed rollback and never
+  attributes the re-run; a 50ms budget only on `View.compute` and
+  `Compose.screen`; `Server.fail/4` blames only batches loaded at or before
+  the failure time; unchanged file content is a `:noop` reload; a logic-free
+  `HerdrServer.Mirror` owns the ETS tables; the dev-only control socket is a
+  stopgap until M12; local-client crash restart deferred to M7. Cost if
+  wrong: one of these becomes an M6 gate finding.
