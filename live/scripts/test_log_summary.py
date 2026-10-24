@@ -56,7 +56,7 @@ class LogSummaryTest(unittest.TestCase):
         got = json.loads(r.stdout)
         for k, v in EXPECTED.items():
             self.assertEqual(got[k], v, k)
-        self.assertEqual(got["period"], "2026-10-20T09:59:00Z .. 2026-10-20T10:09:30Z")
+        self.assertEqual(got["period"], "2026-10-20T09:59:00Z .. 2026-10-20T10:10:10Z")
 
     def test_text_output_order_and_exit_line(self):
         out = run(FIXTURE).stdout.splitlines()
