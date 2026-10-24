@@ -45,6 +45,7 @@ defmodule HerdrTerm.Client do
   """
   @spec local_exit(term) :: term
   def local_exit(why) do
+    HerdrTerm.Application.mark_local_stop()
     Logger.info("local terminal client done (#{inspect(why)}), stopping herdr-live")
     {m, f, a} = Application.get_env(:herdr_term, :on_local_exit, {System, :stop, [0]})
     apply(m, f, a)
@@ -57,6 +58,7 @@ defmodule HerdrTerm.Client do
   """
   @spec stop_local() :: :ok
   def stop_local do
+    HerdrTerm.Application.mark_local_stop()
     spawn(fn -> Supervisor.terminate_child(HerdrTerm.Supervisor, HerdrTerm.LocalClient) end)
     :ok
   end

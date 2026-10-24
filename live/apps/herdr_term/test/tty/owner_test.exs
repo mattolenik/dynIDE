@@ -14,11 +14,41 @@ defmodule HerdrTerm.Tty.OwnerTest do
   def rows(_id), do: nil
 
   setup do
+    :persistent_term.erase({HerdrTerm.Application, :local_stop})
     Application.put_env(:herdr_term, :on_local_exit, {Kernel, :send, [self(), :local_exit]})
     on_exit(fn -> Application.delete_env(:herdr_term, :on_local_exit) end)
     ep = FakeServer.unique_name()
     FakeServer.start(self(), ep, {__MODULE__, :rows, []})
     %{ep: ep}
+  end
+
+  # waits for a (new) local client whose children are all started
+  defp await_started(except \\ nil) do
+    assert_receive {:attached, _, _}, 1000
+
+    wait_until(fn ->
+      pid = Process.whereis(Protocol.local_client_name())
+      pid != except and is_pid(pid) and Client.input(pid) != nil and pid
+    end)
+  end
+
+  defp wait_until(fun, n \\ 100) do
+    cond do
+      v = fun.() -> v
+      n == 0 -> flunk("condition not reached")
+      true -> Process.sleep(10) && wait_until(fun, n - 1)
+    end
+  end
+
+  defp kill_render_until_down(sup, ref) do
+    receive do
+      {:DOWN, ^ref, _, _, _} -> :ok
+    after
+      0 ->
+        if r = Client.render(sup), do: Process.exit(r, :kill)
+        Process.sleep(10)
+        kill_render_until_down(sup, ref)
+    end
   end
 
   defp start(ep, opts \\ []) do
@@ -156,19 +186,14 @@ defmodule HerdrTerm.Tty.OwnerTest do
           starter = Task.async(fn -> HerdrTerm.Application.run_local(opts) end)
 
           for _ <- 1..3 do
-            assert_receive {:attached, _, _}, 1000
-            # a late crash: the client has finished starting
-            Process.sleep(50)
-            old = Process.whereis(Protocol.local_client_name())
+            old = await_started()
             ref = Process.monitor(old)
             Process.exit(old, :kill)
             assert_receive {:DOWN, ^ref, _, _, _}
           end
 
           # the fourth crash is past the limit
-          assert_receive {:attached, _, _}, 1000
-          Process.sleep(50)
-          Process.exit(Process.whereis(Protocol.local_client_name()), :kill)
+          Process.exit(await_started(), :kill)
           assert Task.await(starter) == :ok
         end)
 
@@ -177,13 +202,53 @@ defmodule HerdrTerm.Tty.OwnerTest do
       assert log =~ ~r/crash ts=\d+ proc=local_client action=gave_up/
     end
 
-    test "a normal stop of the local client is not restarted", %{ep: ep} do
+    test "a Render crash loop escalates and the local client is restarted", %{ep: ep} do
+      on_exit(fn -> Supervisor.terminate_child(HerdrTerm.Supervisor, HerdrTerm.LocalClient) end)
+      opts = [endpoint: ep, restart_delay_ms: 20]
+
+      log =
+        capture_log([level: :info], fn ->
+          starter = Task.async(fn -> HerdrTerm.Application.run_local(opts) end)
+          old = await_started()
+          ref = Process.monitor(old)
+          kill_render_until_down(old, ref)
+          new = await_started(old)
+          assert new != old
+          assert Process.whereis(Protocol.local_client_name()) == new
+
+          # a deliberate stop ends the starter
+          Client.stop_local()
+          assert Task.await(starter) == :ok
+        end)
+
+      assert log =~ ~r/crash ts=\d+ proc=local_client action=restarted/
+      assert Process.whereis(Protocol.local_client_name()) == nil
+    end
+
+    test "a client that fails to start counts against the limit", %{ep: ep} do
+      opts = [
+        endpoint: ep,
+        tty_opts: %{error: :enxio},
+        restart_delay_ms: 10,
+        max_restarts: 3,
+        restart_window_ms: 60_000
+      ]
+
+      log =
+        capture_log([level: :info], fn -> assert HerdrTerm.Application.run_local(opts) == :ok end)
+
+      assert length(Regex.scan(~r/proc=local_client action=restarted/, log)) == 3
+      assert length(Regex.scan(~r/terminal client not started/, log)) == 4
+      assert log =~ ~r/proc=local_client action=gave_up/
+      assert Process.whereis(Protocol.local_client_name()) == nil
+    end
+
+    test "a deliberate stop of the local client is not restarted", %{ep: ep} do
       starter =
         Task.async(fn -> HerdrTerm.Application.run_local(endpoint: ep, restart_delay_ms: 20) end)
 
-      assert_receive {:attached, _, _}, 1000
-      Process.sleep(50)
-      Supervisor.terminate_child(HerdrTerm.Supervisor, HerdrTerm.LocalClient)
+      await_started()
+      Client.stop_local()
       assert Task.await(starter) == :ok
       refute_receive {:attached, _, _}, 100
       assert Process.whereis(Protocol.local_client_name()) == nil

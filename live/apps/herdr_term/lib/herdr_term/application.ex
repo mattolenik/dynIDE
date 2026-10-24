@@ -56,28 +56,43 @@ defmodule HerdrTerm.Application do
 
   # restarts: monotonic ms timestamps of the restarts inside the window
   defp run_local(opts, restarts) do
-    with {:ok, pid} <- start_when_ready(opts) do
-      ref = Process.monitor(pid)
+    case start_when_ready(opts) do
+      {:ok, pid} ->
+        ref = Process.monitor(pid)
 
-      reason =
-        receive do
-          {:DOWN, ^ref, :process, _, reason} -> reason
+        reason =
+          receive do
+            {:DOWN, ^ref, :process, _, reason} -> reason
+          end
+
+        cond do
+          clear_local_stop() -> if handoff_phase() == :begin, do: await_abort(opts), else: :ok
+          handoff_phase() == :begin -> await_abort(opts)
+          reason == :normal -> :ok
+          true -> restart_local(opts, restarts, reason)
         end
 
-      cond do
-        handoff_phase() == :begin -> await_abort(opts)
-        crash?(reason) -> restart_local(opts, restarts, reason)
-        true -> :ok
-      end
+      {:error, reason} ->
+        # a start failure counts as a crash: a rollback may have fixed the code by then
+        restart_local(opts, restarts, reason)
     end
 
     :ok
   end
 
-  defp crash?(:normal), do: false
-  defp crash?(:shutdown), do: false
-  defp crash?({:shutdown, _}), do: false
-  defp crash?(_), do: true
+  @local_stop {__MODULE__, :local_stop}
+
+  @doc false
+  # Marks the next stop of the local client as deliberate (detach, tty hangup, handoff
+  # begin): the starter does not restart it.
+  @spec mark_local_stop() :: :ok
+  def mark_local_stop, do: :persistent_term.put(@local_stop, true)
+
+  defp clear_local_stop do
+    marked? = :persistent_term.get(@local_stop, false)
+    if marked?, do: :persistent_term.erase(@local_stop)
+    marked?
+  end
 
   defp restart_local(opts, restarts, reason) do
     now = System.monotonic_time(:millisecond)
@@ -102,7 +117,8 @@ defmodule HerdrTerm.Application do
       )
 
       Process.sleep(Keyword.get(opts, :restart_delay_ms, 200))
-      run_local(opts, [now | recent])
+
+      if handoff_phase() == :begin, do: await_abort(opts), else: run_local(opts, [now | recent])
     end
   end
 
