@@ -37,7 +37,7 @@ the recovery map for the coordinating session: trust this file and
 | M0 skeleton | merged | (deleted) | agent | 179cd23e | 15 commits; results/m0.md; live-check verified green by coordinator |
 | M1 kernel vt+pty | merged | live/m1 | agent | 95ace52e | 25 commits; results/m1.md; 56 cargo + 26 ExUnit; mode/2 p999 1µs under cat 100MB; live-check verified green |
 | M2 term kernel tty+blit | merged | live/m2 | agent | 4ce76654 | 16 commits; results/m2.md; green on macOS and Linux (podman); manual GUI-terminal check owed by human (steps in results/m2.md) |
-| M3 server core + term client | merged | live/m3 | agent | 1474b6df | 43 commits; results/m3.md; 181/78/51 tests + integration + real_kernel; both kernel swaps done; follow-up live/m3-prefix in flight |
+| M3 server core + term client | merged | live/m3 | agent | 1474b6df | 43 commits; results/m3.md; 181/78/51 tests + integration + real_kernel; both kernel swaps done; prefix follow-up merged at 0c773657 |
 | M4 reload + rollback | phase 2 in progress | live/m4 | agent | 54093015 (ph1) | phase 1: Reload.Watcher/Compiler/Ring/Guard, 65 tests; save→loaded ~90ms one module, ~95ms for 21-module fan-out |
 | M5 kernel restart | in progress | live/m5 | agent | | wave 2; dispatched from 95ace52e; rebases when M2/M3 land |
 | M6 gate | not started | | | | human decision |
@@ -68,6 +68,7 @@ the recovery map for the coordinating session: trust this file and
 - 2026-10-23: M5 dispatched (kernel restart under live children) from 95ace52e.
 - 2026-10-23: M2 DONE_WITH_CONCERNS at 6f7e05e3; merged as 4ce76654 (conflict: live/mix.exs dialyzer plt_add_apps, kept :mix and :ex_unit). Linux root causes fixed: ttyname -> ttyname_r in the test helper; Linux-only raise(SIGSTOP) after kill(0, SIGSTOP) returns early. Owed to human: manual live-demo check in a real GUI terminal. Leftovers outside repo: podman image localhost/herdr-m2-check. M3 and M5 informed (Tty/Blit API; stty wrapper belongs in the broker).
 - 2026-10-23: M3 DONE_WITH_CONCERNS at 1474b6df; fast-forwarded. Bench (real kernel, bench client on fake tty): keystroke→glass p95 361µs fast / 424µs slow; frame 80µs @1 pane, 638µs @15 (7.9×); 15×100MiB cat: probe stall max 95ms (target 10ms — gate item), typing p95 12.8ms. Owed to human: GUI-terminal run (procedure in results/m3.md). Known gaps: local client crash not restarted; Pane.Rows restart loses id map (→ M4 ph2). Deviations for M1: pastes >1MiB truncate (needs per-pane retrying write queue); encoders reject some mods; fallback key tables unported. M4 phase 2 started; M5 informed (tty_guard.sh, Client.Session as handoff consumer).
+- 2026-10-23: live-check green on herdr-live with M3. M3 prefix follow-up DONE at 0c773657 (mode moved to Client.State; new additive protocol message {:input_mode, mode}; two-client test fails on old code); fast-forwarded; design.md and AGENTS.md state-layout text corrected.
 
 ## Rulings
 

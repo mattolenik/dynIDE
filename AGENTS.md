@@ -116,9 +116,10 @@ Elixir NIF module, and a facade function in the `Native.*` module it belongs to.
 ## State layout
 
 - `App.Session` (workspaces, tabs, pane tree), `App.Focus` (focused pane,
-  mode, modal stack), `App.Ui` (sidebar, theme, chrome prefs), `Pane.State`
+  modal stack), `App.Ui` (sidebar, theme, chrome prefs), `Pane.State`
   (per pane, in `Pane.Server`), `Client.State` (per client, in
-  `Client.Session`). Do not merge them; edits fan out by compile deps.
+  `Client.Session`; includes that client's input mode such as prefix, like
+  tmux per-client key tables). Do not merge them; edits fan out by compile deps.
 - No local funs in persisted state. Keybinds are `{M, F, A}` tuples (MFA).
 - Every callback begins `state = Map.merge(%Struct{}, state)`.
 - Shape changes get `code_change/3`.

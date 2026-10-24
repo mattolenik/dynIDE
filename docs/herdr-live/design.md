@@ -241,13 +241,14 @@ Invariants:
 Server state is split so hot-path edits do not fan out:
 
 - `App.Session` — workspaces, tabs, pane tree. Changes rarely.
-- `App.Focus` — focused pane, mode, modal stack. Tiny; read on every keystroke.
+- `App.Focus` — focused pane, modal stack. Tiny; read on every keystroke.
 - `App.Ui` — sidebar, theme, chrome preferences. Edited often; nothing else
   depends on its struct at compile time.
 - `Pane.State` — per pane, held by `Pane.Server`, mirrored to ETS per row.
 - `Client.State` — per attached client, held by `Client.Session`: kind, size,
-  cell px, requested viewports, hover. Presentation state lives here, never
-  in `App.*`.
+  cell px, requested viewports, hover, and input mode (prefix/resize), as in
+  tmux's per-client key tables. Presentation and per-client input state live
+  here, never in `App.*`.
 
 Rules enforced at dev time by `safe_apply`:
 
