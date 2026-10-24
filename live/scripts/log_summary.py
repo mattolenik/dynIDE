@@ -104,6 +104,8 @@ def summarize(events, unparsed=0):
                 c["t_pass"] += 1
             elif f.get("result") in ("failed", "error"):
                 c["t_fail"] += 1
+            elif f.get("result") == "stale":
+                c["t_stale"] += 1
         elif kind == "sync":
             syncs += to_int(f.get("count"))
         elif kind == "broker_handoff":
@@ -130,7 +132,7 @@ def summarize(events, unparsed=0):
         "rollbacks": {"manual": c["rb_manual"], "auto": c["rb_auto"]},
         "rollback_reasons": dict(sorted(rb_reasons.items())),
         "guard_failures": {"attributed": c["gf_attr"], "unattributed": c["gf_none"]},
-        "tests": {"passed": c["t_pass"], "failed": c["t_fail"]},
+        "tests": {"passed": c["t_pass"], "failed": c["t_fail"], "stale": c["t_stale"]},
         "syncs": {"modules": syncs},
         "handoffs": {"crash": c["h_crash"], "graceful": c["h_graceful"], "failed": c["h_failed"]},
         "handoff_ms_p50": pct(hand_ms, 50),

@@ -14,7 +14,7 @@ FIXTURE = os.path.join(HERE, "fixtures", "dogfood-sample.log")
 # Expected counts for fixtures/dogfood-sample.log (author both together):
 #   vm_starts 3 | reloads 2 (fanout 3 + 5) | modules_reloaded 8 | fanout_max 5
 #   compile_errors 1 | rollbacks manual 1 (reason=manual), auto 1 (raise)
-#   guard_failures attributed 1, unattributed 1 | tests passed 1, failed 1
+#   guard_failures attributed 1, unattributed 1 | tests passed 1, failed 1, stale 1
 #   syncs 7 modules | handoffs crash 2, graceful 1, failed 1 | handoff ms 15,40,90
 #   crashes local_client 2, session 1, store 1 | layout_resets 1 (store restored)
 #   session_losses 1 | unparsed 1 (ts=oops)
@@ -27,7 +27,7 @@ EXPECTED = {
     "rollbacks": {"manual": 1, "auto": 1},
     "rollback_reasons": {"manual": 1, "raise": 1},
     "guard_failures": {"attributed": 1, "unattributed": 1},
-    "tests": {"passed": 1, "failed": 1},
+    "tests": {"passed": 1, "failed": 1, "stale": 1},
     "syncs": {"modules": 7},
     "handoffs": {"crash": 2, "graceful": 1, "failed": 1},
     "handoff_ms_p50": 40,

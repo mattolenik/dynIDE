@@ -12,6 +12,7 @@
 2026-10-20 10:02:12.000 [info] herdr-event guard_failure ts=1792490532000 mfa=HerdrServer.View.compute/2 kind=exit attributed=none detail="noproc"
 2026-10-20 10:03:00.000 [info] herdr-event reload ts=1792490580000 batch=3 fanout=5 modules=A,B,C,D,E compile_ms=300
 2026-10-20 10:03:20.000 [info] herdr-event tests ts=1792490600000 result=failed files=1 failures=2 ms=1500
+2026-10-20 10:03:25.000 [info] herdr-event tests ts=1792490605000 result=stale files=1 failures=0 ms=800
 2026-10-20 10:04:00.000 [info] herdr-event rollback ts=1792490640000 batch=3 fanout=5 modules=A,B,C,D,E reason=manual detail="user asked"
 2026-10-20 10:04:30.000 [info] herdr-event rejected ts=1792490670000 module=HerdrServer.Native path=lib/herdr_server/native.ex
 2026-10-20 10:04:40.000 [info] herdr-event purge_blocked ts=1792490680000 module=HerdrServer.View holders=HerdrServer.Pane.Server
