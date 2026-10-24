@@ -69,8 +69,8 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   kernel and broker) and `live/native/herdr_broker` (the broker binary: VM
   supervisor, fd and blob holder, warm standby, handoff state machine, host
   tty guard). `live/live.just` lists every crate in `live_crates`.
-- Each crate is its own Cargo workspace (empty `[workspace]`), so the root
-  `[patch.crates-io] portable-pty` is not inherited: repeat it with
+- Each crate is its own Cargo workspace (empty `[workspace]`), so no root
+  `[patch.crates-io]` is inherited: set `[patch.crates-io] portable-pty` with
   `path = "../../../vendor/portable-pty"` when a crate needs portable-pty.
 - `live/bin/herdr-live`: dev launcher. It runs the broker, which spawns the
   VM (`mix run --no-halt` under `-noshell -noinput`) plus one warm standby;
@@ -81,7 +81,9 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   `live/scripts/launcher_smoke.sh`, `attached_smoke.sh`,
   `live/bench/handoff/smoke.exs`. A VM learns its role over the link when
   `HERDR_BROKER_SOCK` is set; without it (tests, iex) it starts standalone.
-- Rust `src/` is herdr, kept as reference until the M6 gate, pruned in M7.
+- The Rust herdr product (`src/`) was pruned in M7. It lives on as the git tag
+  `herdr-reference`; `live/bench/gate/herdr_ref.sh` builds it from the tag when a
+  benchmark needs the reference binary.
 
 Adding an app: from `live/`, `mix new apps/<name>`; depend only on
 `{:herdr_scene, in_umbrella: true}` (and optionally `{:herdr_reload, in_umbrella: true}`); set
@@ -108,12 +110,13 @@ Elixir NIF module, and a facade function in the `Native.*` module it belongs to.
   writes ANSI, with no knowledge of panes or scenes.
 - **No god objects.** Split modules that do too many things; GenServer
   callbacks stay thin.
-- **Platform code is isolated.** OS APIs live in the NIF crates (and
-  `src/platform/` in the reference tree); Elixir core has no OS branches.
+- **Platform code is isolated.** OS APIs live in the NIF crates (the reference
+  `src/platform/` is in the `herdr-reference` tag); Elixir core has no OS branches.
 - **Detection is evidence-based.** Match explicit AND/OR gates over the
   bottom-buffer detection source, never whole-pane incidental text or the
-  user-scrollable viewport. In the reference tree, follow the manifest
-  hot-reload loop (`herdr agent read`/`explain`, `src/detect/manifests/`).
+  user-scrollable viewport. The reference manifest hot-reload loop
+  (`herdr agent read`/`explain`, `src/detect/manifests/`) is in the
+  `herdr-reference` tag.
 - **UI patterns are reused.** Mouse-first. New dialogs and flows reuse the
   existing chrome roles and interaction patterns instead of one-off screens.
 - **Multiplicative performance paths.** Work reachable from damage handling,
@@ -165,7 +168,8 @@ Elixir NIF module, and a facade function in the `Native.*` module it belongs to.
 - `just live-test`: mix and cargo tests. `just live-check` (format, credo
   --strict, dialyzer, cargo fmt/clippy, tests, launcher smoke): run before
   committing. `just live-run` launches. CI: `.github/workflows/live.yml`.
-- `just check` still covers the reference Rust tree but is not the gate.
+- `just check` is an alias of `live-check`. `just maintenance-test` runs the
+  vendoring script tests.
 
 ## Vendored libghostty-vt
 

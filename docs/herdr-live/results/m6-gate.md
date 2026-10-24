@@ -277,3 +277,13 @@ Each: decision, then the cost if wrong.
   is the regression check.
 - Linux is aarch64 in a VM on the same Mac; x86_64 and bare-metal Linux were not run.
 - Deferred minors from task reviews are listed in the SDD ledger; none blocks the gate.
+
+## Re-running the gate after the M7 prune
+
+M7 removed the Rust `src/` tree, so the `herdrref` suite and `glass.py herdr` no longer
+build the root crate. `live/bench/gate/herdr_ref.sh` builds the `herdr-reference` tag
+(the last commit with `src/`) from `git archive` into
+`${XDG_CACHE_HOME:-$HOME/.cache}/herdr-live/herdr-reference/<short sha>`, and
+`gate_round.sh <tag> herdrref` runs `render_scale_profile` in that tree. Set `HERDR_BIN`
+to use another herdr binary for `glass.py herdr`; the `herdrref` suite is then skipped
+unless the tree is already extracted. The numbers above are unchanged.

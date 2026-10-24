@@ -21,17 +21,18 @@ class VendorPortablePtyTests(unittest.TestCase):
 
     def test_cargo_patch_points_at_vendored_tree(self) -> None:
         project_root = Path(__file__).resolve().parent.parent
-        cargo_toml = (project_root / "Cargo.toml").read_text()
+        # the kernel crate is its own workspace and carries the patch itself
+        cargo_toml = (project_root / "live" / "native" / "herdr_kernel" / "Cargo.toml").read_text()
 
         self.assertIn('portable-pty = "=0.9.0"', cargo_toml)
         self.assertIn("[patch.crates-io]", cargo_toml)
-        self.assertIn('portable-pty = { path = "vendor/portable-pty" }', cargo_toml)
+        self.assertIn('portable-pty = { path = "../../../vendor/portable-pty" }', cargo_toml)
 
     def test_cargo_metadata_resolves_portable_pty_to_vendored_tree(self) -> None:
         project_root = Path(__file__).resolve().parent.parent
         result = subprocess.run(
             ["cargo", "metadata", "--locked", "--format-version", "1"],
-            cwd=project_root,
+            cwd=project_root / "live" / "native" / "herdr_kernel",
             text=True,
             capture_output=True,
         )
