@@ -3,8 +3,8 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   Pure rasterizer: a `HerdrScene.Scene` plus packed pane rows becomes full
   screen rows of packed cells. Each screen row is built once as a list of
   pieces (borders, `Cells.fit` slices of pane rows, status text) and joined
-  with a single `Cells.concat/1`; pane content is never touched per cell
-  except where an overlay applies.
+  once (plain pieces as sub-binaries, else `Cells.concat/1`); pane content
+  is never touched per cell except where an overlay applies.
 
   Pieces on a row are expected to be disjoint (borders win over the content
   they overlap; otherwise the leftmost piece wins).
@@ -29,13 +29,26 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
 
   @spec frame(Scene.t(), rows_by_pane, Theme.t()) :: [{non_neg_integer, binary}]
   def frame(%Scene{size: %{cols: cols, rows: rows}} = scene, rows_by_pane, theme) do
-    panes = Enum.map(scene.panes, &prep_pane(&1, scene, rows_by_pane, theme))
-    status = status_rows(scene.chrome, theme)
+    {panes, _cache} =
+      Enum.map_reduce(scene.panes, %{}, &prep_pane(&1, &2, scene, rows_by_pane, theme))
 
-    for y <- 0..(rows - 1)//1 do
-      segs = Enum.flat_map(panes, &pane_segs(&1, y)) ++ Map.get(status, y, [])
-      {y, assemble(segs, cols)}
-    end
+    by_row = segs_by_row(panes, status_rows(scene.chrome, theme), rows)
+
+    for y <- 0..(rows - 1)//1, do: {y, assemble(Map.get(by_row, y, []), cols)}
+  end
+
+  # y => segments in pane order, then status; each pane visits only the rows it spans
+  defp segs_by_row(panes, status, rows) do
+    pane_segs =
+      for p <- panes, y <- span(p, rows), seg <- pane_segs(p, y), do: {y, seg}
+
+    status_segs = for {y, segs} <- status, seg <- segs, do: {y, seg}
+    Enum.group_by(pane_segs ++ status_segs, &elem(&1, 0), &elem(&1, 1))
+  end
+
+  defp span(%{cy: cy, ch: ch, border: b}, rows) do
+    {lo, hi} = if b, do: {min(cy, b.oy), max(cy + ch, b.oy + b.oh)}, else: {cy, cy + ch}
+    max(lo, 0)..(min(hi, rows) - 1)//1
   end
 
   @doc """
@@ -67,7 +80,7 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   defp assemble(segs, cols) do
     {pieces, x} =
       segs
-      |> Enum.sort_by(&elem(&1, 0))
+      |> List.keysort(0)
       |> Enum.reduce({[], 0}, fn {sx, w, bin}, {acc, x} ->
         cond do
           sx >= cols or sx + w <= x -> {acc, x}
@@ -77,8 +90,21 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
       end)
 
     pieces = if x < cols, do: gap(pieces, cols - x), else: pieces
-    row = pieces |> Enum.reverse() |> Cells.concat()
+    row = join(pieces)
     if Cell.cols(row) > cols, do: Cells.fit(row, 0, cols), else: row
+  end
+
+  # `Cells.concat(Enum.reverse(pieces))` with one footer read per piece: plain pieces
+  # join as sub-binaries of their records, any trailer falls back to `Cells.concat/1`
+  defp join(pieces), do: join(pieces, [], pieces)
+
+  defp join([], acc, _), do: IO.iodata_to_binary([acc, <<0::32>>])
+
+  defp join([bin | rest], acc, all) do
+    case binary_part(bin, byte_size(bin), -4) do
+      <<0::32>> -> join(rest, [binary_part(bin, 0, byte_size(bin) - 4) | acc], all)
+      _trailer -> all |> Enum.reverse() |> Cells.concat()
+    end
   end
 
   defp gap(acc, 0), do: acc
@@ -86,18 +112,21 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
 
   # panes
 
-  defp prep_pane(%Pane{rect: r} = pane, scene, rows_by_pane, theme) do
-    style = Theme.border_style(theme, pane.id == scene.focus.pane)
+  # `cache` holds encoded border pieces by shape: same-sized panes share them
+  defp prep_pane(%Pane{rect: r} = pane, cache, scene, rows_by_pane, theme) do
+    {border, cache} = prep_border(pane.border, pane.id == scene.focus.pane, cache, theme)
 
-    %{
+    prepped = %{
       cx: r.x,
       cy: r.y,
       cw: r.w,
       ch: r.h,
       src: rows_source(Map.get(rows_by_pane, pane.id, inline(pane.rows))),
       overlays: pane.overlays,
-      border: prep_border(pane.border, style, Theme.glyphs(theme))
+      border: border
     }
+
+    {prepped, cache}
   end
 
   defp inline({:inline, rows}), do: rows
@@ -111,13 +140,16 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   defp fetch_row(t, n) when is_tuple(t), do: if(n < tuple_size(t), do: elem(t, n))
   defp fetch_row(m, n), do: Map.get(m, n)
 
-  defp prep_border(nil, _, _), do: nil
+  defp prep_border(nil, _, cache, _), do: {nil, cache}
 
-  defp prep_border(%{rect: r, edges: edges, title: title}, style, g) do
+  defp prep_border(%{rect: r, edges: edges, title: title}, focus?, cache, theme) do
     left? = :left in edges
     right? = :right in edges
+    key = {r.w, left?, right?, title, focus?}
 
-    %{
+    pieces = Map.get_lazy(cache, key, fn -> border_pieces(key, theme) end)
+
+    border = %{
       ox: r.x,
       oy: r.y,
       ow: r.w,
@@ -125,10 +157,20 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
       left?: left?,
       right?: right?,
       top?: :top in edges,
-      bottom?: :bottom in edges,
+      bottom?: :bottom in edges
+    }
+
+    {Map.merge(border, pieces), Map.put(cache, key, pieces)}
+  end
+
+  defp border_pieces({w, left?, right?, title, focus?}, theme) do
+    style = Theme.border_style(theme, focus?)
+    g = Theme.glyphs(theme)
+
+    %{
       v: Cells.text(g.v, style),
-      top_row: hline(r.w, left?, right?, {g.tl, g.tr}, g.h, title, style),
-      bottom_row: hline(r.w, left?, right?, {g.bl, g.br}, g.h, nil, style)
+      top_row: hline(w, left?, right?, {g.tl, g.tr}, g.h, title, style),
+      bottom_row: hline(w, left?, right?, {g.bl, g.br}, g.h, nil, style)
     }
   end
 
@@ -196,7 +238,7 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
     row =
       case fetch_row(p.src, n) do
         nil -> Cell.blank_row(p.cw)
-        r -> Cells.fit(r, 0, p.cw)
+        r -> if Cells.exact?(r, p.cw), do: r, else: Cells.fit(r, 0, p.cw)
       end
 
     Enum.reduce(p.overlays, row, fn o, row ->

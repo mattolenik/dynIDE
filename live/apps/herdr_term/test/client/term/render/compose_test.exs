@@ -218,4 +218,75 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
     assert texts(Compose.frame(scene, %{}, @theme)) == ["hey "]
     assert texts(Compose.frame(scene, %{1 => %{0 => Cells.text("map", @s)}}, @theme)) == ["map "]
   end
+
+  # 5x3 grid of bordered 20x10 panes over a status row, with titles, partial edges,
+  # selection/dim/hover overlays, wide chars (some straddling the clip edge), overflow
+  # clusters, too-long and missing rows, and every rows_by_pane shape.
+  defp grid_scene do
+    panes =
+      for i <- 0..14 do
+        {cx, cy} = {rem(i, 5) * 20, div(i, 5) * 10}
+        edges = if rem(i, 4) == 3, do: [:top, :left], else: [:top, :bottom, :left, :right]
+
+        overlays =
+          case rem(i, 5) do
+            0 -> [%Overlay{kind: :selection, args: %{from: {3, 1}, to: {5, 4}}}]
+            1 -> [%Overlay{kind: :dim, args: %{reason: :inactive}}]
+            2 -> [%Overlay{kind: :link_hover, args: %{id: 1, from: {0, 2}, to: {4, 2}}}]
+            _ -> []
+          end
+
+        %Pane{
+          id: i + 1,
+          rect: %{x: cx + 1, y: cy + 1, w: 18, h: 8},
+          border: %{
+            rect: %{x: cx, y: cy, w: 20, h: 10},
+            edges: edges,
+            title: if(rem(i, 3) == 0, do: "pane #{i + 1} 日本語 title", else: nil)
+          },
+          rows:
+            if(i == 14, do: {:inline, [{0, Cells.text("inline", @s)}]}, else: {:ref, i + 1, 0}),
+          overlays: overlays
+        }
+      end
+
+    %{scene() | size: %{cols: 100, rows: 31}, panes: panes}
+    |> Map.update!(:chrome, fn root ->
+      [status] = root.children
+      %{root | children: [%{status | rect: %{x: 0, y: 30, w: 100, h: 1}}]}
+    end)
+  end
+
+  defp grid_rows do
+    bold = Cells.style(fg: {:rgb, 1, 2, 3}, attrs: [:bold])
+    family = "👨‍👩‍👧‍👦"
+
+    lines = [
+      String.duplicate("abc", 10),
+      String.duplicate("a", 17) <> "日本",
+      "日本語のテキスト" <> family <> "x",
+      family <> " " <> family,
+      "plain"
+    ]
+
+    styles = Stream.cycle([@s, bold])
+
+    for id <- 1..13, into: %{} do
+      rows = Enum.zip_with(lines, styles, &Cells.text("#{id}#{&1}", &2))
+      {id, rows_shape(rem(id, 3), rows)}
+    end
+  end
+
+  defp rows_shape(0, rows), do: List.to_tuple(rows)
+  defp rows_shape(1, rows), do: Enum.with_index(rows, fn r, n -> {n, r} end)
+  defp rows_shape(2, rows), do: Map.new(rows_shape(1, rows))
+
+  test "15-pane grid composes byte-identically to the reference frame" do
+    frame = Compose.frame(grid_scene(), grid_rows(), @theme)
+    assert Enum.all?(frame, fn {_, b} -> Cell.cols(b) == 100 end)
+    digest = :crypto.hash(:sha256, Enum.map(frame, fn {y, b} -> [<<y::16>>, b] end))
+
+    assert Base.encode16(digest, case: :lower) ==
+             "877ee358451f2053cd8870aff7dcf1bfaf533c4df609e2e8826b3f1dd29b3540"
+  end
 end

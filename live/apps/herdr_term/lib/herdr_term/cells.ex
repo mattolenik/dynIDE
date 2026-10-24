@@ -41,12 +41,19 @@ defmodule HerdrTerm.Cells do
     |> Enum.flat_map(fn g ->
       <<cp::utf8, _::binary>> = g
 
-      if Enum.any?(@wide, &(cp in &1)),
+      if wide?(cp),
         do: [%{style | glyph: g, width: 2}, %{style | glyph: "", width: 0}],
         else: [%{style | glyph: g, width: 1}]
     end)
     |> Cell.encode_row()
   end
+
+  # a guard clause per literal range: no runtime Enumerable dispatch per grapheme
+  for r <- @wide do
+    defp wide?(cp) when cp in unquote(Macro.escape(r)), do: true
+  end
+
+  defp wide?(_cp), do: false
 
   @doc """
   `n` copies of `glyph`, same bytes as `text(String.duplicate(glyph, n), style)`;
@@ -82,6 +89,10 @@ defmodule HerdrTerm.Cells do
       if pad == 0, do: piece, else: Cell.concat([piece, Cell.blank_row(pad)])
     end
   end
+
+  @doc "True when `fit(row, 0, w)` would return `row` unchanged: `w > 0` columns, edges whole."
+  @spec exact?(Cell.row(), non_neg_integer) :: boolean
+  def exact?(row, w), do: w > 0 and Cell.cols(row) == w and edge_ok?(row)
 
   defp edge_ok?(piece) do
     cells = Cell.records(piece)
