@@ -4,6 +4,7 @@
 
 use std::cell::Cell;
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rustler::sys::ErlNifEnv;
@@ -22,7 +23,7 @@ mod atoms {
         ok, error, nil, stale, damage, exit, osc, dcs, bell, title, pwd, signal, panic, unknown,
         truncated, backpressure, closed, hyperlink, text, viewport, screen, rows,
         block, bar, underline, block_hollow, hup, term, kill, int,
-        key, mods, event, kind, button, x, y, px,
+        key, mods, event, kind, button, x, y, px, disabled,
     }
 }
 
@@ -568,11 +569,17 @@ fn pty_set_hidden(env: Env, pty: ResourceArc<PtyRes>, hidden: bool) -> Atom {
     atoms::ok()
 }
 
-#[cfg(feature = "test-nifs")]
+/// Set at load from `load_data` (`Mix.env() == :test`). One .so serves every Mix env, so
+/// test hooks are always compiled in and are inert (`{:error, :disabled}`) outside test.
+static TEST_HOOKS: AtomicBool = AtomicBool::new(false);
+
 #[rustler::nif]
-fn test_inject_reader_panic(pty: ResourceArc<PtyRes>) -> Atom {
+fn test_inject_reader_panic(env: Env, pty: ResourceArc<PtyRes>) -> Term {
+    if !TEST_HOOKS.load(Ordering::Acquire) {
+        return (atoms::error(), atoms::disabled()).encode(env);
+    }
     pty.pty.inject_reader_panic();
-    atoms::ok()
+    atoms::ok().encode(env)
 }
 
 /// True when SIGCHLD is ignored or SA_NOCLDWAIT is set: the kernel would auto-reap our
@@ -599,7 +606,8 @@ fn restore_default_sigchld() {
 
 // Covered by the ExUnit exit-status tests: ERTS starts with auto-reaping SIGCHLD, so
 // `{:exit, id, 0}` arriving proves the restore. (A cargo test would race the pty tests.)
-pub fn load(_env: Env, _info: Term) -> bool {
+pub fn load(_env: Env, info: Term) -> bool {
+    TEST_HOOKS.store(info.decode::<bool>().unwrap_or(false), Ordering::Release);
     // Kernel panics surface as exit events and NIF raises; never print them (no stderr).
     std::panic::set_hook(Box::new(|_| {}));
     if sigchld_auto_reaps() {

@@ -153,7 +153,6 @@ struct Inner {
     /// Reap status. The waiter holds this lock across the reaping `waitpid`, and `signal`
     /// holds it across `kill`, so a signal never reaches a recycled pid.
     reaped: Mutex<Option<ExitStatus>>,
-    #[cfg(any(test, feature = "test-nifs"))]
     inject_panic: AtomicBool,
 }
 
@@ -293,7 +292,6 @@ impl Inner {
     }
 
     fn check_injected_panic(&self) {
-        #[cfg(any(test, feature = "test-nifs"))]
         if self.inject_panic.load(Ordering::Acquire) {
             self.vt.panic_holding_core();
         }
@@ -574,7 +572,6 @@ impl Pty {
             stop: AtomicBool::new(false),
             exit: Mutex::new(None),
             reaped: Mutex::new(None),
-            #[cfg(any(test, feature = "test-nifs"))]
             inject_panic: AtomicBool::new(false),
         });
         let started = run(&inner, "waiter", waiter_main)
@@ -638,7 +635,6 @@ impl Pty {
         lock(&self.inner.exit).clone()
     }
 
-    #[cfg(any(test, feature = "test-nifs"))]
     pub fn inject_reader_panic(&self) {
         self.inner.inject_panic.store(true, Ordering::Release);
         self.inner.wake();

@@ -12,7 +12,8 @@ defmodule HerdrServer.Native do
     otp_app: :herdr_server,
     crate: :herdr_kernel,
     path: "../../native/herdr_kernel",
-    features: if(Mix.env() == :test, do: ["test-nifs"], else: [])
+    # Enables the test-only NIFs at load; the same .so serves every Mix env.
+    load_data: Mix.env() == :test
 
   # Stubs: arguments are term() so opaque facade types pass through without
   # breaking opacity; the facades carry the precise specs.
@@ -89,11 +90,11 @@ defmodule HerdrServer.Native do
   @spec pty_set_hidden(term, term) :: :ok
   def pty_set_hidden(_pty, _hidden), do: err()
 
-  if Mix.env() == :test do
-    @doc "Test only: makes the pane's reader thread panic while holding the vt core lock."
-    @spec test_inject_reader_panic(term) :: :ok
-    def test_inject_reader_panic(_pty), do: err()
-  end
+  # Test only: makes the pane's reader panic holding the vt core lock.
+  # `{:error, :disabled}` outside the test env.
+  @doc false
+  @spec test_inject_reader_panic(term) :: :ok | {:error, :disabled}
+  def test_inject_reader_panic(_pty), do: err()
 
   defp err, do: :erlang.nif_error(:nif_not_loaded)
 end

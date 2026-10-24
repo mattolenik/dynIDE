@@ -456,7 +456,6 @@ impl Vt {
     }
 
     /// Test hook for `Pty::inject_reader_panic`: panics with the core lock held, poisoning it.
-    #[cfg(any(test, feature = "test-nifs"))]
     pub(crate) fn panic_holding_core(&self) {
         let _core = lock(&self.core);
         panic!("injected reader panic");
