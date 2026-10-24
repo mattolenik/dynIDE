@@ -35,6 +35,11 @@ defmodule HerdrServer.App.Store do
     * Handoff (M5): the latest app is held with the broker and a new VM's `init/1` adopts
       it before looking at the mirror (`Store.Carry`). The adopted app is mirrored at once,
       so a later Store restart in this VM restarts from the mirror as above.
+    * Persistence (M8): a fresh Store (no carry, an empty mirror) with persistence enabled
+      restores the app last written to disk (`Persist.Load`) in `handle_continue/2`,
+      spawning each pane's `$SHELL` in its recorded cwd over its saved scrollback. The
+      precedence is carry > mirror > disk: a carried or mirrored app never reads the disk.
+      Without a usable file the app stays nil and the first event initialises it.
     * In a VM that adopted panes (`Link.adopt_reason/0` not nil) no restart or restore
       closes a keeper pane nothing maps (`App.Restore`): it may be an adopted child.
   """
@@ -50,6 +55,7 @@ defmodule HerdrServer.App.Store do
   alias HerdrServer.{Kernel, Layout}
   alias HerdrServer.Pane.{Input, Rows, Server}
   alias HerdrServer.Pane.Supervisor, as: Panes
+  alias HerdrServer.Persist.{Disk, Load}
 
   # bytes of scrollback per pane
   @max_scrollback 10_000_000
@@ -130,7 +136,11 @@ defmodule HerdrServer.App.Store do
         # a fresh start: close what a previous incarnation without a mirror left open
         lost(Restore.close_all(), :fresh_restart)
         :persistent_term.erase(Protocol.fast_path_key())
-        {:ok, %__MODULE__{}}
+        cfg = Disk.config()
+
+        if cfg.enabled,
+          do: {:ok, %__MODULE__{}, {:continue, {:disk, cfg}}},
+          else: {:ok, %__MODULE__{}}
 
       app ->
         # a mirrored app in this VM means the Store itself restarted
@@ -175,6 +185,13 @@ defmodule HerdrServer.App.Store do
     else
       {:failed, _} -> :failed
     end
+  end
+
+  @impl true
+  def handle_continue({:disk, cfg}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    state = Load.run(state, cfg, &effect(&1, &2, nil))
+    {:noreply, state |> settle() |> publish_fast() |> Mirror.flush() |> Carry.hold()}
   end
 
   @impl true
@@ -385,7 +402,11 @@ defmodule HerdrServer.App.Store do
   @doc false
   defdelegate adoption(blob), to: Carry
 
-  defp effect(state, {:spawn, id, %{cols: c, rows: r}}, origin) do
+  defp effect(state, {:spawn, id, size}, origin),
+    do: effect(state, {:spawn, id, size, %{cwd: nil, replay: nil}}, origin)
+
+  # a restored pane (Persist.RestorePlan): its recorded cwd and saved scrollback
+  defp effect(state, {:spawn, id, %{cols: c, rows: r}, opts}, origin) do
     # The kernel sets TERM=xterm-256color; Pane.Server subscribes when it starts. Children
     # inherit the OS environment of the VM, not `System.put_env/2` changes: extra
     # variables go in `config :herdr_server, :pane_env` (a list of {name, value}).
@@ -393,10 +414,11 @@ defmodule HerdrServer.App.Store do
       cmd: System.get_env("SHELL", "/bin/sh"),
       args: [],
       env: Application.get_env(:herdr_server, :pane_env, []),
-      cwd: File.cwd!(),
+      cwd: opts.cwd || File.cwd!(),
       cols: c,
       rows: r,
       max_scrollback: @max_scrollback,
+      replay: opts.replay,
       subscriber: nil
     }
 

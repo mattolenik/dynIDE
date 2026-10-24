@@ -254,6 +254,13 @@ defmodule HerdrServer.Persist.Schema do
     struct(HerdrServer.Layout, %{l | prev_focus: prev})
   end
 
+  @doc """
+  Brings a restored app to the running code's shape before the Store adopts it. Identity
+  for now: the call site for `App.Upgrade.app/1` (M13) once it lands.
+  """
+  @spec upgrade(map()) :: map()
+  def upgrade(app), do: app
+
   # --- migration ---
 
   @doc """

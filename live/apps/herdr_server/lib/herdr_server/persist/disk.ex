@@ -102,7 +102,7 @@ defmodule HerdrServer.Persist.Disk do
 
   @doc """
   Reads the snapshot. `:none` when there is no file; a file that does not decode is
-  moved aside and gives `{:error, reason}`.
+  moved aside and gives `{:error, reason}`. Every error is logged as `persist_error op=read`.
   """
   @spec read(cfg) :: {:ok, Schema.snapshot(), integer} | :none | {:error, term}
   def read(cfg) do
@@ -119,6 +119,7 @@ defmodule HerdrServer.Persist.Disk do
         :none
 
       {:error, reason} ->
+        HerdrReload.Telemetry.event(:persist_error, op: :read, reason: inspect(reason))
         {:error, reason}
     end
   end
