@@ -12,7 +12,7 @@ defmodule HerdrIntegration.BenchSmokeTest do
 
   test "quick run writes every metric" do
     ExUnit.CaptureIO.capture_io(fn -> Bench.run(["--quick"]) end)
-    json = Mix.Project.build_path() |> Path.dirname() |> Path.join("bench/m3.json")
+    json = Mix.Project.build_path() |> Path.dirname() |> Path.join("bench/m3-quick.json")
     report = json |> File.read!() |> JSON.decode!()
 
     for key <- @keys do

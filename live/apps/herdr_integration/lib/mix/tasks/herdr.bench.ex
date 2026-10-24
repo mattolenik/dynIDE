@@ -11,9 +11,10 @@ if Mix.env() == :test do
       2. frame cost (`Compose.frame/3` + `Fake.Blit.frame/3`) at 200x50, 1 vs 15 full panes
       3. scheduler stall and typing latency while 15 panes each get 100MiB of output
 
-    Prints a markdown table and writes `_build/bench/m3.json`. `--quick` (or
-    `HERDR_BENCH_QUICK=1`) shrinks every metric 10x. Compiled only in `:test`
-    because it drives the clients with `HerdrIntegration.Driver` (test/support).
+    Prints a markdown table and writes `_build/bench/m3.json` (quick runs:
+    `m3-quick.json`). `--quick` (or `HERDR_BENCH_QUICK=1`) shrinks every metric
+    10x. Compiled only in `:test` because it drives the clients with
+    `HerdrIntegration.Driver` (test/support).
     """
     use Mix.Task
 
@@ -159,6 +160,7 @@ if Mix.env() == :test do
 
       case await_cell(tty, {r.x + col, r.y}, [ch], deadline()) do
         :timeout -> :timeout
+        at when at < t0 -> :invalid
         at -> (at - t0) / 1000
       end
     end
@@ -170,24 +172,29 @@ if Mix.env() == :test do
       :timeout != await_cell(tty, {r.x, r.y}, ["", " "], deadline()) or Mix.raise("bench: clear")
     end
 
-    # `at` of the first frame after which the screen cell holds one of `want`
-    # ponytail: reads the live screen, so a later queued frame could be credited to an
-    # earlier `at`; frames are >= 6ms apart and this process idles in receive.
+    # On each frame notification, reads the cell and the latest logged frame's `at` in one
+    # Agent read and returns that `at` once the cell holds one of `want`. `Fake.Blit` writes
+    # the screen before notifying, so the screen may already include later frames; the
+    # latest `at` is the frame that is certainly shown, an upper bound on the true latency.
     defp await_cell(tty, {x, y}, want, deadline) do
       left = max(deadline - System.monotonic_time(:millisecond), 0)
 
       receive do
-        {:frame, ^tty, %{at: at}} ->
-          if cell(tty, x, y) in want, do: at, else: await_cell(tty, {x, y}, want, deadline)
+        {:frame, ^tty, _} ->
+          {glyph, at} = cell(tty, x, y)
+          if glyph in want and at != nil, do: at, else: await_cell(tty, {x, y}, want, deadline)
       after
         left -> :timeout
       end
     end
 
     defp cell(tty, x, y) do
-      case Agent.get(tty, &Map.get(&1.screen, y)) do
-        nil -> nil
-        row -> row |> Cell.slice(x, 1) |> Cell.decode_row() |> hd() |> Map.fetch!(:glyph)
+      {row, last} = Agent.get(tty, &{Map.get(&1.screen, y), :queue.peek_r(&1.frames)})
+      at = if match?({:value, _}, last), do: elem(last, 1).at
+
+      case row do
+        nil -> {nil, at}
+        row -> {row |> Cell.slice(x, 1) |> Cell.decode_row() |> hd() |> Map.fetch!(:glyph), at}
       end
     end
 
@@ -374,13 +381,14 @@ if Mix.env() == :test do
     # -- stats and output ---------------------------------------------------
 
     defp summarize(samples) do
-      {ok, timeouts} = Enum.split_with(samples, &is_number/1)
+      {ok, bad} = Enum.split_with(samples, &is_number/1)
       sorted = Enum.sort(ok)
       n = length(sorted)
 
       %{
         n: n,
-        timeouts: length(timeouts),
+        timeouts: Enum.count(bad, &(&1 == :timeout)),
+        invalid: Enum.count(bad, &(&1 == :invalid)),
         mean: if(n > 0, do: Enum.sum(sorted) / n, else: 0.0),
         p50: pct(sorted, n, 50),
         p95: pct(sorted, n, 95),
@@ -416,11 +424,12 @@ if Mix.env() == :test do
         environment: environment()
       }
 
-      path = Mix.Project.build_path() |> Path.dirname() |> Path.join("bench/m3.json")
+      name = if cfg.quick, do: "bench/m3-quick.json", else: "bench/m3.json"
+      path = Mix.Project.build_path() |> Path.dirname() |> Path.join(name)
       File.mkdir_p!(Path.dirname(path))
       File.write!(path, JSON.encode!(json))
-      IO.puts(table(r, ratio, cfg))
-      IO.puts("\nwrote #{Path.relative_to_cwd(path)}")
+      Mix.shell().info(table(r, ratio, cfg))
+      Mix.shell().info("\nwrote #{Path.relative_to_cwd(path)}")
     end
 
     defp table(r, ratio, cfg) do
@@ -447,7 +456,8 @@ if Mix.env() == :test do
       | flood: typing in a 16th pane (n=#{st.typing.n}) | #{keys(st.typing)} | <= 20ms |
 
       Method: keystroke t0 = monotonic time before `Fake.Tty.inject` of one printable char;
-      t1 = `at` of the first `Fake.Blit` frame after which the target screen cell shows it.
+      t1 = `at` of the latest logged `Fake.Blit` frame when the target cell first shows it
+      (read together; an upper bound), samples with t1 < t0 are counted invalid.
       One keystroke at a time, waiting for its frame. Idle rows then wait until no frame for
       min_frame_interval_ms + 2ms (each keystroke yields a rows frame then a cursor-scene
       frame), then 2ms; the "2ms after each frame" row and flood typing only sleep 2ms, so
@@ -466,6 +476,7 @@ if Mix.env() == :test do
 
     defp keys(s) do
       t = if s.timeouts > 0, do: ", #{s.timeouts} timeouts", else: ""
+      t = if s.invalid > 0, do: t <> ", #{s.invalid} invalid (frame at < t0)", else: t
       "p50 #{us(s.p50)} / p95 #{us(s.p95)} / p99 #{us(s.p99)} / max #{us(s.max)} µs#{t}"
     end
 
