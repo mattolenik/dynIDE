@@ -22,7 +22,7 @@
             rect: nil,
             text: "TERMINAL",
             token: :default,
-            props: %{},
+            props: %{mode: :terminal},
             children: []
           },
           %HerdrScene.Scene.Node{
@@ -68,7 +68,7 @@
             rect: nil,
             text: "ctrl+b",
             token: :muted,
-            props: %{},
+            props: %{key: "b", mods: [:ctrl]},
             children: []
           }
         ]

@@ -85,6 +85,26 @@ defmodule HerdrServer.ViewTest do
   defp plain_value?(v) when is_list(v), do: Enum.all?(v, &plain_value?/1)
   defp plain_value?(_), do: false
 
+  test "content rects lie inside their borders and the scene" do
+    sizes = [{5, 2}, {1, 1}, {3, 1}, {2, 3}, {4, 4}, {7, 3}, {10, 5}]
+
+    for n <- [2, 3, 6, 15], {c, r} <- sizes do
+      s = View.compute(many(fresh(80, 24), n), client(c, r))
+      assert :ok = Scene.validate(s)
+
+      for %{rect: k, border: b} <- s.panes do
+        assert k.x >= b.rect.x and k.y >= b.rect.y
+        assert k.x + k.w <= b.rect.x + b.rect.w and k.y + k.h <= b.rect.y + b.rect.h
+      end
+    end
+  end
+
+  test "mode and hint nodes are self-describing" do
+    s = View.compute(fresh(80, 24), client(80, 24))
+    assert child(s, :mode).props == %{mode: :terminal}
+    assert child(s, :hint).props == %{key: "b", mods: [:ctrl]}
+  end
+
   test "tiny clients never raise and validate" do
     for {c, r} <- [{5, 2}, {1, 1}, {3, 1}], app <- [fresh(80, 24), many(fresh(80, 24), 6)] do
       s = View.compute(app, client(c, r))

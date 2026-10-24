@@ -130,7 +130,8 @@ defmodule HerdrServer.Layout do
 
   @doc """
   Pane chrome with herdr's defaults. One pane: no border. Several: every pane gets all
-  four edges around its layout rect and a content rect inset by one cell.
+  four edges around its layout rect and a content rect inset by one cell (origin capped at
+  the outer rect's end, so the content rect always lies inside the border rect).
   """
   @spec borders([%{id: id(), rect: rect()}], rect()) :: [
           %{id: id(), rect: rect(), border: map() | nil}
@@ -139,7 +140,12 @@ defmodule HerdrServer.Layout do
 
   def borders(panes, _rect) do
     Enum.map(panes, fn %{id: id, rect: r} ->
-      content = %{x: r.x + 1, y: r.y + 1, w: max(r.w - 2, 0), h: max(r.h - 2, 0)}
+      content = %{
+        x: min(r.x + 1, r.x + r.w),
+        y: min(r.y + 1, r.y + r.h),
+        w: max(r.w - 2, 0),
+        h: max(r.h - 2, 0)
+      }
 
       %{
         id: id,

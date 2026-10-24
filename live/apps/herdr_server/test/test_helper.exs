@@ -30,11 +30,14 @@ defmodule HerdrServer.ViewHelpers do
     Enum.find(ws.tabs, &(&1.id == ws.active_tab)).layout
   end
 
+  # focuses a pane through App.Actions with a left press inside its content rect
   defp focus(app, id) do
-    ws = hd(app.session.workspaces)
-    l = Layout.focus(layout(app), id)
-    tabs = Enum.map(ws.tabs, &if(&1.id == ws.active_tab, do: %{&1 | layout: l}, else: &1))
-    app = put_in(app.session.workspaces, [%{ws | tabs: tabs}])
-    put_in(app.focus.pane, id)
+    area = app.session.area
+
+    %{rect: r} =
+      layout(app) |> Layout.panes(area) |> Layout.borders(area) |> Enum.find(&(&1.id == id))
+
+    ev = {:mouse, %{kind: :press, button: :left, x: r.x, y: r.y, mods: [], px: nil}}
+    elem(Actions.apply(app, ev), 0)
   end
 end

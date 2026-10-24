@@ -32,6 +32,10 @@ defmodule HerdrServer.SceneFixturesTest do
     end
   end
 
+  test "no orphaned fixtures" do
+    assert Fixture.names(@dir) == @fixtures |> Enum.map(&elem(&1, 0)) |> Enum.sort()
+  end
+
   test "narrow fixture has 15 positive content rects" do
     scene = View.compute(build(200, 50, [{:many, 15}]), %State{size: %{cols: 200, rows: 50}})
     assert length(scene.panes) == 15

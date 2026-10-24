@@ -22,7 +22,7 @@
             rect: nil,
             text: "PREFIX",
             token: :accent,
-            props: %{},
+            props: %{mode: :prefix},
             children: []
           },
           %HerdrScene.Scene.Node{
@@ -59,7 +59,7 @@
             rect: nil,
             text: "ctrl+b",
             token: :muted,
-            props: %{},
+            props: %{key: "b", mods: [:ctrl]},
             children: []
           }
         ]

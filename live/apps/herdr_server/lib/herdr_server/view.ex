@@ -14,7 +14,12 @@ defmodule HerdrServer.View do
       the second child. The divider is the 1-cell line at `pos` (second child's leading
       border column or row), spanning the split's area. A client resolves
       `{:chrome, [{:divider, path}], :drag}` against it.
-    * All rects are clamped into the pane area, so tiny clients never produce invalid scenes.
+    * A divider's `direction` names the split: `:horizontal` means panes side by side, so
+      the divider line itself is vertical (and `:vertical` gives a horizontal line).
+    * Divider rects are clamped into the pane area; pane rects are inside it by
+      `Layout.borders/2`, so tiny clients never produce invalid scenes.
+    * Self-describing chrome: the `:mode` node has `props: %{mode: mode}`, the `:hint` node
+      `props: %{key: binary, mods: [atom]}` (the prefix key; empty props when hidden).
   """
 
   alias HerdrScene.Scene
@@ -48,7 +53,7 @@ defmodule HerdrServer.View do
 
     %Pane{
       id: id,
-      rect: clamp(rect, area),
+      rect: rect,
       border: border && %{border | title: meta.title},
       rows: if(transport == :inline, do: {:inline, []}, else: {:ref, id, meta.layout_gen})
     }
@@ -81,9 +86,16 @@ defmodule HerdrServer.View do
   defp divider_rect(%{direction: :vertical, pos: pos, area: a}, area),
     do: clamp(%{x: a.x, y: pos, w: a.w, h: 1}, area)
 
-  defp mode(%{focus: %{mode: :terminal}}), do: text(:mode, "TERMINAL", :default)
-  defp mode(%{focus: %{mode: :prefix}}), do: text(:mode, "PREFIX", :accent)
-  defp mode(%{focus: %{mode: :resize}}), do: text(:mode, "RESIZE", :warning)
+  defp mode(%{focus: %{mode: m}}) do
+    {label, token} =
+      case m do
+        :terminal -> {"TERMINAL", :default}
+        :prefix -> {"PREFIX", :accent}
+        :resize -> {"RESIZE", :warning}
+      end
+
+    %{text(:mode, label, token) | props: %{mode: m}}
+  end
 
   defp tabs(ws) do
     children =
@@ -107,16 +119,15 @@ defmodule HerdrServer.View do
   end
 
   defp hint(%{focus: %{mode: mode}, ui: ui}) do
-    label =
-      case ui.keybinds.prefix do
-        [key | _] when mode in [:terminal, :prefix] and ui.status.show_hints -> key_label(key)
-        _ -> ""
-      end
+    case ui.keybinds.prefix do
+      [{key, mods} | _] when mode in [:terminal, :prefix] and ui.status.show_hints ->
+        label = Enum.map_join(mods ++ [key], "+", &to_string/1)
+        %{text(:hint, label, :muted) | props: %{key: key, mods: mods}}
 
-    text(:hint, label, :muted)
+      _ ->
+        text(:hint, "", :muted)
+    end
   end
-
-  defp key_label({key, mods}), do: Enum.map_join(mods ++ [key], "+", &to_string/1)
 
   defp text(id, text, token), do: %Node{role: :text, id: id, text: text, token: token}
 
