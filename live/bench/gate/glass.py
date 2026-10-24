@@ -95,6 +95,13 @@ class Term:
         except OSError:
             data = b""
         if not data:
+            # Linux gives EIO while no slave fd is open (herdr-live redirects its stdio to
+            # the log before it opens /dev/tty, while it builds); macOS just blocks. Only a
+            # child that has exited ends the session.
+            if os.waitpid(self.pid, os.WNOHANG)[0] == 0:
+                time.sleep(min(wait, 0.01))
+                return b""
+            pgroups.discard(self.pid)
             self.alive = False
             return b""
         self.answer(data)
