@@ -1,5 +1,5 @@
 #!/bin/sh
-# herdr-live launcher (dev build). Usage: herdr-live [kernel-restart | status | rollback [n] | test-on-save [on|off]]
+# herdr-live launcher (dev build). Usage: herdr-live [kernel-restart | status | <verb> ...]
 # With no argument it builds native/herdr_broker and execs `herdr_broker run`,
 # which supervises the VMs (warm standby, fd holding, handoff on kill -9 or
 # kernel-restart) and restores the host tty at exit (it replaces
@@ -17,6 +17,16 @@
 # $HERDR_LIVE_RUNTIME_DIR/state, so two instances with their own runtime dirs never share
 # one session file.
 #
+# Every other verb (ping, pane ..., rollback, test-on-save, ...; `herdr-live help`
+# lists them, docs/herdr-live/api.md describes them) runs the CLI (apps/herdr_cli)
+# against the API socket ($HERDR_LIVE_API, else the api.sock beside the default log):
+# `erl -noinput` with Elixir's ebin and the CLI's ebin, no mix and no Elixir boot,
+# ~150 ms p50 vs ~270 ms for `elixir -e` or an escript (M12 task 7). It never reads stdin.
+# Elixir's ebin dir is asked from `elixir` once and cached in _build/dev (version
+# managers' shims defeat symlink resolution); the cache is redone when the dir is gone.
+# Exit codes: 0 ok, 1 API error (JSON on stderr) or not running, 2 usage.
+# `status` prints the broker's status, then the server's (key=value) when it answers.
+#
 # herdr-live rollback [n]: roll back the newest n live reload batches (default 1)
 # through the API socket of the running instance (HerdrServer.Api.Listener, served
 # by the current primary VM; a promoted VM takes the socket over).
@@ -27,42 +37,28 @@
 # argument prints the current mode (ok gate | ok off). Off by default; it adds seconds
 # per save. HERDR_LIVE_TEST_ON_SAVE=1 starts it on. The runtime setting does not survive
 # a VM handoff (the new VM falls back to HERDR_LIVE_TEST_ON_SAVE / config).
-api() { # api <method> <params json>; prints ok <batch ids> | ok none | ok <mode> | error <msg>
-  sock=${HERDR_LIVE_API:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/api.sock}
-  [ -S "$sock" ] || { echo "herdr-live is not running" >&2; exit 1; }
-  exec elixir -e '
-    [sock, method, params] = System.argv()
-    req = JSON.encode!(%{id: "cli", method: method, params: JSON.decode!(params)})
-    with {:ok, s} <- :gen_tcp.connect({:local, sock}, 0, [:binary, packet: :line, buffer: 1_048_576, active: false], 2000),
-         :ok <- :gen_tcp.send(s, req <> "\n"),
-         {:ok, line} <- :gen_tcp.recv(s, 0, 60_000) do
-      out =
-        case JSON.decode!(line) do
-          %{"result" => %{"batches" => []}} -> "ok none"
-          %{"result" => %{"batches" => ids}} -> "ok " <> Enum.join(ids, " ")
-          %{"result" => %{"mode" => mode}} -> "ok " <> mode
-          %{"error" => %{"message" => msg}} -> "error " <> msg
-        end
-      IO.puts(out)
-      System.halt(if String.starts_with?(out, "ok"), do: 0, else: 1)
-    else
-      _ -> IO.puts(:stderr, "herdr-live is not running"); System.halt(1)
-    end' "$sock" "$1" "$2"
+# resolve symlinks (portable: no readlink -f on macOS)
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
+done
+root=$(cd "$(dirname "$self")/.." && pwd) || exit 1
+cli() { # runs in the caller's cwd, so a relative HERDR_LIVE_API keeps its meaning
+  ebin=$root/_build/dev/lib/herdr_cli/ebin
+  [ -d "$ebin" ] || (cd "$root" && MIX_ENV=dev mix compile) >&2 || exit 1
+  cache=$root/_build/dev/herdr_cli.elixir_ebin
+  exs=$(cat "$cache" 2>/dev/null)
+  if [ ! -f "$exs/elixir.app" ]; then
+    exs=$(elixir -e 'IO.puts(Path.join(Path.expand(:code.lib_dir(:elixir)), "ebin"))') || exit 1
+    printf '%s\n' "$exs" >"$cache.$$" && mv "$cache.$$" "$cache"
+  fi
+  # no crash dump in the caller's cwd if the VM cannot boot
+  ERL_CRASH_DUMP_SECONDS=0 exec erl -noinput -boot no_dot_erlang -pa "$exs" -pa "$ebin" -run Elixir.HerdrCli main_erl -extra "$@"
 }
 case ${1:-} in
-  rollback)
-    case ${2:-1} in
-      *[!0-9]* | '' | 0) echo "usage: herdr-live rollback [n]" >&2; exit 2 ;;
-    esac
-    api reload.rollback "{\"n\":${2:-1}}"
-    ;;
-  test-on-save)
-    case ${2:-status} in
-      on | off) api reload.test_on_save "{\"mode\":\"$2\"}" ;;
-      status) api reload.test_on_save "{}" ;;
-      *) echo "usage: herdr-live test-on-save [on|off]" >&2; exit 2 ;;
-    esac
-    ;;
+  kernel-restart | status | '') ;;
+  *) cli "$@" ;;
 esac
 log=${HERDR_LIVE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/herdr-live.log}
 case $log in /*) ;; *) log=$PWD/$log ;; esac
@@ -74,24 +70,22 @@ if [ -n "${HERDR_LIVE_RUNTIME_DIR:-}" ] && [ -z "${HERDR_LIVE_STATE_DIR:-}" ]; t
 fi
 # 0700 when created here: the API socket (HerdrServer.Api.Listener) lives beside the log
 (umask 077 && mkdir -p "$(dirname "$log")") || exit 1
-# resolve symlinks (portable: no readlink -f on macOS)
-self=$0
-while [ -L "$self" ]; do
-  link=$(readlink "$self")
-  case $link in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
-done
-cd "$(dirname "$self")/.." || exit 1
+sock=${HERDR_LIVE_API:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/api.sock}
+case $sock in /*) ;; *) sock=$PWD/$sock ;; esac
+cd "$root" || exit 1
 broker=$PWD/native/herdr_broker/target/release/herdr_broker
 build() { cargo build --release --locked --quiet --manifest-path native/herdr_broker/Cargo.toml; }
 case ${1:-} in
-  kernel-restart | status)
+  kernel-restart)
     [ -x "$broker" ] || build >&2 || exit 1
     exec "$broker" "$1"
     ;;
-  '') ;;
-  *)
-    echo "usage: herdr-live [kernel-restart | status | rollback [n] | test-on-save [on|off]]" >&2
-    exit 2
+  status)
+    [ -x "$broker" ] || build >&2 || exit 1
+    "$broker" status
+    rc=$?
+    [ -S "$sock" ] && (HERDR_LIVE_API=$sock cli server status --kv 2>/dev/null)
+    exit $rc
     ;;
 esac
 export MIX_ENV="${MIX_ENV:-dev}"

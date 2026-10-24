@@ -90,7 +90,7 @@ defmodule HerdrServer.Api.Spec do
         [],
         "server_status",
         [],
-        "herdr-live server status"
+        "herdr-live server status [--kv]"
       )
     ]
   end
@@ -104,7 +104,7 @@ defmodule HerdrServer.Api.Spec do
         [opt("n", {:integer, 1, 100}, "Number of batches to roll back; default 1.")],
         "reload_rollback",
         [:not_available, :failed, :timeout],
-        "herdr-live reload rollback [<n>]"
+        "herdr-live rollback [<n>]"
       ),
       method(
         "reload.test_on_save",
@@ -113,7 +113,7 @@ defmodule HerdrServer.Api.Spec do
         [opt("mode", {:enum, ["on", "off"]}, "Set the gate; omit to read it.")],
         "test_on_save",
         [:not_available],
-        "herdr-live reload test-on-save [on|off]"
+        "herdr-live test-on-save [on|off]"
       )
     ]
   end
@@ -331,7 +331,7 @@ defmodule HerdrServer.Api.Spec do
         [pid],
         "process_info",
         [:not_found],
-        "herdr-live pane process-info <pane_id>"
+        "herdr-live pane process-info [<pane_id>]"
       ),
       method(
         "pane.send_text",
@@ -367,7 +367,7 @@ defmodule HerdrServer.Api.Spec do
         [pid, source(), lines()],
         "pane_read",
         send_errors,
-        "herdr-live pane read <pane_id> [--source visible|recent] [--lines N]"
+        "herdr-live pane read [<pane_id>] [--source visible|recent] [--lines N]"
       ),
       method(
         "pane.wait_for_output",
@@ -383,7 +383,7 @@ defmodule HerdrServer.Api.Spec do
         ],
         "output_matched",
         [:not_found, :timeout],
-        "herdr-live pane wait-output <pane_id> (--match S | --regex R) [--source visible|recent] [--lines N] [--timeout MS]"
+        "herdr-live pane wait-output [<pane_id>] (--match S | --regex R) [--source visible|recent] [--lines N] [--timeout MS]"
       )
     ]
   end
@@ -410,7 +410,7 @@ defmodule HerdrServer.Api.Spec do
         ],
         "subscription_started",
         [:not_found, :events_lost],
-        "herdr-live events [--type T]... [--pane <pane_id>]"
+        "herdr-live events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] [--workspace <workspace_id>]"
       )
     ]
   end

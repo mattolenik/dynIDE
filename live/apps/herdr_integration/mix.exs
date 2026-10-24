@@ -24,6 +24,7 @@ defmodule HerdrIntegration.MixProject do
 
   defp deps do
     [
+      {:herdr_cli, in_umbrella: true},
       {:herdr_scene, in_umbrella: true},
       {:herdr_server, in_umbrella: true},
       {:herdr_term, in_umbrella: true}

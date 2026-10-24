@@ -3,7 +3,7 @@ defmodule HerdrScene.DependencyRuleTest do
   use ExUnit.Case, async: false
 
   # The test-only integration app is the one exemption, by exact name.
-  @integration_deps [:herdr_scene, :herdr_server, :herdr_term]
+  @integration_deps [:herdr_cli, :herdr_scene, :herdr_server, :herdr_term]
 
   test "every app depends on herdr_scene (and optionally herdr_reload); herdr_scene depends on nothing" do
     deps =

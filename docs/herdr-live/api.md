@@ -67,7 +67,7 @@ Errors: none.
 
 Server generation, process and reload facts.
 
-CLI: `herdr-live server status`
+CLI: `herdr-live server status [--kv]`
 
 Params: none.
 
@@ -81,7 +81,7 @@ Errors: none.
 
 Roll back the last n reload batches.
 
-CLI: `herdr-live reload rollback [<n>]`
+CLI: `herdr-live rollback [<n>]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -95,7 +95,7 @@ Errors: `invalid_params`, `not_available`, `failed`, `timeout`
 
 Read or set the test-on-save gate.
 
-CLI: `herdr-live reload test-on-save [on|off]`
+CLI: `herdr-live test-on-save [on|off]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -388,7 +388,7 @@ Errors: `invalid_params`, `not_found`
 
 OS process facts of a pane.
 
-CLI: `herdr-live pane process-info <pane_id>`
+CLI: `herdr-live pane process-info [<pane_id>]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -447,7 +447,7 @@ Errors: `invalid_params`, `not_found`, `backpressure`
 
 Read terminal text.
 
-CLI: `herdr-live pane read <pane_id> [--source visible|recent] [--lines N]`
+CLI: `herdr-live pane read [<pane_id>] [--source visible|recent] [--lines N]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -463,7 +463,7 @@ Errors: `invalid_params`, `not_found`, `backpressure`
 
 Wait until a pane's output matches a substring or a regex.
 
-CLI: `herdr-live pane wait-output <pane_id> (--match S | --regex R) [--source visible|recent] [--lines N] [--timeout MS]`
+CLI: `herdr-live pane wait-output [<pane_id>] (--match S | --regex R) [--source visible|recent] [--lines N] [--timeout MS]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -484,7 +484,7 @@ Errors: `invalid_params`, `not_found`, `timeout`
 
 Turn the connection into an event stream.
 
-CLI: `herdr-live events [--type T]... [--pane <pane_id>]`
+CLI: `herdr-live events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] [--workspace <workspace_id>]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
