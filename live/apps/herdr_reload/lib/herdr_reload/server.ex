@@ -79,7 +79,7 @@ defmodule HerdrReload.Server do
        rejected_dir: Path.join([Compiler.build_path(compile_opts), "herdr_reload", "rejected"]),
        # batch ids restart per VM run: the stamp keeps an earlier run's rejects
        vm_stamp: System.os_time(:millisecond),
-       mtimes: %{},
+       mtimes: Compiler.source_mtimes(compile_opts),
        ring: Ring.new(Keyword.get(opts, :ring_depth, 8)),
        next_id: 1
      }}

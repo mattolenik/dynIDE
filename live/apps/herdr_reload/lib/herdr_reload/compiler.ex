@@ -34,6 +34,24 @@ defmodule HerdrReload.Compiler do
   @spec build_path(keyword()) :: Path.t()
   def build_path(opts), do: in_project(opts, &Mix.Project.build_path/0)
 
+  @doc """
+  Current mtimes of the project's `lib/**/*.ex` sources (each umbrella child's).
+  A Server seeds its mtimes with them at start, taking each as the mtime Mix
+  recorded, so the first same-second edit after start is back-dated too.
+  """
+  @spec source_mtimes(keyword()) :: %{Path.t() => integer()}
+  def source_mtimes(opts) do
+    # spelled from project_dir, as callers spell batch paths (cwd may be a realpath)
+    base = opts[:project_dir] || File.cwd!()
+
+    in_project(opts, fn ->
+      # ponytail: lib/ only; other elixirc_paths start unseeded, as before
+      roots = Map.values(Mix.Project.apps_paths() || %{"." => "."})
+      paths = Enum.flat_map(roots, &Path.wildcard(Path.join(Path.expand(&1, base), "lib/**/*.ex")))
+      Enum.reduce(paths, %{}, &update_mtime/2)
+    end)
+  end
+
   @doc "Every beam in the project's ebin dirs, read from disk."
   @spec snapshot(keyword()) :: cache()
   def snapshot(opts), do: opts |> ebin_dirs() |> read_beams()

@@ -98,6 +98,22 @@ defmodule HerdrReload.CompilerTest do
     assert Map.keys(r2.changed) == [ToyC.V]
   end
 
+  # a reloader that just started knows no mtimes; Mix recorded v.ex at its last compile
+  for {name, offset} <- [same_second: 0, next_second: 1] do
+    test "first edit after start, #{name} as the last compile, is compiled" do
+      {dir, opts, compiled} = toy!(:"toy_c_first_#{unquote(name)}")
+      p = path(dir, "v")
+      snap = Compiler.snapshot(opts)
+      seeded = Compiler.source_mtimes(opts)
+      assert seeded[p] == compiled[p]
+
+      write_source!(dir, "lib/v.ex", v_src(2))
+      File.touch!(p, compiled[p] + unquote(offset))
+      assert {:ok, r} = Compiler.compile(snap, [p], seeded, opts)
+      assert Map.keys(r.changed) == [ToyC.V]
+    end
+  end
+
   test "compile error restores unloaded modules" do
     {dir, opts, mtimes} = toy!(:toy_c_err)
     assert v() == 1
