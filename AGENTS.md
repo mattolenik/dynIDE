@@ -160,9 +160,8 @@ Full guide: `docs/herdr-live/editing-live.md`. Human checks: `docs/herdr-live/re
 - A new field in a persisted struct needs a `code_change/3` that merges
   defaults. No `fn` in state (rejected at the guard). Guarded call sites
   stay thin; blanket `rescue` stays in `HerdrReload.Guard`.
-- Read the status line: `r<N> <k>m` loaded, `r! compile` compile error,
-  `r<N> rolled back: <reason>`, `synced <k>m, no rollback`, `r rejected`,
-  `r blocked`, `tests ...`, `handoff ...`. The transient notice has detail.
+- Read the status line (`r<N> <k>m`, `r! compile`, `rolled back`, `synced ..., no
+  rollback`, `tests ...`, `handoff ...`); every text is in the guide.
 - A rolled-back source reloads only when its content changes: edit or revert
   it, a bare re-save does nothing. `herdr-live rollback [n]` rolls back by hand.
 - `herdr-live test-on-save on|off|status` (or `HERDR_LIVE_TEST_ON_SAVE=1`) gates

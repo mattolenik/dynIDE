@@ -48,7 +48,7 @@ Prepare a big file once: `seq 1 3000000 > /tmp/herdr-big.txt` (about 22 MB).
 | B4 | In a pane: `htop` | htop draws correctly (bars, colours, header), keys work, `q` leaves it. | [ ] pass  [ ] fail |
 | B5 | Resize window A | Panes reflow, no debris, shells see the new size (`stty size`). | [ ] pass  [ ] fail |
 | B6 | Second terminal client at another size (m3 item 2): needs the M16 transport, not available. Substitute: resize window A narrow (about 80x24), then wide, with `cat` running | Layout adapts both ways; content intact. | [ ] pass  [ ] fail  [ ] skipped |
-| B8 | `ctrl-b q` | herdr-live exits with status 0 (`echo $?`); tty is cooked and the prompt is back; no stray escape sequences. (Detach and quit are the same today.) | [ ] pass  [ ] fail |
+| B7 | `ctrl-b q` | herdr-live exits with status 0 (`echo $?`); tty is cooked and the prompt is back; no stray escape sequences. (Detach and quit are the same today.) | [ ] pass  [ ] fail |
 
 Notes:
 
@@ -63,8 +63,8 @@ Start `just live-run`. Make at least 4 panes. In window A:
 
 | # | Step | Expected | Result |
 |---|---|---|---|
-| C1 | In pane 1 run `htop`. In pane 2 run `yes | head -n 2000000`. Type in pane 3 meanwhile (`echo c1-ok`, edit a long line, hold a key for repeat) | htop keeps refreshing at its usual rate (note any stutter or frozen frames); the `yes` pane scrolls and ends; typing in pane 3 echoes without noticeable delay. Note visible lag in ms-ish terms ("none", "small", "bad") here: ______ | [ ] pass  [ ] fail |
-| C2 | In pane 2 run a fast build log: `cd live/native/herdr_kernel && cargo build -vv` (touch a source first so it rebuilds, e.g. `touch src/lib.rs`), or `yes | head -n 2000000` again. Type in pane 3 and watch htop in pane 1 | Same as C1: typing responsive, htop alive. Note lag: ______ | [ ] pass  [ ] fail |
+| C1 | In pane 1 run `htop`. In pane 2 run `yes \| head -n 2000000`. Type in pane 3 meanwhile (`echo c1-ok`, edit a long line, hold a key for repeat) | htop keeps refreshing at its usual rate (note any stutter or frozen frames); the `yes` pane scrolls and ends; typing in pane 3 echoes without noticeable delay. Note visible lag in ms-ish terms ("none", "small", "bad") here: ______ | [ ] pass  [ ] fail |
+| C2 | In pane 2 run a fast build log: `cd live/native/herdr_kernel && cargo build -vv` (touch a source first so it rebuilds, e.g. `touch src/lib.rs`), or `yes \| head -n 2000000` again. Type in pane 3 and watch htop in pane 1 | Same as C1: typing responsive, htop alive. Note lag: ______ | [ ] pass  [ ] fail |
 | C3 | After the flood ends, type at a prompt in pane 2 | Echo is immediate again (the reader was promoted back); no residual lag. | [ ] pass  [ ] fail |
 | C4 | Fast full-screen TUI in a pane: `htop -d 1` (fastest refresh) or `watch -n 0.1 'ls -l /'`; if you have a TUI that redraws at high frame rates (a pager with a fast scroll, `vtop`, a game), use it. Watch it for 30 s while typing in another pane | The TUI stays smooth enough to use (a demoted reader may slow a very fast TUI; record how it looks, "smooth" / "slower than in a plain terminal" / "visibly stuttering"): ______ Typing elsewhere is unaffected. | [ ] pass  [ ] fail |
 | C5 | Same C1 under the demotion with window A resized during the flood | No crash, no debris once the flood ends. | [ ] pass  [ ] fail |
@@ -109,6 +109,7 @@ Notes (latency you felt, anything that looked wrong):
 | F4 | `just live-log-summary` | Shows the crash handoff and no `session_lost`. | [ ] pass  [ ] fail |
 | F5 | Make a reload edit (D1 style) right after the crash handoff | Loads normally in the new primary. If you edited something before the crash and after the standby booted, the status line shows `synced <k>m, no rollback`. | [ ] pass  [ ] fail |
 | F6 | `ctrl-b q` | Clean exit, status 0, tty cooked. | [ ] pass  [ ] fail |
+| F7 | Last, destructive (ends the session and its panes). m3 asked for "kill -9 the VM from another window; the tty must come back cooked": with the broker that kill is the crash handoff of F2, not a tty restore. To test the worst case, run `just live-run` again, then in window B read `broker_pid` from `live/bin/herdr-live status` and run `kill -9 <broker_pid>` (that pid only) | Truthful expectation, from `native/herdr_broker/src/tty.rs`: the termios save/restore and the restore escape sequence run in the broker process, so a SIGKILLed broker cannot run them. The VMs lose their broker link and halt (`Link.halt`), so the session and its panes end (the broker is the only holder of the pane fds). The tty may be left raw, in the alt screen, with mouse reporting on. Expected recovery: type `reset` (blind, then Enter) or `stty sane`, and `printf '\033[?1049l\033[?1000l\033[?25h'`. Record what you actually see and whether `reset` was needed; this is informational, not a failure. | [ ] as described  [ ] other: ______ |
 
 Notes:
 

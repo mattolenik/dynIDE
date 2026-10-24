@@ -31,7 +31,7 @@ The reload pipeline runs only in the primary VM. The warm standby VM does not ru
 |---|---|
 | any `.ex` under `live/apps/*/lib` (server, term, scene, reload) | save; hot reload |
 | `herdr_reload` itself | save; it is reloadable, but a mistake in it is not guarded by itself |
-| NIF Rust code (`live/native/herdr_kernel`, `herdr_term`), libghostty-vt | rebuild, then `live/bin/herdr-live kernel-restart` (graceful handoff to a fresh VM, children keep running, about 1.4 s wall, input is queued and replayed) |
+| NIF Rust code (`live/native/herdr_kernel`, `herdr_term`), libghostty-vt | rebuild, then `live/bin/herdr-live kernel-restart` (graceful handoff to a fresh VM, children keep running; input is queued and replayed. The handoff window was 8-12 ms (results/m6-gate.md); the whole `kernel-restart` took 1417 ms wall in the typing bench under load, results/m5.md `restart_wall_ms`) |
 | `live/native/herdr_broker` | restart herdr-live (the broker is the process supervising the VMs) |
 | `config/*.exs`, `mix.exs`, new deps | restart herdr-live (a dep added mid-session needs a VM restart) |
 | Elixir tests only (`apps/*/test`) | not watched; run `mix test` yourself |
@@ -194,7 +194,7 @@ Off by default. It adds about a second per save, so it is for risky edits.
   `test-on-save on` again. Turning it off clears the blocked set (the next save loads
   whatever is on disk).
 - Cost, measured on `view.ex` (n=5): save to "tests passed" median 861 ms, save to loaded
-  median 981 ms, against about 190 ms without the gate (results/m6-gate.md).
+  median 981 ms (results/m7.md, Task 6 bench `bench/reload/test_gate_bench.exs`), against about 190 ms without the gate (results/m6-gate.md).
 
 ## Telemetry
 
@@ -205,10 +205,10 @@ lists are comma-joined.
 
 | kind | when | keys |
 |---|---|---|
-| `vm_start` / `vm_stop` | VM up / down | `gen` `role` `adopt` (`fresh`/`crash`/`graceful`) |
+| `vm_start` / `vm_stop` | VM up / down | `vm_start`: `gen` `role` `adopt` (`fresh`/`crash`/`graceful`); `vm_stop`: `gen` |
 | `reload` | a batch loaded | `batch` `fanout` `modules` `compile_ms` |
 | `compile_error` | nothing loaded | `file` `line` `count` `msg` |
-| `rollback` | batch rolled back | `batch` `fanout` `modules` `reason` (`manual`/`raise`/`throw`/`exit`/`timeout`/`local_fun`) `detail` |
+| `rollback` | batch rolled back | `batch` `fanout` `modules` `reason` (`manual`/`raise`/`throw`/`exit`/`timeout`/`local_fun`/`other`) `detail` |
 | `rejected` | local fun in state | `module` `path` |
 | `purge_blocked` | old code still running | `module` `holders` |
 | `sync` | promotion sync | `count` `modules` `failed` |
@@ -266,7 +266,8 @@ grep -E 'herdr-event (session_lost|crash|broker_handoff_failed)' "$L"
   ui_field < 1 s, view_loop <= 150 ms, closure rejected, pane_in_window reconciled).
   Other metrics: `just live-bench-handoff`, `just live-bench-glass`,
   `just live-bench-os-floor`; `live/bench/gate_round.sh <tag> [suite...]` runs the whole
-  slice-1 table one suite after another.
+  slice-1 table one suite after another, logging under
+  `.superpowers/sdd/m6/runs/<os>-<tag>` unless `OUT` is set.
 - After any change to the snapshot path (`Vt.encode_snapshot`/`restore`, the Snapshotter,
   the broker blob) or a libghostty-vt bump, re-run the kill -9 bench with 30 runs:
   `cd live && elixir bench/handoff/kill9.exs runs=30`. It exits 1 if any run has
