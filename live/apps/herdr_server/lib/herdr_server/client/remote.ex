@@ -96,6 +96,8 @@ defmodule HerdrServer.Client.Remote do
             # PREPARE..THAW: no reads, writes kept in frozen_out (newest first)
             frozen: false,
             frozen_out: [],
+            # {pane_id, {image_id, fp}} the client has (Client.Remote.Images)
+            images_sent: MapSet.new(),
             # pane mode (R17): the pane id and the Store monitor
             pane: nil,
             store_ref: nil

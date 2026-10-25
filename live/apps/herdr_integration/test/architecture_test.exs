@@ -7,6 +7,7 @@ defmodule HerdrIntegration.ArchitectureTest do
   use ExUnit.Case, async: true
 
   alias HerdrScene.{Cell, Event}
+  alias HerdrScene.Scene.Graphic
   alias HerdrScene.Scene.Pane, as: ScenePane
   alias HerdrServer.App.{Actions, Modal}
   alias HerdrServer.Client.{Keys, PaneScene, State}
@@ -228,8 +229,40 @@ defmodule HerdrIntegration.ArchitectureTest do
 
     scenes ++
       statuses ++
+      graphics(split, state.(:terminal, [])) ++
       modal_scenes(split, state.(:terminal, [])) ++
       pane_scenes ++ layers ++ handoffs ++ simple_messages(row)
+  end
+
+  # a pane with a kitty placement, its image and a withheld one (decision 8)
+  defp graphics(app, st) do
+    g = %{
+      image: {7, 1},
+      placement: 1,
+      x: 0,
+      y: 0,
+      cols: 2,
+      rows: 1,
+      x_off: 0,
+      y_off: 0,
+      src: {0, 0, 0, 0},
+      px: {0, 0},
+      z: 0,
+      size: {1, 1},
+      format: :rgb,
+      bytes: 3
+    }
+
+    id = app.focus.pane
+
+    images =
+      for f <- Graphic.formats(),
+          d <- [<<1, 2, 3>>, nil],
+          do:
+            {"image #{f}/#{inspect(d)}",
+             {:image, id, {7, 1}, %{format: f, width: 1, height: 1, bytes: 3, data: d}}}
+
+    [{"scene graphics", {:scene, View.compute(app, %{st | graphics: %{id => [g]}})}} | images]
   end
 
   # every M13 modal kind open over the split app (menus, prompts, confirms, settings, ...)

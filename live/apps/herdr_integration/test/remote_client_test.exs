@@ -10,6 +10,9 @@ defmodule HerdrIntegration.RemoteClientTest do
   alias HerdrIntegration.Driver
   alias HerdrServer.App.Store
   alias HerdrServer.Client.{Remote, Socket}
+  alias HerdrServer.Kernel.Fake.{Keeper, Vt}
+  alias HerdrServer.Pane.Rows
+  alias HerdrTerm.Client
   alias HerdrTerm.Remote.Conn
 
   @wait 3_000
@@ -97,6 +100,51 @@ defmodule HerdrIntegration.RemoteClientTest do
 
     Driver.type(remote, "two")
     assert has?(remote, "two")
+  end
+
+  @img %{format: :rgba, width: 2, height: 1, bytes: 8, data: <<0::64>>}
+
+  defp placement do
+    %{
+      image: {7, 42},
+      placement: 3,
+      x: 0,
+      y: 0,
+      cols: 4,
+      rows: 2,
+      x_off: 0,
+      y_off: 0,
+      src: {0, 0, 0, 0},
+      px: {0, 0},
+      z: 0,
+      size: {2, 1},
+      format: :rgba,
+      bytes: 8
+    }
+  end
+
+  defp images(client), do: :sys.get_state(Client.render(client)).images
+
+  defp show_image(client) do
+    [id] = pane_ids(client)
+    {:ok, %{vt: vt}} = Keeper.lookup(Rows.kernel_id(id))
+    :ok = Vt.set_graphics(vt, [placement()], %{7 => @img})
+    Driver.output(id, "x")
+    id
+  end
+
+  test "a socket client gets the kitty image before the scene placing it", ctx do
+    {remote, _conn, _id} = start_remote(ctx, {80, 24})
+    id = show_image(remote)
+    assert eventually(fn -> images(remote) == %{{id, 7, 42} => @img} end)
+  end
+
+  test "an image over the remote cap arrives withheld", ctx do
+    Application.put_env(:herdr_server, :remote_image_max_bytes, 4)
+    on_exit(fn -> Application.delete_env(:herdr_server, :remote_image_max_bytes) end)
+    {remote, _conn, _id} = start_remote(ctx, {80, 24})
+    id = show_image(remote)
+    assert eventually(fn -> images(remote) == %{{id, 7, 42} => %{@img | data: nil}} end)
   end
 
   defp eventually(fun, timeout \\ 5_000) do

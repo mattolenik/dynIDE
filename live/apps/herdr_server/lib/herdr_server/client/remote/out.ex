@@ -11,13 +11,20 @@ defmodule HerdrServer.Client.Remote.Out do
   sends one error notice: a failed `put` sends that message unbatched and replaces the
   outbox with a fresh one (batching resumes, the next flush resends every row); a failed
   flush sends nothing until the next frame.
+
+  Images (`Client.Remote.Images`, editable, guarded the same way): every scene written is
+  preceded by an `{:image, ...}` frame for each image it references that this conn has
+  not sent (`images_sent`); one whose placement says more than
+  `config :herdr_server, :remote_image_max_bytes` (default 8 MiB) goes with `data: nil`.
+  `full/1` (attach, resume) resends them all.
   """
 
   alias HerdrReload.Guard
   alias HerdrScene.Wire
   alias HerdrServer.App.Store
+  alias HerdrServer.Client
   alias HerdrServer.Client.Outbox
-  alias HerdrServer.Client.Remote.Carry
+  alias HerdrServer.Client.Remote.{Carry, Images}
   alias HerdrServer.Native.Link, as: NLink
 
   @registry HerdrServer.Client.Remote.Registry
@@ -47,6 +54,8 @@ defmodule HerdrServer.Client.Remote.Out do
   @doc "Writes the last scene with every row (an attach or resume)."
   @spec full(map) :: map
   def full(state) do
+    state = %{state | images_sent: MapSet.new()}
+
     case outbox(:full, [state.outbox]) do
       {:ok, {msgs, outbox}} -> write_all(%{state | outbox: outbox, last_flush: now()}, msgs)
       {:failed, f} -> failed(state, f)
@@ -59,8 +68,10 @@ defmodule HerdrServer.Client.Remote.Out do
     do:
       write(state, {:notice, %{level: :error, text: "client output failed: #{Guard.message(f)}"}})
 
-  defp outbox(fun, args),
-    do: Guard.run_twice(Outbox, fun, args, scan: false, server: Store.reload_server())
+  defp outbox(fun, args), do: guarded(Outbox, fun, args)
+
+  defp guarded(mod, fun, args),
+    do: Guard.run_twice(mod, fun, args, scan: false, server: Store.reload_server())
 
   # a failing pending? still tries the (guarded) flush
   defp pending?(state), do: outbox(:pending?, [state.outbox]) != {:ok, false}
@@ -117,9 +128,46 @@ defmodule HerdrServer.Client.Remote.Out do
 
   @spec write(map, term) :: map
   def write(%{socket: nil} = state, _msg), do: state
-  def write(%{frozen: true} = state, msg), do: %{state | frozen_out: [msg | state.frozen_out]}
+  def write(state, {:scene, scene} = msg), do: state |> images(scene) |> send_msg(msg)
+  def write(state, msg), do: send_msg(state, msg)
 
-  def write(state, msg) do
+  # the images `scene` references that the client lacks, before it
+  defp images(state, scene) do
+    with {:ok, missing} <- guarded(Images, :missing, [scene, state.images_sent]),
+         state = Enum.reduce(missing, state, &image/2),
+         {:ok, sent} <- guarded(Images, :prune, [state.images_sent, scene]) do
+      %{state | images_sent: sent}
+    else
+      {:failed, f} -> failed(state, f)
+    end
+  end
+
+  defp image({pane, {id, _} = key, placement}, state) do
+    max = Application.get_env(:herdr_server, :remote_image_max_bytes, 8 * 1024 * 1024)
+
+    payload =
+      if placement.bytes > max,
+        do: guarded(Images, :withheld, [placement]),
+        else: guarded(Client.Images, :fetch, [pane, id])
+
+    case payload do
+      # gone from the vt: not sent, the next scene tries again
+      {:ok, nil} ->
+        state
+
+      {:ok, p} ->
+        state = send_msg(state, {:image, pane, key, p})
+        %{state | images_sent: MapSet.put(state.images_sent, {pane, key})}
+
+      {:failed, f} ->
+        failed(state, f)
+    end
+  end
+
+  defp send_msg(%{socket: nil} = state, _msg), do: state
+  defp send_msg(%{frozen: true} = state, msg), do: %{state | frozen_out: [msg | state.frozen_out]}
+
+  defp send_msg(state, msg) do
     case :gen_tcp.send(state.socket, Wire.encode(msg)) do
       :ok -> state
       {:error, _} -> drop(state)
