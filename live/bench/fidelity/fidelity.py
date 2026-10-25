@@ -142,8 +142,7 @@ def check_queries(h, tmp):
 
 def check_wheel_scroll(h, tmp):
     h.run("seq 1 500", "seq 1 500")
-    x, y = h.find("500", exclude="seq")
-    lowest = min(numbers(h, x))
+    x, y, lowest = seq_shown(h)
     for _ in range(3):
         h.sgr(64, x, y - 5)
     h.wait(lambda: min(numbers(h, x), default=lowest) <= lowest - 9 and scrollbar(h),
@@ -153,6 +152,26 @@ def check_wheel_scroll(h, tmp):
     h.wait(lambda: not scrollbar(h) and h.find("$ z", exclude="seq") is not None, "typing snaps to the bottom")
     h.send(b"\x7f")
     return f"3 notches scrolled {shown} lines, scrollbar shown, typing snapped back"
+
+
+def seq_shown(h):
+    """(column, row, lowest number) of `seq 1 500`'s output. The row is the one whose number
+    is 500 alone: `run`'s marker `done-<ns>` holds "500" in about 1 run of 70, and
+    `find("500")` then took the marker's column (M9's page_up flake: `min()` of an empty
+    list, or a PageUp that scrolled but was never seen)."""
+    got = []
+
+    def shown():
+        rows = h.screen.rows()
+        for y in range(len(rows) - 1, -1, -1):
+            m = re.search(r"(?<![\w-])500(?!\S)", rows[y])
+            if m and 500 in numbers(h, m.start()):
+                got.append((m.start(), y, min(numbers(h, m.start()))))
+                return True
+        return False
+
+    h.wait(shown, "a row with the number 500 alone after seq 1 500")
+    return got[-1]
 
 
 def numbers(h, col):
@@ -172,8 +191,7 @@ def scrollbar(h):
 
 def check_page_up(h, tmp):
     h.run("seq 1 500", "seq 1 500")
-    x, _ = h.find("500", exclude="seq")
-    lowest = min(numbers(h, x))
+    x, _, lowest = seq_shown(h)
     h.send(b"\x1b[5~")
     h.wait(lambda: min(numbers(h, x), default=lowest) <= lowest - 20, "PageUp shows an earlier page")
     moved = lowest - min(numbers(h, x))
