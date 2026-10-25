@@ -12,7 +12,10 @@ repaints fully.
 
 demo: drives bin/live-demo as a job of an interactive /bin/sh (job control on)
 in a pty: first paint, input, Ctrl-Z / fg with full repaint, SIGWINCH resize,
-kill -9 of the VM (the wrapper restores the tty), and `q` exiting 0.
+kill -9 of the VM (the wrapper restores the tty), `kill %1` of a suspended job
+(it runs on in the background without touching the tty, never stopped by
+SIGTTOU/SIGTTIN, and exits non-zero), `kill %1; fg` (ends on the main screen,
+cooked), and `q` exiting 0.
 
 herdr: runs bin/herdr-live attached (real tty and blit kernels, real server
 kernel) as the session leader of a 120x40 pty: first frame (alt screen,
@@ -396,24 +399,52 @@ class Shell:
         pgroups.add(self.job)
         return vm
 
-    def ended(self, at, what):
+    def ended(self, at, what, restore=True):
         """After the demo job ends: the restore sequence and a prompt follow,
-        and the tty is cooked again. Returns the job's exit status."""
-        at = self.expect(ALT_OFF, at, f"restore after {what}")
-        self.expect(PROMPT, at, f"prompt after {what}")
+        and the tty is cooked again. Returns the job's exit status. Without
+        `restore`, a job that ends before it re-enters the alt screen may
+        write nothing; the screen must still end on the main screen."""
+        if restore:
+            at = self.expect(ALT_OFF, at, f"restore after {what}")
+            self.expect(PROMPT, at, f"prompt after {what}")
+        else:
+            def settled(seen):
+                if seen.rfind(ALT_ON) > seen.rfind(ALT_OFF):
+                    return False
+                return seen.find(PROMPT, max(seen.rfind(ALT_OFF), 0)) >= 0
+            self.expect(settled, at, f"prompt on the main screen after {what}")
         pgroups.discard(self.job)
-        ok(lflag(self.fd) & COOKED == COOKED, f"{what}: restore sequence, prompt, tty cooked")
+        ok(self.main_screen(at) and lflag(self.fd) & COOKED == COOKED,
+           f"{what}: {'restore sequence, ' if restore else ''}prompt, main screen, tty cooked")
         out = self.run(b"echo demo-exit=$?", f"exit status after {what}")
         m = re.search(r"demo-exit=(\d+)", out)
         if not m:
             fail(f"{what}: no exit status in {out!r}")
         return int(m.group(1))
 
+    def suspend(self):
+        """Ctrl-Z: the alt screen is left and the shell prompts."""
+        at = self.send(b"\x1a")
+        self.expect(PROMPT, self.expect(ALT_OFF, at, "alt screen left on Ctrl-Z"), "prompt after Ctrl-Z")
+
+    def main_screen(self, at):
+        """No alt screen entered since `at` is still open."""
+        seen = bytes(transcript[at:])
+        return seen.rfind(ALT_ON) <= seen.rfind(ALT_OFF)
+
     def run(self, cmd, label):
         """Runs a shell command at the prompt; returns its output."""
         start = self.send(cmd + b"\n")
         end = self.expect(PROMPT, start + len(cmd), label)
         return bytes(transcript[start:end]).decode("utf-8", "replace")
+
+
+def alive_group(pgid):
+    """A process of group `pgid` still runs (zombies do not count: dash reaps
+    a background job only when it next runs a command)."""
+    out = subprocess.run(["ps", "-A", "-o", "pgid=,stat="], capture_output=True, text=True).stdout
+    return any(f[0] == str(pgid) and not f[1].startswith("Z")
+               for f in (line.split() for line in out.splitlines()) if len(f) == 2)
 
 
 def demo():
@@ -423,6 +454,7 @@ def demo():
                if k not in ("ENV", "BASH_ENV", "HERDR_SOCKET_PATH", "HERDR_CLIENT_SOCKET_PATH")}
         env.update(PS1="$ ", PS2="> ", HISTFILE="/dev/null", TERM="xterm-256color",
                    LIVE_DEMO_LOG=os.path.join(tmp, "live-demo.log"))
+        log = env["LIVE_DEMO_LOG"]
         sh = Shell(env)
         sh.expect(PROMPT, 0, "first prompt")
         # Job control on; no line editor, so the tty stays cooked at the prompt.
@@ -465,17 +497,47 @@ def demo():
         out = sh.run(b"stty -a", "stty -a after kill -9")
         ok(word(out, "icanon") and word(out, "echo"), "kill -9: stty -a shows icanon echo")
 
-        # A signal to the stopped job reaches the wrapper sh too; it must still restore.
+        # A signal to the stopped job reaches the wrapper sh too. bash's `kill %1` also
+        # sends SIGCONT (dash's does not, hence the explicit one), so the job runs on
+        # in the background, where the VM must not touch the tty: a tcsetattr or read
+        # there raises SIGTTOU/SIGTTIN, which can land after a later `fg` and stop the
+        # job again (the old `kill %1; fg` flake).
         start = sh.send(b"bin/live-demo\n")
-        sh.paint(b"100x30", start, "second run first paint")
-        at = sh.send(b"\x1a")
-        sh.expect(PROMPT, sh.expect(ALT_OFF, at, "alt screen left on Ctrl-Z"), "prompt after Ctrl-Z")
-        # fg: a job continued in the background would stop again on its tty writes.
-        status = sh.ended(sh.send(b"kill %1; fg\n"), "kill %1")
-        ok(status != 0, f"kill %1: wrapper exits non-zero (got {status})")
+        vm = sh.paint(b"100x30", start, "second run first paint")
+        sh.suspend()
+        at = len(transcript)
+        sh.run(b"kill %1; kill -CONT %1", "prompt after kill %1")
 
+        def stopped():
+            return "T" in subprocess.run(["ps", "-o", "stat=", "-p", str(vm)],
+                                         capture_output=True, text=True).stdout
+
+        # The VM logs SIGTERM once it runs again; a tty access stops it first.
+        got = sh.expect(lambda _: ("stopped" if stopped() else
+                                   "SIGTERM received" in open(log).read() and "running"),
+                        at, "VM resumed in the background")
+        if got == "running":
+            time.sleep(0.5)
+            got = "stopped" if stopped() else got
+        ok(got == "running", f"kill %1: the VM runs on in the background, not stopped by tty access ({got})")
+        # It exits there; the guard leaves the shell's tty alone (suspend restored it).
+        sh.expect(lambda _: not alive_group(sh.job), at, "background job exit after kill %1")
+        pgroups.discard(sh.job)
+        out = sh.run(b"jobs", "jobs after kill %1")
+        m = re.search(r"(?:Exit |Done\()(\d+)", bytes(transcript[at:]).decode("utf-8", "replace"))
+        ok(m is not None and m.group(1) != "0", f"kill %1: background job exits non-zero ({out!r})")
+        ok(ALT_ON not in transcript[at:] and lflag(sh.fd) & COOKED == COOKED,
+           "kill %1: tty cooked, alt screen never re-entered from the background")
+
+        # `kill %1; fg`: the VM resumes in the background and is foregrounded at once.
         start = sh.send(b"bin/live-demo\n")
         sh.paint(b"100x30", start, "third run first paint")
+        sh.suspend()
+        status = sh.ended(sh.send(b"kill %1; fg\n"), "kill %1; fg", restore=False)
+        ok(status != 0, f"kill %1; fg: wrapper exits non-zero (got {status})")
+
+        start = sh.send(b"bin/live-demo\n")
+        sh.paint(b"100x30", start, "fourth run first paint")
         status = sh.ended(sh.send(b"q"), "q")
         ok(status == 0, f"quit: q exits 0 (got {status})")
         os.write(sh.fd, b"exit\n")

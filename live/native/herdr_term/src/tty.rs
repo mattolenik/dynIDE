@@ -326,6 +326,12 @@ impl Inner {
             match poll_fd(fd, libc::POLLIN, POLL_MS) {
                 // Input that arrives after restore belongs to whoever opens the tty next.
                 Ok(true) if self.shutdown.load(Ordering::Acquire) => break,
+                // Continued in the background (see `suspend_with`): a read
+                // would raise SIGTTIN; the input is the shell's until `fg`.
+                Ok(true) if in_background(fd) => {
+                    std::thread::sleep(FOREGROUND_POLL);
+                    continue;
+                }
                 Ok(true) => {}
                 Ok(false) => continue,
                 Err(_) => {
@@ -440,19 +446,26 @@ impl Inner {
     }
 
     /// Restores the terminal, stops the whole process group with SIGSTOP and,
-    /// once continued, re-enters raw mode and the alternate screen. Returns
-    /// `Ok(true)` after SIGCONT, and exactly then `Event::Resumed` follows.
+    /// once continued and in the foreground again, re-enters raw mode and the
+    /// alternate screen. Returns `Ok(true)` after that, and exactly then
+    /// `Event::Resumed` follows.
     /// `Ok(false)` after the final `restore` (nothing done). `Err` when the
     /// terminal could not be reset or the event thread could not start; the
     /// process is then not stopped.
     pub fn suspend(self: &Arc<Self>) -> io::Result<bool> {
-        self.suspend_with(stop_process_group)
+        let fd = self.file.as_raw_fd();
+        self.suspend_with(stop_process_group, || in_background(fd))
     }
 
-    /// `suspend` with the stop injected, so tests can run it in-process.
-    /// The write lock is held throughout, so the output thread cannot write
-    /// while the host is cooked; it resumes behind the re-enter sequence.
-    pub(crate) fn suspend_with(self: &Arc<Self>, stop: impl FnOnce()) -> io::Result<bool> {
+    /// `suspend` with the stop and the foreground check injected, so tests
+    /// can run it in-process. The write lock is held throughout, so the
+    /// output thread cannot write while the host is cooked; it resumes behind
+    /// the re-enter sequence.
+    pub(crate) fn suspend_with(
+        self: &Arc<Self>,
+        stop: impl FnOnce(),
+        mut background: impl FnMut() -> bool,
+    ) -> io::Result<bool> {
         let _guard = lock(&self.write_lock);
         if self.restored.load(Ordering::Acquire) {
             return Ok(false);
@@ -472,6 +485,13 @@ impl Inner {
             })?;
         reset(&self.file, &self.saved, self.kitty_push.is_some(), true)?;
         stop();
+        // `kill %1` continues a stopped job in the background. A tcsetattr there
+        // raises SIGTTOU against the group, and the kernel checks and signals
+        // without the tty lock, so the stop can land after the shell's `fg` and
+        // stop the job again. Wait for the foreground instead of touching it.
+        while background() && !self.shutdown.load(Ordering::Acquire) {
+            std::thread::sleep(FOREGROUND_POLL);
+        }
         // Best effort: the resumed caller repaints either way; nothing else to undo.
         let _ = set_raw(self.file.as_raw_fd(), &self.saved);
         let mut enter = ENTER.to_vec();
@@ -495,6 +515,20 @@ impl Inner {
             let _ = reset(&self.file, &self.saved, self.kitty_push.is_some(), false);
         }
     }
+}
+
+/// How often a resumed `suspend` or the reader re-checks for the foreground.
+const FOREGROUND_POLL: Duration = Duration::from_millis(10);
+
+/// Whether `fd` is our controlling tty with another process group in the
+/// foreground, so a tcsetattr or read on it would raise SIGTTOU or SIGTTIN.
+/// tcgetpgrp itself is allowed from the background; a tty that is not our
+/// controlling one fails it (and cannot stop us).
+fn in_background(fd: RawFd) -> bool {
+    // SAFETY: plain syscalls on a valid fd.
+    let foreground = unsafe { libc::tcgetpgrp(fd) };
+    // SAFETY: getpgrp cannot fail.
+    foreground > 0 && foreground != unsafe { libc::getpgrp() }
 }
 
 /// A Linux `kill` that returned sooner than this did not wait for SIGCONT.
@@ -1032,12 +1066,15 @@ mod tests {
         let mut stopped_lflag = 0;
         let stopped = tty
             .inner
-            .suspend_with(|| {
-                stopped_lflag = termios(&p.slave).c_lflag;
-                // The output thread must hold this until after resume.
-                tty.inner.output.write(b"<W>".to_vec()).unwrap();
-                std::thread::sleep(Duration::from_millis(150));
-            })
+            .suspend_with(
+                || {
+                    stopped_lflag = termios(&p.slave).c_lflag;
+                    // The output thread must hold this until after resume.
+                    tty.inner.output.write(b"<W>".to_vec()).unwrap();
+                    std::thread::sleep(Duration::from_millis(150));
+                },
+                || false,
+            )
             .unwrap();
         assert!(stopped);
         let cooked = libc::ICANON | libc::ECHO;
@@ -1066,6 +1103,49 @@ mod tests {
         assert!(contains(&out, b"\x1b[2J"), "full repaint: {out:?}");
     }
 
+    /// `kill %1` continues a stopped job in the background; a tcsetattr from
+    /// there raises SIGTTOU, which can land after the shell's `fg` and stop
+    /// the job again. Resume touches the tty only once foreground.
+    #[test]
+    fn resume_waits_for_the_foreground() {
+        let p = pty();
+        let (sink, rx) = channel();
+        let tty = TtyResource::new(Inner::open_path(&p.path, 0, Some(sink)).unwrap());
+        read_until(&p.master, b"\x1b[c", Duration::from_secs(1));
+        let cooked = libc::ICANON | libc::ECHO;
+        let mut checks = 0;
+        let mut leaked = Vec::new();
+        let stopped = tty
+            .inner
+            .suspend_with(
+                || {
+                    read_until(&p.master, b"\x1b[?1049l", Duration::from_secs(1));
+                },
+                || {
+                    checks += 1;
+                    if termios(&p.slave).c_lflag & cooked != cooked {
+                        leaked.push(format!("raw while background (check {checks})"));
+                    }
+                    let out = read_until(&p.master, b"", Duration::from_millis(20));
+                    if !out.is_empty() {
+                        leaked.push(format!("wrote while background: {out:?}"));
+                    }
+                    checks < 5
+                },
+            )
+            .unwrap();
+        assert!(stopped);
+        assert_eq!(checks, 5);
+        assert!(leaked.is_empty(), "{leaked:?}");
+        assert_eq!(termios(&p.slave).c_lflag & cooked, 0, "raw once foreground");
+        let out = read_until(&p.master, b"\x1b[?1049h", Duration::from_secs(1));
+        assert!(contains(&out, b"\x1b[?1049h"), "{out:?}");
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(1)).ok(),
+            Some(Event::Resumed)
+        );
+    }
+
     #[test]
     fn suspend_that_cannot_reset_neither_stops_nor_resumes() {
         let p = pty();
@@ -1076,7 +1156,7 @@ mod tests {
         // SAFETY: both fds are open; dup2 atomically replaces the tty fd.
         assert!(unsafe { libc::dup2(null.as_raw_fd(), tty.inner.file.as_raw_fd()) } >= 0);
         let mut called = false;
-        assert!(tty.inner.suspend_with(|| called = true).is_err());
+        assert!(tty.inner.suspend_with(|| called = true, || false).is_err());
         assert!(!called);
         let resumed = std::iter::from_fn(|| rx.recv_timeout(Duration::from_millis(300)).ok())
             .any(|e| e == Event::Resumed);
@@ -1090,7 +1170,7 @@ mod tests {
         tty.inner.restore().unwrap();
         read_until(&p.master, b"\x1b[?1049l", Duration::from_secs(1));
         let mut called = false;
-        assert!(!tty.inner.suspend_with(|| called = true).unwrap());
+        assert!(!tty.inner.suspend_with(|| called = true, || false).unwrap());
         assert!(!called);
         let out = read_until(&p.master, b"", Duration::from_millis(200));
         assert!(out.is_empty(), "{out:?}");
