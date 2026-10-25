@@ -9,6 +9,10 @@
 # server) instead of loading the compiled apps. Packed rows: 32-byte cells, glyph first.
 # frame_ms is a server config value (config/config.exs, default 8) with no per-run override;
 # the bench prints what the config says. Every metric is one `REMOTE ` line.
+# HERDR_BENCH_SERVER_ROOT=<dir> with ssh=<target>: no local broker; the server is already
+# running on <target> with its API socket at <dir>/ctl.sock, and the CLI calls and the flood
+# file go over the same ssh (bench/remote/linux_ssh.sh). The relay finds the instance through
+# HERDR_LIVE_API, which the ssh command must forward (SendEnv, AcceptEnv on the server).
 Code.require_file("../handoff/driver.exs", __DIR__)
 alias HandoffDriver, as: D
 
@@ -22,6 +26,36 @@ defmodule RemoteBench do
       [_, l] -> l |> String.split([" ", ","], trim: true) |> Enum.join("/")
       _ -> "?"
     end
+  end
+
+  def server_root, do: System.get_env("HERDR_BENCH_SERVER_ROOT")
+
+  # a shell command on the server host: over ssh when the server is remote, else locally
+  def on_server(cmd) do
+    case {server_root(), System.get_env("BENCH_TRANSPORT")} do
+      {root, "ssh=" <> target} when is_binary(root) ->
+        [exe | pre] = String.split(System.get_env("HERDR_LIVE_SSH", "ssh"))
+
+        System.cmd(System.find_executable(exe) || exe, pre ++ ["-T", target, cmd],
+          stderr_to_stdout: true
+        )
+
+      _ ->
+        System.cmd("sh", ["-c", cmd], stderr_to_stdout: true)
+    end
+  end
+
+  def sq(a), do: "'" <> String.replace(a, "'", "'\\''") <> "'"
+
+  def cli(%{remote: true} = b, args) do
+    bin = System.get_env("HERDR_LIVE_REMOTE_BIN", "herdr-live")
+    api = Path.join(b.root, "ctl.sock")
+
+    {out, st} =
+      on_server(Enum.map_join(["env", "HERDR_LIVE_API=" <> api, bin | args], " ", &sq/1))
+
+    st == 0 || raise "herdr-live #{Enum.join(args, " ")} failed (#{st}): #{out}"
+    out
   end
 
   def cli(b, args) do
@@ -63,6 +97,7 @@ defmodule RemoteBench do
   end
 
   def connect(b, "ssh=" <> target) do
+    b[:remote] || D.wait(fn -> File.exists?(Path.join(b.root, "client.token")) end, 60_000)
     exe = System.get_env("HERDR_LIVE_SSH", "ssh")
     open_ssh(b, exe, target, System.get_env("HERDR_LIVE_REMOTE_BIN", "herdr-live"))
   end
@@ -327,6 +362,7 @@ end
 alias RemoteBench, as: R
 
 [transport | opts] = System.argv()
+System.put_env("BENCH_TRANSPORT", transport)
 
 opts =
   Map.new(opts, fn o ->
@@ -346,7 +382,7 @@ run = fn b ->
     "REMOTE config transport=#{transport} frame_ms=#{R.frame_ms()} keys=#{keys} flood_s=#{secs} mb=#{mb} panes=#{panes}"
   )
 
-  File.exists?(Path.join(b.root, "ctl.sock")) ||
+  b[:remote] || File.exists?(Path.join(b.root, "ctl.sock")) ||
     D.wait(fn -> File.exists?(Path.join(b.root, "ctl.sock")) end, 60_000)
 
   first = R.cli(b, ["pane", "list"]) |> R.pane_id()
@@ -373,10 +409,9 @@ run = fn b ->
       file = Path.join(b.root, "flood.txt")
 
       {_, 0} =
-        System.cmd("sh", [
-          "-c",
+        R.on_server(
           "yes 'the quick brown fox jumps over the lazy dog 0123456789' 2>/dev/null | head -c #{mb * 1_048_576} > #{file}"
-        ])
+        )
 
       ids = R.split_panes(b, first, panes)
       for p <- tl(ids), do: R.cli(b, ["pane", "run", "p#{p}", "while :; do cat #{file}; done"])
@@ -406,7 +441,10 @@ IO.puts("REMOTE uptime_start #{R.uptime()}")
 
 code =
   try do
-    case D.with_broker("remote", run) do
+    case if(R.server_root(),
+           do: {run.(%{root: R.server_root(), remote: true}), 0},
+           else: D.with_broker("remote", run)
+         ) do
       {:ok, 0} ->
         0
 
