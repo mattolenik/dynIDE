@@ -64,6 +64,13 @@ defmodule HerdrServer.Client.OutboxTest do
     refute Outbox.pending?(t)
   end
 
+  test "rows for a pane absent from the last scene are not pending" do
+    s = scene([[{0, "a"}], [{0, "x"}]])
+    {_, t} = flushed(Outbox.new(), {:scene, s})
+    refute Outbox.pending?(Outbox.put(t, {:rows, 9999, 1, [{0, "z"}]}))
+    refute Outbox.pending?(Outbox.put(Outbox.new(), {:rows, 1, 1, [{0, "z"}]}))
+  end
+
   test "scene pending plus rows for a pane not in it: only the scene" do
     s = scene([[{0, "a"}], [{0, "x"}]])
     t = Outbox.new() |> Outbox.put({:scene, s}) |> Outbox.put({:rows, 9999, 1, [{0, "z"}]})

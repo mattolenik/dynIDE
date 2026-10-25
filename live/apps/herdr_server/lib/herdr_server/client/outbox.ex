@@ -46,8 +46,10 @@ defmodule HerdrServer.Client.Outbox do
   end
 
   @spec pending?(t) :: boolean
-  def pending?(%__MODULE__{scene: nil, rows: rows, sent: sent}) do
-    Enum.any?(rows, fn {id, r} -> diff(r, sent[id]) != [] end)
+  def pending?(%__MODULE__{scene: nil, rows: rows, sent: sent, last_scene: last}) do
+    rows
+    |> Map.take(visible_ids(last))
+    |> Enum.any?(fn {id, r} -> diff(r, sent[id]) != [] end)
   end
 
   def pending?(%__MODULE__{}), do: true
