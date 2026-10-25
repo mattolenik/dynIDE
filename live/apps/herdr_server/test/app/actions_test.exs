@@ -5,6 +5,22 @@ defmodule HerdrServer.App.ActionsTest do
   alias HerdrServer.Layout
 
   defp fresh, do: elem(Actions.init(%{cols: 100, rows: 25}), 0)
+
+  test "new_tab and close_tab reframe when the tab bar hides for a single tab" do
+    app = fresh()
+
+    app =
+      app
+      |> put_in([Access.key(:ui), Access.key(:tab_bar), :hide_single], true)
+      |> Actions.reframe()
+
+    assert app.session.area.y == 0
+    {app, [{:spawn, _, _}]} = Actions.new_tab(app)
+    assert app.session.area.y == 1
+    {app, _} = Actions.close_tab(app)
+    assert Actions.reframe(app).session.area.y == 0
+  end
+
   defp press(app, key, mods \\ []), do: Actions.apply(app, Event.key(key, mods))
 
   # applies the prefix binding of `key` the way the Store runs it (keys resolve in Client.Keys)

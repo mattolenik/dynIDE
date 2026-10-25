@@ -39,9 +39,9 @@ defmodule HerdrServer.View do
 
   @spec compute(map, State.t()) :: Scene.t()
   def compute(app, %State{size: %{cols: cols, rows: rows} = size} = client) do
-    regions = Frame.regions(size, app.ui)
-    area = regions.panes
     ws = Enum.find(app.session.workspaces, &(&1.id == app.session.active_workspace))
+    regions = Frame.regions(size, app.ui, length(ws.tabs))
+    area = regions.panes
     tab = Enum.find(ws.tabs, &(&1.id == ws.active_tab))
     layout = tab.layout
 

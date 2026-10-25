@@ -166,6 +166,8 @@ defmodule HerdrServer.ConfigTest do
     status_indicators = "symbols"
     prompt_new_tab_name = false
     pane_borders = "off"
+    hide_tab_bar_when_single_tab = true
+    tab_bar_position = "bottom"
 
     [ui.sound]
     enabled = false
@@ -189,6 +191,7 @@ defmodule HerdrServer.ConfigTest do
     assert ui.indicators == :symbols
     assert ui.prompt_new_tab_name == false
     assert ui.pane_borders == :off
+    assert ui.tab_bar == %{position: :bottom, hide_single: true}
     assert ui.sound == %{enabled: false, command: "say"}
     assert ui.toast == %{delivery: :terminal, delay_ms: 3000}
     assert ui.theme == %{name: "nord", auto_switch: true, light: "one-light", dark: "dracula"}

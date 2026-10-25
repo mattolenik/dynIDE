@@ -30,6 +30,7 @@ defmodule HerdrServer.App.UpgradeTest do
              app.ui
 
     assert app.ui.pane_borders == :auto
+    assert app.ui.tab_bar == %{position: :top, hide_single: false}
 
     assert %Session{size: %{cols: 80, rows: 24}} = app.session
     assert %Focus{pane: 1, modal: []} = app.focus

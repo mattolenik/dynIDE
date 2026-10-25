@@ -35,6 +35,20 @@ defmodule HerdrServer.View.FrameTest do
     assert %{tabs: nil, panes: %{y: 0, h: 1}} = Frame.regions(%{cols: 80, rows: 2}, %Ui{})
   end
 
+  test "hide_single drops the tab bar for one tab only" do
+    ui = %Ui{tab_bar: %{position: :top, hide_single: true}}
+    size = %{cols: 120, rows: 40}
+    assert %{tabs: nil, panes: %{y: 0, h: 39}} = Frame.regions(size, ui, 1)
+    assert %{tabs: %{y: 0}, panes: %{y: 1, h: 38}} = Frame.regions(size, ui, 2)
+  end
+
+  test "bottom puts the tab bar above the status row" do
+    ui = %Ui{tab_bar: %{position: :bottom, hide_single: false}}
+
+    assert %{tabs: %{y: 38, h: 1}, panes: %{y: 0, h: 38}} =
+             Frame.regions(%{cols: 120, rows: 40}, ui)
+  end
+
   test "every rect stays inside the size" do
     for c <- 1..30, r <- 1..8, ui <- [%Ui{}, %Ui{sidebar: %{%Ui{}.sidebar | collapsed: true}}] do
       regions = Frame.regions(%{cols: c, rows: r}, ui)

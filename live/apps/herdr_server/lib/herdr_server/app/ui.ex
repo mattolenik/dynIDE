@@ -26,7 +26,7 @@ defmodule HerdrServer.App.Ui do
       spaces_offset: 0,
       agents_offset: 0
     },
-    tab_bar: %{position: :top},
+    tab_bar: %{position: :top, hide_single: false},
     indicators: :dots,
     confirm_close: true,
     onboarding: false,
@@ -51,7 +51,7 @@ defmodule HerdrServer.App.Ui do
             spaces_offset: non_neg_integer(),
             agents_offset: non_neg_integer()
           },
-          tab_bar: %{position: :top | :bottom},
+          tab_bar: %{position: :top | :bottom, hide_single: boolean()},
           indicators: :dots | :symbols,
           confirm_close: boolean(),
           onboarding: boolean(),

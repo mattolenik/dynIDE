@@ -47,6 +47,8 @@ defmodule HerdrServer.Config do
     {:ui, ["confirm_close"], :bool, [:confirm_close]},
     {:ui, ["status_indicators"], {:enum, ~w(dots symbols)}, [:indicators]},
     {:ui, ["prompt_new_tab_name"], :bool, [:prompt_new_tab_name]},
+    {:ui, ["hide_tab_bar_when_single_tab"], :bool, [:tab_bar, :hide_single]},
+    {:ui, ["tab_bar_position"], {:enum, ~w(top bottom)}, [:tab_bar, :position]},
     {:ui, ["pane_borders"], {:enum, ~w(auto always off)}, [:pane_borders]},
     {:ui, ["window_title"], :string, [:window_title]},
     {:ui, ["sound", "enabled"], :bool, [:sound, :enabled]},

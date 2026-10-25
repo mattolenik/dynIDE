@@ -419,6 +419,9 @@ defmodule HerdrServer.App.Store do
 
     case result do
       {:ok, {app, effects}} ->
+        # the tab count (new/close tab, workspace switch, API) decides the tab bar, so the area
+        # is settled once here instead of in every action that changes it
+        app = Actions.reframe(app)
         {:cont, {:ok, Enum.reduce(effects, %{state | app: app}, &effect(&2, &1, origin))}}
 
       {:failed, reason, batch} ->

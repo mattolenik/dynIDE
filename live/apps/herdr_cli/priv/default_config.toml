@@ -12,6 +12,8 @@ sidebar_max_width = 36
 confirm_close = true
 status_indicators = "dots"   # "dots" | "symbols"
 prompt_new_tab_name = true
+# hide_tab_bar_when_single_tab = false
+# tab_bar_position = "top"   # "top" | "bottom"
 
 [ui.sound]
 enabled = true

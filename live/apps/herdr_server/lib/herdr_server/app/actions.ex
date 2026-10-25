@@ -49,7 +49,7 @@ defmodule HerdrServer.App.Actions do
   def init(%{cols: c, rows: r}, cfg \\ nil) do
     size = %{cols: c, rows: r}
     {ui, fx} = configure(%Ui{keybinds: Keybinds.default()}, cfg, start: true)
-    area = area(size, ui)
+    area = area(size, ui, 1)
     layout = Layout.new(1)
 
     session = %Session{
@@ -204,6 +204,7 @@ defmodule HerdrServer.App.Actions do
     tab = %{id: tab_id, name: tab_name(ws.tabs), layout: layout}
     app = put_ws(app, %{ws | tabs: ws.tabs ++ [tab], active_tab: tab_id})
     app = put_in(app.session.panes[id], %{title: nil, layout_gen: 0})
+    app = reframe(app)
     {sync(app), [{:spawn, id, size_of(app, tab, layout, id)}]}
   end
 
@@ -343,14 +344,17 @@ defmodule HerdrServer.App.Actions do
   # --- helpers ---
 
   # the driver's pane area, at least 1x1 so a spawn never asks for an empty pty
-  defp area(size, ui) do
-    r = Frame.regions(size, ui).panes
+  defp area(size, ui, tabs_count) do
+    r = Frame.regions(size, ui, tabs_count).panes
     %{r | w: max(r.w, 1), h: max(r.h, 1)}
   end
 
   @doc false
   # `session.area` from `session.size` and the ui (also used by `App.Chrome`)
-  def reframe(app), do: put_in(app.session.area, area(app.session.size, app.ui))
+  def reframe(app) do
+    n = if w = ws(app), do: length(w.tabs), else: 2
+    put_in(app.session.area, area(app.session.size, app.ui, n))
+  end
 
   defp ws(%{session: s}), do: Enum.find(s.workspaces, &(&1.id == s.active_workspace))
 
