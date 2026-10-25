@@ -126,6 +126,16 @@ defmodule HerdrServer.Client.RemoteTest do
     end
   end
 
+  test "a resume for another target under the same client_id is refused", ctx do
+    s = attached!(attach(ctx, client_id: "tgt1"))
+    scene!(s)
+    :ok = :gen_tcp.close(s)
+    wait_until(fn -> not entry("tgt1").connected end)
+    s2 = attach(ctx, client_id: "tgt1", target: {:pane, 1, :observe})
+    assert recv_frame(s2) == {:refused, "target mismatch"}
+    assert entry("tgt1").target == :session
+  end
+
   test "list shows the conn", ctx do
     s = attached!(attach(ctx, client_id: "listme12345"))
     scene!(s)

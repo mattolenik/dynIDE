@@ -307,8 +307,8 @@ defmodule HerdrServer.Client.Socket do
       :ok
     else
       {:refused, _} = r -> refuse(s, r)
-      # the conn closed it: a handoff is under way
-      :handoff -> :ok
+      # the conn closed it: a handoff is under way, or another target's client_id
+      r when r in [:handoff, :refused] -> :ok
       _ when tries > 1 -> serve(s, info, buf, tries - 1)
       _ -> :gen_tcp.close(s)
     end

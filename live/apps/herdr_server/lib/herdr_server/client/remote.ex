@@ -174,7 +174,8 @@ defmodule HerdrServer.Client.Remote do
   @doc false
   # by Client.Socket after giving `pid` the socket; `buf` is what followed the attach frame
   # `:handoff`: refused during a handoff, the socket is already closed
-  @spec resume(pid, :gen_tcp.socket(), map, binary) :: :ok | :error | :handoff
+  # `:refused`: another target under this client_id, refused and closed
+  @spec resume(pid, :gen_tcp.socket(), map, binary) :: :ok | :error | :handoff | :refused
   def resume(pid, socket, info, buf) do
     # the conn may be closing a stuck old socket first: never time out (and retry) here
     GenServer.call(pid, {:resume, socket, info, buf}, :infinity)
@@ -294,8 +295,7 @@ defmodule HerdrServer.Client.Remote do
       :gen_tcp.close(s)
       {:reply, :handoff, state}
     else
-      state = state |> connect(s, info, not state.fresh) |> Carry.hold()
-      {:reply, :ok, received(state, buf)}
+      resume_target(state, s, info, buf)
     end
   end
 
@@ -319,6 +319,19 @@ defmodule HerdrServer.Client.Remote do
     # what arrived before the freeze is still in the buffer
     state = if state.socket, do: received(state, ""), else: state
     {:reply, :ok, Out.schedule(state)}
+  end
+
+  # a client_id names one conn: a resume for another target is refused (m4)
+  defp resume_target(state, s, %{target: t}, _buf) when t != state.info.target do
+    HerdrReload.Telemetry.event(:client_refused, reason: "target mismatch")
+    _ = :gen_tcp.send(s, Wire.encode({:refused, "target mismatch"}))
+    :gen_tcp.close(s)
+    {:reply, :refused, state}
+  end
+
+  defp resume_target(state, s, info, buf) do
+    state = state |> connect(s, info, not state.fresh) |> Carry.hold()
+    {:reply, :ok, received(state, buf)}
   end
 
   defp adopt(key, b, s, fd) do
