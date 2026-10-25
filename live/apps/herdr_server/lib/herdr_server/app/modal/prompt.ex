@@ -28,8 +28,7 @@ defmodule HerdrServer.App.Modal.Prompt do
   @spec new_tab(map) :: {map, [tuple]}
   def new_tab(app) do
     if app.ui.prompt_new_tab_name do
-      next = Enum.max([0 | Enum.map(ws(app).tabs, & &1.id)]) + 1
-      open(app, new("new tab", Integer.to_string(next), {__MODULE__, :create_tab, []}))
+      open(app, new("new tab", Actions.tab_name(ws(app).tabs), {__MODULE__, :create_tab, []}))
     else
       Actions.new_tab(app)
     end

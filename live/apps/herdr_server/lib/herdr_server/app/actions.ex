@@ -52,6 +52,8 @@ defmodule HerdrServer.App.Actions do
       active_workspace: 1,
       panes: %{1 => %{title: nil, layout_gen: 0}},
       next_id: 2,
+      next_workspace_id: 2,
+      next_tab_id: 2,
       size: size,
       area: area
     }
@@ -163,10 +165,10 @@ defmodule HerdrServer.App.Actions do
   @spec new_tab(app()) :: {app(), [effect()]}
   def new_tab(app) do
     {id, app} = take_id(app)
+    {tab_id, app} = take_tab_id(app)
     ws = ws(app)
-    tab_id = next_tab_id(ws)
     layout = Layout.new(id)
-    tab = %{id: tab_id, name: Integer.to_string(tab_id), layout: layout}
+    tab = %{id: tab_id, name: tab_name(ws.tabs), layout: layout}
     app = put_ws(app, %{ws | tabs: ws.tabs ++ [tab], active_tab: tab_id})
     app = put_in(app.session.panes[id], %{title: nil, layout_gen: 0})
     {sync(app), [{:spawn, id, size_of(layout, app.session.area, id)}]}
@@ -329,7 +331,20 @@ defmodule HerdrServer.App.Actions do
 
   defp take_id(app), do: {app.session.next_id, update_in(app.session.next_id, &(&1 + 1))}
 
-  defp next_tab_id(ws), do: Enum.max([0 | Enum.map(ws.tabs, & &1.id)]) + 1
+  defp take_tab_id(app),
+    do: {app.session.next_tab_id, update_in(app.session.next_tab_id, &(&1 + 1))}
+
+  @doc false
+  # a new tab's default name: the first number from the tab count up that no tab has
+  # (also the new-tab prompt's prefill)
+  @spec tab_name([map]) :: binary
+  def tab_name(tabs) do
+    names = MapSet.new(tabs, & &1.name)
+
+    Stream.iterate(length(tabs) + 1, &(&1 + 1))
+    |> Stream.map(&Integer.to_string/1)
+    |> Enum.find(&(&1 not in names))
+  end
 
   defp step_tab(app, d) do
     ws = ws(app)
@@ -388,8 +403,9 @@ defmodule HerdrServer.App.Actions do
     case tabs do
       [] ->
         {id, app} = take_id(app)
+        {tab_id, app} = take_tab_id(app)
         l = Layout.new(id)
-        t = %{id: next_tab_id(%{tabs: []}), name: "1", layout: l}
+        t = %{id: tab_id, name: "1", layout: l}
         app = put_ws(app, %{ws | tabs: [t], active_tab: t.id})
         app = put_in(app.session.panes[id], %{title: nil, layout_gen: 0})
         {sync(app), closes ++ [{:spawn, id, size_of(l, app.session.area, id)}]}

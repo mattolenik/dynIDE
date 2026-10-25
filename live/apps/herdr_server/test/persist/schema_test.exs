@@ -22,12 +22,12 @@ defmodule HerdrServer.Persist.SchemaTest do
   end
 
   describe "capture/2" do
-    test "an initial app has exactly the v2 shape" do
-      assert Schema.version() == 2
+    test "an initial app has exactly the v3 shape" do
+      assert Schema.version() == 3
 
       assert Schema.capture(fresh(), %{1 => %{cwd: "/tmp", command: ["/bin/zsh"], hidden: true}}) ==
                %{
-                 v: 2,
+                 v: 3,
                  session: %{
                    workspaces: [
                      %{
@@ -45,6 +45,8 @@ defmodule HerdrServer.Persist.SchemaTest do
                    ],
                    active_workspace: 1,
                    next_id: 2,
+                   next_workspace_id: 2,
+                   next_tab_id: 2,
                    size: %{cols: 80, rows: 24},
                    area: Frame.regions(%{cols: 80, rows: 24}, %Ui{}).panes
                  },
@@ -134,6 +136,25 @@ defmodule HerdrServer.Persist.SchemaTest do
       assert {:ok, a2, _} = Schema.restore(v1)
       assert a2.session.size == %Session{}.size
       assert Schema.capture(a2, %{}) == s
+    end
+
+    test "a v2 snapshot gets id counters above every workspace and tab id" do
+      s = Schema.capture(three(), %{})
+      [ws] = s.session.workspaces
+      ws = %{ws | id: 7, tabs: Enum.map(ws.tabs, &%{&1 | id: &1.id + 4})}
+      s = %{s | session: %{s.session | workspaces: [ws], active_workspace: 7}}
+      v2 = %{s | v: 2, session: Map.drop(s.session, [:next_workspace_id, :next_tab_id])}
+      ws = %{ws | active_tab: ws.active_tab + 4}
+      v2 = put_in(v2.session.workspaces, [ws])
+      assert {:ok, a, _} = Schema.restore(v2)
+      assert {a.session.next_workspace_id, a.session.next_tab_id} == {8, 7}
+    end
+
+    test "counters at or below an existing id are raised on restore" do
+      s = Schema.capture(three(), %{})
+      s = %{s | session: %{s.session | next_workspace_id: 1, next_tab_id: 1}}
+      assert {:ok, a, _} = Schema.restore(s)
+      assert {a.session.next_workspace_id, a.session.next_tab_id} == {2, 3}
     end
 
     test "a bad session size is invalid" do
@@ -284,7 +305,8 @@ defmodule HerdrServer.Persist.SchemaTest do
     end
 
     test "a newer snapshot is refused" do
-      assert {:error, {:newer, 3}} = Schema.restore(%{Schema.capture(fresh(), %{}) | v: 3})
+      v = Schema.version() + 1
+      assert {:error, {:newer, ^v}} = Schema.restore(%{Schema.capture(fresh(), %{}) | v: v})
     end
   end
 
@@ -303,7 +325,7 @@ defmodule HerdrServer.Persist.SchemaTest do
     def up(%{v: 0} = m), do: m |> Map.delete(:old) |> Map.put(:v, 1)
 
     test "a newer version is refused" do
-      assert Schema.migrate(%{v: 3}) == {:error, {:newer, 3}}
+      assert Schema.migrate(%{v: 4}) == {:error, {:newer, 4}}
     end
 
     test "a non-integer or missing version is unknown" do
@@ -316,12 +338,12 @@ defmodule HerdrServer.Persist.SchemaTest do
     end
 
     test "the current version is unchanged" do
-      assert Schema.migrate(%{v: 2, x: 2}) == {:ok, %{v: 2, x: 2}}
+      assert Schema.migrate(%{v: 3, x: 2}) == {:ok, %{v: 3, x: 2}}
     end
 
     test "a synthetic chain is applied in order" do
-      chain = %{0 => {__MODULE__, :up}, 1 => :v1_to_v2}
-      assert Schema.migrate(%{v: 0, old: true, x: 1}, chain) == {:ok, %{v: 2, x: 1}}
+      chain = %{0 => {__MODULE__, :up}, 1 => :v1_to_v2, 2 => :v2_to_v3}
+      assert Schema.migrate(%{v: 0, old: true, x: 1}, chain) == {:ok, %{v: 3, x: 1}}
     end
   end
 

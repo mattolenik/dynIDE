@@ -4,12 +4,13 @@ defmodule HerdrServer.Persist.Schema do
   runtime facts into a plain, versioned snapshot; `restore/1` migrates, validates and
   rebuilds the app. `restore(capture(app, facts))` captures back to the same snapshot.
 
-  Snapshot (v2):
+  Snapshot (v3):
 
-      %{v: 2,
+      %{v: 3,
         session: %{workspaces: [%{id, name, active_tab,
                                   tabs: [%{id, name, layout: %{root, focus, prev_focus}}]}],
-                   active_workspace, next_id, size: %{cols, rows}, area: %{x, y, w, h}},
+                   active_workspace, next_id, next_workspace_id, next_tab_id,
+                   size: %{cols, rows}, area: %{x, y, w, h}},
         focus: %{pane: id | nil},
         ui: Map.from_struct(ui) without :keybinds, plain values only,
         panes: %{id => %{title, cwd, command, hidden}}}
@@ -23,13 +24,16 @@ defmodule HerdrServer.Persist.Schema do
   Migrations: `migrate/2` takes a chain `%{from_v => {module, fun} | fun_atom}` (an atom
   names a function in this module). Each function takes the map at `from_v` and returns
   it at `from_v + 1`; `:v` is set to `from_v + 1` after each step. Registered: v1 -> v2
-  (`v1_to_v2/1`) adds `session.size` with `App.Session`'s default.
+  (`v1_to_v2/1`) adds `session.size` with `App.Session`'s default; v2 -> v3 (`v2_to_v3/1`)
+  adds the id counters `session.next_workspace_id` and `next_tab_id`, just above the
+  snapshot's workspace and tab ids. A restore never puts a counter at or below an
+  existing id.
   """
 
-  alias HerdrServer.App.Keybinds
+  alias HerdrServer.App.{Keybinds, Upgrade}
 
-  @version 2
-  @migrations %{1 => :v1_to_v2}
+  @version 3
+  @migrations %{1 => :v1_to_v2, 2 => :v2_to_v3}
 
   @session HerdrServer.App.Session
   @focus HerdrServer.App.Focus
@@ -57,6 +61,8 @@ defmodule HerdrServer.Persist.Schema do
         workspaces: Enum.map(s.workspaces, &capture_ws/1),
         active_workspace: s.active_workspace,
         next_id: s.next_id,
+        next_workspace_id: s.next_workspace_id,
+        next_tab_id: s.next_tab_id,
         size: Map.take(s.size, [:cols, :rows]),
         area: Map.take(s.area, [:x, :y, :w, :h])
       },
@@ -138,14 +144,23 @@ defmodule HerdrServer.Persist.Schema do
   defp shape(_snap), do: {:error, {:invalid, :shape}}
 
   defp shape_session(
-         %{workspaces: wss, active_workspace: aw, next_id: n, size: size, area: area} = s
+         %{
+           workspaces: wss,
+           active_workspace: aw,
+           next_id: n,
+           next_workspace_id: nw,
+           next_tab_id: nt,
+           size: size,
+           area: area
+         } = s
        )
-       when is_list(wss) and is_integer(n) do
+       when is_list(wss) and is_integer(n) and is_integer(nw) and is_integer(nt) do
     with :ok <- check(id_or_nil?(aw), :active_workspace),
          :ok <- check(size?(size), :size),
          :ok <- check(area?(area), :area),
          :ok <- check(Enum.all?(wss, &ws?/1), :workspaces) do
-      {:ok, Map.take(s, [:workspaces, :active_workspace, :next_id, :size, :area])}
+      keys = [:workspaces, :active_workspace, :next_id, :next_workspace_id, :next_tab_id]
+      {:ok, Map.take(s, keys ++ [:size, :area])}
     end
   end
 
@@ -233,6 +248,7 @@ defmodule HerdrServer.Persist.Schema do
 
   defp build(%{session: s, focus: f, ui: ui, panes: panes}) do
     max_id = panes |> Map.keys() |> Enum.max(fn -> 0 end)
+    {nw, nt} = Upgrade.next_ids(s.workspaces)
 
     session =
       struct(@session,
@@ -240,6 +256,8 @@ defmodule HerdrServer.Persist.Schema do
         active_workspace: s.active_workspace,
         panes: Map.new(panes, fn {id, p} -> {id, %{title: p.title, layout_gen: 0}} end),
         next_id: max(s.next_id, max_id + 1),
+        next_workspace_id: max(s.next_workspace_id, nw),
+        next_tab_id: max(s.next_tab_id, nt),
         size: Map.take(s.size, [:cols, :rows]),
         area: s.area
       )
@@ -296,6 +314,22 @@ defmodule HerdrServer.Persist.Schema do
     do: %{map | session: Map.put_new(s, :size, struct(@session).size)}
 
   def v1_to_v2(map), do: map
+
+  @doc false
+  # v2 had no id counters: just above the snapshot's ids (non-lists are left to `shape`)
+  @spec v2_to_v3(map()) :: map()
+  def v2_to_v3(%{session: %{workspaces: wss} = s} = map) when is_list(wss) do
+    {nw, nt} = if Enum.all?(wss, &ids?/1), do: Upgrade.next_ids(wss), else: {1, 1}
+    s = s |> Map.put_new(:next_workspace_id, nw) |> Map.put_new(:next_tab_id, nt)
+    %{map | session: s}
+  end
+
+  def v2_to_v3(map), do: map
+
+  defp ids?(%{id: id, tabs: tabs}) when is_integer(id) and is_list(tabs),
+    do: Enum.all?(tabs, &match?(%{id: t} when is_integer(t), &1))
+
+  defp ids?(_), do: false
 
   defp step(map, v, {m, fun}, migrations) do
     map |> then(&apply(m, fun, [&1])) |> Map.put(:v, v + 1) |> migrate(migrations)

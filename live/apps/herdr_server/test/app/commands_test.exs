@@ -85,7 +85,9 @@ defmodule HerdrServer.App.CommandsTest do
     assert length(ws(b, 1).tabs) == 1
     {c, fx} = Commands.close_pane(app(), 1)
     assert [{:close, 1}, {:spawn, 2, _}] = fx
-    assert panes(c, 1, 1) == [2]
+    # the replacement tab has a fresh id (tab 1 is not reused)
+    assert [%{id: 2}] = ws(c, 1).tabs
+    assert panes(c, 1, 2) == [2]
   end
 
   test "close_workspace: last is refused, others close their panes" do

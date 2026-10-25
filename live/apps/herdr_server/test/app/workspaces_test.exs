@@ -96,10 +96,25 @@ defmodule HerdrServer.App.WorkspacesTest do
     assert Workspaces.close_workspace(app, 9) == {app, []}
   end
 
+  test "ids are not reused: close the newest workspace or tab, then create one" do
+    {app, _} = Actions.new_workspace(fresh())
+    {app, _} = Workspaces.close_workspace(app, 2)
+    {app, _} = Actions.new_workspace(app)
+    assert Enum.map(app.session.workspaces, & &1.id) == [1, 3]
+
+    {app, _} = Actions.new_tab(app)
+    [_, t] = List.last(app.session.workspaces).tabs
+    {app, _} = Actions.close_tab(app, t.id)
+    {app, _} = Actions.new_tab(app)
+    [_, t2] = List.last(app.session.workspaces).tabs
+    assert t2.id > t.id and t2.name == t.name
+  end
+
   test "closing the last workspace replaces it with a fresh one" do
     {app, effects} = Actions.close_workspace(fresh())
     assert [{:close, 1}, {:spawn, 2, %{cols: 74, rows: 23}}] = effects
-    assert [%{id: 1, name: "workspace"}] = app.session.workspaces
+    # a fresh id: the closed workspace's id 1 is not reused
+    assert [%{id: 2, name: "workspace"}] = app.session.workspaces
     assert app.focus.pane == 2
     assert Map.keys(app.session.panes) == [2]
   end

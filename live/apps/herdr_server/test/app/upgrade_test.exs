@@ -33,6 +33,18 @@ defmodule HerdrServer.App.UpgradeTest do
     assert %Focus{pane: 1, modal: []} = app.focus
   end
 
+  test "an app without id counters gets them above every workspace and tab id" do
+    app = old_app()
+    [ws] = app.session.workspaces
+    ws = %{ws | id: 4, tabs: [%{hd(ws.tabs) | id: 9}], active_tab: 9}
+    s = %{app.session | workspaces: [ws], active_workspace: 4}
+    old = %{app | session: Map.drop(s, [:next_workspace_id, :next_tab_id])}
+
+    for up <- [Upgrade.app(old), elem(Store.code_change(nil, %{app: old}, nil), 1).app] do
+      assert {up.session.next_workspace_id, up.session.next_tab_id} == {5, 10}
+    end
+  end
+
   test "nested prefs merge key by key and keep set values" do
     ui = %{%Ui{} | sidebar: %{width: 30}, theme: %{name: "dracula"}, keybinds: nil}
     app = Upgrade.app(%{session: %Session{}, focus: %Focus{}, ui: ui})

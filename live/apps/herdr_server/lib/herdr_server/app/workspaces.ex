@@ -25,10 +25,10 @@ defmodule HerdrServer.App.Workspaces do
   def new_workspace(app, name, focus?) do
     s = app.session
     {id, layout} = {s.next_id, Layout.new(s.next_id)}
-    ws_id = Enum.max([0 | Enum.map(s.workspaces, & &1.id)]) + 1
+    ws_id = s.next_workspace_id
     ws = %{id: ws_id, name: name || free_name(s.workspaces), tabs: [tab(layout)], active_tab: 1}
-
-    app = %{app | session: %{s | workspaces: s.workspaces ++ [ws], next_id: id + 1}}
+    s = %{s | workspaces: s.workspaces ++ [ws], next_id: id + 1, next_workspace_id: ws_id + 1}
+    app = %{app | session: s}
     app = put_in(app.session.panes[id], %{title: nil, layout_gen: 0})
     app = if focus?, do: activate(app, ws_id), else: app
     {app, [{:spawn, id, spawn_size(layout, s.area, id)}]}
