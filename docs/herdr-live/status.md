@@ -179,3 +179,6 @@ what it costs if wrong.
   --check-formatted` and `mix credo --strict` (M17's pane-layer commit
   passed the tests and failed credo on herdr-live; fixed by the coordinator
   in 0199c209).
+- 2026-10-25: `ui_busy` is an API error code (herdr parity) returned when a
+  popup is requested while one is open, declared on the popup-opening
+  methods; `data.reason` stays. Cost if wrong: one error code to retire.
