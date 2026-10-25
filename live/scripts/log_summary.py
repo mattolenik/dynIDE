@@ -83,6 +83,7 @@ def summarize(events, unparsed=0):
     rb_reasons, crashes, hand_ms = Counter(), Counter(), []
     api_denied, api_errors, conns_max = Counter(), Counter(), 0
     fanout_max = modules = 0
+    detaches, refused, reconnect_ms = Counter(), Counter(), []
     syncs = 0
     broker_up = False
     for kind, _ts, f in events:
@@ -149,6 +150,20 @@ def summarize(events, unparsed=0):
             api_denied[f.get("code", "unknown")] += 1
         elif kind == "api_error":
             api_errors[f.get("code", "unknown")] += 1
+        elif kind == "client_attach":
+            c["cl_attaches"] += 1
+        elif kind == "client_detach":
+            detaches[f.get("reason", "unknown")] += 1
+        elif kind == "client_reconnect":
+            c["cl_reconnects"] += 1
+            reconnect_ms.append(to_int(f.get("away_ms")))
+        elif kind == "client_refused":
+            refused[f.get("reason", "unknown")] += 1
+        elif kind == "client_held":
+            c["cl_held"] += 1
+            c["cl_carried" if f.get("carried") == "true" else "cl_not_carried"] += 1
+        elif kind == "client_handoff_freeze":
+            c["cl_freezes"] += 1
     hand_ms.sort()
     stamps = [e[1] for e in events]
     return {
@@ -176,6 +191,11 @@ def summarize(events, unparsed=0):
         "persist_errors": c["persist_errors"],
         "api": {"connects": c["api_connects"], "conns_max": conns_max,
                 "denied": dict(sorted(api_denied.items())), "errors": dict(sorted(api_errors.items()))},
+        "clients": {"attaches": c["cl_attaches"], "detaches": dict(sorted(detaches.items())),
+                    "reconnects": c["cl_reconnects"], "reconnect_ms_max": max(reconnect_ms, default=None),
+                    "refused": dict(sorted(refused.items())), "held": c["cl_held"],
+                    "held_carried": c["cl_carried"], "held_not_carried": c["cl_not_carried"],
+                    "freezes": c["cl_freezes"]},
         "session_losses": c["session_losses"],
         "unparsed": unparsed,
     }
@@ -186,7 +206,7 @@ def kv(d, suffix=""):
 
 
 def render_text(s):
-    n = s["session_losses"]
+    n, cl = s["session_losses"], s["clients"]
     na = lambda v: "n/a" if v is None else v
     rows = [
         ("period", s["period"]),
@@ -212,6 +232,11 @@ def render_text(s):
         ("persist_errors", s["persist_errors"]),
         ("api", f"connects {s['api']['connects']}, conns_max {s['api']['conns_max']}, "
                 f"denied {kv(s['api']['denied'])}, errors {kv(s['api']['errors'])}"),
+        ("clients", f"attaches {cl['attaches']}, detaches {kv(cl['detaches'])}, "
+                    f"reconnects {cl['reconnects']}, reconnect_ms_max {na(cl['reconnect_ms_max'])}, "
+                    f"refused {kv(cl['refused'])}, held {cl['held']} "
+                    f"(carried {cl['held_carried']}, not carried {cl['held_not_carried']}), "
+                    f"freezes {cl['freezes']}"),
         ("session_losses", n),
         ("unparsed", s["unparsed"]),
         ("exit_criterion", f"session_losses=0 -> {'OK' if n == 0 else f'FAIL ({n})'}"),

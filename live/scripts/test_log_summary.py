@@ -67,7 +67,7 @@ class LogSummaryTest(unittest.TestCase):
             "compile_errors", "rollbacks", "rollback_reasons", "guard_failures", "tests",
             "syncs", "handoffs", "handoff_ms_p50", "handoff_ms_p95", "handoff_ms_max",
             "crashes", "store_restarts", "restores", "persist_writes",
-            "persist_scrollback_writes", "persist_errors", "api", "session_losses", "unparsed",
+            "persist_scrollback_writes", "persist_errors", "api", "clients", "session_losses", "unparsed",
             "exit_criterion"])
         self.assertIn("rollbacks: manual 1, auto 1", out)
         self.assertIn("handoffs: crash 2, graceful 1, failed 1", out)
@@ -176,6 +176,40 @@ class LogSummaryTest(unittest.TestCase):
         got = json.loads(run(FIXTURE, "--json").stdout)
         self.assertEqual(got["api"], {"connects": 0, "conns_max": 0, "denied": {}, "errors": {}})
         self.assertIn("api: connects 0, conns_max 0, denied none, errors none", run(FIXTURE).stdout)
+
+    def test_clients_section(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".log") as f:
+            f.write("herdr-event client_attach ts=1 id=aabbccdd kind=term target=session cols=80 rows=24\n"
+                    "herdr-event client_attach ts=2 id=11223344 kind=term target=session cols=80 rows=24\n"
+                    "herdr-event client_detach ts=3 id=aabbccdd reason=grace_expired\n"
+                    "herdr-event client_detach ts=4 id=11223344 reason=session_ended\n"
+                    "herdr-event client_detach ts=5 id=11223344 reason=grace_expired\n"
+                    "herdr-event client_reconnect ts=6 id=aabbccdd away_ms=120\n"
+                    "herdr-event client_reconnect ts=7 id=aabbccdd away_ms=900\n"
+                    'herdr-event client_refused ts=8 reason="bad version"\n'
+                    "herdr-event client_held ts=9 id=aabbccdd carried=true\n"
+                    "herdr-event client_held ts=10 id=11223344 carried=false\n"
+                    "herdr-event client_held ts=11 id=55667788 carried=true\n"
+                    "herdr-event client_handoff_freeze ts=12 conns=3\n")
+            f.flush()
+            got = json.loads(run(f.name, "--json").stdout)
+            out = run(f.name).stdout.splitlines()
+        self.assertEqual(got["clients"], {
+            "attaches": 2, "detaches": {"grace_expired": 2, "session_ended": 1},
+            "reconnects": 2, "reconnect_ms_max": 900, "refused": {"bad version": 1},
+            "held": 3, "held_carried": 2, "held_not_carried": 1, "freezes": 1})
+        self.assertEqual(got["session_losses"], 0)
+        self.assertIn("clients: attaches 2, detaches grace_expired 2, session_ended 1, "
+                      "reconnects 2, reconnect_ms_max 900, refused bad version 1, "
+                      "held 3 (carried 2, not carried 1), freezes 1", out)
+
+    def test_clients_section_empty(self):
+        got = json.loads(run(FIXTURE, "--json").stdout)["clients"]
+        self.assertEqual(got["attaches"], 0)
+        self.assertIsNone(got["reconnect_ms_max"])
+        self.assertIn("clients: attaches 0, detaches none, reconnects 0, reconnect_ms_max n/a, "
+                      "refused none, held 0 (carried 0, not carried 0), freezes 0",
+                      run(FIXTURE).stdout)
 
     def test_malformed_and_plain_lines(self):
         self.assertIsNone(log_summary.parse_line("just a log line"))
