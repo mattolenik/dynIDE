@@ -366,4 +366,67 @@ defmodule HerdrServer.Client.CopyModeTest do
     assert {%CopyMode{match: {{0, 19_999}, _}}, _} =
              keys(enter(c, {0, 0}), c, ["/", "n", "e", "e", "d", "l", "e", :enter])
   end
+
+  describe "wrap-around" do
+    @wrapped [{:notice, %{level: :info, text: "search wrapped"}}]
+
+    test "/ finds a match above the cursor after wrapping, with a notice" do
+      c = ctx(lines(%{10 => "zebra"}), 200)
+      {t, n} = keys(enter(c, {0, 23}), c, ["/", "z", "e", "b", "r", "a", :enter])
+      assert t.cursor == {0, 10}
+      assert hd(@wrapped) in n
+    end
+
+    test "? finds a match below the cursor after wrapping" do
+      c = ctx(lines(%{250 => "zebra"}), 200)
+      {t, n} = keys(enter(c, {0, 0}), c, ["?", "z", "e", "b", "r", "a", :enter])
+      assert t.cursor == {0, 250}
+      assert hd(@wrapped) in n
+    end
+
+    test "a total miss does not loop and keeps the no-match notice" do
+      c = ctx(lines(), 200)
+
+      for k <- ["/", "?"] do
+        assert {%CopyMode{match: nil}, [{:notice, %{text: "no match for zz"}}]} =
+                 keys(enter(c, {0, 0}), c, [k, "z", "z", :enter])
+      end
+    end
+
+    test "n and N wrap, and a lone match wraps onto itself" do
+      c = ctx(lines(%{10 => "zebra", 100 => "zebra"}), 200)
+      t = %{enter(c, {0, 0}) | search: %{dir: :forward, query: "zebra"}}
+      assert {%{cursor: {0, 10}}, n} = keys(t, c, ["n"])
+      assert hd(@wrapped) in n
+
+      t = %{t | cursor: {0, 10}, match: {{0, 10}, {4, 10}}}
+      assert {%{cursor: {0, 100}}, n} = keys(t, c, ["N"])
+      assert hd(@wrapped) in n
+
+      one = ctx(lines(%{100 => "zebra"}), 200)
+      t = %{enter(one, {0, 0}) | search: %{dir: :forward, query: "zebra"}}
+      assert {%{cursor: {0, 100}}, n} = keys(t, one, ["n"])
+      assert hd(@wrapped) in n
+    end
+
+    test "the wrapped leg shares the 20_000-row budget" do
+      big = lines(%{150 => "needle"}, 20_100)
+      c = %{ctx(big, 0) | scroll: %{total: 20_100, viewport: @h, offset: 0}}
+      q = ["/", "n", "e", "e", "d", "l", "e", :enter]
+
+      # cursor 20_000: forward covers 100 rows, the wrap has 19_900 rows and reaches 150
+      assert {%{cursor: {0, 150}}, n} = keys(enter(c, {0, 20_000}), c, q)
+      assert hd(@wrapped) in n
+
+      # cursor 20_099: forward 1 row, wrap 19_999 rows (0..19_998)
+      far = %{c | read: {Reader, :rows, [lines(%{19_950 => "needle"}, 20_100)]}}
+      assert {%{cursor: {0, 19_950}}, n} = keys(enter(far, {0, 20_099}), far, q)
+      assert hd(@wrapped) in n
+
+      past = %{c | read: {Reader, :rows, [lines(%{19_999 => "needle"}, 20_100)]}}
+
+      assert {%{match: nil}, [{:notice, %{text: "no match for needle"}}]} =
+               keys(enter(past, {0, 20_099}), past, q)
+    end
+  end
 end

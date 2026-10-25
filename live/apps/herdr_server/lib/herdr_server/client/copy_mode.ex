@@ -24,7 +24,9 @@ defmodule HerdrServer.Client.CopyMode do
   (copy the selection, else the current match, and exit), `q` (exit), Esc (clear the
   selection and search, then exit), `/ ?` (prompt; Enter submits, Esc closes; smart case;
   at most 4096 bytes), `n N`. Searches read rows in windows of 200 from the cursor, at
-  most 20_000 rows, and do not wrap around.
+  most 20_000 rows in total. A search that reaches the end (`/`, `n`) or the top (`?`, `N`)
+  without a match wraps once to the other end and notes `search wrapped`; the wrapped leg
+  spends what is left of the same 20_000-row budget, so a miss never costs more.
   """
 
   alias HerdrScene.Cell
@@ -307,33 +309,67 @@ defmodule HerdrServer.Client.CopyMode do
 
   defp find(%{search: %{query: q}, cursor: {x, y}} = t, dir, ctx) do
     case search(q, {x, y}, dir, ctx) do
-      {a, _} = m ->
-        {%{t | cursor: a, match: m}, []}
+      {{a, _} = m, wrapped?} ->
+        notice = if wrapped?, do: [{:notice, %{level: :info, text: "search wrapped"}}], else: []
+        {%{t | cursor: a, match: m}, notice}
 
       nil ->
         {%{t | match: nil}, [{:notice, %{level: :info, text: "no match for " <> q}}]}
     end
   end
 
+  # First leg from the cursor; if it ran into the buffer end within budget, one wrapped leg
+  # from the other end over the remaining budget (cursor row included). Returns {match, wrapped?}.
   defp search(q, {x, y}, :forward, ctx) do
-    y
-    |> windows(min(y + @search_rows - 1, last(ctx)), 1, @search_window)
-    |> Stream.flat_map(fn {first, l} -> read(ctx, first, l) end)
-    |> Enum.find_value(fn {r, cells} ->
-      Enum.find(row_matches(cells, r, q), fn {{mx, _}, _} -> r > y or mx > x end)
-    end)
+    last = last(ctx)
+
+    case scan(q, y, min(y + @search_rows - 1, last), 1, ctx, fn r, mx -> r > y or mx > x end) do
+      nil when y + @search_rows - 1 >= last ->
+        left = @search_rows - (last - y + 1)
+        wrap(scan(q, 0, min(y, left - 1), 1, ctx, fn _, _ -> true end))
+
+      m ->
+        m && {m, false}
+    end
   end
 
   defp search(q, {x, y}, :backward, ctx) do
-    y
-    |> windows(max(y - @search_rows + 1, 0), -1, @search_window)
-    |> Stream.flat_map(fn {first, l} -> ctx |> read(first, l) |> Enum.reverse() end)
+    last = last(ctx)
+
+    case scan(q, y, max(y - @search_rows + 1, 0), -1, ctx, fn r, mx -> r < y or mx < x end) do
+      nil when y - @search_rows + 1 <= 0 ->
+        left = @search_rows - (y + 1)
+        wrap(scan(q, last, max(y, last - left + 1), -1, ctx, fn _, _ -> true end))
+
+      m ->
+        m && {m, false}
+    end
+  end
+
+  defp wrap(nil), do: nil
+  defp wrap(m), do: {m, true}
+
+  # first match (in `dir` order) over rows from..to accepted by `ok?.(row, match_x)`
+  defp scan(q, from, to, 1, ctx, ok?) do
+    from
+    |> windows(to, 1, @search_window)
+    |> Stream.flat_map(fn {first, l} -> read(ctx, first, l) end)
     |> Enum.find_value(fn {r, cells} ->
-      cells |> row_matches(r, q) |> Enum.reverse() |> Enum.find(&before?(&1, r, {x, y}))
+      Enum.find(row_matches(cells, r, q), fn {{mx, _}, _} -> ok?.(r, mx) end)
     end)
   end
 
-  defp before?({{mx, _}, _}, r, {x, y}), do: r < y or mx < x
+  defp scan(q, from, to, -1, ctx, ok?) do
+    from
+    |> windows(to, -1, @search_window)
+    |> Stream.flat_map(fn {first, l} -> ctx |> read(first, l) |> Enum.reverse() end)
+    |> Enum.find_value(fn {r, cells} ->
+      cells
+      |> row_matches(r, q)
+      |> Enum.reverse()
+      |> Enum.find(fn {{mx, _}, _} -> ok?.(r, mx) end)
+    end)
+  end
 
   # inclusive row windows of `n` rows from `from` towards `to`, in reading order
   defp windows(from, to, 1, n) when from <= to,
