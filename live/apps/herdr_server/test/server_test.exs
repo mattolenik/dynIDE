@@ -779,6 +779,27 @@ defmodule HerdrServer.ServerTest do
              Store.request({HerdrServer.App.Commands, :focus_pane, [999]})
   end
 
+  test "request/1 runs under a modal (onboarding): API calls are not keybinds" do
+    {c, _s} = client()
+    scene(c)
+    # the first-run welcome, as Actions.init opens it when the config file is missing
+    :sys.replace_state(Store, fn st ->
+      update_in(
+        st.app,
+        &HerdrServer.App.Modal.Onboarding.at_start(put_in(&1.ui.onboarding, true))
+      )
+    end)
+
+    assert [%{kind: :onboarding}] = Store.snapshot().focus.modal
+    mfa = {HerdrServer.App.Commands, :create_tab, [1, "x", false]}
+    assert {:ok, before, after_app} = Store.request(mfa)
+
+    assert length(hd(after_app.session.workspaces).tabs) ==
+             length(hd(before.session.workspaces).tabs) + 1
+
+    assert [%{kind: :onboarding}] = after_app.focus.modal
+  end
+
   test "request/1 delivers notices to the caller" do
     {c, _s} = client()
     scene(c)

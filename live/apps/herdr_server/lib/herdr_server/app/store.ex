@@ -103,7 +103,7 @@ defmodule HerdrServer.App.Store do
     do: GenServer.call(__MODULE__, {:event, {:run, mfa}, size})
 
   @doc """
-  Runs `{m, f, a}` like `run/2` with no size, and replies `{:ok, before, after}` (the app
+  Runs `{m, f, a}` like `run/2` with no size, also while a modal is open, and replies `{:ok, before, after}` (the app
   before is nil before the first init). Notices for the caller arrive as `{:notice, map}`
   messages ahead of the reply.
   """
@@ -237,7 +237,7 @@ defmodule HerdrServer.App.Store do
   def handle_call({:request, mfa}, {origin, _}, state) do
     state = Map.merge(%__MODULE__{}, state)
     before = state.app
-    state = state |> handle_event({:run, mfa}, nil, origin) |> Mirror.dirty()
+    state = state |> handle_event({:request, mfa}, nil, origin) |> Mirror.dirty()
     {:reply, {:ok, before, state.app}, state}
   end
 
@@ -395,6 +395,11 @@ defmodule HerdrServer.App.Store do
 
         {:run, mfa} ->
           Guard.run_twice_attributed(Actions, :run, [state.app, mfa], opts)
+
+        # API requests are not keybinds: the modal guard in Actions.run is skipped (the
+        # kinds look their targets up again, so a change beneath a modal is safe)
+        {:request, {m, f, a}} ->
+          Guard.run_twice_attributed(m, f, [state.app | a], opts)
 
         ev ->
           Guard.run_twice_attributed(Actions, :apply, [state.app, ev], opts)
