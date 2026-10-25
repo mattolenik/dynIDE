@@ -100,3 +100,7 @@ live-release *args:
 # M18: install the release (built first unless a tarball is given) under a temp prefix and smoke it in a clean env
 live-release-smoke *args:
     '{{live_dir}}/scripts/release/release_smoke.sh' {{args}}
+
+# M18: install the release tarballs into a fresh macOS HOME/prefix and a clean ubuntu:24.04 container (podman)
+live-release-install-check *args:
+    '{{live_dir}}/scripts/release/fresh_install_check.sh' {{args}}

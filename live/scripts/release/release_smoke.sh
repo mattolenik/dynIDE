@@ -1,6 +1,6 @@
 #!/bin/sh
 # Smoke test of the self-contained release (M18 task 1). Usage: release_smoke.sh [tarball]
-# Without a tarball it runs build.sh first. It installs the tarball in the R4 layout
+# Without a tarball it runs build.sh first. It installs the tarball with install.sh (R4 layout)
 # under a prefix with a space (<prefix>/lib/herdr-live/releases/<V>, current -> releases/<V>,
 # <prefix>/bin/herdr-live -> ../lib/herdr-live/current/bin/herdr-live) and runs every
 # command through that symlink in a clean env (env -i: temp HOME, XDG dirs, runtime dir,
@@ -40,15 +40,13 @@ else
   tarball=$(printf '%s\n' "$built" | tail -n 1)
 fi
 [ -f "$tarball" ] || fail "no tarball $tarball"
+
 top=$(tar -tzf "$tarball" | head -n 1 | cut -d/ -f1)
 v=${top#herdr-live-}
 
 prefix="$tmp/pre fix"
-mkdir -p "$prefix/lib/herdr-live/releases" "$prefix/bin" "$tmp/home" "$tmp/t" || fail mkdir
-tar -xzf "$tarball" -C "$prefix/lib/herdr-live/releases" || fail "extract"
-mv "$prefix/lib/herdr-live/releases/$top" "$prefix/lib/herdr-live/releases/$v"
-ln -s "releases/$v" "$prefix/lib/herdr-live/current"
-ln -s ../lib/herdr-live/current/bin/herdr-live "$prefix/bin/herdr-live"
+mkdir -p "$tmp/home" "$tmp/t" || fail mkdir
+sh "$here/install.sh" --prefix "$prefix" "$tarball" >"$tmp/install.out" 2>&1 || fail "install.sh: $(cat "$tmp/install.out")"
 bin="$prefix/bin/herdr-live"
 printf 'onboarding = false\n' >"$tmp/config.toml"
 
