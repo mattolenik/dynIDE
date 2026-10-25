@@ -59,6 +59,12 @@ live-bench-glass:
     python3 '{{live_dir}}/bench/gate/glass.py' herdr --n 500
     python3 '{{live_dir}}/bench/gate/glass.py' herdr-live --n 500
 
+# M9 exit evidence: terminal-fidelity checks in a real pty (PASS/FAIL per check), then reflow against herdr
+live-bench-fidelity:
+    cd '{{live_dir}}' && mix compile
+    python3 '{{live_dir}}/bench/fidelity/fidelity.py'
+    python3 '{{live_dir}}/bench/fidelity/reflow.py'
+
 # OS-only scheduler-stall floor (M6 gate): BEAM probe next to 15 pty cats, no herdr code
 live-bench-os-floor:
     '{{live_dir}}/bench/gate/os_floor.sh'
