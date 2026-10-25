@@ -35,6 +35,19 @@ defmodule HerdrTerm.Client.Term.Render do
   `{:detached, reason}` and
   `{:handoff, map}` go to `Tty.Owner`.
 
+  Kitty graphics: after Compose, `Render.Graphics.run/4` (guarded) turns the scene's
+  placements into `opts.graphics` ops against a cache of what the host holds, and
+  splices `[image WxH]` labels for withheld images into the rows. Image data comes from
+  the attach reply's `images` MFA (fetched once per `{pane, image, fp}` the scene
+  references, guarded) or from `{:image, pane, {image, fp}, payload}` (inline); entries
+  the scene no longer references are dropped. The first frame after an attach starts
+  with `:delete_all`; a failing pass sends only `:delete_all` and resets the cache, a
+  refused frame resets it for the next. Cell px come from `Kernel.tty().size/1`, re-read
+  when the scene size changes; unknown px means no placements. Off with
+  `config :herdr_term, :kitty_graphics, false` or `HERDR_LIVE_KITTY_GRAPHICS=0`. With no
+  placement in the scene and nothing on the host the pass is skipped (one list check per
+  pane).
+
   Desktop: `{:bell, _}` writes one BEL to the host, `{:clipboard, %{text: t}}` goes
   through `HerdrTerm.Clipboard`, `{:open_url, url}` (http/https only, re-checked here)
   through `HerdrTerm.Kernel.desktop/0` (UTF-8 only); a failed copy is logged. `{:host_colors, %{fg, bg}}` (from Input, rgb
@@ -48,9 +61,10 @@ defmodule HerdrTerm.Client.Term.Render do
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
   alias HerdrScene.Scene
+  alias HerdrScene.Scene.Graphic
   alias HerdrTerm.{Client, Clipboard, Kernel}
   alias HerdrTerm.Client.Term.Alert
-  alias HerdrTerm.Client.Term.Render.{Chrome, Compose}
+  alias HerdrTerm.Client.Term.Render.{Chrome, Compose, Graphics}
   alias HerdrTerm.Client.Term.Theme
   alias HerdrTerm.Client.Term.Theme.Detect
   alias HerdrTerm.Tty.Owner
@@ -77,6 +91,8 @@ defmodule HerdrTerm.Client.Term.Render do
     :chrome_key,
     :chrome_retry,
     :sound_warned,
+    :images_mfa,
+    :cell_px,
     transport: :ref,
     caps: nil,
     appearance: :dark,
@@ -86,7 +102,12 @@ defmodule HerdrTerm.Client.Term.Render do
     refs: %{},
     dirty: MapSet.new(),
     last_at: nil,
-    repaint: true
+    repaint: true,
+    images: %{},
+    # host graphics cache (`Render.Graphics.cache`), :reset before the next frame clears
+    # the host; `kitty` nil when the pass is off, else `%{file?: boolean}`
+    gfx: :reset,
+    kitty: nil
   ]
 
   def start_link(opts),
@@ -105,8 +126,23 @@ defmodule HerdrTerm.Client.Term.Render do
        theme: Theme.default(),
        colorfgbg: colorfgbg,
        appearance: Detect.appearance(nil, colorfgbg),
-       transport: Keyword.get(opts, :transport, :ref)
+       transport: Keyword.get(opts, :transport, :ref),
+       kitty: kitty()
      }}
+  end
+
+  # a state from before kitty graphics: the switch is computed as `init/1` does
+  @impl true
+  def code_change(_old, state, _extra) do
+    fresh? = not Map.has_key?(state, :kitty)
+    state = Map.merge(%__MODULE__{}, state)
+    {:ok, if(fresh?, do: %{state | kitty: kitty()}, else: state)}
+  end
+
+  defp kitty do
+    if Application.get_env(:herdr_term, :kitty_graphics, true) and
+         System.get_env("HERDR_LIVE_KITTY_GRAPHICS") != "0",
+       do: %{file?: Graphics.file_transport?(System.get_env())}
   end
 
   @impl true
@@ -127,7 +163,8 @@ defmodule HerdrTerm.Client.Term.Render do
     state = Map.merge(%__MODULE__{}, state)
     send_input(state, {:session, nil})
     # forget the refs: the next scene re-fetches every pane
-    {:noreply, attach(%{state | session: nil, mon: nil, repaint: true, refs: %{}})}
+    state = %{state | session: nil, mon: nil, repaint: true, refs: %{}}
+    {:noreply, attach(%{state | images: %{}, gfx: :reset})}
   end
 
   def handle_info({:scene, %Scene{} = scene}, state) do
@@ -150,7 +187,9 @@ defmodule HerdrTerm.Client.Term.Render do
       end)
 
     cursors = Map.take(state.cursors, ids)
+    images = prune_images(state.images, scene)
     state = %{state | scene: scene, rows: rows, dirty: dirty, refs: refs, cursors: cursors}
+    state = %{state | images: images}
     {:noreply, state |> refresh_theme() |> chrome() |> schedule()}
   end
 
@@ -176,6 +215,14 @@ defmodule HerdrTerm.Client.Term.Render do
     state = Map.merge(%__MODULE__{}, state)
     old = as_map(Map.get(state.rows, id, %{}))
     {:noreply, schedule(%{state | rows: Map.put(state.rows, id, Map.merge(old, Map.new(rows)))})}
+  end
+
+  # inline image data, sent before the scene that references it
+  def handle_info({:image, pane, {image_id, fp}, payload}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+
+    {:noreply,
+     %{state | images: Map.put(state.images, {pane, image_id, fp}, valid_image(payload))}}
   end
 
   def handle_info({:notice, notice}, state) do
@@ -362,9 +409,11 @@ defmodule HerdrTerm.Client.Term.Render do
         :exit, reason -> {:exit, reason}
       end
 
-    with :ok <- Protocol.validate_attach_reply(reply), {:ok, session, %{rows: mfa}} <- reply do
+    with :ok <- Protocol.validate_attach_reply(reply),
+         {:ok, session, %{rows: mfa} = info} <- reply do
       send_input(state, {:session, session})
-      %{state | session: session, mon: Process.monitor(session), rows_mfa: mfa}
+      mon = Process.monitor(session)
+      %{state | session: session, mon: mon, rows_mfa: mfa, images_mfa: info[:images]}
     else
       other ->
         Logger.warning("attach failed: #{inspect(other)}")
@@ -451,16 +500,26 @@ defmodule HerdrTerm.Client.Term.Render do
     # a no-op unless the theme changed since the scene (the key compare is a pointer check)
     state = chrome(state)
     scene = state.scene
+    resized? = scene.size != state.last_size
+    state = if resized?, do: %{state | cell_px: cell_px(state)}, else: state
     args = [scene, state.rows, state.cursors, state.theme, state.chrome]
 
     case Guard.run_twice(Compose, :screen, args, @compose) do
       {:ok, {frame, cursor}} ->
-        repaint = state.repaint or scene.size != state.last_size
+        {frame, ops, state} = graphics(state, frame)
         {at, shape} = cursor || {nil, :block}
-        opts = %{cursor: at, shape: shape, repaint: repaint}
+        opts = %{cursor: at, shape: shape, repaint: state.repaint or resized?, graphics: ops}
 
-        with {:error, why} <- Kernel.blit().frame(state.tty, frame, opts),
-             do: Logger.warning("frame refused: #{inspect(why)}")
+        state =
+          case Kernel.blit().frame(state.tty, frame, opts) do
+            :ok ->
+              state
+
+            # the host got none of the ops: clear it and start over next frame
+            {:error, why} ->
+              Logger.warning("frame refused: #{inspect(why)}")
+              %{state | gfx: :reset}
+          end
 
         %{state | repaint: false, last_size: scene.size, last_at: now()}
 
@@ -470,6 +529,76 @@ defmodule HerdrTerm.Client.Term.Render do
         %{state | repaint: true, timer: Process.send_after(self(), :frame, @retry_frame_ms)}
     end
   end
+
+  # graphics
+
+  defp graphics(%{kitty: nil} = state, frame), do: {frame, [], state}
+
+  defp graphics(state, frame) do
+    {reset, cache} =
+      if state.gfx == :reset, do: {[:delete_all], Graphics.empty()}, else: {[], state.gfx}
+
+    if cache == Graphics.empty() and Enum.all?(state.scene.panes, &(&1.graphics == [])) do
+      {frame, reset, %{state | gfx: cache}}
+    else
+      state = fetch_images(state)
+
+      ctx = %{
+        cell_px: state.cell_px,
+        cache: cache,
+        images: state.images,
+        file?: state.kitty.file?,
+        theme: state.theme
+      }
+
+      case Guard.run_twice(Graphics, :run, [frame, state.scene, state.chrome, ctx], @compose) do
+        {:ok, {frame, ops, cache}} -> {frame, reset ++ ops, %{state | gfx: cache}}
+        # the host is cleared and the cache with it
+        {:failed, _} -> {frame, [:delete_all], %{state | gfx: Graphics.empty()}}
+      end
+    end
+  end
+
+  defp cell_px(state) do
+    case Kernel.tty().size(state.tty) do
+      {cols, rows, pw, ph} when cols > 0 and rows > 0 and pw > 0 and ph > 0 ->
+        {div(pw, cols), div(ph, rows)}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp prune_images(images, _scene) when map_size(images) == 0, do: images
+
+  defp prune_images(images, scene),
+    do: Map.take(images, for(p <- scene.panes, g <- p.graphics, do: image_key(p, g)))
+
+  defp image_key(pane, %{image: {image_id, fp}}), do: {pane.id, image_id, fp}
+
+  # once per key: a nil (unknown, invalid or failed) is kept, not re-fetched every frame
+  defp fetch_images(%{images_mfa: nil} = state), do: state
+
+  defp fetch_images(%{images_mfa: mfa} = state) do
+    keys = for p <- state.scene.panes, g <- p.graphics, do: image_key(p, g)
+    %{state | images: Enum.reduce(keys, state.images, &fetch_image(&2, &1, mfa))}
+  end
+
+  defp fetch_image(images, key, _mfa) when is_map_key(images, key), do: images
+
+  defp fetch_image(images, {pane, image_id, _fp} = key, {m, f, a}) do
+    case Guard.run_twice(m, f, [pane, image_id | a], scan: false) do
+      {:ok, payload} -> Map.put(images, key, valid_image(payload))
+      {:failed, _} -> Map.put(images, key, nil)
+    end
+  end
+
+  # Blit refuses a whole frame over a bad op: only well-formed payloads are kept
+  defp valid_image(%{data: data} = payload) when data == nil or byte_size(data) > 0 do
+    if Graphic.validate_image(payload) == :ok, do: payload
+  end
+
+  defp valid_image(_), do: nil
 
   defp fetch(%{rows_mfa: nil} = state, _id), do: state
 
