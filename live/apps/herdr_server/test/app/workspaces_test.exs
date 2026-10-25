@@ -176,8 +176,10 @@ defmodule HerdrServer.App.WorkspacesTest do
     tabs = fn app -> Enum.map(ws.(app).tabs, & &1.id) end
     assert ws.(app).active_tab == 3
 
-    {moved, []} = Workspaces.move_tab(app, 1, 3, 0)
+    {moved, [{:api_event, {:tab_moved, 1, 3, 0}}]} = Workspaces.move_tab(app, 1, 3, 0)
     assert tabs.(moved) == [3, 1, 2]
+    assert Workspaces.move_tab(app, 1, 3, 2) == {app, []}
+    assert {_, [{:api_event, {:tab_moved, 1, 1, 3}}]} = Workspaces.move_tab(app, 1, 1, 2)
     assert ws.(moved).active_tab == 3
     assert tabs.(elem(Workspaces.move_tab(app, 1, 1, 99), 0)) == [2, 3, 1]
     assert tabs.(elem(Workspaces.move_tab(app, 1, 3, -5), 0)) == [3, 1, 2]
@@ -187,7 +189,7 @@ defmodule HerdrServer.App.WorkspacesTest do
     {app, _} = Actions.new_workspace(app)
     {app, _} = Actions.new_workspace(app)
     ids = fn app -> Enum.map(app.session.workspaces, & &1.id) end
-    {moved, []} = Workspaces.move_workspace(app, 3, 0)
+    {moved, [{:api_event, {:workspace_moved, 3, 0}}]} = Workspaces.move_workspace(app, 3, 0)
     assert ids.(moved) == [3, 1, 2]
     assert moved.session.active_workspace == 3
     assert ids.(elem(Workspaces.move_workspace(app, 1, 7), 0)) == [2, 3, 1]

@@ -175,10 +175,15 @@ defmodule HerdrServer.App.ChromeTest do
       Actions.apply(app, {:chrome, from, {:drop, Map.put(at(0, 0), :over, over)}})
     end
 
-    {moved, []} = drop.(app, [:tabs, {:tab, 1}], [:tabs, {:tab, 3}])
+    {moved, [{:api_event, {:tab_moved, 1, 1, 3}}]} =
+      drop.(app, [:tabs, {:tab, 1}], [:tabs, {:tab, 3}])
+
     assert ids.(moved) == [2, 3, 1]
     assert ws(moved).active_tab == 3
-    {back, []} = drop.(moved, [:tabs, {:tab, 1}], [:tabs, {:tab, 2}])
+
+    {back, [{:api_event, {:tab_moved, 1, 1, 0}}]} =
+      drop.(moved, [:tabs, {:tab, 1}], [:tabs, {:tab, 2}])
+
     assert ids.(back) == [1, 2, 3]
 
     # off a tab, a drag, or no `over`: nothing
@@ -193,7 +198,10 @@ defmodule HerdrServer.App.ChromeTest do
     {app, _} = Actions.new_workspace(app)
     path = &[:sidebar, :spaces, :list, {:workspace, &1}]
     ev = {:drop, Map.put(at(0, 0), :over, path.(1))}
-    {moved, []} = Actions.apply(app, {:chrome, path.(3), ev})
+
+    {moved, [{:api_event, {:workspace_moved, 3, 0}}]} =
+      Actions.apply(app, {:chrome, path.(3), ev})
+
     assert Enum.map(moved.session.workspaces, & &1.id) == [3, 1, 2]
     assert moved.session.active_workspace == 3
   end

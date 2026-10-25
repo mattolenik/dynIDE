@@ -1083,8 +1083,8 @@ defmodule HerdrServer.Api.Spec do
       ev("workspace.renamed", "A workspace's label changed.", ws_obj),
       ev(
         "workspace.moved",
-        "The workspace order changed.",
-        [f("workspaces", {:list, {:ref, "workspace"}})]
+        "A workspace was moved: its id, the requested insert_index and the new order.",
+        ws ++ [f("insert_index", :integer), f("workspaces", {:list, {:ref, "workspace"}})]
       ),
       ev("tab.created", "A tab was created.", tab_obj),
       ev("tab.closed", "A tab was closed.", tab),
@@ -1092,8 +1092,8 @@ defmodule HerdrServer.Api.Spec do
       ev("tab.renamed", "A tab's label changed.", tab_obj),
       ev(
         "tab.moved",
-        "A workspace's tab order changed.",
-        ws ++ [f("tabs", {:list, {:ref, "tab"}})]
+        "A tab was moved: its id, the requested insert_index and its workspace's new order.",
+        tab ++ [f("insert_index", :integer), f("tabs", {:list, {:ref, "tab"}})]
       ),
       ev("pane.created", "A pane was created.", pane_obj),
       ev("pane.closed", "A pane was closed.", pane),

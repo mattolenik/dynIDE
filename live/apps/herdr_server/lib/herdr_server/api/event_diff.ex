@@ -8,11 +8,9 @@ defmodule HerdrServer.Api.EventDiff do
   `layout.updated` carries `"layout"` for each surviving tab whose split tree changed.
   Focus follows `Api.View`'s chain: an event fires when the focused workspace, tab or
   pane id changes. `pane.updated` fires when a surviving pane's object changes other than
-  `focused` (title, size). `workspace.moved` (all workspaces, in order) fires when the
-  surviving workspaces' order changed, `tab.moved` (the workspace's tabs, in order) when a
-  surviving workspace's surviving tabs changed order. Order: workspace, tab, pane, layout
-  events; within each, closed, created, focused, then updated or renamed, then moved.
-  `diff(nil, app)` is `[]`.
+  `focused` (title, size). Order: workspace, tab, pane, layout events; within each,
+  closed, created, focused, then updated or renamed. `diff(nil, app)` is `[]`.
+  `tab.moved` / `workspace.moved` are not diffs: the move reports them (`moved/2`).
   """
 
   alias HerdrServer.Api.{Ids, View}
@@ -55,23 +53,7 @@ defmodule HerdrServer.Api.EventDiff do
           (prev = o.ws[id]) && prev.name != ws.name,
           do: ws_ev("renamed", new, ws)
 
-    moved =
-      if reordered?(Enum.map(o.ws_l, &elem(&1, 0)), Enum.map(n.ws_l, &elem(&1, 0))),
-        do: [
-          %{
-            "event" => "workspace.moved",
-            "workspaces" => Enum.map(new.session.workspaces, &View.workspace(new, &1))
-          }
-        ],
-        else: []
-
-    closed ++ created ++ focused ++ renamed ++ moved
-  end
-
-  # the ids both lists hold, in a different order
-  defp reordered?(old_ids, new_ids) do
-    common = MapSet.intersection(MapSet.new(old_ids), MapSet.new(new_ids))
-    Enum.filter(old_ids, &(&1 in common)) != Enum.filter(new_ids, &(&1 in common))
+    closed ++ created ++ focused ++ renamed
   end
 
   defp ws_ev(kind, app, ws) do
@@ -107,17 +89,7 @@ defmodule HerdrServer.Api.EventDiff do
           (prev = o.tabs[key]) && elem(prev, 1).name != tab.name,
           do: tab_ev("renamed", new, wt)
 
-    moved =
-      for {id, ws} <- n.ws_l,
-          (prev = o.ws[id]) &&
-            reordered?(Enum.map(prev.tabs, & &1.id), Enum.map(ws.tabs, & &1.id)),
-          do: %{
-            "event" => "tab.moved",
-            "workspace_id" => Ids.workspace(id),
-            "tabs" => Enum.map(ws.tabs, &View.tab(new, ws, &1))
-          }
-
-    closed ++ created ++ focused ++ renamed ++ moved
+    closed ++ created ++ focused ++ renamed
   end
 
   defp tab_ev(kind, app, {ws, tab}) do
@@ -126,6 +98,33 @@ defmodule HerdrServer.Api.EventDiff do
       "tab_id" => Ids.tab(ws.id, tab.id),
       "workspace_id" => Ids.workspace(ws.id),
       "tab" => View.tab(app, ws, tab)
+    }
+  end
+
+  @doc """
+  The event of a move effect (`App.Workspaces.move_tab/4`, `move_workspace/3`) in `app`,
+  the app after it: the moved id, the requested `insert_index` and the new order.
+  Nil when the target is gone.
+  """
+  @spec moved(tuple(), app()) :: event() | nil
+  def moved({:tab_moved, w, t, insert}, app) do
+    with %{} = ws <- View.find_workspace(app, w) do
+      %{
+        "event" => "tab.moved",
+        "tab_id" => Ids.tab(w, t),
+        "workspace_id" => Ids.workspace(w),
+        "insert_index" => insert,
+        "tabs" => Enum.map(ws.tabs, &View.tab(app, ws, &1))
+      }
+    end
+  end
+
+  def moved({:workspace_moved, w, insert}, app) do
+    %{
+      "event" => "workspace.moved",
+      "workspace_id" => Ids.workspace(w),
+      "insert_index" => insert,
+      "workspaces" => Enum.map(app.session.workspaces, &View.workspace(app, &1))
     }
   end
 

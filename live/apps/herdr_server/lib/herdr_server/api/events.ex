@@ -6,7 +6,9 @@ defmodule HerdrServer.Api.Events do
   subscription subscribes the hub itself to the Store. On each `{:app_changed, app}` the
   hub diffs against the last app (`Api.EventDiff`, guarded) and sends
   `{:api_event, event}` to each subscriber with a matching filter, at most once per event.
-  The Store's `{:alert, a}` becomes `notification.shown`, placed in the last app.
+  The Store's `{:alert, a}` becomes `notification.shown`, placed in the last app. The
+  Store's `{:api_event, ev}` (a move, `EventDiff.moved/2`) arrives ahead of its app: it
+  waits in `pending` and goes out after that app's diff, placed in it.
   The hub monitors the Store: after a Store restart it subscribes again (retrying every
   100 ms until the Store is registered) and diffs from the new Store's snapshot, so
   changes during the restart give no events. When the last subscriber goes, the hub
@@ -26,7 +28,7 @@ defmodule HerdrServer.Api.Events do
 
   @retry_ms 100
 
-  defstruct subs: %{}, last: nil, store?: false, retry?: false
+  defstruct subs: %{}, last: nil, store?: false, retry?: false, pending: []
 
   @type filter :: %{required(String.t()) => String.t()}
 
@@ -123,7 +125,17 @@ defmodule HerdrServer.Api.Events do
   def handle_info({:app_changed, app}, state) do
     state = Map.merge(%__MODULE__{}, state)
     if state.subs != %{}, do: fan_out(state.last, app, state.subs)
-    {:noreply, %{state | last: app}}
+    moved(Enum.reverse(state.pending), app, state.subs)
+    {:noreply, %{state | last: app, pending: []}}
+  end
+
+  # a move, published with the app that follows it
+  def handle_info({:api_event, ev}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+
+    if state.subs == %{},
+      do: {:noreply, state},
+      else: {:noreply, %{state | pending: [ev | state.pending]}}
   end
 
   # an agent alert (the Store's `{:alert, a}`), placed in the last app
@@ -231,6 +243,22 @@ defmodule HerdrServer.Api.Events do
   defp locate(app, pane),
     do:
       Guard.run_twice(Commands, :locate, [app, pane], server: Store.reload_server(), scan: false)
+
+  defp moved(evs, app, subs) do
+    for ev <- evs,
+        {:ok, %{} = event} <-
+          [
+            Guard.run_twice(EventDiff, :moved, [ev, app],
+              server: Store.reload_server(),
+              scan: false
+            )
+          ],
+        {pid, {_, filters}} <- subs,
+        Enum.any?(filters, &matches?(&1, event)),
+        do: send(pid, {:api_event, event})
+
+    :ok
+  end
 
   defp fan_out(old, new, subs) do
     case Guard.run_twice(EventDiff, :diff, [old, new], server: Store.reload_server(), scan: false) do

@@ -152,25 +152,47 @@ defmodule HerdrServer.App.Workspaces do
 
   @doc """
   Moves tab `tab_id` of workspace `ws_id` to position `index` (0-based, clamped to
-  `0..len-1`); ids and the active tab are kept. Unknown ids are a no-op.
+  `0..len-1`); ids and the active tab are kept. Unknown ids or no change are a no-op.
+  A move gives the effect `{:api_event, {:tab_moved, ws_id, tab_id, insert_index}}`
+  (`Api.Events` publishes `tab.moved`), `insert_index` the equivalent herdr gap
+  (`index + 1` when moving right, else `index`). Both the API (`Commands`) and a chrome
+  drop move through here.
   """
   @spec move_tab(app(), term(), term(), integer()) :: {app(), [effect()]}
-  def move_tab(app, ws_id, tab_id, index),
-    do: {update_ws(app, ws_id, &%{&1 | tabs: move(&1.tabs, tab_id, index)}), []}
+  def move_tab(app, ws_id, tab_id, index) do
+    with %{} = ws <- Enum.find(app.session.workspaces, &(&1.id == ws_id)),
+         {:ok, tabs, insert} <- move(ws.tabs, tab_id, index) do
+      {update_ws(app, ws_id, &%{&1 | tabs: tabs}),
+       [{:api_event, {:tab_moved, ws_id, tab_id, insert}}]}
+    else
+      _ -> {app, []}
+    end
+  end
 
-  @doc "Moves workspace `ws_id` to position `index`, as `move_tab/4`."
+  @doc """
+  Moves workspace `ws_id` to position `index`, as `move_tab/4`; the effect is
+  `{:api_event, {:workspace_moved, ws_id, insert_index}}`.
+  """
   @spec move_workspace(app(), term(), integer()) :: {app(), [effect()]}
-  def move_workspace(app, ws_id, index),
-    do: {update_in(app.session.workspaces, &move(&1, ws_id, index)), []}
+  def move_workspace(app, ws_id, index) do
+    case move(app.session.workspaces, ws_id, index) do
+      {:ok, wss, insert} ->
+        {put_in(app.session.workspaces, wss), [{:api_event, {:workspace_moved, ws_id, insert}}]}
 
+      :error ->
+        {app, []}
+    end
+  end
+
+  # the moved list and the herdr gap index of the move; :error for no id or no change
   defp move(list, id, index) do
-    case Enum.find_index(list, &(&1.id == id)) do
-      nil ->
-        list
-
-      i ->
-        {x, rest} = List.pop_at(list, i)
-        List.insert_at(rest, index |> max(0) |> min(length(rest)), x)
+    with i when is_integer(i) <- Enum.find_index(list, &(&1.id == id)),
+         {x, rest} = List.pop_at(list, i),
+         j = index |> max(0) |> min(length(rest)),
+         true <- j != i do
+      {:ok, List.insert_at(rest, j, x), if(j > i, do: j + 1, else: j)}
+    else
+      _ -> :error
     end
   end
 

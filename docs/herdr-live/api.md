@@ -1303,10 +1303,12 @@ A workspace's label changed.
 
 ### `workspace.moved`
 
-The workspace order changed.
+A workspace was moved: its id, the requested insert_index and the new order.
 
 | data field | type |
 | --- | --- |
+| `workspace_id` | workspace id |
+| `insert_index` | integer |
 | `workspaces` | list of `workspace` object |
 
 ### `tab.created`
@@ -1350,11 +1352,13 @@ A tab's label changed.
 
 ### `tab.moved`
 
-A workspace's tab order changed.
+A tab was moved: its id, the requested insert_index and its workspace's new order.
 
 | data field | type |
 | --- | --- |
+| `tab_id` | tab id |
 | `workspace_id` | workspace id |
+| `insert_index` | integer |
 | `tabs` | list of `tab` object |
 
 ### `pane.created`

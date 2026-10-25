@@ -213,4 +213,32 @@ defmodule HerdrServer.Api.EventsTest do
       %{"event" => _} = ev -> read_until_error(s, [ev | acc])
     end
   end
+
+  test "tab.move and a chrome drop publish tab.moved once; workspace.move workspace.moved",
+       %{path: path, ctl: ctl} do
+    s = subscribe!(path, [%{"type" => "tab.moved"}, %{"type" => "workspace.moved"}])
+    ApiClient.call(ctl, "tab.create", %{})
+    ApiClient.call(ctl, "tab.create", %{})
+
+    ApiClient.call(ctl, "tab.move", %{"tab_id" => "w1:t1", "insert_index" => 3})
+    assert %{"event" => "tab.moved", "data" => data} = event!(s)
+    assert %{"tab_id" => "w1:t1", "workspace_id" => "w1", "insert_index" => 3} = data
+    assert Enum.map(data["tabs"], & &1["tab_id"]) == ~w(w1:t2 w1:t3 w1:t1)
+
+    # a drag of t1 (now last) onto t2 (first): gap 0
+    over = %{x: 0, y: 0, over: [:tabs, {:tab, 2}]}
+    Store.event({:chrome, [:tabs, {:tab, 1}], {:drop, over}}, %{cols: 80, rows: 24})
+    assert %{"event" => "tab.moved", "data" => %{"insert_index" => 0} = data} = event!(s)
+    assert Enum.map(data["tabs"], & &1["tab_id"]) == ~w(w1:t1 w1:t2 w1:t3)
+
+    ApiClient.call(ctl, "workspace.create", %{})
+    ApiClient.call(ctl, "workspace.move", %{"workspace_id" => "w2", "insert_index" => 0})
+    assert %{"event" => "workspace.moved", "data" => data} = event!(s)
+    assert %{"workspace_id" => "w2", "insert_index" => 0} = data
+    assert Enum.map(data["workspaces"], & &1["workspace_id"]) == ~w(w2 w1)
+
+    # a move to where it is publishes nothing
+    ApiClient.call(ctl, "workspace.move", %{"workspace_id" => "w2", "insert_index" => 1})
+    assert ApiClient.recv_line(s, 300) == {:error, :timeout}
+  end
 end

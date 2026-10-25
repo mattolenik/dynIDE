@@ -11,7 +11,8 @@ defmodule HerdrServer.App.Store do
       the latest active remaining session drives and pane sizes are re-settled at its size.
     * `event_async/1` (cast) is for processes the Store calls into (`Pane.Server`).
     * An `{:alert, a}` effect (`App.Alerts`) is sent to every subscriber as is, ahead of
-      that event's `{:app_changed, app}`.
+      that event's `{:app_changed, app}`. An `{:api_event, ev}` effect (a tab or
+      workspace move) goes to `Api.Events` only, also ahead of it.
     * Subscribers get `{:app_changed, app}` after each event that changed the app. The
       Store only ever `send`s to sessions, so there is no call cycle.
     * After each event: panes of inactive tabs are hidden, active-tab panes are resized to
@@ -559,6 +560,15 @@ defmodule HerdrServer.App.Store do
   # every subscriber decides for itself (sessions: `Client.Toasts`; the API hub publishes)
   defp effect(state, {:alert, a}, _origin) do
     Enum.each(Map.keys(state.subs), &send(&1, {:alert, a}))
+    state
+  end
+
+  # an API event only the command knows (`tab.moved` ...): the API hub, ahead of
+  # this event's {:app_changed, app}
+  defp effect(state, {:api_event, ev}, _origin) do
+    with pid when is_pid(pid) <- Process.whereis(HerdrServer.Api.Events),
+         do: send(pid, {:api_event, ev})
+
     state
   end
 
