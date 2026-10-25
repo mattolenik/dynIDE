@@ -105,6 +105,31 @@ want="cwd=$tmp/home rel=none erl= path=/usr/bin:/bin"
 [ "$line" = "$want" ] || fail "pane shell: $line (wanted $want)"
 echo "PASS: pane shell starts in \$HOME (cwd / at launch), no RELEASE_*/ROOTDIR/BINDIR env, the caller's PATH (no erl)"
 
+# a plugin action runs as a port child of the VM: same env rules as the pane shell
+mkdir -p "$tmp/plugin"
+cat >"$tmp/plugin/herdr-plugin.toml" <<P
+id = "envcheck"
+name = "envcheck"
+version = "0.1.0"
+min_herdr_version = "0.1.0"
+
+[[actions]]
+id = "env"
+title = "env"
+command = ["/bin/sh", "-c", "echo \\"rel=\${RELEASE_ROOT:-none}\${RELEASE_VSN:-}\${ROOTDIR:-}\${BINDIR:-} erl=\$(command -v erl) path=\$PATH\\" >'$tmp/plugin.out'"]
+P
+"$x" "$bin" plugin link "$tmp/plugin" >"$tmp/link" 2>&1 || fail "plugin link: $(cat "$tmp/link")"
+"$x" "$bin" plugin action invoke envcheck.env >"$tmp/invoke" 2>&1 || fail "plugin action invoke: $(cat "$tmp/invoke")"
+i=0
+until [ -s "$tmp/plugin.out" ]; do
+  i=$((i + 1))
+  [ "$i" -lt 20 ] || fail "plugin action wrote nothing in 10 s: $(cat "$tmp/invoke")"
+  sleep 0.5
+done
+want="rel=none erl= path=/usr/bin:/bin"
+[ "$(cat "$tmp/plugin.out")" = "$want" ] || fail "plugin action env: $(cat "$tmp/plugin.out") (wanted $want)"
+echo "PASS: a plugin action (port child) gets the caller's PATH (no erl) and no RELEASE_*/ROOTDIR/BINDIR env"
+
 "$x" "$bin" kernel-restart >"$tmp/kr" 2>&1 || fail "kernel-restart: $(cat "$tmp/kr")"
 "$x" "$bin" ping >/dev/null 2>&1 || fail "no ping after kernel-restart"
 [ "$(panes)" = "$ids" ] || fail "pane ids after kernel-restart: $(panes) (wanted $ids)"

@@ -31,26 +31,33 @@ if System.get_env("HERDR_LIVE_TEST_ON_SAVE") == "1" do
   config :herdr_reload, HerdrReload, test_on_save: :gate
 end
 
-# M18: a release VM (bin/herdr_live) records its version for the API. Pane shells inherit
-# the VM's real env (the kernel spawns them; System.delete_env does not reach that env), so
-# the release script's RELEASE_* are blanked there: its `${VAR:-default}` reads "" as
-# unset, and another Elixir release started from a pane does not boot as this one. erl's
-# ROOTDIR/BINDIR/EMU/PROGNAME go the same way, and PATH is the launcher's caller's
-# (HERDR_LIVE_PANE_PATH): erlexec put the bundled erts bin and the release bin/ first,
-# which would shadow the user's erl/elixir/mix and bypass the install's `current` link.
+# M18: a release VM (bin/herdr_live) records its version for the API, then gives every
+# process it starts the launcher caller's env back. erlexec put the bundled erts bin and the
+# release bin/ first on PATH (shadowing the user's erl/elixir/mix and bypassing the install's
+# `current` link; the launcher saved the caller's PATH as HERDR_LIVE_PANE_PATH), and the
+# release scripts exported RELEASE_* (another Elixir release started from a child would
+# boot as this one) and erl's ROOTDIR/BINDIR/EMU/PROGNAME. One list serves both kinds of
+# child: port children (plugins, hooks, custom commands, git, sound, ssh) take the VM's
+# env, edited here; pane shells come from the kernel, which reads the real process env
+# that System.put_env/delete_env do not reach, so they get the same list as :pane_env
+# ("" reads as unset to the release scripts' `${VAR:-default}`).
 if config_env() == :prod do
   config :herdr_server, :version, System.get_env("RELEASE_VSN")
 
   blank =
     for {k, _} <- System.get_env(),
-        String.starts_with?(k, "RELEASE_") or k in ~w(ROOTDIR BINDIR EMU PROGNAME),
+        String.starts_with?(k, "RELEASE_") or
+          k in ~w(ROOTDIR BINDIR EMU PROGNAME HERDR_LIVE_PANE_PATH),
         do: {k, ""}
 
-  path =
+  child_env =
     case System.get_env("HERDR_LIVE_PANE_PATH") do
-      nil -> []
-      p -> [{"PATH", p}, {"HERDR_LIVE_PANE_PATH", ""}]
+      nil -> blank
+      path -> [{"PATH", path} | blank]
     end
 
-  config :herdr_server, :pane_env, blank ++ path
+  for {k, v} <- child_env,
+      do: if(v == "", do: System.delete_env(k), else: System.put_env(k, v))
+
+  config :herdr_server, :pane_env, child_env
 end

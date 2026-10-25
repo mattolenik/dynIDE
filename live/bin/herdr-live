@@ -79,6 +79,9 @@ if [ -f "$root/releases/start_erl.data" ]; then
   unset RELEASE_NAME RELEASE_VSN RELEASE_PROG RELEASE_COOKIE RELEASE_MODE RELEASE_NODE \
     RELEASE_TMP RELEASE_VM_ARGS RELEASE_REMOTE_VM_ARGS RELEASE_DISTRIBUTION \
     RELEASE_BOOT_SCRIPT RELEASE_BOOT_SCRIPT_CLEAN RELEASE_SYS_CONFIG ERL_ROOTDIR
+  # erlexec puts the bundled erts bin and the release's bin first on a VM's PATH; the VMs
+  # give their children (panes, plugins, hooks, ssh) this one back (config/runtime.exs)
+  export HERDR_LIVE_PANE_PATH="$PATH"
 fi
 cli() { # runs in the caller's cwd, so a relative HERDR_LIVE_API keeps its meaning
   if [ -n "$rel" ]; then # the release's erts and ebins; bin/no_dot_erlang.boot is OTP's
@@ -217,9 +220,6 @@ exec </dev/null >>"$log" 2>&1
 # process group, so a terminal ^C must not open the BEAM break menu (the broker
 # turns SIGINT into a clean stop).
 if [ -n "$rel" ]; then
-  # erlexec puts the bundled erts bin and the release's bin first on the VM's PATH:
-  # pane shells get the caller's PATH back (config/runtime.exs :pane_env)
-  export HERDR_LIVE_PANE_PATH="$PATH"
   set -- "$root/bin/herdr_live" start
 else
   export MIX_ENV="${MIX_ENV:-dev}"
