@@ -31,6 +31,7 @@ live-check:
     python3 '{{live_dir}}/scripts/tty_harness.py' selfhost
     python3 '{{live_dir}}/scripts/tty_harness.py' persist
     python3 '{{live_dir}}/scripts/tty_harness.py' agent
+    python3 '{{live_dir}}/scripts/tty_harness.py' remote
 
 # Summarise a herdr-live log (reloads, rollbacks, handoffs, restores, session losses); args: [LOG ...] [--since ISO] [--json]
 live-log-summary *args:

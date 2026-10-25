@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end host tty checks for HerdrTerm.Native.Tty under a real pty.
 
-Usage: tty_harness.py destructor|demo|herdr|herdr-stress|selfhost|persist|agent [-v]
+Usage: tty_harness.py destructor|demo|herdr|herdr-stress|selfhost|persist|agent|remote [-v]
 
 destructor: runs scripts/tty_destructor.exs in the BEAM as the pty's session
 leader. Answers each kitty/DA1 probe, then checks: the destructor of a killed
@@ -64,7 +64,17 @@ among them), agent list (stderr has code not_available) and 10 timed pings
 (mean latency printed). Prefix q exits 0 and log_summary.py reports api
 connects >= 5 and session_losses 0.
 
-herdr, herdr-stress, selfhost, persist and agent launch bin/herdr-live and compile into the
+remote: M16's remote attach. A (120x40) runs the instance; B (80x24) runs
+`bin/herdr-live attach fakehost` with HERDR_LIVE_SSH=bench/remote/fake_ssh.sh (the
+relay runs locally) and its own transcript: B shows TERMINAL on row 24, an echo
+typed in either shows in the other; killing the relay (its pid file) shows
+reconnecting in B, then a client_reconnect and B's echo on A; kernel-restart
+carries B's socket (client_held carried=true, no client_reconnect for B) and B's
+echo still reaches A; prefix q ends only B (exit 0, tty restored), A answers, A
+quits; log_summary.py reports clients attaches >= 2 and session_losses 0. On a
+failure the client and server log tails are printed.
+
+herdr, herdr-stress, selfhost, persist, agent and remote launch bin/herdr-live and compile into the
 shared _build/dev, so they skip (print SKIP, exit 0) inside a herdr-live pane:
 pane shells inherit the VM's HERDR_BROKER_SOCK. Run them outside the dogfood
 instance (another terminal or worktree).
@@ -549,9 +559,17 @@ def demo():
 class Herdr:
     """bin/herdr-live attached, leading the session of a fresh cols x rows pty."""
 
-    def __init__(self, tmp, cols, rows, run=""):
+    # the open terminals: until() and cli() pump them all, so a second pty (remote)
+    # never fills up while the checks wait on the other
+    running = []
+
+    def __init__(self, tmp, cols, rows, run="", args=(), extra_env=None):
         """`run` names the log, API socket and runtime dir, so two launches in one
-        temp dir (persist) stay apart; the state dir (session files) is the temp dir's."""
+        temp dir (persist) stay apart; the state dir (session files) is the temp dir's.
+        `args` launches `bin/herdr-live args` (attach: a client of the instance named by
+        `run`) with its own transcript; the plain launch uses the global one."""
+        self.args = tuple(args)
+        self.transcript = bytearray() if args else transcript
         self.log = os.path.join(tmp, f"herdr-live{run}.log")
         self.tmp = tmp
         self.master, slave = os.openpty()
@@ -576,6 +594,7 @@ class Herdr:
                    HERDR_LIVE_LOG=self.log, HERDR_LIVE_API=os.path.join(tmp, f"api{run}.sock"),
                    HERDR_LIVE_RUNTIME_DIR=os.path.join(tmp, f"rt{run}"), HERDR_LIVE_STATE_DIR=self.state,
                    HERDR_LIVE_CONFIG=config_path)
+        env.update(extra_env or {})
         self.env = env
         pid = os.fork()
         if pid == 0:
@@ -586,15 +605,17 @@ class Herdr:
                 os.dup2(slave, 1)
                 os.dup2(slave, 2)
                 os.close(self.master)
-                os.execve(os.path.join(LIVE, "bin", "herdr-live"), ["herdr-live"], env)
+                os.execve(os.path.join(LIVE, "bin", "herdr-live"), ["herdr-live", *self.args], env)
             finally:
                 os._exit(127)
         os.close(slave)
         self.pid = pid
         pgroups.add(pid)
+        Herdr.running.append(self)
 
     def pump(self, wait=0.05):
         """Reads for at most `wait` seconds (a busy stream never starves the checks)."""
+        transcript = self.transcript
         at, end = len(transcript), time.monotonic() + wait
         while (left := end - time.monotonic()) > 0 and select.select([self.master], [], [], left)[0]:
             try:
@@ -619,7 +640,7 @@ class Herdr:
                 if verbose:
                     print("--- screen", self.screen.text(), sep="\n")
                 fail(f"timed out waiting for {label}")
-            self.pump()
+            pump_all()
 
     def send(self, data):
         os.write(self.master, data)
@@ -644,7 +665,7 @@ class Herdr:
             while p.poll() is None:
                 if time.monotonic() > end:
                     fail(f"herdr-live {' '.join(args)} timed out")
-                self.pump()
+                pump_all()
         finally:
             if p.poll() is None:
                 os.killpg(p.pid, signal.SIGKILL)
@@ -660,11 +681,12 @@ class Herdr:
     def start(self):
         self.until(lambda: os.path.exists(self.log) and "terminal client started" in open(self.log).read(),
                    "terminal client started")
-        self.until(lambda: ALT_ON in transcript and self.shows("TERMINAL") and self.prompts() >= 1,
+        self.until(lambda: ALT_ON in self.transcript and self.shows("TERMINAL") and self.prompts() >= 1,
                    "first frame with TERMINAL and a prompt")
         ok(True, "herdr: alt screen, first frame with TERMINAL status and the pane's prompt")
 
     def quit(self):
+        transcript = self.transcript
         at = len(transcript)
         self.send(b"\x02q")
         status = None
@@ -676,6 +698,7 @@ class Herdr:
             if pid:
                 status = st
         pgroups.discard(self.pid)
+        Herdr.running.remove(self)
         self.pump(0.1)
         after = bytes(transcript[at:])
         ok(os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0,
@@ -683,8 +706,14 @@ class Herdr:
         ok(b"\x1b[<u" in after and after.rfind(ALT_OFF) > after.rfind(b"\x1b[<u"),
            "quit: kitty flags popped, then the alt screen left")
         ok(config(self.master) == self.before, "quit: tty settings unchanged")
-        log = open(self.log).read()
-        ok("herdr-live stopped" in log, "quit: log has herdr-live stopped")
+        if not self.args:
+            log = open(self.log).read()
+            ok("herdr-live stopped" in log, "quit: log has herdr-live stopped")
+
+
+def pump_all():
+    for h in Herdr.running:
+        h.pump()
 
 
 def herdr():
@@ -1045,15 +1074,101 @@ def agent():
         print("--- screen", h.screen.text(), sep="\n")
 
 
+def remote():
+    global DEADLINE
+    # under /tmp: short socket paths (api.sock, client.sock beside it)
+    with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+        tmp = os.path.realpath(tmp)
+        compile_then_start_clock(tmp)
+        DEADLINE += 180
+        pidfile, clog = os.path.join(tmp, "relay.pid"), os.path.join(tmp, "client.log")
+        events = lambda kind: re.findall(rf"herdr-event {kind}\b.*", read_text(a.log))
+        a = Herdr(tmp, 120, 40)
+        try:
+            a.start()
+            b = Herdr(tmp, 80, 24, args=("attach", "fakehost"), extra_env={
+                "HERDR_LIVE_SSH": os.path.join(LIVE, "bench", "remote", "fake_ssh.sh"),
+                "HERDR_LIVE_REMOTE_BIN": os.path.join(LIVE, "bin", "herdr-live"),
+                "HERDR_LIVE_FAKE_SSH_PIDFILE": pidfile, "HERDR_LIVE_CLIENT_LOG": clog})
+            b.until(lambda: ALT_ON in b.transcript and len(b.screen.rows()) >= 24
+                    and b.screen.rows()[23].startswith("TERMINAL") and b.prompts() >= 1,
+                    "B: first frame with TERMINAL on row 24 and a prompt", timeout=120)
+            ok(len(a.screen.rows()) >= 40 and a.screen.rows()[39].startswith("TERMINAL"),
+               "remote: B (80x24, attach fakehost over fake_ssh) shows TERMINAL on row 24, A on row 40")
+            attach = events("client_attach")
+            ok(len(attach) >= 1, f"remote: server log has {attach[-1] if attach else 'client_attach'}")
+            cid = re.search(r"\bid=(\S+)", attach[-1]).group(1)
+
+            b.send(b'echo from-""b\r')
+            a.until(lambda: a.shows("from-b"), "B's echo from-b on A's screen", timeout=30)
+            ok(True, "remote: echo from-b typed in B shows on A")
+            a.send(b'echo from-""a\r')
+            b.until(lambda: b.shows("from-a"), "A's echo from-a on B's screen", timeout=30)
+            ok(True, "remote: echo from-a typed in A shows on B")
+
+            b.until(lambda: os.path.exists(pidfile) and read_text(pidfile).strip().isdigit(),
+                    "the relay's pid file", timeout=30)
+            relay = int(read_text(pidfile).strip())
+            os.remove(pidfile)
+            at, before = len(b.transcript), len(events("client_reconnect"))
+            os.kill(relay, signal.SIGKILL)  # the relay is a child of B's VM (our pgroup)
+            b.until(lambda: b"reconnecting" in b.transcript[at:], "B shows reconnecting", timeout=30)
+            ok(True, f"remote: killing the relay (pid {relay}) shows reconnecting in B")
+            b.until(lambda: len(events("client_reconnect")) > before and not b.shows("reconnecting"),
+                    "client_reconnect in the log and the notice cleared", timeout=60)
+            ok(True, f"remote: B reconnected ({events('client_reconnect')[-1].strip()})")
+            b.send(b'echo after-""drop\r')
+            a.until(lambda: a.shows("after-drop"), "after-drop from B on A", timeout=30)
+            ok(True, "remote: echo after-drop typed in B shows on A")
+
+            reconnects, held = len(events("client_reconnect")), len(events("client_held"))
+            code, out = a.cli("kernel-restart", timeout=120)
+            ok(code == 0, f"remote: herdr-live kernel-restart exits 0 ({out.strip()})")
+            a.until(lambda: re.search(r"handoff graceful g\d+", a.screen.text()),
+                    "handoff graceful g<gen> on A", timeout=60)
+            b.until(lambda: len(events("client_held")) > held, "client_held after the restart", timeout=60)
+            b.send(b'echo after-""restart\r')
+            a.until(lambda: a.shows("after-restart"), "after-restart from B on A", timeout=60)
+            ok(True, "remote: after kernel-restart, echo after-restart typed in B shows on A")
+            # a resync after a bad frame waits the longest backoff (5 s): outlast it
+            end = time.monotonic() + 6
+            while time.monotonic() < end:
+                pump_all()
+            ok("cannot decode" not in read_text(clog), "remote: the client decoded every server frame")
+            new_held = events("client_held")[held:]
+            new_rec = [l for l in events("client_reconnect")[reconnects:] if f"id={cid}" in l]
+            carried = [l for l in new_held if f"id={cid}" in l and "carried=true" in l]
+            if not carried or new_rec:
+                print("--- client events", *events("client_\\w+"), sep="\n", file=sys.stderr)
+            ok(carried, f"remote: handoff carried B's socket ({(carried or new_held or ['none'])[0].strip()})")
+            ok(not new_rec, f"remote: no client_reconnect for B ({cid}) across the handoff ({new_rec})")
+
+            b.quit()
+            a.send(b'echo a-""still\r')
+            a.until(lambda: a.shows("a-still"), "A answers after B quit", timeout=30)
+            ok(True, "remote: prefix q ended only B, A still runs")
+            a.quit()
+        except SystemExit:
+            for name, path in (("client log", clog), ("server log", a.log)):
+                if os.path.exists(path):
+                    print(f"--- {name}", read_text(path)[-6000:] if not verbose else read_text(path), sep="\n", file=sys.stderr)
+            raise
+        s = log_json(a.log)
+        ok(s["clients"]["attaches"] >= 2 and s["session_losses"] == 0,
+           f"remote: log summary clients {s['clients']}, session_losses {s['session_losses']}")
+    if verbose:
+        print("--- B screen", b.screen.text(), sep="\n")
+
+
 if __name__ == "__main__":
     modes = {"destructor": destructor, "demo": demo, "herdr": herdr, "herdr-stress": herdr_stress,
-             "selfhost": selfhost, "persist": persist, "agent": agent}
+             "selfhost": selfhost, "persist": persist, "agent": agent, "remote": remote}
     args = [a for a in sys.argv[1:] if a != "-v"]
     if len(args) != 1 or args[0] not in modes:
         sys.exit(__doc__)
     # a pane of a running herdr-live inherits the VM's env: these modes would compile into
     # and reload that instance's own _build
-    if args[0] in ("herdr", "herdr-stress", "selfhost", "persist", "agent") and os.environ.get("HERDR_BROKER_SOCK"):
+    if args[0] in ("herdr", "herdr-stress", "selfhost", "persist", "agent", "remote") and os.environ.get("HERDR_BROKER_SOCK"):
         print(f"SKIP: {args[0]}: running inside herdr-live (run live-check outside it, see editing-live.md)")
         sys.exit(0)
     # CI cancellation: let `finally` kill the process groups.
