@@ -130,6 +130,24 @@ successes) and 5 s have passed; the ring is 8 batches deep. So a bad edit to a r
 used feature is still blamed on the right batch when you finally use it, unless more
 than 8 reloads happened since.
 
+## Chrome layout and the config file (M13)
+
+The screen is herdr's: a 26-column sidebar on the left (spaces and agents; `prefix b`
+toggles, drag its `│` edge to resize, `«`/`»` collapses), a tab bar on the top row of the
+main area (`+` opens a "new tab" prompt), and herdr-live's own full-width status row at the
+bottom (mode, the runtime texts below, notices, hint). Chrome is a scene tree built by
+`HerdrServer.View.*` and drawn by `HerdrTerm.Client.Term.Render.Chrome.*`; editing either
+reloads like any other module (an edit to a chrome rasterizer shows at the next chrome
+change, which the reload notice itself causes). Modals (confirm, prompt, menus, settings
+`prefix s`, keybinds `prefix ?`, onboarding) live in `App.Focus.modal`; while one is open,
+keybindings do nothing except detach, and API requests still apply.
+
+Config: `$HERDR_LIVE_CONFIG`, else `${XDG_CONFIG_HOME:-~/.config}/herdr-live/config.toml`
+(herdr's TOML format, herdr's `[keys]` syntax). A missing file shows onboarding once;
+`continue` writes `onboarding = false`. `prefix R` reloads; a file that fails to parse keeps
+the running config and shows one warning. Settings and keybind edits are written back in
+place. Scripts that drive the launcher export `HERDR_LIVE_CONFIG` with `onboarding = false`.
+
 ## Reading the status line
 
 The `:status` chrome node shows up to three runtime nodes in priority order reload >
