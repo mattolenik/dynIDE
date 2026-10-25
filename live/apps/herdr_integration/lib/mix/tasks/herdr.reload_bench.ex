@@ -55,7 +55,7 @@ if Mix.env() == :test do
     @actions "apps/herdr_server/lib/herdr_server/app/actions.ex"
 
     # a list literal in View.Status whose nodes render on the status row
-    @view_left "left = [mode(client.mode)]"
+    @view_left "left = left ++ runtime"
 
     @impl Mix.Task
     def run(args) do
@@ -215,8 +215,8 @@ if Mix.env() == :test do
       # before the reload has no :marker key, so the default is what is shown
       view =
         {@view_left,
-         String.trim_trailing(@view_left, "]") <>
-           ", text(:bench, %HerdrServer.App.Ui{}.marker, :muted)]"}
+         @view_left <>
+           " ++ [text(:bench, %HerdrServer.App.Ui{}.marker, :muted)]"}
 
       warm = setup_edit(client, cfg, [{@status, [view]}, {@ui, [ui.(100)]}], "umk100z")
       r = edit_loop(client, cfg, @ui, ui, &"umk#{&1}z")
@@ -267,8 +267,7 @@ if Mix.env() == :test do
         cfg,
         @status,
         fn i ->
-          {@view_left,
-           String.trim_trailing(@view_left, "]") <> ~s|, text(:bench, "vmk#{i}z", :muted)]|}
+          {@view_left, @view_left <> ~s| ++ [text(:bench, "vmk#{i}z", :muted)]|}
         end,
         &"vmk#{&1}z"
       )
@@ -577,9 +576,9 @@ if Mix.env() == :test do
     end
 
     defp tab_names(scene) do
-      case HerdrScene.Scene.Node.find(scene.chrome, [:status, :tabs]) do
+      case HerdrScene.Scene.Node.find(scene.chrome, [:tabs]) do
         nil -> []
-        tabs -> Enum.map(tabs.children, & &1.text)
+        tabs -> for %{role: :tab, text: t} <- tabs.children, do: t
       end
     end
 
