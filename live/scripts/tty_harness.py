@@ -106,6 +106,9 @@ import unicodedata
 
 LIVE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUN_SECONDS = 120
+# remote mode: outlasts the client's longest reconnect/resync backoff (the max of `backoff`
+# in apps/herdr_term/lib/herdr_term/remote/conn.ex, 5 s) plus slack; keep above it
+REMOTE_BACKOFF_WINDOW = 6
 COMPILE_TIMEOUT = 600
 DEADLINE = None
 PROBE = b"\x1b[?u\x1b[c"
@@ -1111,7 +1114,7 @@ def remote():
             relay = int(read_text(pidfile).strip())
             os.remove(pidfile)
             at, before = len(b.transcript), len(events("client_reconnect"))
-            os.kill(relay, signal.SIGKILL)  # the relay is a child of B's VM (our pgroup)
+            os.kill(relay, signal.SIGKILL)  # a port child of B's VM, in its own process group
             b.until(lambda: b"reconnecting" in b.transcript[at:], "B shows reconnecting", timeout=30)
             ok(True, f"remote: killing the relay (pid {relay}) shows reconnecting in B")
             b.until(lambda: len(events("client_reconnect")) > before and not b.shows("reconnecting"),
@@ -1131,7 +1134,7 @@ def remote():
             a.until(lambda: a.shows("after-restart"), "after-restart from B on A", timeout=60)
             ok(True, "remote: after kernel-restart, echo after-restart typed in B shows on A")
             # a resync after a bad frame waits the longest backoff (5 s): outlast it
-            end = time.monotonic() + 6
+            end = time.monotonic() + REMOTE_BACKOFF_WINDOW
             while time.monotonic() < end:
                 pump_all()
             ok("cannot decode" not in read_text(clog), "remote: the client decoded every server frame")
@@ -1153,6 +1156,14 @@ def remote():
                 if os.path.exists(path):
                     print(f"--- {name}", read_text(path)[-6000:] if not verbose else read_text(path), sep="\n", file=sys.stderr)
             raise
+        finally:
+            # the reconnected relay (fake_ssh's pid file) leads its own group, not ours
+            try:
+                pg = os.getpgid(int(read_text(pidfile).strip()))
+                if pg != os.getpgrp():
+                    os.killpg(pg, signal.SIGKILL)
+            except (OSError, ValueError):
+                pass
         s = log_json(a.log)
         ok(s["clients"]["attaches"] >= 2 and s["session_losses"] == 0,
            f"remote: log summary clients {s['clients']}, session_losses {s['session_losses']}")
