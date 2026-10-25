@@ -5,7 +5,8 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Tabs do
   `max(label + 4, 8)` cells, `:selected` when active and `:surface` otherwise, one blank
   between tabs; the `:new_tab` button is `" + "` right after the last tab. A bar that
   does not fit is cut and its last visible cell becomes `…`. Hits: every (visible part
-  of a) tab and button, then the region itself.
+  of a) tab and button, then the region itself; tabs are `drag: true` (reorder). A tab's
+  `drop_marker` (`:before` / `:after`) replaces its first / last cell with the accent `▏`.
   """
 
   alias HerdrScene.Cell
@@ -34,7 +35,12 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Tabs do
 
     hits =
       for {child, x, p, _} <- placed, (w = min(x + Cell.cols(p), r.w) - x) > 0 do
-        Chrome.hit(%{x: r.x + x, y: r.y, w: w, h: 1}, [id, child.id], child.role)
+        Chrome.hit(
+          %{x: r.x + x, y: r.y, w: w, h: 1},
+          [id, child.id],
+          child.role,
+          child.role == :tab
+        )
       end
 
     {rows, hits ++ [Chrome.hit(r, [id], node.role)]}
@@ -55,13 +61,24 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Tabs do
     token = if Map.get(props, :active), do: :selected, else: :surface
     label = if(Map.get(props, :zoomed), do: "Z ", else: "") <> to_string(name || "")
     label_cells = Text.text(label, token, theme)
-    [{n, Text.center(label_cells, max(Cell.cols(label_cells) + 4, 8), Theme.style(theme, token))}]
+
+    cells =
+      Text.center(label_cells, max(Cell.cols(label_cells) + 4, 8), Theme.style(theme, token))
+
+    [{n, marker(cells, Map.get(props, :drop_marker), theme)}]
   end
 
   defp piece(%Node{role: :button, id: :new_tab} = n, theme),
     do: [{n, Text.text(" + ", :muted, theme)}]
 
   defp piece(_other, _theme), do: []
+
+  defp marker(cells, nil, _theme), do: cells
+
+  defp marker(cells, side, theme) do
+    x = if side == :before, do: 0, else: Cell.cols(cells) - 1
+    Text.mark(cells, x, Theme.glyphs(theme).drop_tab, theme)
+  end
 
   defp concat([]), do: Cell.blank_row(0)
   defp concat(pieces), do: Cell.concat(pieces)

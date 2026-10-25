@@ -77,8 +77,10 @@ defmodule HerdrServer.View do
   end
 
   defp chrome(app, client, ws, tab, %{panes: area} = regions) do
-    sidebar = if regions.sidebar, do: [Sidebar.node(app, regions.sidebar)], else: []
-    tabs = if regions.tabs, do: [Tabs.node(ws, regions.tabs)], else: []
+    sidebar =
+      if regions.sidebar, do: [Sidebar.node(app, regions.sidebar, client.drag)], else: []
+
+    tabs = if regions.tabs, do: [Tabs.node(ws, regions.tabs, client.drag)], else: []
 
     splits =
       if Layout.zoomed?(tab.layout, Map.get(tab, :zoom)),

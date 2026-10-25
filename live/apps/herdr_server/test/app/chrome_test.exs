@@ -165,4 +165,36 @@ defmodule HerdrServer.App.ChromeTest do
     app = Upgrade.app(%{session: %Session{}, focus: %{}, ui: ui})
     assert %{spaces_offset: 0, agents_offset: 0, width: 30} = app.ui.sidebar
   end
+
+  test "dropping a tab over another moves it to that tab's position" do
+    {app, _} = Actions.new_tab(fresh())
+    {app, _} = Actions.new_tab(app)
+    ids = fn app -> Enum.map(ws(app).tabs, & &1.id) end
+
+    drop = fn app, from, over ->
+      Actions.apply(app, {:chrome, from, {:drop, Map.put(at(0, 0), :over, over)}})
+    end
+
+    {moved, []} = drop.(app, [:tabs, {:tab, 1}], [:tabs, {:tab, 3}])
+    assert ids.(moved) == [2, 3, 1]
+    assert ws(moved).active_tab == 3
+    {back, []} = drop.(moved, [:tabs, {:tab, 1}], [:tabs, {:tab, 2}])
+    assert ids.(back) == [1, 2, 3]
+
+    # off a tab, a drag, or no `over`: nothing
+    assert drop.(app, [:tabs, {:tab, 1}], [:tabs, :new_tab]) == {app, []}
+    assert drop.(app, [:tabs, {:tab, 1}], nil) == {app, []}
+    assert chrome(app, [:tabs, {:tab, 1}], :drag) == {app, []}
+    assert chrome(app, [:tabs, {:tab, 1}], :drop) == {app, []}
+  end
+
+  test "dropping a workspace over another moves it there" do
+    {app, _} = Actions.new_workspace(fresh())
+    {app, _} = Actions.new_workspace(app)
+    path = &[:sidebar, :spaces, :list, {:workspace, &1}]
+    ev = {:drop, Map.put(at(0, 0), :over, path.(1))}
+    {moved, []} = Actions.apply(app, {:chrome, path.(3), ev})
+    assert Enum.map(moved.session.workspaces, & &1.id) == [3, 1, 2]
+    assert moved.session.active_workspace == 3
+  end
 end

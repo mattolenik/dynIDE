@@ -44,7 +44,7 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.SidebarTest do
     for r <- rows, do: assert(String.at(r, 25) == "│")
     assert String.length(hd(rows)) == 26
 
-    assert %{drag: false} = hit(l, [:sidebar, :spaces, :list, {:workspace, 1}])
+    assert %{drag: true} = hit(l, [:sidebar, :spaces, :list, {:workspace, 1}])
     assert %{rect: %{x: 0, w: 4}} = hit(l, [:sidebar, :spaces, :new])
     assert %{rect: %{x: 21, w: 4}} = hit(l, [:sidebar, :spaces, :menu])
     assert %{rect: %{x: 25, y: 0, w: 1, h: ^h}, drag: true} = hit(l, [:sidebar, :edge])
@@ -213,4 +213,37 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.SidebarTest do
   defp put_text(%Node{} = n, [id | rest], t) do
     %{n | children: Enum.map(n.children, &if(&1.id == id, do: put_text(&1, rest, t), else: &1))}
   end
+
+  test "workspace items are reorder hits; a drop_marker draws the accent ▔ above or below" do
+    scene = Fixture.load("sidebar_expanded_120x40")
+    accent = Theme.style(@theme, :accent).fg
+    path = [:sidebar, :spaces, :list, {:workspace, 1}]
+
+    marked = fn side ->
+      chrome =
+        update_in(scene.chrome, [Access.key(:children)], fn cs ->
+          Enum.map(cs, &mark(&1, path, side))
+        end)
+
+      layout(%{scene | chrome: chrome})
+    end
+
+    l = marked.(:before)
+    %{rect: r, drag: true} = hit(l, path)
+    cell = fn l, y -> l |> row(y) |> Cell.decode_row() |> hd() end
+    assert %{glyph: "▔", fg: ^accent} = cell.(l, r.y)
+
+    l = marked.(:after)
+    assert %{glyph: "▔", fg: ^accent} = cell.(l, r.y + r.h)
+    refute cell.(l, r.y).glyph == "▔"
+    refute hit(l, [:sidebar, :agents, :list, {:pane, 1}]).drag
+  end
+
+  defp mark(%Node{id: id} = n, [id], side),
+    do: %{n | props: Map.put(n.props, :drop_marker, side)}
+
+  defp mark(%Node{id: id, children: cs} = n, [id | rest], side),
+    do: %{n | children: Enum.map(cs, &mark(&1, rest, side))}
+
+  defp mark(n, _path, _side), do: n
 end

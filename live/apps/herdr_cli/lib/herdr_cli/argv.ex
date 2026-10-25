@@ -9,7 +9,7 @@ defmodule HerdrCli.Argv do
 
   Positional kinds: `{:req, name}`; `{:opt, name}` (a string, may be omitted); `{:pane, name, :required | :optional}` (when
   omitted, `HERDR_PANE_ID` from env, else usage / left out); `{:keys, name}` (one or
-  more); `{:opt_int, name}`; `{:opt_enum, name, values}`. Option kinds: `:string`,
+  more); `{:int, name}`; `{:opt_int, name}`; `{:opt_enum, name, values}`. Option kinds: `:string`,
   `:int`, `:number`, `:flag`, `{:const, value}` (a flag that sets `value`), `{:enum, values}`,
   `{:many, values}` (repeatable), `:file` (a path; becomes `{:file, path}` for the caller to read into the param), `{:kv_many}` (repeatable `KEY=VALUE`, collected into a map).
   An atom key is consumed by `finish/3` (`:json` is accepted and dropped). A row with
@@ -188,6 +188,14 @@ defmodule HerdrCli.Argv do
         "workspace rename <workspace_id> <label>"
       ),
       cmd(
+        ~w(workspace move),
+        "workspace.move",
+        [id, {:int, "index"}],
+        %{},
+        :json,
+        "workspace move <workspace_id> <index>"
+      ),
+      cmd(
         ~w(workspace close),
         "workspace.close",
         [id],
@@ -224,6 +232,14 @@ defmodule HerdrCli.Argv do
         %{},
         :json,
         "tab rename <tab_id> <label>"
+      ),
+      cmd(
+        ~w(tab move),
+        "tab.move",
+        [id, {:int, "index"}],
+        %{},
+        :json,
+        "tab move <tab_id> <index>"
       ),
       cmd(~w(tab close), "tab.close", [id], %{}, :json, "tab close <tab_id>")
     ]
@@ -861,6 +877,12 @@ defmodule HerdrCli.Argv do
 
   defp positionals([{:opt, name} | spec], [v | rest], env, acc),
     do: positionals(spec, rest, env, Map.put(acc, name, v))
+
+  defp positionals([{:int, name} | _], [], _env, _acc), do: {:error, "missing <#{name}>"}
+
+  defp positionals([{:int, name} | spec], [v | rest], env, acc) do
+    with {:ok, i} <- int(v, "<#{name}>"), do: positionals(spec, rest, env, Map.put(acc, name, i))
+  end
 
   defp positionals([{:opt_int, _} | spec], [], env, acc), do: positionals(spec, [], env, acc)
 

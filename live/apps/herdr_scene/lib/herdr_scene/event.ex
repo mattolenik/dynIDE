@@ -21,7 +21,8 @@ defmodule HerdrScene.Event do
   scene root's children down (the root id is not part of a path), e.g.
   `[:tabs, {:tab, 2}]`. The action is `{kind, %{x, y}}` with scene-cell
   coordinates and `kind` in `HerdrScene.Chrome.action_kinds/0`; bare-atom
-  actions are rejected.
+  actions are rejected. A `:drag` / `:drop` of a tab or workspace item (a
+  reorder) also carries `over`, the chrome path under the pointer or nil.
   """
 
   alias HerdrScene.Chrome

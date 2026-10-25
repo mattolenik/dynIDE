@@ -94,6 +94,15 @@ defmodule HerdrCli.ArgvTest do
                {:call, "tab.rename", %{"tab_id" => "w1:t2", "label" => "logs"}, :json}
 
       assert p("tab close w1:t2") == {:call, "tab.close", %{"tab_id" => "w1:t2"}, :json}
+
+      assert p("tab move w1:t2 0") ==
+               {:call, "tab.move", %{"tab_id" => "w1:t2", "index" => 0}, :json}
+
+      assert p("workspace move w2 1") ==
+               {:call, "workspace.move", %{"workspace_id" => "w2", "index" => 1}, :json}
+
+      assert {:usage, _} = p("tab move w1:t2")
+      assert {:usage, _} = p("tab move w1:t2 x")
     end
   end
 

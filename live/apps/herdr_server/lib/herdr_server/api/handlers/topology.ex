@@ -57,6 +57,9 @@ defmodule HerdrServer.Api.Handlers.Topology do
   def handle("workspace.rename", %{workspace_id: w, label: l}),
     do: change_ws(w, {Commands, :rename_workspace, [w, l]})
 
+  def handle("workspace.move", %{workspace_id: w, index: i}),
+    do: change_ws(w, {Commands, :move_workspace, [w, i]})
+
   def handle("workspace.close", %{workspace_id: w}) do
     with {:ok, before, aft, notes} <- run_on_ws(w, {Commands, :close_workspace, [w]}) do
       ws = View.find_workspace(before, w)
@@ -91,6 +94,9 @@ defmodule HerdrServer.Api.Handlers.Topology do
 
   def handle("tab.rename", %{tab_id: {w, t} = id, label: l}),
     do: change_tab(id, {Commands, :rename_tab, [w, t, l]})
+
+  def handle("tab.move", %{tab_id: {w, t} = id, index: i}),
+    do: change_tab(id, {Commands, :move_tab, [w, t, i]})
 
   def handle("tab.close", %{tab_id: {w, t} = id}) do
     with {:ok, before, aft, notes} <- run_on_tab(id, {Commands, :close_tab, [w, t]}) do

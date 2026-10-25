@@ -145,4 +145,35 @@ defmodule HerdrTerm.Client.Term.HitTest do
 
     assert {[], _} = route(m(:release, :left, 40, 5), g, 1250)
   end
+
+  test "a reorder hit (tab, drag: true) clicks on press; motion drags with over; a still release adds nothing" do
+    t1 = %{@tab | drag: true}
+    t2 = %{t1 | rect: %{x: 20, y: 0, w: 8, h: 1}, path: [:tabs, {:tab, 2}]}
+    hits = [t1, t2, @div, @tabs]
+    p1 = [:tabs, {:tab, 1}]
+
+    assert {[{:chrome, ^p1, {:click, %{x: 12, y: 0}}}], g} =
+             route(m(:press, :left, 12, 0), nil, 1000, hits)
+
+    assert {[], g} = route(m(:release, :left, 12, 0), g, 1100, hits)
+
+    assert {[{:chrome, ^p1, {:click, _}}], g} = route(m(:press, :left, 12, 0), g, 2000, hits)
+
+    assert {[{:chrome, ^p1, {:drag, %{x: 22, y: 0, over: [:tabs, {:tab, 2}]}}}], g} =
+             route(m(:drag, :left, 22, 0), g, 2100, hits)
+
+    assert {[{:chrome, ^p1, {:drag, %{over: nil}}}], g} =
+             route(m(:drag, :left, 60, 30), g, 2150, hits)
+
+    assert {[{:chrome, ^p1, {:drop, %{x: 22, y: 0, over: [:tabs, {:tab, 2}]}}}], g} =
+             route(m(:release, :left, 22, 0), g, 2200, hits)
+
+    refute g.held
+
+    # a divider drag still names no `over`
+    assert {[{:chrome, [{:divider, []}], {:drag, at}}], _} =
+             route(m(:drag, :left, 30, 5), grabbed(), 1000, hits)
+
+    refute Map.has_key?(at, :over)
+  end
 end

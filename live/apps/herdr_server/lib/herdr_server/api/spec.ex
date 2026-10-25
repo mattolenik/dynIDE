@@ -61,6 +61,7 @@ defmodule HerdrServer.Api.Spec do
   defp tab_id, do: req("tab_id", :tab_id, "Target tab.")
   defp ws_id, do: req("workspace_id", :workspace_id, "Target workspace.")
   defp label, do: req("label", :string, "New label.")
+  defp index, do: req("index", {:integer, 0, 65_535}, "New 0-based position.")
   defp focus(doc), do: opt("focus", :boolean, doc)
   defp source, do: opt("source", {:enum, @sources}, "Text source; default `visible`.")
   defp lines, do: opt("lines", {:integer, 1, 10_000}, "Maximum number of lines.")
@@ -341,6 +342,15 @@ defmodule HerdrServer.Api.Spec do
         "herdr-live workspace rename <workspace_id> <label>"
       ),
       method(
+        "workspace.move",
+        g,
+        "Move a workspace to a 0-based position (clamped); the focused one stays focused.",
+        [ws_id(), index()],
+        "workspace_info",
+        [:not_found],
+        "herdr-live workspace move <workspace_id> <index>"
+      ),
+      method(
         "workspace.close",
         g,
         "Close a workspace and its panes.",
@@ -404,6 +414,15 @@ defmodule HerdrServer.Api.Spec do
         "tab_info",
         [:not_found],
         "herdr-live tab rename <tab_id> <label>"
+      ),
+      method(
+        "tab.move",
+        g,
+        "Move a tab to a 0-based position in its workspace (clamped); the active one stays active.",
+        [tab_id(), index()],
+        "tab_info",
+        [:not_found],
+        "herdr-live tab move <tab_id> <index>"
       ),
       method(
         "tab.close",

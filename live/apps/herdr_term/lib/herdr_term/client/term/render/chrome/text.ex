@@ -57,4 +57,19 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Text do
         ])
     end
   end
+
+  @doc "`row` with column `x` replaced by `glyph` in `:accent` (a drop marker); out of range: unchanged."
+  @spec mark(Cell.row(), integer, binary, Theme.t()) :: Cell.row()
+  def mark(row, x, glyph, theme) do
+    w = Cell.cols(row)
+
+    if x < 0 or x >= w,
+      do: row,
+      else:
+        Cells.concat([
+          Cells.fit(row, 0, x),
+          text(glyph, :accent, theme),
+          Cells.fit(row, x + 1, w - x - 1)
+        ])
+  end
 end

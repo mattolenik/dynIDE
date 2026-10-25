@@ -10,15 +10,18 @@ defmodule HerdrServer.View.Sidebar do
   pane's `agent`, else its title, else `"terminal"`; its `:tab` text shows only when the
   workspace has more than one tab. A workspace whose `git` fact (`WorkspaceFacts`) has a
   branch carries it as the item's `:detail`, `"main ↑1 ↓2"`. Collapsed: sections carry no text.
+  The workspace item under the client's workspace drag (`drag`, as `View.Tabs.node/3`)
+  carries `drop_marker`.
   """
 
   alias HerdrScene.Scene.Node
   alias HerdrServer.Layout
+  alias HerdrServer.View.Tabs
 
   @prio %{unknown: 0, idle: 1, working: 2, done: 3, blocked: 4}
 
-  @spec node(map, HerdrScene.Scene.rect()) :: Node.t()
-  def node(app, rect) do
+  @spec node(map, HerdrScene.Scene.rect(), map | nil) :: Node.t()
+  def node(app, rect, drag \\ nil) do
     collapsed = app.ui.sidebar.collapsed
     label = &if(collapsed, do: nil, else: &1)
     w = rect.w - 1
@@ -32,7 +35,7 @@ defmodule HerdrServer.View.Sidebar do
           role: :list,
           id: :list,
           props: %{offset: offset(app, :spaces_offset)},
-          children: workspaces(app)
+          children: workspaces(app, drag)
         },
         %Node{role: :button, id: :new, text: "new", props: %{action: :new_workspace}},
         %Node{
@@ -97,7 +100,10 @@ defmodule HerdrServer.View.Sidebar do
     ]
   end
 
-  defp workspaces(app) do
+  defp workspaces(app, drag) do
+    path = &[:sidebar, :spaces, :list, {:workspace, &1}]
+    paths = Enum.map(app.session.workspaces, &path.(&1.id))
+
     app.session.workspaces
     |> Enum.with_index(1)
     |> Enum.map(fn {ws, i} ->
@@ -110,7 +116,10 @@ defmodule HerdrServer.View.Sidebar do
       %Node{
         role: :item,
         id: {:workspace, ws.id},
-        props: detail(%{active: ws.id == app.session.active_workspace, index: i}, ws),
+        props:
+          %{active: ws.id == app.session.active_workspace, index: i}
+          |> detail(ws)
+          |> Tabs.put_marker(Tabs.drop_marker(drag, path.(ws.id), paths)),
         children: [line(0, [badge(state), text(:workspace, ws.name)])]
       }
     end)

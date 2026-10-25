@@ -168,4 +168,29 @@ defmodule HerdrServer.App.WorkspacesTest do
     {app, []} = Actions.apply(app, {:workspace_git, 1, nil})
     assert hd(app.session.workspaces).git == nil
   end
+
+  test "move_tab and move_workspace clamp the index and keep ids and the active one" do
+    {app, _} = Actions.new_tab(fresh())
+    {app, _} = Actions.new_tab(app)
+    ws = fn app -> hd(app.session.workspaces) end
+    tabs = fn app -> Enum.map(ws.(app).tabs, & &1.id) end
+    assert ws.(app).active_tab == 3
+
+    {moved, []} = Workspaces.move_tab(app, 1, 3, 0)
+    assert tabs.(moved) == [3, 1, 2]
+    assert ws.(moved).active_tab == 3
+    assert tabs.(elem(Workspaces.move_tab(app, 1, 1, 99), 0)) == [2, 3, 1]
+    assert tabs.(elem(Workspaces.move_tab(app, 1, 3, -5), 0)) == [3, 1, 2]
+    assert elem(Workspaces.move_tab(app, 1, 9, 0), 0) == app
+    assert elem(Workspaces.move_tab(app, 9, 1, 0), 0) == app
+
+    {app, _} = Actions.new_workspace(app)
+    {app, _} = Actions.new_workspace(app)
+    ids = fn app -> Enum.map(app.session.workspaces, & &1.id) end
+    {moved, []} = Workspaces.move_workspace(app, 3, 0)
+    assert ids.(moved) == [3, 1, 2]
+    assert moved.session.active_workspace == 3
+    assert ids.(elem(Workspaces.move_workspace(app, 1, 7), 0)) == [2, 3, 1]
+    assert elem(Workspaces.move_workspace(app, 9, 0), 0) == app
+  end
 end

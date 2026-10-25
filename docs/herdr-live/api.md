@@ -261,6 +261,21 @@ Result: `workspace_info` with `workspace` (`workspace` object).
 
 Errors: `invalid_params`, `not_found`
 
+### `workspace.move`
+
+Move a workspace to a 0-based position (clamped); the focused one stays focused.
+
+CLI: `herdr-live workspace move <workspace_id> <index>`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `workspace_id` | workspace id | yes | Target workspace. |
+| `index` | integer 0..65535 | yes | New 0-based position. |
+
+Result: `workspace_info` with `workspace` (`workspace` object).
+
+Errors: `invalid_params`, `not_found`
+
 ### `workspace.close`
 
 Close a workspace and its panes.
@@ -345,6 +360,21 @@ CLI: `herdr-live tab rename <tab_id> <label>`
 | --- | --- | --- | --- |
 | `tab_id` | tab id | yes | Target tab. |
 | `label` | string | yes | New label. |
+
+Result: `tab_info` with `tab` (`tab` object).
+
+Errors: `invalid_params`, `not_found`
+
+### `tab.move`
+
+Move a tab to a 0-based position in its workspace (clamped); the active one stays active.
+
+CLI: `herdr-live tab move <tab_id> <index>`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `tab_id` | tab id | yes | Target tab. |
+| `index` | integer 0..65535 | yes | New 0-based position. |
 
 Result: `tab_info` with `tab` (`tab` object).
 

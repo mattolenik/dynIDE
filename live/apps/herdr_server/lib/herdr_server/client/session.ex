@@ -37,6 +37,10 @@ defmodule HerdrServer.Client.Session do
   `Mirror.get(:runtime_status)`) is kept in `state.runtime` for View's status line; a
   changed status repaints (the scene is pushed only if it differs).
 
+  Drag (M17): `:drag` on a tab or workspace item (`over`: the client's hit path under the
+  pointer) sets `state.drag` and repaints, without the Store; `:drop` goes to the Store
+  (`App.Chrome` reorders) and clears it.
+
   Window title: `{:window_title, title | nil}` (API `client.window_title.set|clear`) sets the
   client's override; `hostname` is read once in init.
 
@@ -491,6 +495,19 @@ defmodule HerdrServer.Client.Session do
     end
   end
 
+  # a tab / workspace drag is this client's drop marker; only the drop reaches the Store
+  defp apply_input(state, {:chrome, [:tabs, {:tab, _}] = p, {k, at}} = ev, _from)
+       when k in [:drag, :drop],
+       do: dragged(state, p, k, at, ev)
+
+  defp apply_input(
+         state,
+         {:chrome, [:sidebar, :spaces, :list, {:workspace, _}] = p, {k, at}} = ev,
+         _from
+       )
+       when k in [:drag, :drop],
+       do: dragged(state, p, k, at, ev)
+
   defp apply_input(state, {:mouse, _} = ev, _from) do
     become_foreground(state)
     ctx = Guard.run_twice(PointerIo, :context, [state.pointer, ev, state.last_scene], guard())
@@ -510,6 +527,21 @@ defmodule HerdrServer.Client.Session do
     become_foreground(state)
     Store.event(ev, driving_size(state))
     state
+  end
+
+  defp dragged(state, from, :drag, at, _ev) do
+    over = Map.get(at, :over)
+
+    drag =
+      if is_list(over) and over != from and Enum.drop(over, -1) == Enum.drop(from, -1),
+        do: %{from: from, over: over}
+
+    if drag == state.drag, do: state, else: repaint(%{state | drag: drag})
+  end
+
+  defp dragged(state, _from, :drop, _at, ev) do
+    Store.event(ev, driving_size(state))
+    if state.drag, do: repaint(%{state | drag: nil}), else: state
   end
 
   defp alerted(state, a) do
@@ -868,7 +900,8 @@ defmodule HerdrServer.Client.Session do
       facts: facts(state, ids),
       graphics: graphics(ids),
       window_title: state.window_title,
-      hostname: state.hostname
+      hostname: state.hostname,
+      drag: state.drag
     }
 
     Guard.run_twice(View, :compute, [app, view_state],

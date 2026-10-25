@@ -243,6 +243,8 @@ defmodule HerdrServer.Api.TopologyTest do
           {"tab.focus", t},
           {"tab.rename", Map.put(t, "label", "x")},
           {"tab.close", t},
+          {"tab.move", Map.put(t, "index", 0)},
+          {"workspace.move", Map.put(w, "index", 0)},
           {"pane.list", w},
           {"pane.list", t},
           {"pane.get", p},
@@ -257,5 +259,23 @@ defmodule HerdrServer.Api.TopologyTest do
         ] do
       assert {"not_found", _} = err(s, m, params), m
     end
+  end
+
+  test "tab.move and workspace.move reorder, clamped, keeping the focused one", %{s: s} do
+    ok!(s, "workspace.list")
+    ok!(s, "tab.create", %{})
+    ok!(s, "tab.create", %{})
+    r = ok!(s, "tab.move", %{"tab_id" => "w1:t1", "index" => 99})
+    assert r["tab"]["tab_id"] == "w1:t1"
+    assert r["tab"]["focused"]
+    assert Enum.map(ok!(s, "tab.list")["tabs"], & &1["tab_id"]) == ~w(w1:t2 w1:t3 w1:t1)
+
+    ok!(s, "workspace.create", %{})
+    r = ok!(s, "workspace.move", %{"workspace_id" => "w2", "index" => 0})
+    refute r["workspace"]["focused"]
+    assert Enum.map(ok!(s, "workspace.list")["workspaces"], & &1["workspace_id"]) == ~w(w2 w1)
+    assert focused_ws(s) == "w1"
+
+    assert {"invalid_params", _} = err(s, "tab.move", %{"tab_id" => "w1:t1", "index" => -1})
   end
 end

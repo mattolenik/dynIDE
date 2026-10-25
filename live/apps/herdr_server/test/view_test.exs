@@ -331,4 +331,30 @@ defmodule HerdrServer.ViewTest do
     s = View.compute(app, %{client(80, 24, :ref, :copy) | copy: copy})
     assert %{text: "?ab", token: :accent} = child(s, :mode)
   end
+
+  test "drop_marker is on the dragged-over tab and workspace for the dragging client only" do
+    {app, _} = Actions.new_tab(fresh(120, 40))
+    {app, _} = Actions.new_tab(app)
+    {app, _} = Actions.new_workspace(app)
+    {app, []} = Actions.switch_workspace_id(app, 1)
+    plain = View.compute(app, client(120, 40))
+    tab = fn s, id -> Node.find(s.chrome, [:tabs, {:tab, id}]).props end
+    ws = fn s, id -> Node.find(s.chrome, [:sidebar, :spaces, :list, {:workspace, id}]).props end
+    refute Map.has_key?(tab.(plain, 3), :drop_marker)
+    refute Map.has_key?(ws.(plain, 1), :drop_marker)
+
+    drag = fn from, over ->
+      View.compute(app, %{client(120, 40) | drag: %{from: from, over: over}})
+    end
+
+    s = drag.([:tabs, {:tab, 1}], [:tabs, {:tab, 3}])
+    assert :ok = Scene.validate(s)
+    assert tab.(s, 3).drop_marker == :after
+    refute Map.has_key?(tab.(s, 2), :drop_marker)
+    assert tab.(drag.([:tabs, {:tab, 3}], [:tabs, {:tab, 1}]), 1).drop_marker == :before
+
+    w = &[:sidebar, :spaces, :list, {:workspace, &1}]
+    assert ws.(drag.(w.(2), w.(1)), 1).drop_marker == :before
+    refute Map.has_key?(ws.(drag.(w.(1), w.(1)), 1), :drop_marker)
+  end
 end

@@ -3,7 +3,12 @@ defmodule HerdrServer.App.Chrome do
   Pure chrome actions: `apply/3` resolves a client's `{:chrome, path, {kind, %{x, y}}}`
   (delegated from `App.Actions.apply/2`) to an action, returning `{app, effects}`.
 
-    * `[:tabs, {:tab, id}]` click switches to the tab; wheel anywhere on `[:tabs | _]`
+    * `[:tabs, {:tab, id}]` click switches to the tab; a `:drop` whose `over` (the
+      client's topmost hit path under the pointer) is another `[:tabs, {:tab, to}]` moves
+      the tab to `to`'s position (`Workspaces.move_tab/4`: dragging right lands after
+      `to`, left before it), likewise a workspace dropped over another workspace item
+      (`move_workspace/3`). `:drag` changes nothing here: the drop marker is the dragging
+      client's own (`Client.Session` keeps it in `Client.State.drag`); wheel anywhere on `[:tabs | _]`
       steps tabs; `[:tabs, :new_tab]` click opens a tab (`Modal.Prompt.new_tab/1`: asks
       for its name when `ui.prompt_new_tab_name`).
     * `[{:divider, split_path}]` drag / drop sets the split's ratio from the pointer's
@@ -29,7 +34,7 @@ defmodule HerdrServer.App.Chrome do
     * Unknown paths: no-op.
   """
 
-  alias HerdrServer.App.{Actions, Modal}
+  alias HerdrServer.App.{Actions, Modal, Workspaces}
   alias HerdrServer.App.Modal.{Menu, Prompt}
   alias HerdrServer.Layout
   alias HerdrServer.View.Frame
@@ -52,6 +57,24 @@ defmodule HerdrServer.App.Chrome do
     case Enum.find_index(ws(app).tabs, &(&1.id == id)) do
       nil -> {app, []}
       i -> Actions.switch_tab(app, i + 1)
+    end
+  end
+
+  def apply(app, [:tabs, {:tab, id}], {:drop, %{over: [:tabs, {:tab, to}]}}) do
+    case Enum.find_index(ws(app).tabs, &(&1.id == to)) do
+      nil -> {app, []}
+      i -> Workspaces.move_tab(app, app.session.active_workspace, id, i)
+    end
+  end
+
+  def apply(
+        app,
+        [:sidebar, :spaces, :list, {:workspace, id}],
+        {:drop, %{over: [:sidebar, :spaces, :list, {:workspace, to}]}}
+      ) do
+    case Enum.find_index(app.session.workspaces, &(&1.id == to)) do
+      nil -> {app, []}
+      i -> Workspaces.move_workspace(app, id, i)
     end
   end
 

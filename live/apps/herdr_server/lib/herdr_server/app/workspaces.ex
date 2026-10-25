@@ -1,7 +1,7 @@
 defmodule HerdrServer.App.Workspaces do
   @moduledoc """
   Pure workspace and focus actions, delegated from `HerdrServer.App.Actions`: create,
-  switch, close, step, rename, and `focus_pane/2` (jump to a pane in any workspace or tab).
+  switch, close, step, rename, move, and `focus_pane/2` (jump to a pane in any workspace or tab).
   Returns `{app, effects}` like the other actions.
 
   Panes of inactive workspaces stay alive; the Store's `settle/1` hides every pane that is
@@ -148,6 +148,30 @@ defmodule HerdrServer.App.Workspaces do
            ws
        end)
      end), []}
+  end
+
+  @doc """
+  Moves tab `tab_id` of workspace `ws_id` to position `index` (0-based, clamped to
+  `0..len-1`); ids and the active tab are kept. Unknown ids are a no-op.
+  """
+  @spec move_tab(app(), term(), term(), integer()) :: {app(), [effect()]}
+  def move_tab(app, ws_id, tab_id, index),
+    do: {update_ws(app, ws_id, &%{&1 | tabs: move(&1.tabs, tab_id, index)}), []}
+
+  @doc "Moves workspace `ws_id` to position `index`, as `move_tab/4`."
+  @spec move_workspace(app(), term(), integer()) :: {app(), [effect()]}
+  def move_workspace(app, ws_id, index),
+    do: {update_in(app.session.workspaces, &move(&1, ws_id, index)), []}
+
+  defp move(list, id, index) do
+    case Enum.find_index(list, &(&1.id == id)) do
+      nil ->
+        list
+
+      i ->
+        {x, rest} = List.pop_at(list, i)
+        List.insert_at(rest, index |> max(0) |> min(length(rest)), x)
+    end
   end
 
   @doc "A user rename: the workspace keeps `name` (`auto_name: false`)."

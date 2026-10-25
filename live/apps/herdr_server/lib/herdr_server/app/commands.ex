@@ -38,6 +38,9 @@ defmodule HerdrServer.App.Commands do
   @spec rename_workspace(app(), integer(), String.t()) :: result()
   defdelegate rename_workspace(app, ws_id, label), to: Workspaces
 
+  @spec move_workspace(app(), integer(), integer()) :: result()
+  defdelegate move_workspace(app, ws_id, index), to: Workspaces
+
   @spec close_workspace(app(), integer()) :: result()
   def close_workspace(%{session: %{workspaces: [_only]}} = app, ws_id) do
     with_ws(app, ws_id, fn _ ->
@@ -71,6 +74,9 @@ defmodule HerdrServer.App.Commands do
 
   @spec rename_tab(app(), integer(), integer(), String.t()) :: result()
   defdelegate rename_tab(app, ws_id, tab_id, label), to: Workspaces
+
+  @spec move_tab(app(), integer(), integer(), integer()) :: result()
+  defdelegate move_tab(app, ws_id, tab_id, index), to: Workspaces
 
   @spec close_tab(app(), integer(), integer()) :: result()
   def close_tab(app, ws_id, tab_id) do

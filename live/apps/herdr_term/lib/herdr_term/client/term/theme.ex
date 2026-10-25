@@ -54,6 +54,8 @@ defmodule HerdrTerm.Client.Term.Theme do
         enter: "↵",
         ellipsis: "…",
         rule: "─",
+        drop_tab: "▏",
+        drop_row: "▔",
         tree_mid: "├─",
         tree_end: "└─",
         state_dots: @state_dots,

@@ -1350,4 +1350,31 @@ defmodule HerdrServer.ServerTest do
     scene_until(c, &toast/1)
     scene_until(c, &(toast(&1) == nil))
   end
+
+  test "a tab drag marks its drop target for the dragging client only; the drop reorders" do
+    {a, sa} = client()
+    scene(a)
+    {b, sb} = client()
+    scene(b)
+
+    for _ <- 1..2,
+        do: {:ok, _, _} = Store.request({HerdrServer.App.Commands, :create_tab, [1, nil, false]})
+
+    marker = fn s ->
+      with %{props: p} <- Scene.Node.find(s.chrome, [:tabs, {:tab, 3}]), do: p[:drop_marker]
+    end
+
+    over = %{x: 40, y: 0, over: [:tabs, {:tab, 3}]}
+
+    input(sa, a, 1, {:chrome, [:tabs, {:tab, 1}], {:drag, over}})
+    assert_receive {^a, {:ack, 1}}
+    scene_until(a, &(marker.(&1) == :after))
+    assert marker.(:sys.get_state(sb).last_scene) == nil
+
+    input(sa, a, 2, {:chrome, [:tabs, {:tab, 1}], {:drop, over}})
+    assert_receive {^a, {:ack, 2}}
+    assert Enum.map(hd(Store.snapshot().session.workspaces).tabs, & &1.id) == [2, 3, 1]
+    assert marker.(scene_until(a, &(marker.(&1) == nil))) == nil
+    assert :sys.get_state(sa).drag == nil
+  end
 end

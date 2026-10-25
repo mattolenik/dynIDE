@@ -17,6 +17,9 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Sidebar do
   The active workspace row has the `:selected` background. Badges are `state_dots` or
   `state_symbols` (root `indicators`) in their state's colour.
 
+  Workspace items are `drag: true` hits (reorder). A `drop_marker` draws the accent `▔`
+  in column 0 of the item's first row (`:before`) or of the row below it (`:after`).
+
   Hits, topmost first: toggle, edge, split, every item, the buttons, the sections, then
   the region; all clipped to the region.
   """
@@ -269,18 +272,40 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Sidebar do
 
   # each item's rows (`fun`) from y0 while they fit above y1; returns the next free row
   defp rows_of(items, path, y0, y1, ctx, fun) do
-    {lines, hits, y} = Enum.reduce_while(items, {[], [], y0}, &place(&1, &2, path, y1, ctx, fun))
-    {Enum.reverse(lines), Enum.reverse(hits), y}
+    {lines, hits, y, marks} =
+      Enum.reduce_while(items, {[], [], y0, []}, &place(&1, &2, path, y1, ctx, fun))
+
+    {lines |> Enum.reverse() |> marks(marks, y1, ctx), Enum.reverse(hits), y}
   end
 
-  defp place(_item, {_, _, y} = acc, _path, y1, _ctx, _fun) when y > y1, do: {:halt, acc}
+  defp place(_item, {_, _, y, _} = acc, _path, y1, _ctx, _fun) when y > y1, do: {:halt, acc}
 
-  defp place(item, {ls, hs, y}, path, y1, ctx, fun) do
+  defp place(item, {ls, hs, y, ms}, path, y1, ctx, fun) do
     rows = item |> fun.() |> Enum.take(y1 - y + 1)
     n = length(rows)
-    hit = Chrome.hit(rect(ctx, y, y + n - 1), path ++ [item.id], :item)
+    drag = path == [:sidebar, :spaces, :list]
+    hit = Chrome.hit(rect(ctx, y, y + n - 1), path ++ [item.id], :item, drag)
     ls = rows |> Enum.with_index(y) |> Enum.reduce(ls, fn {row, yy}, acc -> [{yy, row} | acc] end)
-    {:cont, {ls, [hit | hs], y + n}}
+
+    ms =
+      case Map.get(item.props, :drop_marker) do
+        :before -> [y | ms]
+        :after -> [y + n | ms]
+        _ -> ms
+      end
+
+    {:cont, {ls, [hit | hs], y + n, ms}}
+  end
+
+  # the drop marker cells; an `:after` below the last item marks a blank row
+  defp marks(lines, [], _y1, _ctx), do: lines
+
+  defp marks(lines, ms, y1, %{cw: cw, base: base, g: g, theme: theme}) do
+    extra = for y <- ms, y <= y1, not List.keymember?(lines, y, 0), do: {y, Cells.blank(cw, base)}
+
+    Enum.map(lines ++ extra, fn {y, row} ->
+      if y in ms, do: {y, Text.mark(row, 0, g.drop_row, theme)}, else: {y, row}
+    end)
   end
 
   defp item_badge(%Node{children: groups}, ctx) do

@@ -19,6 +19,9 @@ defmodule HerdrServer.Client.State do
   `View.compute`, panes without placements left out.
   `window_title` is the `title set` override of the window title
   (nil: the `ui.window_title` template), `hostname` is read once at attach.
+  `drag` is this client's tab or workspace drag, `%{from: path, over: path}` (the
+  dragged chrome path and the one under the pointer, same kind) or nil: `View` puts the
+  `drop_marker` prop on `over` for this client only. Not mirrored (a re-attach ends it).
   """
 
   defstruct [
@@ -49,7 +52,8 @@ defmodule HerdrServer.Client.State do
     facts_tick: nil,
     graphics: %{},
     window_title: nil,
-    hostname: nil
+    hostname: nil,
+    drag: nil
   ]
 
   @type t :: %__MODULE__{
@@ -80,6 +84,7 @@ defmodule HerdrServer.Client.State do
           facts_tick: HerdrServer.Throttle.t(),
           graphics: %{optional(pos_integer()) => [HerdrScene.Scene.Graphic.t()]},
           window_title: binary() | nil,
-          hostname: binary() | nil
+          hostname: binary() | nil,
+          drag: %{from: [term()], over: [term()]} | nil
         }
 end

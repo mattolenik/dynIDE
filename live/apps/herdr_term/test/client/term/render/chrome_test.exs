@@ -56,7 +56,7 @@ defmodule HerdrTerm.Client.Term.Render.ChromeTest do
     assert Enum.at(cells, 12).bg == Theme.style(@theme, :selected).bg
     assert Enum.at(cells, 3).bg == Theme.style(@theme, :surface).bg
 
-    assert %{rect: %{x: 0, y: 0, w: 8, h: 1}, role: :tab, drag: false} =
+    assert %{rect: %{x: 0, y: 0, w: 8, h: 1}, role: :tab, drag: true} =
              hit(layout, [:tabs, {:tab, 1}])
 
     assert %{rect: %{x: 9, y: 0, w: 8, h: 1}} = hit(layout, [:tabs, {:tab, 2}])
@@ -286,5 +286,29 @@ defmodule HerdrTerm.Client.Term.Render.ChromeTest do
       assert RChrome.hover(layout, [:status], @theme) == layout
       assert RChrome.hover(layout, [:tabs, :new_tab], @theme) == layout
     end
+  end
+
+  test "a tab's drop_marker draws the accent ▏ on that side" do
+    accent = Theme.style(@theme, :accent).fg
+    t = tabs(["1", "2", "3"], 1)
+
+    mark = fn side ->
+      [t1, t2, t3, new] = t.children
+      t3 = %{t3 | props: Map.put(t3.props, :drop_marker, side)}
+      layout = RChrome.layout(root([%{t | children: [t1, t2, t3, new]}]), @size, @theme)
+      %{rect: r, drag: true} = hit(layout, [:tabs, {:tab, 3}])
+
+      cells =
+        layout.base |> Map.fetch!(0) |> Enum.flat_map(fn {_, _, row} -> Cell.decode_row(row) end)
+
+      {Enum.at(cells, r.x), Enum.at(cells, r.x + r.w - 1)}
+    end
+
+    {first, last} = mark.(:before)
+    assert %{glyph: "▏", fg: ^accent} = first
+    refute last.glyph == "▏"
+    {first, last} = mark.(:after)
+    assert %{glyph: "▏", fg: ^accent} = last
+    refute first.glyph == "▏"
   end
 end

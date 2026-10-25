@@ -19,6 +19,11 @@ defmodule HerdrTerm.Client.Term.Hit do
     * Left press over no hit passes through and sets the `:pass` grab: drags and the
       release pass through unchanged until that release, even over a hit (a pane
       selection or a program's mouse drag crossing chrome).
+    * A drag hit with role `:tab` or `:item` (a reorderable tab or workspace) is a click
+      first (M13 ruling 18: the press acts): its press emits `:click` and remembers a
+      `reorder` grab; the first motion makes it held, then `:drag` / `:drop` as above, each
+      with `over`, the topmost hit path under the pointer (nil over none). A release
+      without motion emits nothing more.
     * Right / middle press emit `:right_click` / `:middle_click`; wheel up / down emit
       `:scroll_up` / `:scroll_down`. A move over a hit passes through unchanged (outside
       every pane the server only uses it to clear a link hover); other events over a hit
@@ -28,11 +33,26 @@ defmodule HerdrTerm.Client.Term.Hit do
 
   @double_ms 350
 
-  @type grab :: %{path: [term] | nil, at: integer, held: boolean, down: boolean} | :pass | nil
+  @type grab ::
+          %{
+            required(:path) => [term] | nil,
+            required(:at) => integer,
+            required(:held) => boolean,
+            required(:down) => boolean,
+            optional(:reorder) => true
+          }
+          | :pass
+          | nil
+
+  @reorder [:tab, :item]
 
   @spec route([map], grab, tuple, integer) :: {[tuple], grab}
   def route(hits, grab, {:mouse, m} = ev, now) do
-    grab = if stale?(grab, hits), do: Map.merge(grab, %{held: false, down: true}), else: grab
+    grab =
+      if stale?(grab, hits),
+        do: grab |> Map.merge(%{held: false, down: true}) |> Map.delete(:reorder),
+        else: grab
+
     held(grab, m, ev, hits, now)
   end
 
@@ -50,11 +70,15 @@ defmodule HerdrTerm.Client.Term.Hit do
   defp stale?(%{held: true, path: p}, hits), do: not Enum.any?(hits, &(&1.path == p))
   defp stale?(_grab, _hits), do: false
 
-  defp held(%{held: true, path: p} = g, %{kind: :drag} = m, _ev, _hits, _now),
-    do: {[chrome(p, :drag, m)], g}
+  defp held(%{held: true, path: p} = g, %{kind: :drag} = m, _ev, hits, _now),
+    do: {[chrome(p, :drag, m, over(g, hits, m))], g}
 
-  defp held(%{held: true, path: p} = g, %{kind: :release} = m, _ev, _hits, _now),
-    do: {[chrome(p, :drop, m)], Map.merge(g, %{held: false, down: false})}
+  defp held(%{held: true, path: p} = g, %{kind: :release} = m, _ev, hits, _now),
+    do: {[chrome(p, :drop, m, over(g, hits, m))], Map.merge(g, %{held: false, down: false})}
+
+  # a reorder press already clicked: its first motion starts the drag
+  defp held(%{down: true, reorder: true} = g, %{kind: :drag} = m, ev, hits, now),
+    do: held(%{g | held: true}, m, ev, hits, now)
 
   defp held(:pass, %{kind: :drag}, ev, _hits, _now), do: {[ev], :pass}
   defp held(:pass, %{kind: :release}, ev, _hits, _now), do: {[ev], nil}
@@ -77,6 +101,9 @@ defmodule HerdrTerm.Client.Term.Hit do
     cond do
       match?(%{path: ^p}, last) and now - last.at <= @double_ms ->
         {[chrome(p, :double_click, m)], %{path: nil, at: now, held: false, down: true}}
+
+      hit.drag and hit.role in @reorder ->
+        {[chrome(p, :click, m)], %{path: p, at: now, held: false, down: true, reorder: true}}
 
       hit.drag ->
         {[], %{path: p, at: now, held: true, down: false}}
@@ -101,6 +128,19 @@ defmodule HerdrTerm.Client.Term.Hit do
   defp over(_hit, _m, last, _now), do: {[], last}
 
   defp chrome(path, kind, m), do: {:chrome, path, {kind, %{x: m.x, y: m.y}}}
+
+  defp chrome(path, kind, m, :none), do: chrome(path, kind, m)
+  defp chrome(path, kind, m, over), do: {:chrome, path, {kind, %{x: m.x, y: m.y, over: over}}}
+
+  # only a reorder drag names the hit under the pointer
+  defp over(%{reorder: true}, hits, m) do
+    case Enum.find(hits, &inside?(&1.rect, m.x, m.y)) do
+      %{path: p} -> p
+      nil -> nil
+    end
+  end
+
+  defp over(_grab, _hits, _m), do: :none
 
   defp inside?(r, x, y), do: x >= r.x and x < r.x + r.w and y >= r.y and y < r.y + r.h
 end
