@@ -23,13 +23,12 @@ permissions:
 jobs:
   sync:
     # Pinned to the gha-autofork commit tagged v1; bump deliberately after reviewing the diff.
-    uses: mattolenik/gha-autofork/.github/workflows/autofork.yml@e9bfcc8a51f0696c57473cffcae78feb8509b93f
+    uses: mattolenik/gha-autofork/.github/workflows/autofork.yml@1604e3f0f42cb636ca0d9a5bd81b927220fc1564
     with:
       upstream: herdrdev/herdr
       upstream_branch: master
       branch: master
-      worker: claude:claude-opus-5-5
-      reviewer: codex:gpt-6.1-sol
+      # Worker and reviewer default to Claude Code against the DeepSeek API (deepseek:deepseek-v4-pro).
       verify_command: bash scripts/autofork_verify.sh
       # Herdr's suite needs a real host (root-owned sticky /tmp, PTY handoff, ACL
       # xattrs), so verification runs unsandboxed with the read-only token.
@@ -39,5 +38,4 @@ jobs:
       dry_run: ${{ inputs.dry_run || false }}
     secrets:
       token: ${{ secrets.AUTOFORK_TOKEN }}
-      anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-      openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+      deepseek_api_key: ${{ secrets.DEEPSEEK_API_KEY }}
