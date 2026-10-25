@@ -13,6 +13,10 @@ if Mix.env() == :test do
       2. second client: a key typed in client A, timed until client B (80x24) shows it
       3. frame cost (`Compose.frame/4` + `Fake.Blit.frame/3`) at `--size`, 1 vs 15 full panes,
          and 15 panes under an open dimming modal (the rename prompt)
+      3b. graphics frame cost (`Compose.screen/5` + `Render.Graphics.run/4` + `Fake.Blit.frame/3`
+         with the ops, as Render runs them): 15 full panes without placements, and 2 full
+         panes with 8 placements each in steady state (images already on the host, so
+         every frame only replays the 16 places)
       4. scheduler stall and typing latency while 15 panes each get 100MiB of output
 
     Prints a markdown table and writes `_build/bench/m3.json` (`m3-real.json` with
@@ -39,7 +43,7 @@ if Mix.env() == :test do
     alias HerdrServer.Kernel.Fake.{Keeper, Pty}
     alias HerdrServer.Pane.Rows
     alias HerdrTerm.Client
-    alias HerdrTerm.Client.Term.Render.{Chrome, Compose}
+    alias HerdrTerm.Client.Term.Render.{Chrome, Compose, Graphics}
     alias HerdrTerm.Client.Term.Theme
     alias HerdrTerm.Kernel.Fake.{Blit, Tty}
 
@@ -175,8 +179,12 @@ if Mix.env() == :test do
       paced = type_loop(client, pane, &(&1 >= cfg.keys), :paced)
       second = second_client(client, pane, cfg)
       frame_1 = frame_cost(Driver.scene(client), cfg)
+      scene_2 = Driver.grow(client, 2)
+      gfx_2_none = gfx_cost(scene_2, cfg, 0)
+      gfx_2 = gfx_cost(scene_2, cfg, 8)
       scene_15 = Driver.grow(client, 15)
       frame_15 = frame_cost(scene_15, cfg)
+      gfx_15 = gfx_cost(scene_15, cfg, 0)
       frame_15_dim = frame_cost(with_prompt(scene_15), cfg)
 
       %{
@@ -187,6 +195,9 @@ if Mix.env() == :test do
         frame_1: frame_1,
         frame_15: frame_15,
         frame_15_dim: frame_15_dim,
+        gfx_2_none: gfx_2_none,
+        gfx_2: gfx_2,
+        gfx_15: gfx_15,
         stall: stall(client, cfg)
       }
     end
@@ -421,6 +432,80 @@ if Mix.env() == :test do
       frame
     end
 
+    # Compose.screen + Graphics.run + Blit.frame with the ops, a full repaint per frame.
+    # `per_pane` placements on each pane (a 4x2 grid of 200x200 rgba images, distinct
+    # per placement); the cache is warmed once, so frames replay places only.
+    defp gfx_cost(scene, cfg, per_pane) do
+      {cols, rows} = cfg.size
+      cell = {10, 20}
+      {:ok, tty} = Tty.open(%{size: {cols, rows, cols * 10, rows * 20}})
+      theme = Theme.default()
+      chrome = Chrome.layout(scene.chrome, scene.size, theme)
+      scene = %{scene | panes: Enum.map(scene.panes, &with_graphics(&1, per_pane))}
+      image = %{format: :rgba, width: 200, height: 200, bytes: 160_000, data: <<0::1_280_000>>}
+
+      images =
+        for p <- scene.panes,
+            %{image: {i, fp}} <- p.graphics,
+            into: %{},
+            do: {{p.id, i, fp}, image}
+
+      full = full_rows(scene, "x")
+      ctx = %{cell_px: cell, cache: Graphics.empty(), images: images, file?: false, theme: theme}
+      {_, _, cache} = call(cfg.compose, Graphics, :run, [[], scene, chrome, ctx])
+      ctx = %{ctx | cache: cache}
+      places = per_pane * length(scene.panes)
+
+      frame = fn _ ->
+        {screen, _} = call(cfg.compose, Compose, :screen, [scene, full, %{}, theme, chrome])
+        {screen, ops, ^cache} = call(cfg.compose, Graphics, :run, [screen, scene, chrome, ctx])
+        ^places = length(ops)
+        :ok = Blit.frame(tty, screen, %{cursor: nil, shape: :block, repaint: true, graphics: ops})
+      end
+
+      cost = time(cfg, frame)
+      Agent.stop(tty)
+      %{panes: length(scene.panes), placements: places, repaint: cost}
+    end
+
+    defp with_graphics(pane, 0), do: pane
+
+    defp with_graphics(%{rect: r} = pane, n) do
+      {w, h} = {div(r.w, 4), div(r.h, 2)}
+
+      graphics =
+        for i <- 0..(n - 1) do
+          %{
+            image: {i + 1, 1},
+            placement: 1,
+            x: rem(i, 4) * w,
+            y: div(i, 4) * h,
+            cols: w - 1,
+            rows: h - 1,
+            x_off: 0,
+            y_off: 0,
+            src: {0, 0, 0, 0},
+            px: {0, 0},
+            z: 0,
+            size: {200, 200},
+            format: :rgba,
+            bytes: 160_000
+          }
+        end
+
+      %{pane | graphics: graphics}
+    end
+
+    # raw: direct calls; inline/budget: through the Guard as Render (budget: its 50ms)
+    defp call("raw", mod, fun, args), do: apply(mod, fun, args)
+    defp call("inline", mod, fun, args), do: guarded_call(mod, fun, args, [])
+    defp call("budget", mod, fun, args), do: guarded_call(mod, fun, args, budget_ms: 50)
+
+    defp guarded_call(mod, fun, args, opts) do
+      {:ok, value} = HerdrReload.Guard.run(mod, fun, args, [scan: false] ++ opts)
+      value
+    end
+
     # every row of every pane full of text; one packed row per width, built once
     defp full_rows(scene, glyph) do
       Map.new(scene.panes, fn %{id: id, rect: r} ->
@@ -612,6 +697,10 @@ if Mix.env() == :test do
         frame_1_mean_us: f1.repaint.mean,
         frame_15_mean_us: f15.repaint.mean,
         frame_15_dim_mean_us: r.frame_15_dim.repaint.mean,
+        gfx_15_mean_us: r.gfx_15.repaint.mean,
+        gfx_15_p95_us: r.gfx_15.repaint.p95,
+        gfx_2x8_mean_us: r.gfx_2.repaint.mean,
+        gfx_2x8_p95_us: r.gfx_2.repaint.p95,
         frame_ratio: ratio,
         stall_probe_max_ms: st.probe_max_ms,
         long_schedule_count: st.monitor.long_schedule.count,
@@ -625,6 +714,9 @@ if Mix.env() == :test do
         frame_1: f1,
         frame_15: f15,
         frame_15_dim: r.frame_15_dim,
+        gfx_2_none: r.gfx_2_none,
+        gfx_2: r.gfx_2,
+        gfx_15: r.gfx_15,
         stall: st,
         environment: environment()
       }
@@ -664,6 +756,9 @@ if Mix.env() == :test do
       | frame cost ratio #{f15.panes}/1 (mean) | #{fmt(ratio)}x | within 2x herdr's ratio |
       | frame cost #{geo}, #{f15.panes} panes, 1 pane dirty (full compose, no repaint) | #{frame(f15.dirty)} | reference |
       | frame cost #{geo}, #{f15.panes} full panes under a dimming modal (repaint) | #{frame(r.frame_15_dim.repaint)} | reference |
+      | graphics frame #{geo}, #{r.gfx_15.panes} full panes, no placements (screen + graphics pass, repaint) | #{frame(r.gfx_15.repaint)} | within 10% of M9 (328 / 384 µs) |
+      | graphics frame #{geo}, #{r.gfx_2_none.panes} full panes, no placements (repaint) | #{frame(r.gfx_2_none.repaint)} | reference |
+      | graphics frame #{geo}, #{r.gfx_2.panes} full panes x 8 placements, steady (#{r.gfx_2.placements} places/frame, repaint) | #{frame(r.gfx_2.repaint)} | reference |
       | flood: #{st.panes} panes x #{div(st.bytes_per_pane, 1024 * 1024)}MiB, wall time | #{st.wall_ms} ms | |
       | flood: Process.sleep(1) probe max overshoot | #{fmt(st.probe_max_ms)} ms | no stall > 10ms |
       | flood: long_schedule >= 5ms events (max) | #{st.monitor.long_schedule.count} (#{st.monitor.long_schedule.max_ms} ms, #{st.monitor.long_schedule.max_who}, in #{st.monitor.long_schedule.max_in}, out #{st.monitor.long_schedule.max_out}) | |
@@ -683,7 +778,9 @@ if Mix.env() == :test do
       `:persistent_term` republished with `passthrough: false` (re-asserted before each key),
       so keys go client Input -> Client.Session -> App.Store. Client frames are paced at
       min_frame_interval_ms. Frame cost = `Compose.frame/4` + `Fake.Blit.frame/3`,
-      #{cfg.warmup} warmup + #{cfg.iters} iterations, on a dedicated fake tty. #{String.trim_trailing(flood_method(cfg, st))}
+      #{cfg.warmup} warmup + #{cfg.iters} iterations, on a dedicated fake tty. Graphics
+      frame = `Compose.screen/5` + `Render.Graphics.run/4` (`--compose #{cfg.compose}`) +
+      `Fake.Blit.frame/3` with its ops, cell 10x20 px, host cache warmed once. #{String.trim_trailing(flood_method(cfg, st))}
 
       Environment: OTP #{env.otp}, Elixir #{env.elixir}, #{env.schedulers} schedulers, #{env.os}
       """
