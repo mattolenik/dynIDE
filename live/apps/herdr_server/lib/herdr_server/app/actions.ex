@@ -3,7 +3,7 @@ defmodule HerdrServer.App.Actions do
   Pure input handling: `apply/2` turns a neutral `HerdrScene.Event` (plus the
   server-internal `{:pane_exited, id}`, `{:pane_title, id, title}`, `{:config_loaded, cfg}`,
   `{:agent_state, id, state}`, `{:workspace_cwd, ws_id, cwd, label}`,
-  `{:workspace_git, ws_id, info}` and `{:worktree_done, result}` (`App.Worktrees.done/2`), which are never accepted from clients) into new app
+  `{:workspace_git, ws_id, info}`, `{:metadata_expire, now_ms}` (`App.Metadata.expire/2`) and `{:worktree_done, result}` (`App.Worktrees.done/2`), which are never accepted from clients) into new app
   state and a list of effects. Effects are the only side-effect channel; this module does no I/O and sends no messages.
 
   Effects: `{:spawn, id, %{cols, rows}}`, `{:close, id}`, `{:key, id, event}`,
@@ -33,6 +33,7 @@ defmodule HerdrServer.App.Actions do
     Commands,
     Focus,
     Keybinds,
+    Metadata,
     Modal,
     Session,
     Ui,
@@ -139,6 +140,9 @@ defmodule HerdrServer.App.Actions do
   def apply(app, {:workspace_git, ws_id, info}), do: Workspaces.workspace_git(app, ws_id, info)
 
   def apply(app, {:worktree_done, result}), do: Worktrees.done(app, result)
+
+  # server-internal (the Store's metadata timer)
+  def apply(app, {:metadata_expire, now}), do: Metadata.expire(app, now)
 
   # server-internal (M11 detection): stores the state, alerts on herdr's transitions
   def apply(app, {:agent_state, id, state}) do

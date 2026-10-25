@@ -85,6 +85,15 @@ defmodule HerdrServer.Persist.SchemaTest do
     end
   end
 
+  test "metadata tokens are never persisted" do
+    alias HerdrServer.App.Metadata
+    app = fresh()
+    {app, _} = Metadata.report(app, {:pane, 1}, %{"pr" => "#1"}, "s", 1, nil, 0)
+    {app, _} = Metadata.report(app, {:workspace, 1}, %{"ci" => "ok"}, "s", 1, nil, 0)
+    assert app.session.panes[1].metadata["pr"].value == "#1"
+    assert Schema.capture(app, %{}) == Schema.capture(fresh(), %{})
+  end
+
   describe "restore/1" do
     test "gives back session and focus, pane metas at layout_gen 0, modal []" do
       app = three()

@@ -10,7 +10,7 @@ defmodule HerdrServer.Api.View do
   """
 
   alias HerdrServer.Api.Ids
-  alias HerdrServer.App.Commands
+  alias HerdrServer.App.{Commands, Metadata}
   alias HerdrServer.Layout
 
   @type app :: HerdrServer.App.Actions.app()
@@ -24,6 +24,7 @@ defmodule HerdrServer.Api.View do
       tabs: length(ws.tabs),
       active_tab_id: Ids.tab(ws.id, ws.active_tab)
     }
+    |> tokens(Map.get(ws, :metadata))
   end
 
   @spec tab(app(), map(), map()) :: map()
@@ -95,6 +96,15 @@ defmodule HerdrServer.Api.View do
       cols: size.cols,
       rows: size.rows
     }
+    |> tokens(get_in(app.session.panes, [id, :metadata]))
+  end
+
+  # herdr's `tokens`: the visible metadata values, left out when there are none
+  defp tokens(obj, meta) do
+    case Metadata.visible(meta) do
+      [] -> obj
+      kv -> Map.put(obj, :tokens, Map.new(kv))
+    end
   end
 
   # The one place a per-pane fact is read. `title` stays the session's: `Pane.Server`

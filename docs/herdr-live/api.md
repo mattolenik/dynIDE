@@ -276,6 +276,24 @@ Result: `workspace_list` with `workspaces` (list of `workspace` object).
 
 Errors: `invalid_params`, `not_found`, `failed`
 
+### `workspace.report_metadata`
+
+Set or clear a workspace's metadata tokens (at most 32), shown after its branch.
+
+CLI: `herdr-live workspace report-metadata <workspace_id> --source S --token K=V... [--clear-token K]... [--seq N] [--ttl-ms N]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `workspace_id` | workspace id | yes | Target workspace. |
+| `source` | string | yes | Reporting integration: ASCII letters, digits, `:._-`, 1-80. |
+| `tokens` | object of strings or nulls | yes | 1-16 keys `[A-Za-z0-9_-]{1,32}` (not `__`-prefixed); a value is trimmed, stripped of control characters and cut to 80; null or empty clears the key. |
+| `seq` | integer 0..9007199254740991 | no | Report sequence number; at most the source's last is dropped. |
+| `ttl_ms` | integer 1..86400000 | no | The set keys expire after this many ms. |
+
+Result: `ok` (no fields).
+
+Errors: `invalid_params`, `not_found`, `failed`
+
 ### `workspace.close`
 
 Close a workspace and its panes.
@@ -525,6 +543,24 @@ CLI: `herdr-live pane report-agent <pane_id> --source S --agent A --state S [--m
 Result: `ok` (no fields).
 
 Errors: `invalid_params`, `not_available`
+
+### `pane.report_metadata`
+
+Set or clear a pane's metadata tokens (at most 32), shown under its agent line.
+
+CLI: `herdr-live pane report-metadata [<pane_id>] --source S --token K=V... [--clear-token K]... [--seq N] [--ttl-ms N]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | no | Target pane; default the focused pane. |
+| `source` | string | yes | Reporting integration: ASCII letters, digits, `:._-`, 1-80. |
+| `tokens` | object of strings or nulls | yes | 1-16 keys `[A-Za-z0-9_-]{1,32}` (not `__`-prefixed); a value is trimmed, stripped of control characters and cut to 80; null or empty clears the key. |
+| `seq` | integer 0..9007199254740991 | no | Report sequence number; at most the source's last is dropped. |
+| `ttl_ms` | integer 1..86400000 | no | The set keys expire after this many ms. |
+
+Result: `ok` (no fields).
+
+Errors: `invalid_params`, `not_found`, `failed`
 
 ### `pane.release_agent`
 
@@ -1235,6 +1271,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 | `focused` | boolean |
 | `cols` | integer |
 | `rows` | integer |
+| `tokens` | object |
 
 ### `plugin`
 
@@ -1288,6 +1325,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 | `focused` | boolean |
 | `tabs` | integer |
 | `active_tab_id` | tab id |
+| `tokens` | object |
 
 ### `worktree`
 

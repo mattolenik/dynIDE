@@ -10,7 +10,7 @@ defmodule HerdrServer.Api.Handlers.Topology do
   """
 
   alias HerdrServer.Api.{Ids, View}
-  alias HerdrServer.App.{Commands, Store}
+  alias HerdrServer.App.{Commands, Metadata, Store}
   alias HerdrServer.Kernel
   alias HerdrServer.Layout
   alias HerdrServer.Pane.Rows
@@ -70,6 +70,9 @@ defmodule HerdrServer.Api.Handlers.Topology do
       err -> err
     end
   end
+
+  def handle("workspace.report_metadata", %{workspace_id: w} = p),
+    do: report_metadata(p, {:workspace, w}, &run_on_ws(w, &1))
 
   def handle("workspace.close", %{workspace_id: w}) do
     with {:ok, before, aft, notes} <- run_on_ws(w, {Commands, :close_workspace, [w]}) do
@@ -176,6 +179,11 @@ defmodule HerdrServer.Api.Handlers.Topology do
 
   def handle("pane.resize", p),
     do: by_pane(p, "pane_resize", :resize_pane_dir, [min(abs(p[:amount] || 0.05) * 1.0, 0.5)])
+
+  def handle("pane.report_metadata", p) do
+    id = p[:pane_id] || app!().focus.pane
+    report_metadata(p, {:pane, id}, &run_on_pane(id, &1))
+  end
 
   def handle("pane.close", %{pane_id: id}) do
     with {:ok, _before, aft, notes} <- run_on_pane(id, {Commands, :close_pane, [id]}) do
@@ -424,6 +432,21 @@ defmodule HerdrServer.Api.Handlers.Topology do
     else
       # the pane's kernel is gone (closing, or never started): not a process to describe
       _ -> :error
+    end
+  end
+
+  # a report over the cap is a warning: failed
+  defp report_metadata(p, target, run) do
+    now = System.system_time(:millisecond)
+
+    with {:normalize, {:ok, source, patch}} <-
+           {:normalize, Metadata.normalize(p.source, p.tokens)},
+         {:ok, _before, _aft, notes} <-
+           run.({Metadata, :report, [target, patch, source, p[:seq], p[:ttl_ms], now]}) do
+      if notes == [], do: {:ok, %{type: "ok"}}, else: unchanged(notes)
+    else
+      {:normalize, {:error, msg}} -> {:error, :invalid_params, msg}
+      err -> err
     end
   end
 

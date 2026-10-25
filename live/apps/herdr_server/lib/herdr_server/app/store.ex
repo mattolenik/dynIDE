@@ -47,6 +47,10 @@ defmodule HerdrServer.App.Store do
       Without a usable file the app stays nil and the first event initialises it.
     * In a VM that adopted panes (`Link.adopt_reason/0` not nil) no restart or restore
       closes a keeper pane nothing maps (`App.Restore`): it may be an adopted child.
+    * Metadata tokens (`App.Metadata`): an `{:expire_at, ms}` effect arms one
+      `Process.send_after` for the earliest pending expiry (an earlier one replaces it);
+      on firing the Store applies `{:metadata_expire, now_ms}`, which re-arms the next.
+      Every init sweeps once (a restarted or adopted app's timer is gone).
     * Config (M13, `Store.Config`): the first init passes the file to `Actions.init/2`;
       an app adopted at start gets it as `{:config_loaded, cfg}` (`:load_config`).
   """
@@ -91,7 +95,8 @@ defmodule HerdrServer.App.Store do
             hold_timer: nil,
             mirrored: %{},
             flush: nil,
-            diag: nil
+            diag: nil,
+            expiry: nil
 
   def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
 
@@ -163,6 +168,8 @@ defmodule HerdrServer.App.Store do
   @impl true
   def init(:ok) do
     send(self(), :load_config)
+    # a restarted or adopted app's metadata timer did not survive: sweep and re-arm
+    send(self(), :metadata_expire)
 
     case Link.take_adopted(Carry.key()) do
       [{_key, blob, _fds}] ->
@@ -327,6 +334,20 @@ defmodule HerdrServer.App.Store do
     {:noreply,
      if(cfg,
        do: state |> handle_event({:config_loaded, cfg}, nil, nil) |> Mirror.dirty(),
+       else: state
+     )}
+  end
+
+  # the one metadata timer (`{:expire_at, ms}`) fired: the sweep re-arms the next one
+  def handle_info(:metadata_expire, state) do
+    state = %{Map.merge(%__MODULE__{}, state) | expiry: nil}
+
+    {:noreply,
+     if(state.app,
+       do:
+         state
+         |> handle_event({:metadata_expire, System.system_time(:millisecond)}, nil, nil)
+         |> Mirror.dirty(),
        else: state
      )}
   end
@@ -570,6 +591,28 @@ defmodule HerdrServer.App.Store do
          do: send(pid, {:api_event, ev})
 
     state
+  end
+
+  # one timer, for the earliest pending expiry: an earlier one replaces it
+  defp effect(%{expiry: {ref, armed}} = state, {:expire_at, ms}, origin) do
+    if ms < armed do
+      Process.cancel_timer(ref)
+      # a timer that already fired left its message: drop it, so only one sweep is pending
+      receive do
+        :metadata_expire -> :ok
+      after
+        0 -> :ok
+      end
+
+      effect(%{state | expiry: nil}, {:expire_at, ms}, origin)
+    else
+      state
+    end
+  end
+
+  defp effect(state, {:expire_at, ms}, _origin) do
+    delay = max(ms - System.system_time(:millisecond), 0)
+    %{state | expiry: {Process.send_after(self(), :metadata_expire, delay), ms}}
   end
 
   defp effect(state, other, origin) do

@@ -80,6 +80,7 @@ defmodule HerdrServer.Api.ConformanceTest do
   defp default({:enum, [v | _]}), do: v
   defp default({:list, :string}), do: ["a"]
   defp default({:list, {:object, _}}), do: [%{"type" => "pane.created"}]
+  defp default({:map, _}), do: %{"k" => "v"}
 
   defp call(s, method, fill \\ %{}), do: ApiClient.call(s, method, params(method, fill))
 
@@ -219,6 +220,14 @@ defmodule HerdrServer.Api.ConformanceTest do
     %{"result" => %{"type" => "subscription_started"}} = call(s, "events.subscribe")
     Process.exit(Process.whereis(Events), :kill)
     ApiClient.recv_line(s)
+  end
+
+  # over the 32-token cap
+  defp produce(method, :failed, ctx)
+       when method in ~w(pane.report_metadata workspace.report_metadata) do
+    s = listen(ctx)
+    for i <- 0..1, do: call(s, method, %{"tokens" => Map.new(1..16, &{"k#{i}_#{&1}", "v"})})
+    call(s, method, %{"tokens" => %{"one_more" => "v"}})
   end
 
   defp produce("workspace.close", :failed, ctx), do: call(listen(ctx), "workspace.close")

@@ -11,7 +11,7 @@ defmodule HerdrCli.Argv do
   omitted, `HERDR_PANE_ID` from env, else usage / left out); `{:keys, name}` (one or
   more); `{:int, name}`; `{:opt_int, name}`; `{:opt_enum, name, values}`. Option kinds: `:string`,
   `:int`, `:number`, `:flag`, `{:const, value}` (a flag that sets `value`), `{:enum, values}`,
-  `{:many, values}` (repeatable), `:file` (a path; becomes `{:file, path}` for the caller to read into the param), `{:kv_many}` (repeatable `KEY=VALUE`, collected into a map).
+  `{:many, values}` (repeatable), `:file` (a path; becomes `{:file, path}` for the caller to read into the param), `{:kv_many}` (repeatable `KEY=VALUE`, collected into a map), `{:clear_many}` (repeatable `KEY`, put in the same map as nil).
   An atom key is consumed by `finish/3` (`:json` is accepted and dropped). A row with
   `alias: true` is another spelling of a command and has no Spec `cli` string of its own.
   `--opt value` and `--opt=value` are both accepted; `--` ends options.
@@ -35,6 +35,15 @@ defmodule HerdrCli.Argv do
 
   @source {:enum, @sources}
   @read_opts %{"source" => {"source", @source}, "lines" => {"lines", :int}}
+
+  # herdr's report-metadata flags: --token and --clear-token fill one `tokens` map
+  @metadata_opts %{
+    "source" => {"source", :string},
+    "token" => {"tokens", {:kv_many}},
+    "clear-token" => {"tokens", {:clear_many}},
+    "seq" => {"seq", :int},
+    "ttl-ms" => {"ttl_ms", :int}
+  }
 
   defp cmd(words, method, pos, opts, out, usage),
     do: %{words: words, method: method, pos: pos, opts: opts, out: out, usage: usage}
@@ -194,6 +203,15 @@ defmodule HerdrCli.Argv do
         %{},
         :json,
         "workspace move <workspace_id> <insert_index>"
+      ),
+      cmd(
+        ~w(workspace report-metadata),
+        "workspace.report_metadata",
+        [id],
+        @metadata_opts,
+        :json,
+        "workspace report-metadata <workspace_id> --source S --token K=V... " <>
+          "[--clear-token K]... [--seq N] [--ttl-ms N]"
       ),
       cmd(
         ~w(workspace close),
@@ -392,6 +410,15 @@ defmodule HerdrCli.Argv do
         },
         :json,
         "pane report-agent <pane_id> --source S --agent A --state S [--message T] [--seq N]"
+      ),
+      cmd(
+        ~w(pane report-metadata),
+        "pane.report_metadata",
+        [opt_id],
+        @metadata_opts,
+        :json,
+        "pane report-metadata [<pane_id>] --source S --token K=V... " <>
+          "[--clear-token K]... [--seq N] [--ttl-ms N]"
       ),
       cmd(
         ~w(pane release-agent),
@@ -841,6 +868,9 @@ defmodule HerdrCli.Argv do
   defp put_opt(acc, key, {:kv_many}, {k, v}),
     do: Map.update(acc, key, %{k => v}, &Map.put(&1, k, v))
 
+  defp put_opt(acc, key, {:clear_many}, k),
+    do: Map.update(acc, key, %{k => nil}, &Map.put(&1, k, nil))
+
   defp put_opt(acc, key, _kind, v), do: Map.put(acc, key, v)
 
   defp convert(_name, :flag, v), do: {:ok, v}
@@ -853,6 +883,7 @@ defmodule HerdrCli.Argv do
     end
   end
 
+  defp convert(_name, {:clear_many}, v), do: {:ok, v}
   defp convert(_name, :string, v), do: {:ok, v}
   defp convert(_name, :file, v), do: {:ok, {:file, v}}
   defp convert(name, :int, v), do: int(v, "--#{name}")
@@ -946,6 +977,12 @@ defmodule HerdrCli.Argv do
 
   defp check("pane.report_agent", params), do: require_opts(params, ~w(source agent state))
   defp check("pane.release_agent", params), do: require_opts(params, ~w(source agent))
+
+  defp check(m, params) when m in ~w(pane.report_metadata workspace.report_metadata) do
+    if Map.has_key?(params, "tokens"),
+      do: require_opts(params, ~w(source)),
+      else: {:error, "missing token to set or clear (--token K=V or --clear-token K)"}
+  end
 
   defp check("pane.zoom", %{"zoom" => true, "off" => true}),
     do: {:error, "give at most one of --on and --off"}

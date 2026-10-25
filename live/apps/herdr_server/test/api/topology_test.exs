@@ -362,4 +362,60 @@ defmodule HerdrServer.Api.TopologyTest do
     assert {"invalid_params", _} =
              err(s, "tab.move", %{"tab_id" => "w1:t1", "insert_index" => -1})
   end
+
+  describe "report_metadata" do
+    test "pane and workspace tokens round trip; null clears; stale seq dropped", %{s: s} do
+      rep = &ok!(s, "pane.report_metadata", Map.merge(%{"source" => "hook"}, &1))
+
+      assert %{"type" => "ok"} =
+               rep.(%{"tokens" => %{"pr" => " #12\n", "ci" => "ok"}, "seq" => 2})
+
+      assert ok!(s, "pane.get", %{"pane_id" => "p1"})["pane"]["tokens"] == %{
+               "pr" => "#12",
+               "ci" => "ok"
+             }
+
+      rep.(%{"tokens" => %{"pr" => "#13"}, "seq" => 2})
+      rep.(%{"pane_id" => "p1", "tokens" => %{"ci" => nil}, "seq" => 3})
+      assert ok!(s, "pane.get", %{"pane_id" => "p1"})["pane"]["tokens"] == %{"pr" => "#12"}
+      rep.(%{"tokens" => %{"pr" => ""}})
+      refute Map.has_key?(ok!(s, "pane.get", %{"pane_id" => "p1"})["pane"], "tokens")
+
+      ok!(s, "workspace.report_metadata", %{
+        "workspace_id" => "w1",
+        "source" => "hook",
+        "tokens" => %{"build" => "green"}
+      })
+
+      assert ok!(s, "workspace.get", %{"workspace_id" => "w1"})["workspace"]["tokens"] ==
+               %{"build" => "green"}
+
+      assert {"invalid_params", _} =
+               err(s, "pane.report_metadata", %{"source" => "a b", "tokens" => %{"k" => "v"}})
+
+      assert {"not_found", _} =
+               err(s, "workspace.report_metadata", %{
+                 "workspace_id" => "w9",
+                 "source" => "hook",
+                 "tokens" => %{"k" => "v"}
+               })
+    end
+
+    test "ttl_ms expires a token through the Store's timer", %{s: s} do
+      p = %{"source" => "hook", "tokens" => %{"short" => "1"}, "ttl_ms" => 30}
+      ok!(s, "pane.report_metadata", p)
+      ok!(s, "pane.report_metadata", %{p | "tokens" => %{"long" => "2"}, "ttl_ms" => 60_000})
+
+      assert ok!(s, "pane.get", %{"pane_id" => "p1"})["pane"]["tokens"] == %{
+               "short" => "1",
+               "long" => "2"
+             }
+
+      Process.sleep(120)
+      assert ok!(s, "pane.get", %{"pane_id" => "p1"})["pane"]["tokens"] == %{"long" => "2"}
+      # one timer, armed for the long key
+      assert %{expiry: {_, at}} = :sys.get_state(Store)
+      assert at > System.system_time(:millisecond) + 50_000
+    end
+  end
 end

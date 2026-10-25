@@ -212,6 +212,7 @@ defmodule HerdrServer.Api.Spec.Doc do
   defp type({:enum, vs}), do: vs |> Enum.map(&"`#{&1}`") |> or_list()
   defp type({:list, t}), do: "list of " <> type(t)
   defp type({:map, :string}), do: "object of strings"
+  defp type({:map, :null_or_string}), do: "object of strings or nulls"
   defp type({:ref, name}), do: "`#{name}` object"
   defp type({:object, ps}), do: "object {" <> Enum.map_join(ps, ", ", &obj_param/1) <> "}"
 

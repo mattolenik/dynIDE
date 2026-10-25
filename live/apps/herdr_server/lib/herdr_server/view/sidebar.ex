@@ -9,13 +9,16 @@ defmodule HerdrServer.View.Sidebar do
   working > idle > unknown; panes without one are `:unknown`). An agent line names the
   pane's `agent`, else its title, else `"terminal"`; its `:tab` text shows only when the
   workspace has more than one tab. A workspace whose `git` fact (`WorkspaceFacts`) has a
-  branch carries it as the item's `:detail`, `"main ↑1 ↓2"`. Collapsed: sections carry no text.
+  branch carries it as the item's `:detail`, `"main ↑1 ↓2"`, followed by the workspace's
+  metadata token values (`App.Metadata.visible/1`, by key), all joined by `" · "`; a pane
+  item's `:detail` is its pane's token values. Collapsed: sections carry no text.
   The workspace item under the client's workspace drag (`drag`, `View.DropMarker`)
   carries `drop_marker`. With the client's navigate preview (`navigate`, `%{ids, at}`,
   `Client.State`) every workspace item carries `selected`, true only on `ids[at]`.
   """
 
   alias HerdrScene.Scene.Node
+  alias HerdrServer.App.Metadata
   alias HerdrServer.Layout
   alias HerdrServer.View.DropMarker
 
@@ -120,7 +123,7 @@ defmodule HerdrServer.View.Sidebar do
         id: {:workspace, ws.id},
         props:
           %{active: ws.id == app.session.active_workspace, index: i}
-          |> detail(ws)
+          |> detail(branch(ws), Map.get(ws, :metadata))
           |> then(&if(navigate, do: Map.put(&1, :selected, ws.id == preview), else: &1))
           |> DropMarker.put(DropMarker.side(drag, path.(ws.id), paths)),
         children: [line(0, [badge(state), text(:workspace, ws.name)])]
@@ -137,7 +140,7 @@ defmodule HerdrServer.View.Sidebar do
       %Node{
         role: :item,
         id: {:pane, id},
-        props: %{active: id == app.focus.pane},
+        props: detail(%{active: id == app.focus.pane}, [], Map.get(meta, :metadata)),
         children: [
           line(0, [badge(state(app, id)), text(:workspace, ws.name)] ++ tab_text),
           line(1, [text(:agent, name)])
@@ -146,17 +149,23 @@ defmodule HerdrServer.View.Sidebar do
     end
   end
 
+  defp detail(props, lead, meta) do
+    case lead ++ Enum.map(Metadata.visible(meta), &elem(&1, 1)) do
+      [] -> props
+      parts -> Map.put(props, :detail, Enum.join(parts, " · "))
+    end
+  end
+
   # `"main ↑1 ↓2"` from the workspace's git facts (arrows only when non-zero)
-  defp detail(props, %{git: %{branch: b} = g}) when is_binary(b) do
-    text =
+  defp branch(%{git: %{branch: b} = g}) when is_binary(b) do
+    [
       [b, g.ahead > 0 && "↑#{g.ahead}", g.behind > 0 && "↓#{g.behind}"]
       |> Enum.filter(& &1)
       |> Enum.join(" ")
-
-    Map.put(props, :detail, text)
+    ]
   end
 
-  defp detail(props, _ws), do: props
+  defp branch(_ws), do: []
 
   # the client skips `offset` items (one owner of the skip: the rasterizer)
   defp offset(app, key), do: Map.get(app.ui.sidebar, key, 0)

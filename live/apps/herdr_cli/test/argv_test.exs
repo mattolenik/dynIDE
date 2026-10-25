@@ -391,6 +391,28 @@ defmodule HerdrCli.ArgvTest do
       assert {:usage, _} = p("pane report-agent p1 --source s --agent a --state done")
       assert {:usage, _} = p("pane release-agent p1 --source s")
 
+      # herdr's flags: --token K=V and --clear-token K share one tokens map
+      assert p("pane report-metadata p1 --source s --token a=x=y --token e= --clear-token b") ==
+               {:call, "pane.report_metadata",
+                %{
+                  "pane_id" => "p1",
+                  "source" => "s",
+                  "tokens" => %{"a" => "x=y", "e" => "", "b" => nil}
+                }, :json}
+
+      assert p("workspace report-metadata w1 --source s --token k=v --seq 2 --ttl-ms 9") ==
+               {:call, "workspace.report_metadata",
+                %{
+                  "workspace_id" => "w1",
+                  "source" => "s",
+                  "tokens" => %{"k" => "v"},
+                  "seq" => 2,
+                  "ttl_ms" => 9
+                }, :json}
+
+      assert {:usage, _} = p("pane report-metadata p1 --source s")
+      assert {:usage, _} = p("pane report-metadata p1 --token k=v")
+
       assert p("agent wait p1 --until idle --until done --timeout 100") ==
                {:call, "agent.wait",
                 %{"target" => "p1", "until" => ["idle", "done"], "timeout_ms" => 100}, :json}

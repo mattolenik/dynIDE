@@ -7,7 +7,7 @@ defmodule HerdrServer.Api.Spec do
 
   Param types: `:string | :boolean | {:integer, min, max} | {:number, min, max} |
   {:enum, [String.t()]} | :pane_id | :tab_id | :workspace_id | {:list, type} |
-  {:map, :string} | :object | {:object, [param]}` (`:object` is any JSON object). A list
+  {:map, :string | :null_or_string} | :object | {:object, [param]}` (`:object` is any JSON object). A list
   param may carry `min_items: n`.
   Result field types add `:integer`, `:object` (opaque JSON object),
   `:null_or_string`, `{:ref, object_name}`.
@@ -71,6 +71,25 @@ defmodule HerdrServer.Api.Spec do
   defp source, do: opt("source", {:enum, @sources}, "Text source; default `visible`.")
   defp lines, do: opt("lines", {:integer, 1, 10_000}, "Maximum number of lines.")
   defp target, do: req("target", :string, "Agent target (pane id or agent name).")
+
+  # herdr's report_metadata params after the target
+  defp metadata_params do
+    [
+      req("source", :string, "Reporting integration: ASCII letters, digits, `:._-`, 1-80."),
+      req(
+        "tokens",
+        {:map, :null_or_string},
+        "1-16 keys `[A-Za-z0-9_-]{1,32}` (not `__`-prefixed); a value is trimmed, " <>
+          "stripped of control characters and cut to 80; null or empty clears the key."
+      ),
+      opt(
+        "seq",
+        {:integer, 0, 9_007_199_254_740_991},
+        "Report sequence number; at most the source's last is dropped."
+      ),
+      opt("ttl_ms", {:integer, 1, 86_400_000}, "The set keys expire after this many ms.")
+    ]
+  end
 
   defp timeout_ms,
     do: opt("timeout_ms", {:integer, 1, 3_600_000}, "Give up after this many milliseconds.")
@@ -357,6 +376,16 @@ defmodule HerdrServer.Api.Spec do
         "herdr-live workspace move <workspace_id> <insert_index>"
       ),
       method(
+        "workspace.report_metadata",
+        g,
+        "Set or clear a workspace's metadata tokens (at most 32), shown after its branch.",
+        [ws_id() | metadata_params()],
+        "ok",
+        [:not_found, :failed],
+        "herdr-live workspace report-metadata <workspace_id> --source S --token K=V... " <>
+          "[--clear-token K]... [--seq N] [--ttl-ms N]"
+      ),
+      method(
         "workspace.close",
         g,
         "Close a workspace and its panes.",
@@ -553,6 +582,16 @@ defmodule HerdrServer.Api.Spec do
         "ok",
         [:not_available],
         "herdr-live pane report-agent <pane_id> --source S --agent A --state S [--message T] [--seq N]"
+      ),
+      method(
+        "pane.report_metadata",
+        g,
+        "Set or clear a pane's metadata tokens (at most 32), shown under its agent line.",
+        [opt_pane("Target pane; default the focused pane.") | metadata_params()],
+        "ok",
+        [:not_found, :failed],
+        "herdr-live pane report-metadata [<pane_id>] --source S --token K=V... " <>
+          "[--clear-token K]... [--seq N] [--ttl-ms N]"
       ),
       method(
         "pane.release_agent",
@@ -1014,7 +1053,8 @@ defmodule HerdrServer.Api.Spec do
         f("label", :string),
         f("focused", :boolean),
         f("tabs", :integer),
-        f("active_tab_id", :tab_id)
+        f("active_tab_id", :tab_id),
+        f("tokens", :object, false)
       ],
       "tab" => [
         f("tab_id", :tab_id),
@@ -1032,7 +1072,8 @@ defmodule HerdrServer.Api.Spec do
         f("label", :null_or_string),
         f("focused", :boolean),
         f("cols", :integer),
-        f("rows", :integer)
+        f("rows", :integer),
+        f("tokens", :object, false)
       ],
       "agent" => [
         f("pane_id", :pane_id),
@@ -1411,6 +1452,14 @@ defmodule HerdrServer.Api.Spec do
   end
 
   defp check({:map, :string}, _, full, _), do: bad(full, "an object of strings")
+
+  defp check({:map, :null_or_string}, v, full, _) when is_map(v) do
+    if Enum.all?(v, fn {k, x} -> is_binary(k) and (is_binary(x) or is_nil(x)) end),
+      do: {:ok, v},
+      else: bad(full, "an object of strings or nulls")
+  end
+
+  defp check({:map, :null_or_string}, _, full, _), do: bad(full, "an object of strings or nulls")
   defp check({:object, params}, v, full, _), do: check_object(params, v, full)
   defp check(:object, v, _, _) when is_map(v), do: {:ok, v}
   defp check(:object, _, full, _), do: bad(full, "an object")

@@ -8,7 +8,7 @@ defmodule HerdrServer.Api.EventDiff do
   `layout.updated` carries `"layout"` for each surviving tab whose split tree changed.
   Focus follows `Api.View`'s chain: an event fires when the focused workspace, tab or
   pane id changes. `pane.updated` fires when a surviving pane's object changes other than
-  `focused` (title, size). Order: workspace, tab, pane, layout events; within each,
+  `focused` (title, size, tokens). Order: workspace, tab, pane, layout events; within each,
   closed, created, focused, then updated or renamed. `diff(nil, app)` is `[]`.
   `tab.moved` / `workspace.moved` are not diffs: the move reports them (`moved/2`).
   """
@@ -162,13 +162,14 @@ defmodule HerdrServer.Api.EventDiff do
 
     same? =
       ows.id == nws.id and otab.layout == ntab.layout and old.session.area == new.session.area and
-        title(old, id) == title(new, id)
+        title(old, id) == title(new, id) and metadata(old, id) == metadata(new, id)
 
     not same? and
       Map.delete(View.pane(old, id), :focused) != Map.delete(View.pane(new, id), :focused)
   end
 
   defp title(app, id), do: get_in(app.session.panes, [id, :title])
+  defp metadata(app, id), do: get_in(app.session.panes, [id, :metadata])
 
   defp pane_ev(kind, app, id, {ws, tab}) do
     ids(id, ws, tab)

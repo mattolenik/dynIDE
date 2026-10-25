@@ -144,6 +144,31 @@ defmodule HerdrServer.View.SidebarTest do
     assert :ok = Scene.validate(View.compute(app, client(120, 40)))
   end
 
+  test "metadata token values follow the branch in a workspace's detail; a pane's own" do
+    alias HerdrServer.App.Metadata
+    app = fresh(120, 40)
+    git = &put_in(&1.session.workspaces, [Map.put(hd(&1.session.workspaces), :git, &2)])
+    app = git.(app, %{branch: "main", ahead: 1, behind: 0})
+
+    {app, _} =
+      Metadata.report(app, {:workspace, 1}, %{"z" => "last", "a" => "first"}, "s", nil, nil, 0)
+
+    {app, _} = Metadata.report(app, {:pane, 1}, %{"pr" => "#12"}, "s", nil, nil, 0)
+
+    assert [%{props: %{detail: "main ↑1 · first · last"}}] =
+             items(Sidebar.node(app, @rect), :spaces)
+
+    assert [%{props: %{detail: "#12"}}] = items(Sidebar.node(app, @rect), :agents)
+
+    # no branch: the values alone; cleared: no detail
+    app = git.(app, nil)
+    assert [%{props: %{detail: "first · last"}}] = items(Sidebar.node(app, @rect), :spaces)
+    {app, _} = Metadata.report(app, {:pane, 1}, %{"pr" => nil}, "s", nil, nil, 0)
+    assert [%{props: p}] = items(Sidebar.node(app, @rect), :agents)
+    refute Map.has_key?(p, :detail)
+    assert :ok = Scene.validate(View.compute(app, client(120, 40)))
+  end
+
   test "a navigate preview marks one workspace selected, for that client only" do
     app = add_workspace(fresh(120, 40), "two")
     nav = %{ids: [1, 2], at: 0}
