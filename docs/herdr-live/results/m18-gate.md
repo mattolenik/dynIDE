@@ -47,9 +47,9 @@ Build per row (the "build" column):
 | frame cost, 15 full panes, 120x40, full repaint | in-VM | 148 µs mean; herdr 666 µs | 162-175; herdr 652-689 | 201 / 201 µs (r1 / r2); herdr 750 µs | 177-183; herdr 726-755 | 15-pane full repaint ≤ herdr's at the same geometry | met |
 | frame cost ratio 1 vs 15, 120x40 | in-VM | 4.32x (34 → 148 µs; herdr 1.11x) | 2.40-2.77x | 4.52x / 4.10x (44-49 → 201 µs; herdr 1.15x) | 2.31-3.07x | record (restated in M6) | recorded |
 | frame cost at 200x50, 1 / 15 panes | in-VM | 46 / 204 µs (m3real), 42 / 200 µs (m3fake) | 58-68 / 307-326 | 57 / 251, r2 57 / 235 µs | 65-96 / 364-379 | (record) | — |
-| 15-pane frame vs M7 (fake kernel, 200x50, mean / p95) | in-VM | 200 / 246 µs vs M7 338 / 379 (−41 %) | — | 230 / 276 µs (no M7 Linux number) | — | no > 10 % regression vs M7 | met |
-| `cat` 100 MiB × 15: typing in a 16th pane | in-VM (real kernel) | p95 5.8 ms (200x50, max 13.3), 7.2 ms (120x40, max 15.2); load 5.1→10.8, 67-70 % idle | 7.2-7.6 ms | r1 p95 13.0 / 11.4 ms (max 122 / 608); r2 10.1 / 12.9 ms (max 47 / 50); guest 2.4-4.1 | 11.4-12.0 ms (max 69-622) | ≤ 20 ms p95 | met |
-| `cat` 100 MiB × 15: scheduler stall (probe max) | in-VM (real kernel) | 9.4 ms (200x50), 10.9 ms (120x40) | 11.0-19.4 (120x40 11.3-16.3) | r1 99.7 / 110.6 ms; r2 79.8 / 90.5 ms | 41.6-81.3 (120x40 25.4-63.3) | no worse than the OS-only floor, ≤ 10 ms where it allows | met (see notes) |
+| 15-pane frame vs M7 (fake kernel, 200x50, mean / p95) | in-VM | 200 / 246 µs vs M7 338 / 379 (−41 %) | — | 230 / 276 µs | — | no > 10 % regression vs M7 | macOS met; Linux recorded (no M7 Linux baseline) |
+| `cat` 100 MiB × 15: typing in a 16th pane | in-VM (real kernel) | p95 5.8 ms (200x50, max 13.3), 7.2 ms (120x40, max 15.2); load 5.1→10.8, 67-70 % idle | 7.2-7.6 ms (200x50; M6 gave one range, no 120x40 typing value) | r1 p95 13.0 / 11.4 ms (max 122 / 608); r2 10.1 / 12.9 ms (max 47 / 50); guest 2.4-4.1 | 11.4-12.0 ms (200x50, one range; max 69-622) | ≤ 20 ms p95 | met |
+| `cat` 100 MiB × 15: scheduler stall (probe max) | in-VM (real kernel) | 9.4 ms (200x50), 10.9 ms (120x40) | 11.0-19.4 (120x40 11.3-16.3) | r1 99.7 / 110.6 ms; r2 79.8 / 90.5 ms | 41.6-81.3 (120x40 25.4-63.3) | no worse than the OS-only floor, ≤ 10 ms where it allows | macOS met; Linux met vs the floor's worst iteration (floor 7.9-592 ms over 6 iterations; see notes) |
 | OS-only floor (BEAM probe next to 15 pty cats, no herdr) | none (script) | 47.0 / 38.8 / 48.7 ms (load 10.8→18.8, 70 % idle) | 61.1-92.1 | r1 7.9 / 484.8 / 8.4 ms; r2 591.8 / 194.1 / 294.2 ms | 340-699 | (floor) | — |
 | edit `Client.Term.Render`, save → visible | dev (reload is off in the release, R1) | p95 220 ms (load 18.8→9.2, 65-67 % idle) | 288-296 | 223 ms | 282-296 | < 500 ms p95 | met |
 | edit `View.compute`, save → visible | dev (R1) | 214 ms | 186-196 | 209 ms | 183-191 | < 500 ms p95 | met |
@@ -74,8 +74,10 @@ Build per row (the "build" column):
 - **Frame ratio.** The 1-pane frame got cheaper since M6 (120x40: about 60 → 34 µs macOS),
   and the 15-pane frame got cheaper too (162-175 → 148 µs). The ratio therefore grew, while the
   restated target (15 panes ≤ herdr) holds with 4.5x (macOS) and 3.7x (Linux) margin.
-- **Linux stall.** Both rounds are below the floor's worst iteration, as the restated row
-  requires (r1 100-111 ms against 485 ms; r2 80-91 ms against 194-592 ms). Linux is above M6's
+- **Linux stall.** Both rounds are below the floor's worst iteration, as M6 judged the restated row
+  (r1 100-111 ms against 485 ms; r2 80-91 ms against 592 ms). The floor's full range over
+  its six iterations is 7.9-592 ms (r1 7.9 / 484.8 / 8.4, r2 591.8 / 194.1 / 294.2), so the
+  stall is above the floor's best iterations. Linux is above M6's
   25-81 ms. The floor is bimodal today: in r1 two of its three iterations stayed under 9 ms.
   Guest idle during the floods was 4-49 % (vmstat), between floods 97-99 %, and the host
   dipped to 11-18 % idle in the same minutes. In r1 the long-schedule events (80, max 83 ms, in
