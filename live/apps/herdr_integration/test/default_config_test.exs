@@ -34,15 +34,23 @@ defmodule HerdrIntegration.DefaultConfigTest do
       raw = get_in(Map.fetch!(cfg, table), keys)
       want = get_in(ui, Enum.map(at, &Access.key/1))
       got = if at == [:toast, :delay_ms], do: raw * 1000, else: raw
-      assert to_string(got) == to_string(want), "#{table}.#{Enum.join(keys, ".")}"
+      # atoms (enums) come from the file as strings; everything else must match by type
+      got = if is_atom(want) and is_binary(got), do: String.to_atom(got), else: got
+      assert got === want, "#{table}.#{Enum.join(keys, ".")}"
     end
   end
 
-  test "the commented [keys] are the keybind defaults" do
-    text = File.read!(@path)
+  test "the commented [keys] are exactly the keybind defaults" do
+    [_, keys] = String.split(File.read!(@path), "\n[keys]\n")
 
-    for {action, specs} <- Keybinds.to_config(Keybinds.default()) do
-      assert text =~ "# #{action} = #{inspect(specs)}", action
-    end
+    listed =
+      for "# " <> line <- String.split(keys, "\n"),
+          [name, val] = String.split(line, " = ", parts: 2) do
+        {name, val |> Code.eval_string() |> elem(0)}
+      end
+
+    want = Keybinds.to_config(Keybinds.default()) |> Enum.map(fn {a, s} -> {to_string(a), s} end)
+    assert MapSet.new(listed) == MapSet.new(want)
+    assert length(listed) == length(want)
   end
 end

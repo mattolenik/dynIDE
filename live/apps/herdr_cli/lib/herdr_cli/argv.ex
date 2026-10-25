@@ -582,6 +582,9 @@ defmodule HerdrCli.Argv do
   defp with_usage(c, {:error, msg}),
     do: {:usage, "herdr-live: #{msg}\nusage: herdr-live #{c.usage}\n"}
 
+  defp print(%{words: ["--default-config"]} = c, [_ | _]),
+    do: with_usage(c, {:error, "takes no arguments"})
+
   defp print(%{words: ["--default-config"]}, []) do
     case File.read(default_config_path()) do
       {:ok, text} ->

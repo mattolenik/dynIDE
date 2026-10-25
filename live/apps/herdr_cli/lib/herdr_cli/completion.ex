@@ -56,7 +56,8 @@ defmodule HerdrCli.Completion do
   defp gen(:fish, firsts, seconds) do
     "complete -c herdr-live -f -n '__fish_use_subcommand' -a '#{firsts}'\n" <>
       Enum.map_join(seconds, "", fn {f, ss} ->
-        "complete -c herdr-live -f -n '__fish_seen_subcommand_from #{f}' -a '#{ss}'\n"
+        "complete -c herdr-live -f -n '__fish_seen_subcommand_from #{f}; " <>
+          "and not __fish_seen_subcommand_from #{ss}' -a '#{ss}'\n"
       end)
   end
 end
