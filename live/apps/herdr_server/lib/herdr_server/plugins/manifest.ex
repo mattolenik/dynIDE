@@ -140,7 +140,7 @@ defmodule HerdrServer.Plugins.Manifest do
     placement = p["placement"] || "overlay"
 
     if placement not in @placements,
-      do: fail("plugin_manifest_parse_failed", "unknown pane placement '#{inspect(placement)}'")
+      do: fail("plugin_manifest_parse_failed", "unknown pane placement '#{show(placement)}'")
 
     if placement != "popup" and (p["width"] != nil or p["height"] != nil),
       do:
@@ -265,7 +265,7 @@ defmodule HerdrServer.Plugins.Manifest do
   defp platforms([_ | _] = l) do
     case Enum.find(l, &(&1 not in @platforms)) do
       nil -> l
-      bad -> fail("invalid_plugin_platform", "unknown platform '#{inspect(bad)}'")
+      bad -> fail("invalid_plugin_platform", "unknown platform '#{show(bad)}'")
     end
   end
 
@@ -308,6 +308,9 @@ defmodule HerdrServer.Plugins.Manifest do
         )
     end
   end
+
+  defp show(v) when is_binary(v), do: v
+  defp show(v), do: inspect(v)
 
   defp fail(reason, message), do: throw({:manifest, reason, message})
 end

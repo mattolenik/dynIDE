@@ -83,6 +83,80 @@ defmodule HerdrServer.Plugins.ManifestTest do
        ~s([[actions]]\nid = "a"\ntitle = "x"\ncommand = ["x"]\n[[link_handlers]]\nid = "h"\ntitle = "x"\npattern = "("\naction = "a"\n)}
   ]
 
+  @act ~s([[actions]]\nid = "a"\ntitle = "x"\ncommand = ["x"]\n)
+  @nop ~s(id = "a"\nname = "T"\nversion = "1"\nmin_herdr_version = "0.7.0"\n)
+
+  @more_failures [
+    {"invalid_plugin_pane_title", @base <> ~s([[panes]]\nid = "p"\ncommand = ["x"]\n)},
+    {"invalid_plugin_link_handler_id",
+     @base <>
+       @act <> ~s([[link_handlers]]\nid = "h.x"\ntitle = "x"\npattern = "x"\naction = "a"\n)},
+    {"invalid_plugin_link_handler_title",
+     @base <> @act <> ~s([[link_handlers]]\nid = "h"\npattern = "x"\naction = "a"\n)},
+    {"invalid_plugin_event", @base <> ~s([[events]]\ncommand = ["x"]\n)},
+    {"invalid_plugin_command", @base <> ~s([[events]]\non = "pane.created"\n)},
+    {"invalid_plugin_platform",
+     @base <> ~s([[actions]]\nid = "a"\ntitle = "x"\nplatforms = ["amiga"]\ncommand = ["x"]\n)},
+    {"invalid_plugin_platform",
+     @base <> ~s([[panes]]\nid = "p"\ntitle = "x"\nplatforms = ["amiga"]\ncommand = ["x"]\n)},
+    {"invalid_plugin_platform",
+     @base <> ~s([[events]]\non = "pane.created"\nplatforms = ["amiga"]\ncommand = ["x"]\n)},
+    {"invalid_plugin_platform",
+     @base <>
+       @act <>
+       ~s([[link_handlers]]\nid = "h"\ntitle = "x"\npattern = "x"\naction = "a"\nplatforms = ["amiga"]\n)},
+    # herdr also rejects an empty platforms array
+    {"invalid_plugin_platform", @nop <> "platforms = []\n"},
+    {"plugin_manifest_parse_failed",
+     @base <> ~s([[panes]]\nid = "p"\ntitle = "x"\nplacement = "bogus"\ncommand = ["x"]\n)},
+    {"plugin_manifest_parse_failed",
+     @base <> ~s([[actions]]\nid = "a"\ntitle = "x"\ncontexts = ["bogus"]\ncommand = ["x"]\n)},
+    {"plugin_manifest_parse_failed", @base <> "actions = [1]\n"},
+    {"invalid_plugin_action_id",
+     @base <>
+       ~s([[actions]]\nid = "#{String.duplicate("a", 121)}"\ntitle = "x"\ncommand = ["x"]\n)},
+    {"invalid_plugin_pane_id",
+     @base <> ~s([[panes]]\nid = "#{String.duplicate("a", 121)}"\ntitle = "x"\ncommand = ["x"]\n)},
+    {"invalid_plugin_pane_id", @base <> ~s([[panes]]\nid = "a.b"\ntitle = "x"\ncommand = ["x"]\n)}
+  ]
+
+  @tag :tmp_dir
+  test "every other rejection reason", %{tmp_dir: dir} do
+    for {reason, text} <- @more_failures do
+      assert {:error, ^reason, msg} = load_text(text, dir), text
+      assert is_binary(msg)
+    end
+
+    assert {:error, _, msg} =
+             load_text(
+               @base <>
+                 ~s([[panes]]\nid = "p"\ntitle = "x"\nplacement = "bogus"\ncommand = ["x"]\n),
+               dir
+             )
+
+    assert msg =~ "'bogus'"
+    assert {:error, _, msg} = load_text(@nop <> ~s(platforms = ["amiga"]\n), dir)
+    assert msg == "unknown platform 'amiga'"
+  end
+
+  @tag :tmp_dir
+  test "warning without top-level platforms, and dotted id with a link handler", %{tmp_dir: dir} do
+    {:ok, m} = load_text(@nop, dir)
+    assert m["warnings"] == ["manifest does not declare platforms; platform support unknown"]
+
+    text =
+      ~s(id = "ex.a.b"\nname = "T"\nversion = "1"\nmin_herdr_version = "0.7.0"\nplatforms = ["linux"]\n) <>
+        @act <> ~s([[link_handlers]]\nid = "h"\ntitle = "x"\npattern = "^x"\naction = "a"\n)
+
+    assert {:ok,
+            %{
+              "plugin_id" => "ex.a.b",
+              "actions" => [%{"qualified_id" => "ex.a.b.a"}],
+              "link_handlers" => [%{"action" => "a"}]
+            }} =
+             load_text(text, dir)
+  end
+
   @tag :tmp_dir
   test "validation reasons", %{tmp_dir: dir} do
     for {reason, text} <- @failures do
