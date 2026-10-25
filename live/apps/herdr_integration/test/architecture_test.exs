@@ -212,6 +212,14 @@ defmodule HerdrIntegration.ArchitectureTest do
         {"pane scene #{n}", {:scene, PaneScene.build(1, {0, {row, row}, c}, size)}}
       end ++ [{"pane scene empty", {:scene, PaneScene.build(1, nil, size)}}]
 
+    # every pane layer (the popup scene itself lands with App.Modal.Popup)
+    base = View.compute(app, state.(:terminal, []))
+
+    layers =
+      for l <- HerdrScene.Scene.Pane.layers() do
+        {"pane layer #{l}", {:scene, %{base | panes: Enum.map(base.panes, &%{&1 | layer: l})}}}
+      end
+
     handoffs =
       for phase <- handoff_phases() do
         {"handoff #{phase}", {:handoff, %{phase: phase, gen: 2, panes: [1, 2]}}}
@@ -220,7 +228,7 @@ defmodule HerdrIntegration.ArchitectureTest do
     scenes ++
       statuses ++
       modal_scenes(split, state.(:terminal, [])) ++
-      pane_scenes ++ handoffs ++ simple_messages(row)
+      pane_scenes ++ layers ++ handoffs ++ simple_messages(row)
   end
 
   # every M13 modal kind open over the split app (menus, prompts, confirms, settings, ...)

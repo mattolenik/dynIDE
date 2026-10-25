@@ -22,6 +22,14 @@ defmodule HerdrScene.Scene.Pane do
 
   `graphics` lists the pane's kitty image placements (`HerdrScene.Scene.Graphic`), sorted
   by z, pane-relative and unclipped: the client clips them to `rect` and its own chrome.
+
+  `layer` is `:base` (default: tiled panes, disjoint from each other) or `:popup` (a
+  floating pane, e.g. `App.Modal.Popup`). A client draws `:popup` panes, with their
+  border, after every `:base` pane and after an open modal's dim, so the dim never
+  applies to them; chrome top-layer nodes (dialogs, toasts) still draw over them. Popup
+  panes may overlap `:base` panes: there the popup wins for cells, pointer hits and
+  kitty graphics (a `:base` pane's placements are clipped out of popup rects). Among
+  popups, later in `panes` is on top. The cursor stays the focused pane's.
   """
 
   alias HerdrScene.Scene.{Graphic, Overlay}
@@ -37,9 +45,15 @@ defmodule HerdrScene.Scene.Pane do
           rows: rows,
           cursor: %{x: non_neg_integer, y: non_neg_integer, shape: atom, visible: boolean} | nil,
           overlays: [Overlay.t()],
-          graphics: [Graphic.t()]
+          graphics: [Graphic.t()],
+          layer: :base | :popup
         }
 
   @enforce_keys [:id, :rect, :rows]
-  defstruct [:id, :rect, :border, :rows, :cursor, overlays: [], graphics: []]
+  defstruct [:id, :rect, :border, :rows, :cursor, overlays: [], graphics: [], layer: :base]
+
+  @layers [:base, :popup]
+
+  @spec layers() :: [atom]
+  def layers, do: @layers
 end

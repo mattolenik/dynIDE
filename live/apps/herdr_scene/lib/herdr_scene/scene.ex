@@ -13,7 +13,9 @@ defmodule HerdrScene.Scene do
     * Layout is in cells: all rects are in the scene's `size` grid.
     * Cursor, selection, dim and link hover are semantic overlays.
     * Pane contents are either a ref (`{:ref, pane_id, gen}`, resolved by the
-      client) or inline rows. `Pane.rect` is the content rect.
+      client) or inline rows. `Pane.rect` is the content rect. Panes are on the
+      `:base` layer (tiled, disjoint) or the `:popup` layer (floating, drawn over
+      `:base` panes and a modal's dim); see `HerdrScene.Scene.Pane`.
     * Region rule: a chrome node with a `rect` is a region; children without
       rects are laid out by the client inside their nearest region. Roles in
       `HerdrScene.Chrome.region_roles/0` must carry a rect unless an ancestor
@@ -165,7 +167,14 @@ defmodule HerdrScene.Scene do
       rows_errors("#{path}.rows", p) ++
       pane_cursor_errors("#{path}.cursor", p.cursor) ++
       overlays_errors("#{path}.overlays", p.overlays) ++
-      graphics_errors("#{path}.graphics", p.graphics)
+      graphics_errors("#{path}.graphics", p.graphics) ++
+      layer_errors("#{path}.layer", p.layer)
+  end
+
+  defp layer_errors(path, layer) do
+    if layer in Pane.layers(),
+      do: [],
+      else: ["#{path}: expected one of #{inspect(Pane.layers())}"]
   end
 
   defp one_pane_errors(path, _, _, _, _), do: ["#{path}: not a %Pane{}"]

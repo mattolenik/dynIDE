@@ -112,6 +112,15 @@ defmodule HerdrScene.SceneTest do
     assert errors(pc.(%{x: 0, y: 0, shape: :block, visible: true, blinking: 1})) =~ "cursor"
   end
 
+  test "pane layer defaults to base, accepts popup, rejects others" do
+    s = HerdrScene.SceneSample.build()
+    assert Enum.all?(s.panes, &(&1.layer == :base))
+    popup = List.update_at(s.panes, 1, &%{&1 | layer: :popup})
+    assert Scene.validate(%{s | panes: popup}) == :ok
+    bad = List.update_at(s.panes, 1, &%{&1 | layer: :float})
+    assert errors(%{s | panes: bad}) =~ "panes[1].layer: expected one of [:base, :popup]"
+  end
+
   test "non scene" do
     assert {:error, [_]} = Scene.validate(:nope)
   end
