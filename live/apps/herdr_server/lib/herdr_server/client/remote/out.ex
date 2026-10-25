@@ -15,7 +15,8 @@ defmodule HerdrServer.Client.Remote.Out do
   Images (`Client.Remote.Images`, editable, guarded the same way): every scene written is
   preceded by an `{:image, ...}` frame for each image it references that this conn has
   not sent (`images_sent`); one whose placement says more than
-  `config :herdr_server, :remote_image_max_bytes` (default 8 MiB) goes with `data: nil`.
+  `config :herdr_server, :remote_image_max_bytes` (default 8 MiB, clamped below
+  `HerdrScene.Wire.max_server_frame/0`), or whose fetched data does, goes with `data: nil`.
   `full/1` (attach, resume) resends them all.
   """
 
@@ -143,14 +144,19 @@ defmodule HerdrServer.Client.Remote.Out do
   end
 
   defp image({pane, {id, _} = key, placement}, state) do
-    max = Application.get_env(:herdr_server, :remote_image_max_bytes, 8 * 1024 * 1024)
+    # never more than one server frame can carry, room left for the envelope
+    max =
+      min(
+        Application.get_env(:herdr_server, :remote_image_max_bytes, 8 * 1024 * 1024),
+        Wire.max_server_frame() - 4096
+      )
 
     payload =
       if placement.bytes > max,
         do: guarded(Images, :withheld, [placement]),
         else: guarded(Client.Images, :fetch, [pane, id])
 
-    case payload do
+    case cap(payload, max) do
       # gone from the vt: not sent, the next scene tries again
       {:ok, nil} ->
         state
@@ -163,6 +169,12 @@ defmodule HerdrServer.Client.Remote.Out do
         failed(state, f)
     end
   end
+
+  # the cap applies to what is sent, not only to what the placement says
+  defp cap({:ok, %{data: data} = p}, max) when is_binary(data) and byte_size(data) > max,
+    do: {:ok, %{p | data: nil}}
+
+  defp cap(payload, _max), do: payload
 
   defp send_msg(%{socket: nil} = state, _msg), do: state
   defp send_msg(%{frozen: true} = state, msg), do: %{state | frozen_out: [msg | state.frozen_out]}

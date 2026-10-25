@@ -148,7 +148,8 @@ defmodule HerdrServer.Pane.Server do
     kernel_ok(state.id, :set_hidden, Kernel.pty().set_hidden(state.pty, hidden?))
     :ok = Mirror.put({:pane, state.id}, %{hidden: hidden?})
     state = %{state | hidden: hidden?}
-    {:reply, :ok, if(hidden?, do: state, else: reload(state))}
+    # hidden: no stale placements in the scene that shows it again; unhiding reads them back
+    {:reply, :ok, if(hidden?, do: graphics(state, []), else: reload(state))}
   end
 
   @impl true
@@ -528,16 +529,14 @@ defmodule HerdrServer.Pane.Server do
   end
 
   # kitty placements: written and announced only when they change
-  defp put_graphics(state) do
-    case Kernel.vt().graphics_placements(state.vt) do
-      same when same == state.graphics ->
-        state
+  defp put_graphics(state), do: graphics(state, Kernel.vt().graphics_placements(state.vt))
 
-      placements ->
-        :ok = Facts.put_graphics(state.id, placements)
-        dispatch({:pane_facts, state.id})
-        %{state | graphics: placements}
-    end
+  defp graphics(state, same) when same == state.graphics, do: state
+
+  defp graphics(state, placements) do
+    :ok = Facts.put_graphics(state.id, placements)
+    dispatch({:pane_facts, state.id})
+    %{state | graphics: placements}
   end
 
   defp dispatch(msg) do

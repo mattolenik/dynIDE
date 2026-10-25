@@ -139,6 +139,21 @@ defmodule HerdrServer.Pane.ServerGraphicsTest do
     assert Facts.graphics(1) == []
   end
 
+  test "hiding a pane clears its graphics; showing it again reads them back", %{c: c} do
+    :ok = Fake.Vt.set_graphics(res(1).vt, [g()])
+    Fake.Pty.output(res(1).pty, "x")
+    assert_receive {:pane_facts, 1}, 500
+    :ok = Store.run({Actions, :new_tab, []}, %{cols: 80, rows: 24})
+    assert_receive {:pane_facts, 1}, 500
+    # a scene built as the tab comes back never carries the old placements
+    assert Facts.graphics(1) == []
+    scene_until(c, &match?([%{id: 2}], &1.panes))
+
+    :ok = Store.run({Actions, :next_tab, []}, %{cols: 80, rows: 24})
+    assert_receive {:pane_facts, 1}, 500
+    assert Facts.graphics(1) == [g()]
+  end
+
   test "closing a pane drops its graphics", %{c: c} do
     :ok = Store.run({Actions, :new_tab, []}, %{cols: 80, rows: 24})
     scene_until(c, &match?([%{id: 2}], &1.panes))

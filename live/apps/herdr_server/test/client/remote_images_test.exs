@@ -2,7 +2,7 @@ defmodule HerdrServer.Client.Remote.ImagesTest do
   use ExUnit.Case, async: false
   @moduletag :capture_log
 
-  alias HerdrScene.{Protocol, Scene}
+  alias HerdrScene.{Protocol, Scene, Wire}
   alias HerdrServer.App.Store
   alias HerdrServer.Client.Remote
   alias HerdrServer.Client.Remote.{Images, Out}
@@ -121,6 +121,25 @@ defmodule HerdrServer.Client.Remote.ImagesTest do
                {:image, 1, {7, 42}, %{@img | data: nil}},
                {:scene, s}
              ]
+    end
+
+    test "the cap applies to the fetched data, not only the placement's bytes" do
+      Application.put_env(:herdr_server, :remote_image_max_bytes, 4)
+      s = scene([{1, [g(%{bytes: 2})]}])
+
+      assert [{:image, 1, {7, 42}, %{@img | data: nil}}, {:scene, s}] ==
+               written(Out.write(conn(), {:scene, s}))
+    end
+
+    test "the cap is clamped below the max server frame" do
+      Application.put_env(:herdr_server, :remote_image_max_bytes, 2 * Wire.max_server_frame())
+      big = :binary.copy(<<0>>, Wire.max_server_frame())
+      {:ok, %{vt: vt}} = Fake.Keeper.lookup(Rows.kernel_id(1))
+      :ok = Fake.Vt.set_graphics(vt, [g()], %{7 => %{@img | data: big}})
+      s = scene([{1, [g()]}])
+
+      assert [{:image, 1, {7, 42}, %{data: nil}}, {:scene, ^s}] =
+               written(Out.write(conn(), {:scene, s}))
     end
 
     test "an image the vt no longer has is skipped and not marked sent" do
