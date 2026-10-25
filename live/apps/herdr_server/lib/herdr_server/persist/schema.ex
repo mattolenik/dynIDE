@@ -186,8 +186,7 @@ defmodule HerdrServer.Persist.Schema do
   defp tree?(_), do: false
 
   defp pane?({id, %{title: t, name: n, cwd: c, command: cmd, hidden: h}}) do
-    id?(id) and (is_nil(t) or is_binary(t)) and (is_nil(n) or is_binary(n)) and
-      (is_nil(c) or is_binary(c)) and
+    id?(id) and Enum.all?([t, n, c], &(is_nil(&1) or is_binary(&1))) and
       (is_nil(cmd) or (is_list(cmd) and Enum.all?(cmd, &is_binary/1))) and is_boolean(h)
   end
 

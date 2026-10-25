@@ -2,7 +2,7 @@ defmodule HerdrServer.App.ChromeTest do
   use ExUnit.Case, async: true
 
   alias HerdrScene.Scene.Node
-  alias HerdrServer.App.{Actions, Session, Ui, Upgrade}
+  alias HerdrServer.App.{Actions, Modal, Session, Ui, Upgrade}
   alias HerdrServer.Layout
   alias HerdrServer.View.Sidebar
 
@@ -40,7 +40,7 @@ defmodule HerdrServer.App.ChromeTest do
     assert ws(app).active_tab == 1
     assert chrome(app, [:tabs, :new_tab], :double_click) == chrome(app, [:tabs, :new_tab], :click)
     {menu, []} = chrome(app, [:sidebar, :spaces, :menu], :click)
-    path = [HerdrServer.App.Modal.view(menu, menu.session.size).id, :backdrop]
+    path = [Modal.view(menu, menu.session.size).id, :backdrop]
     assert chrome(menu, path, :double_click) == chrome(menu, path, :click)
   end
 

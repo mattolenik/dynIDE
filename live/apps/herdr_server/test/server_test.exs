@@ -35,6 +35,7 @@ defmodule HerdrServer.ServerTest do
   @moduletag :capture_log
 
   alias HerdrScene.{Cell, Event, Protocol, Scene}
+  alias HerdrServer.App.Modal.Onboarding
   alias HerdrServer.App.Store
   alias HerdrServer.Handoff.Notice
   alias HerdrServer.Kernel.Fake
@@ -786,7 +787,7 @@ defmodule HerdrServer.ServerTest do
     :sys.replace_state(Store, fn st ->
       update_in(
         st.app,
-        &HerdrServer.App.Modal.Onboarding.at_start(put_in(&1.ui.onboarding, true))
+        &Onboarding.at_start(put_in(&1.ui.onboarding, true))
       )
     end)
 

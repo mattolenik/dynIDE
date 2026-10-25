@@ -3,7 +3,7 @@ defmodule HerdrServer.App.ModalTest do
 
   alias HerdrScene.Event
   alias HerdrScene.Scene.Node
-  alias HerdrServer.App.{Actions, Modal}
+  alias HerdrServer.App.{Actions, Modal, Upgrade}
   alias HerdrServer.App.Modal.{Prompt, TextField}
 
   # a test-only kind that ignores Esc and backdrop clicks (Task 8's onboarding does)
@@ -147,7 +147,7 @@ defmodule HerdrServer.App.ModalTest do
 
     # the counter survives an upgrade of an old focus with a stack
     old = %{app | focus: Map.from_struct(app.focus) |> Map.delete(:next_modal_id)}
-    assert [%{id: 3}, _] = HerdrServer.App.Upgrade.app(old) |> stub() |> then(& &1.focus.modal)
+    assert [%{id: 3}, _] = Upgrade.app(old) |> stub() |> then(& &1.focus.modal)
   end
 
   test "modal state is plain data" do
