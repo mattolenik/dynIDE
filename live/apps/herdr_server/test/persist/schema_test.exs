@@ -52,13 +52,15 @@ defmodule HerdrServer.Persist.SchemaTest do
                  },
                  focus: %{pane: 1},
                  ui: Map.delete(Map.from_struct(%Ui{}), :keybinds),
-                 panes: %{1 => %{title: nil, cwd: "/tmp", command: ["/bin/zsh"], hidden: true}}
+                 panes: %{
+                   1 => %{title: nil, name: nil, cwd: "/tmp", command: ["/bin/zsh"], hidden: true}
+                 }
                }
     end
 
     test "missing facts are nil, nil, false" do
       assert Schema.capture(fresh(), %{}).panes == %{
-               1 => %{title: nil, cwd: nil, command: nil, hidden: false}
+               1 => %{title: nil, name: nil, cwd: nil, command: nil, hidden: false}
              }
     end
 
@@ -138,6 +140,23 @@ defmodule HerdrServer.Persist.SchemaTest do
       assert Schema.capture(a2, %{}) == s
     end
 
+    test "pane names round-trip; a v2 snapshot's panes get name nil" do
+      {app, []} = Actions.rename_pane(three(), 2, "build")
+      s = Schema.capture(app, %{})
+      assert s.panes[2].name == "build" and s.panes[1].name == nil
+      assert {:ok, a2, f2} = Schema.restore(s)
+      assert a2.session.panes[2].name == "build"
+      refute Map.has_key?(a2.session.panes[1], :name)
+      refute Map.has_key?(f2[2], :name)
+      assert Schema.capture(a2, %{}) == s
+
+      v2 = %{s | v: 2, panes: Map.new(s.panes, fn {id, p} -> {id, Map.delete(p, :name)} end)}
+      v2 = %{v2 | session: Map.drop(v2.session, [:next_workspace_id, :next_tab_id])}
+      assert {:ok, a3, _} = Schema.restore(v2)
+      refute Map.has_key?(a3.session.panes[2], :name)
+      assert {:error, {:invalid, :panes}} = Schema.restore(put_in(s.panes[2].name, 7))
+    end
+
     test "a v2 snapshot gets id counters above every workspace and tab id" do
       s = Schema.capture(three(), %{})
       [ws] = s.session.workspaces
@@ -188,6 +207,7 @@ defmodule HerdrServer.Persist.SchemaTest do
       s =
         put_in(Schema.capture(fresh(), %{}), [:panes, 9], %{
           title: nil,
+          name: nil,
           cwd: nil,
           command: nil,
           hidden: false

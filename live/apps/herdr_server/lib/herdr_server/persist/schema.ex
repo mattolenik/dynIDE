@@ -13,7 +13,7 @@ defmodule HerdrServer.Persist.Schema do
                    size: %{cols, rows}, area: %{x, y, w, h}},
         focus: %{pane: id | nil},
         ui: Map.from_struct(ui) without :keybinds, plain values only,
-        panes: %{id => %{title, cwd, command, hidden}}}
+        panes: %{id => %{title, name, cwd, command, hidden}}}
 
   Not persisted: keybinds (restored as `Keybinds.default/0`), the modal stack (`[]`),
   pane `layout_gen` (0). The recorded command is metadata, never re-run.
@@ -26,8 +26,8 @@ defmodule HerdrServer.Persist.Schema do
   it at `from_v + 1`; `:v` is set to `from_v + 1` after each step. Registered: v1 -> v2
   (`v1_to_v2/1`) adds `session.size` with `App.Session`'s default; v2 -> v3 (`v2_to_v3/1`)
   adds the id counters `session.next_workspace_id` and `next_tab_id`, just above the
-  snapshot's workspace and tab ids. A restore never puts a counter at or below an
-  existing id.
+  snapshot's workspace and tab ids, and `name: nil` to every pane. A restore never puts
+  a counter at or below an existing id.
   """
 
   alias HerdrServer.App.{Keybinds, Upgrade}
@@ -103,6 +103,7 @@ defmodule HerdrServer.Persist.Schema do
 
     %{
       title: Map.get(meta, :title),
+      name: Map.get(meta, :name),
       cwd: Map.get(fact, :cwd),
       command: Map.get(fact, :command),
       hidden: Map.get(fact, :hidden, false) == true
@@ -121,7 +122,8 @@ defmodule HerdrServer.Persist.Schema do
          :ok <- check(plain?(snap), :not_plain),
          {:ok, snap} <- shape(snap),
          :ok <- validate(snap) do
-      {:ok, build(snap), Map.new(snap.panes, fn {id, p} -> {id, Map.delete(p, :title)} end)}
+      {:ok, build(snap),
+       Map.new(snap.panes, fn {id, p} -> {id, Map.drop(p, [:title, :name])} end)}
     end
   end
 
@@ -183,8 +185,9 @@ defmodule HerdrServer.Persist.Schema do
 
   defp tree?(_), do: false
 
-  defp pane?({id, %{title: t, cwd: c, command: cmd, hidden: h}}) do
-    id?(id) and (is_nil(t) or is_binary(t)) and (is_nil(c) or is_binary(c)) and
+  defp pane?({id, %{title: t, name: n, cwd: c, command: cmd, hidden: h}}) do
+    id?(id) and (is_nil(t) or is_binary(t)) and (is_nil(n) or is_binary(n)) and
+      (is_nil(c) or is_binary(c)) and
       (is_nil(cmd) or (is_list(cmd) and Enum.all?(cmd, &is_binary/1))) and is_boolean(h)
   end
 
@@ -254,7 +257,7 @@ defmodule HerdrServer.Persist.Schema do
       struct(@session,
         workspaces: Enum.map(s.workspaces, &build_ws/1),
         active_workspace: s.active_workspace,
-        panes: Map.new(panes, fn {id, p} -> {id, %{title: p.title, layout_gen: 0}} end),
+        panes: Map.new(panes, fn {id, p} -> {id, build_pane(p)} end),
         next_id: max(s.next_id, max_id + 1),
         next_workspace_id: max(s.next_workspace_id, nw),
         next_tab_id: max(s.next_tab_id, nt),
@@ -268,6 +271,10 @@ defmodule HerdrServer.Persist.Schema do
       ui: struct(@ui, Map.put(ui, :keybinds, Keybinds.default()))
     }
   end
+
+  # a pane meta has :name only once renamed
+  defp build_pane(%{name: nil} = p), do: %{title: p.title, layout_gen: 0}
+  defp build_pane(p), do: %{title: p.title, name: p.name, layout_gen: 0}
 
   defp build_ws(ws) do
     %{
@@ -316,15 +323,24 @@ defmodule HerdrServer.Persist.Schema do
   def v1_to_v2(map), do: map
 
   @doc false
-  # v2 had no id counters: just above the snapshot's ids (non-lists are left to `shape`)
+  # v2 had no id counters (just above the snapshot's ids; non-lists are left to `shape`)
+  # and no pane names
   @spec v2_to_v3(map()) :: map()
   def v2_to_v3(%{session: %{workspaces: wss} = s} = map) when is_list(wss) do
     {nw, nt} = if Enum.all?(wss, &ids?/1), do: Upgrade.next_ids(wss), else: {1, 1}
     s = s |> Map.put_new(:next_workspace_id, nw) |> Map.put_new(:next_tab_id, nt)
-    %{map | session: s}
+    Map.replace_lazy(%{map | session: s}, :panes, &v2_panes/1)
   end
 
   def v2_to_v3(map), do: map
+
+  defp v2_panes(panes) when is_map(panes),
+    do:
+      Map.new(panes, fn {id, p} ->
+        {id, if(is_map(p), do: Map.put_new(p, :name, nil), else: p)}
+      end)
+
+  defp v2_panes(panes), do: panes
 
   defp ids?(%{id: id, tabs: tabs}) when is_integer(id) and is_list(tabs),
     do: Enum.all?(tabs, &match?(%{id: t} when is_integer(t), &1))
