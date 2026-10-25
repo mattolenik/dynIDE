@@ -109,6 +109,34 @@ defmodule HerdrTerm.Client.Term.RenderGraphicsReloadTest do
 
   defp places(ops), do: for({:place, _} = op <- ops, do: op)
 
+  test "a Graphics edit without empty/0 or file_transport?/1 crashes neither a running nor a starting Render",
+       ctx do
+    broken =
+      ctx.original
+      |> String.replace("  @spec empty() :: cache\n", "")
+      |> String.replace("  def empty, do: %{images: %{}, placements: MapSet.new()}\n", "")
+      |> String.replace(~r/  @spec file_transport\?.*\n  def file_transport\?\(env\),\n.*\n/, "")
+
+    swap(broken, ctx.source)
+    refute function_exported?(Graphics, :empty, 0)
+    refute function_exported?(Graphics, :file_transport?, 1)
+
+    # running: the frame path never calls Graphics outside the Guard
+    send(ctx.render, {:scene, scene([graphic(1, 0)])})
+    {ops, _} = frame(host([]))
+    assert [:delete_all, {:upload, _}, {:place, _}] = ops
+    send(ctx.render, :repaint)
+    assert {[:delete_all | _], _} = frame(host([]))
+    assert Process.alive?(ctx.render)
+
+    # starting: init/1 falls back to direct transport
+    ep = FakeServer.unique_name()
+    FakeServer.start(self(), ep, {__MODULE__, :rows, []}, %{images: {__MODULE__, :image, []}})
+    sup = start_supervised!({Client, endpoint: ep}, id: ep)
+    assert_receive {:attached, _, _}, @wait
+    assert %{kitty: %{file?: false}} = :sys.get_state(Client.render(sup))
+  end
+
   test "a good reload replays the same placements; a failing pass clears and re-uploads; no ghost after the pane goes",
        ctx do
     %{render: render} = ctx

@@ -143,7 +143,15 @@ defmodule HerdrTerm.Client.Term.Render do
   defp kitty do
     if Application.get_env(:herdr_term, :kitty_graphics, true) and
          System.get_env("HERDR_LIVE_KITTY_GRAPHICS") != "0",
-       do: %{file?: Graphics.file_transport?(System.get_env())}
+       do: %{file?: file_transport?()}
+  end
+
+  # a broken Graphics edit falls back to direct transport instead of crash-looping init
+  defp file_transport? do
+    case Guard.run_twice(Graphics, :file_transport?, [System.get_env()], scan: false) do
+      {:ok, file?} -> file? == true
+      {:failed, _} -> false
+    end
   end
 
   @impl true
@@ -204,7 +212,8 @@ defmodule HerdrTerm.Client.Term.Render do
 
   def handle_info(:repaint, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, schedule(%{state | repaint: true})}
+    # a suspend can land mid-upload: the host's graphics state is unknown
+    {:noreply, schedule(%{state | repaint: true, gfx: :reset})}
   end
 
   def handle_info({:damage, id, _gen}, state) do
@@ -222,8 +231,8 @@ defmodule HerdrTerm.Client.Term.Render do
   def handle_info({:image, pane, {image_id, fp}, payload}, state) do
     state = Map.merge(%__MODULE__{}, state)
 
-    {:noreply,
-     %{state | images: Map.put(state.images, {pane, image_id, fp}, valid_image(payload))}}
+    images = Map.put(state.images, {pane, image_id, fp}, valid_image(payload))
+    {:noreply, schedule(%{state | images: images})}
   end
 
   def handle_info({:notice, notice}, state) do
@@ -539,6 +548,9 @@ defmodule HerdrTerm.Client.Term.Render do
 
   # graphics
 
+  # Graphics.empty/0 inlined: the frame path calls into editable Graphics only via the Guard
+  @empty_gfx %{images: %{}, placements: MapSet.new()}
+
   defp graphics(%{kitty: nil} = state, frame), do: {frame, [], state}
 
   # after a failed pass the host is clear: skip until the retry window is over, then
@@ -546,16 +558,16 @@ defmodule HerdrTerm.Client.Term.Render do
   defp graphics(%{gfx: {:failed, at}} = state, frame) do
     if now() - at < @retry_frame_ms,
       do: {frame, [], state},
-      else: pass(state, frame, [], Graphics.empty(), [])
+      else: pass(state, frame, [], @empty_gfx, [])
   end
 
   defp graphics(%{gfx: :reset} = state, frame),
-    do: pass(state, frame, [:delete_all], Graphics.empty(), [:delete_all])
+    do: pass(state, frame, [:delete_all], @empty_gfx, [:delete_all])
 
   defp graphics(state, frame), do: pass(state, frame, [], state.gfx, [:delete_all])
 
   defp pass(state, frame, reset, cache, fail_ops) do
-    if cache == Graphics.empty() and Enum.all?(state.scene.panes, &(&1.graphics == [])) do
+    if cache == @empty_gfx and Enum.all?(state.scene.panes, &(&1.graphics == [])) do
       {frame, reset, %{state | gfx: cache}}
     else
       # nothing can show without cell px or under a dimming modal: no fetch either

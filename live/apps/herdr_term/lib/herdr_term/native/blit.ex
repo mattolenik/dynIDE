@@ -12,9 +12,9 @@ defmodule HerdrTerm.Native.Blit do
   `opts.graphics` are kitty graphics ops (`t:HerdrTerm.Kernel.Blit.graphics_op/0`),
   encoded as given and written after the cells inside the frame's
   synchronized output, between `ESC 7` and `ESC 8`. A replaced frame's ops
-  go first in the replacing frame, minus ops a later op makes moot. The one mechanism choice made here: a
-  `:file` upload is sent direct until the temp-file transport is known to
-  work (see `HerdrTerm.Native.Tty.stats/1`).
+  go first in the replacing frame, minus ops a later op makes moot. The one
+  mechanism choice made here: a `:file` upload is sent direct until the
+  temp-file transport is known to work (see `HerdrTerm.Native.Tty.stats/1`).
   """
 
   @behaviour HerdrTerm.Kernel.Blit

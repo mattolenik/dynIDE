@@ -93,8 +93,26 @@ defmodule HerdrTerm.Client.Term.RenderGraphicsTest do
     # the placement gone: placement and image deleted on the host
     send(render, {:scene, scene([])})
     assert [{:delete_placement, ^id, _}, {:delete_image, ^id}] = frame_ops()
+    # a tty resume (:repaint) clears the host: a suspend can land mid-upload
     send(render, :repaint)
-    assert [] = frame_ops()
+    assert [:delete_all] = frame_ops()
+  end
+
+  test ":repaint clears the host and re-uploads the placed images" do
+    %{render: render} = start()
+    send(render, {:scene, scene([graphic()])})
+    assert [:delete_all, {:upload, %{id: id}}, {:place, _}] = frame_ops()
+    send(render, :repaint)
+    assert [:delete_all, {:upload, %{id: ^id}}, {:place, %{id: ^id}}] = frame_ops()
+  end
+
+  test "an {:image} after its scene shows without other damage" do
+    %{render: render} = start(nil)
+    send(render, {:scene, scene([graphic()])})
+    assert [:delete_all] = frame_ops()
+    payload = %{format: :rgb, width: 2, height: 1, bytes: 6, data: "late"}
+    send(render, {:image, 1, {7, 42}, payload})
+    assert [{:upload, %{data: "late"}}, {:place, _}] = frame_ops()
   end
 
   test "a failing graphics pass sends :delete_all and the cell frame still goes out" do
