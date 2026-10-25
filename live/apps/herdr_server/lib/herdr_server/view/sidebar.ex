@@ -13,10 +13,11 @@ defmodule HerdrServer.View.Sidebar do
   workspace has more than one tab. A workspace whose `git` fact (`WorkspaceFacts`) has a
   branch carries it as the item's `:detail`, `"main ↑1 ↓2"`, followed by the workspace's
   metadata token values (`App.Metadata.visible/1`, by key), all joined by `" · "`; a pane
-  item's `:detail` is its pane's token values. Collapsed: sections carry no text.
-  The workspace item under the client's workspace drag (`drag`, `View.DropMarker`)
-  carries `drop_marker`. With the client's navigate preview (`navigate`, `%{ids, at}`,
-  `Client.State`) every workspace item carries `selected`, true only on `ids[at]`.
+  item's `:detail` is its pane's token values. Collapsed: sections and the `:sort` button
+  carry no text. The workspace item under the client's workspace drag (`drag`,
+  `View.DropMarker`) carries `drop_marker`. With the client's navigate preview
+  (`navigate`, `%{ids, at}`, `Client.State`) every workspace item carries `selected`, true
+  only on `ids[at]`.
   """
 
   alias HerdrScene.Scene.Node
@@ -67,7 +68,7 @@ defmodule HerdrServer.View.Sidebar do
         %Node{
           role: :button,
           id: :sort,
-          text: if(app.ui.agent_panel_sort == :priority, do: "priority", else: "grouped"),
+          text: label.(if app.ui.agent_panel_sort == :priority, do: "priority", else: "grouped"),
           props: %{action: :toggle_agent_sort}
         }
       ]

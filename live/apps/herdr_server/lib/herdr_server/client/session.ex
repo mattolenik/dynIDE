@@ -238,9 +238,14 @@ defmodule HerdrServer.Client.Session do
     {:noreply, delay(state, a)}
   end
 
-  def handle_info({:alert_due, a}, state) do
+  # only the pane's latest pending alert fires
+  def handle_info({:alert_due, ref, a}, state) do
     state = Map.merge(%State{}, state)
-    {:noreply, alerted(state, a)}
+
+    case Map.pop(state.pending_alerts, a.pane) do
+      {^ref, rest} -> {:noreply, alerted(%{state | pending_alerts: rest}, a)}
+      _ -> {:noreply, state}
+    end
   end
 
   def handle_info({:toast_expired, id}, state) do
@@ -584,15 +589,19 @@ defmodule HerdrServer.Client.Session do
     end
   end
 
-  # a pane's alert waits `ui.toast.delay_ms`, then is rechecked against the app of then
+  # a pane's alert waits `ui.toast.delay_ms`, then is rechecked against the app of then;
+  # it replaces the pane's pending one (herdr)
   defp delay(state, %{pane: p} = a) when p != nil do
+    state = %{state | pending_alerts: Map.delete(state.pending_alerts, p)}
+
     case Store.snapshot().ui.toast.delay_ms do
       0 ->
         alerted(state, a)
 
       ms ->
-        Process.send_after(self(), {:alert_due, a}, ms)
-        state
+        ref = make_ref()
+        Process.send_after(self(), {:alert_due, ref, a}, ms)
+        put_in(state.pending_alerts[p], ref)
     end
   catch
     :exit, _ -> state
@@ -612,7 +621,9 @@ defmodule HerdrServer.Client.Session do
           {nil, state.toasts}
 
         _ ->
-          case Guard.run_twice(Toasts, :alert, [state.toasts, a, app, state.focused, id], guard) do
+          args = [state.toasts, a, app, state.focused, id]
+
+          case Guard.run_twice(Toasts, :alert, args, guard) do
             {:ok, {_, _} = r} -> r
             _ -> {a, state.toasts}
           end

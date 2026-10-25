@@ -182,7 +182,7 @@
                 role: :button,
                 id: :sort,
                 rect: nil,
-                text: "grouped",
+                text: nil,
                 token: nil,
                 props: %{action: :toggle_agent_sort},
                 children: []

@@ -18,8 +18,8 @@ defmodule HerdrServer.Config do
   Keys: `[keys]` `prefix` and the `Keybinds.Catalog` action names (a spec string or an
   array, `[]` unbinds); `[ui]` `sidebar_width`, `sidebar_min_width`, `sidebar_max_width`,
   `sidebar_start_collapsed`, `confirm_close`, `status_indicators` (`"dots"` |
-  `"symbols"`), `prompt_new_tab_name`, `agent_panel_sort` (`"spaces"` | `"priority"`),
-  `window_title` (template of `{hostname}`,
+  `"symbols"`), `prompt_new_tab_name`, `agent_panel_sort` (`"spaces"` | `"priority"`,
+  herdr's alias `"workspaces"` is `"spaces"`), `window_title` (template of `{hostname}`,
   `{workspace}`, `{tab}`, `{pane}`, `{terminal_title}`); `[ui.sound]` `enabled`,
   `command` (run by an in-VM terminal client with the sound name as its last argument;
   never sent to a socket client, which runs its own `HERDR_LIVE_SOUND_COMMAND`),
@@ -70,7 +70,7 @@ defmodule HerdrServer.Config do
     {:ui, ["tab_bar_position"], {:enum, ~w(top bottom)}, [:tab_bar, :position]},
     {:ui, ["pane_borders"], {:enum, ~w(auto always off)}, [:pane_borders]},
     {:ui, ["window_title"], :string, [:window_title]},
-    {:ui, ["agent_panel_sort"], {:enum, ~w(spaces priority)}, [:agent_panel_sort]},
+    {:ui, ["agent_panel_sort"], :agent_sort, [:agent_panel_sort]},
     {:ui, ["sound", "enabled"], :bool, [:sound, :enabled]},
     {:ui, ["sound", "command"], :string, [:sound, :command]},
     {:ui, ["sound", "done_path"], :string, [:sound, :done_path]},
@@ -346,6 +346,9 @@ defmodule HerdrServer.Config do
   defp cast(:string, v) when is_binary(v), do: {:ok, v}
   defp cast(:delay, v) when is_integer(v) and v in 0..3600, do: {:ok, v * 1000}
   defp cast(:delay_ms, v) when is_integer(v) and v in 0..60_000, do: {:ok, v}
+
+  defp cast(:agent_sort, "workspaces"), do: {:ok, :spaces}
+  defp cast(:agent_sort, v), do: cast({:enum, ~w(spaces priority)}, v)
 
   # to_atom, not to_existing_atom: a value may name an atom no loaded module holds yet
   # (`always`), and `vals` is a fixed whitelist, so config cannot grow the atom table

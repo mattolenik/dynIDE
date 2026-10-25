@@ -45,7 +45,7 @@ defmodule HerdrServer.Client.Toasts do
     end
   end
 
-  @doc "Whether `alert` still holds in `app`: its pane is still finished / `:blocked` (pane-less: true)."
+  @doc "Whether `alert` holds in `app`: its pane still finished / `:blocked` (no pane: true)."
   @spec recheck(map, map) :: boolean
   def recheck(%{pane: nil}, _app), do: true
 

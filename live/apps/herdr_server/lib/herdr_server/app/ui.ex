@@ -2,11 +2,11 @@ defmodule HerdrServer.App.Ui do
   @moduledoc """
   UI configuration carried in app state, with herdr's defaults: sidebar geometry
   (`width` clamped to `min..max` while expanded, `split` the spaces/agents ratio, the
-  lists' scroll `spaces_offset` / `agents_offset`), tab bar
-  position, theme names, agent state indicators, the agents list order
-  (`agent_panel_sort`: `:spaces` in workspace order, `:priority` by state), confirmations,
-  toast and sound delivery, `pane_borders` (`Layout.borders/3`),
-  `custom_commands` (`[[keys.command]]`, plain maps; `App.CustomCommands`).
+  lists' scroll `spaces_offset` / `agents_offset`), tab bar position, theme names, agent
+  state indicators, the agents list order (`agent_panel_sort`: `:spaces` in workspace
+  order, `:priority` by state), confirmations, toast and sound delivery, `pane_borders`
+  (`Layout.borders/3`), `custom_commands` (`[[keys.command]]`, plain maps;
+  `App.CustomCommands`).
   Older apps get the new keys from `App.Upgrade.app/1`.
   """
 

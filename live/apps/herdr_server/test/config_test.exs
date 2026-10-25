@@ -217,6 +217,9 @@ defmodule HerdrServer.ConfigTest do
     assert ui.pane_borders == :off
     assert ui.tab_bar == %{position: :bottom, hide_single: true}
     assert ui.agent_panel_sort == :priority
+    # herdr's alias
+    {_kb, alias_ui, []} = apply_cfg(load(dir, ~s([ui]\nagent_panel_sort = "workspaces"\n)))
+    assert alias_ui.agent_panel_sort == :spaces
 
     assert ui.sound == %{
              enabled: false,

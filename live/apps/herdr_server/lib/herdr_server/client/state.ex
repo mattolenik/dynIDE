@@ -7,8 +7,10 @@ defmodule HerdrServer.Client.State do
   `HerdrServer.RuntimeStatus` the session got from `ReloadNotices` (shared facts, copied
   here so the pure View reads only its client). `toasts` are this client's queued
   notifications (`Client.Toasts`, newest first), `focused` its outer terminal's last
-  `{:focus, bool}` report (nil: unknown). `pointer` is this client's
-  `Client.Pointer` (selection, link hover, gestures; transient, not mirrored) and
+  `{:focus, bool}` report (nil: unknown), `pending_alerts` the delayed alert per pane
+  (`pane_id => ref`: a newer alert for the pane replaces it; a stale timer is dropped).
+  `pointer` is this client's `Client.Pointer` (selection, link hover, gestures;
+  transient, not mirrored) and
   `pointer_refs` the session's pointer timers (`:autoscroll` ref, `:expire` `{ref, selection}`).
   `facts` is `pane_id => %{scrolled, scroll, alt_screen}` that the session gathers
   (`PointerIo.scene_facts/2`) before `View.compute`, only for scrolled panes and the
@@ -48,6 +50,7 @@ defmodule HerdrServer.Client.State do
     store_monitor: nil,
     held: nil,
     toasts: [],
+    pending_alerts: %{},
     focused: nil,
     pointer: %HerdrServer.Client.Pointer{},
     pointer_refs: %{},
@@ -81,6 +84,7 @@ defmodule HerdrServer.Client.State do
           store_monitor: reference() | nil,
           held: [tuple()] | nil,
           toasts: [HerdrServer.Client.Toasts.toast()],
+          pending_alerts: %{optional(pos_integer()) => reference()},
           focused: boolean() | nil,
           pointer: HerdrServer.Client.Pointer.t(),
           pointer_refs: map(),

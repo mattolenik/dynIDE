@@ -1361,6 +1361,13 @@ defmodule HerdrServer.ServerTest do
     Store.event_async({:agent_state, 1, :blocked})
     Store.event_async({:agent_state, 1, :working})
     refute_receive {^c, {:alert, _}}, 1500
+
+    # blocked, working, blocked within the delay: the newer alert replaces the pending one
+    Store.event_async({:agent_state, 1, :blocked})
+    Store.event_async({:agent_state, 1, :working})
+    Store.event_async({:agent_state, 1, :blocked})
+    assert_receive {^c, {:alert, %{level: :attention, pane: 1}}}, 1500
+    refute_receive {^c, {:alert, _}}, 500
   end
 
   @tag :tmp_dir
