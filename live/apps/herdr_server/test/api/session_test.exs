@@ -10,7 +10,7 @@ defmodule HerdrServer.Api.SessionTest do
 
   setup do
     ctx = setup_listener()
-    dir = Path.join(System.tmp_dir!(), "hls#{System.unique_integer([:positive])}")
+    dir = Path.join(System.tmp_dir!(), "hls#{System.pid()}-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf!(dir) end)
     path = Path.join(dir, "a.sock")

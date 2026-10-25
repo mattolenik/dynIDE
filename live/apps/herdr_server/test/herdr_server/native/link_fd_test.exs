@@ -4,7 +4,7 @@ defmodule HerdrServer.Native.LinkFdTest do
   alias HerdrServer.Native.Link
 
   test "a socket fd survives dup, close, take and fdopen" do
-    path = "/tmp/hl-fd-#{System.unique_integer([:positive])}.sock"
+    path = "/tmp/hlf#{System.pid()}-#{System.unique_integer([:positive])}.sock"
     {:ok, l} = :gen_tcp.listen(0, ifaddr: {:local, path}, mode: :binary, active: false)
     on_exit(fn -> :gen_tcp.close(l) && File.rm(path) end)
 
@@ -26,7 +26,7 @@ defmodule HerdrServer.Native.LinkFdTest do
   end
 
   test "an fdopen'd port never closes its fd: fd_close does" do
-    path = "/tmp/hl-fd-#{System.unique_integer([:positive])}.sock"
+    path = "/tmp/hlf#{System.pid()}-#{System.unique_integer([:positive])}.sock"
     {:ok, l} = :gen_tcp.listen(0, ifaddr: {:local, path}, mode: :binary, active: false)
     on_exit(fn -> :gen_tcp.close(l) && File.rm(path) end)
     {:ok, c} = :gen_tcp.connect({:local, path}, 0, [:binary, active: false])
