@@ -227,7 +227,8 @@ defmodule HerdrTerm.Client.Term.Render do
   def handle_info({:clipboard, %{text: text}}, state) when is_binary(text) do
     state = Map.merge(%__MODULE__{}, state)
     # no notice channel of its own: a refused copy is a log line
-    case Guard.run_twice(Clipboard, :write, [state.tty, text], scan: false) do
+    # impure: never re-run (a re-run after a rollback would write the clipboard twice)
+    case Guard.run(Clipboard, :write, [state.tty, text], scan: false) do
       {:ok, :ok} -> :ok
       other -> Logger.warning("clipboard write failed: #{inspect(other)}")
     end
