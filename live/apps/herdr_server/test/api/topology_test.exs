@@ -365,7 +365,8 @@ defmodule HerdrServer.Api.TopologyTest do
 
   describe "report_metadata" do
     test "pane and workspace tokens round trip; null clears; stale seq dropped", %{s: s} do
-      rep = &ok!(s, "pane.report_metadata", Map.merge(%{"source" => "hook"}, &1))
+      rep =
+        &ok!(s, "pane.report_metadata", Map.merge(%{"pane_id" => "p1", "source" => "hook"}, &1))
 
       assert %{"type" => "ok"} =
                rep.(%{"tokens" => %{"pr" => " #12\n", "ci" => "ok"}, "seq" => 2})
@@ -376,7 +377,7 @@ defmodule HerdrServer.Api.TopologyTest do
              }
 
       rep.(%{"tokens" => %{"pr" => "#13"}, "seq" => 2})
-      rep.(%{"pane_id" => "p1", "tokens" => %{"ci" => nil}, "seq" => 3})
+      rep.(%{"tokens" => %{"ci" => nil}, "seq" => 3})
       assert ok!(s, "pane.get", %{"pane_id" => "p1"})["pane"]["tokens"] == %{"pr" => "#12"}
       rep.(%{"tokens" => %{"pr" => ""}})
       refute Map.has_key?(ok!(s, "pane.get", %{"pane_id" => "p1"})["pane"], "tokens")
@@ -391,7 +392,15 @@ defmodule HerdrServer.Api.TopologyTest do
                %{"build" => "green"}
 
       assert {"invalid_params", _} =
-               err(s, "pane.report_metadata", %{"source" => "a b", "tokens" => %{"k" => "v"}})
+               err(s, "pane.report_metadata", %{
+                 "pane_id" => "p1",
+                 "source" => "a b",
+                 "tokens" => %{"k" => "v"}
+               })
+
+      # herdr's pane_id is required: no fallback to the focused pane
+      assert {"invalid_params", _} =
+               err(s, "pane.report_metadata", %{"source" => "hook", "tokens" => %{"k" => "v"}})
 
       assert {"not_found", _} =
                err(s, "workspace.report_metadata", %{
@@ -402,7 +411,7 @@ defmodule HerdrServer.Api.TopologyTest do
     end
 
     test "ttl_ms expires a token through the Store's timer", %{s: s} do
-      p = %{"source" => "hook", "tokens" => %{"short" => "1"}, "ttl_ms" => 30}
+      p = %{"pane_id" => "p1", "source" => "hook", "tokens" => %{"short" => "1"}, "ttl_ms" => 30}
       ok!(s, "pane.report_metadata", p)
       ok!(s, "pane.report_metadata", %{p | "tokens" => %{"long" => "2"}, "ttl_ms" => 60_000})
 
@@ -411,8 +420,12 @@ defmodule HerdrServer.Api.TopologyTest do
                "long" => "2"
              }
 
-      Process.sleep(120)
-      assert ok!(s, "pane.get", %{"pane_id" => "p1"})["pane"]["tokens"] == %{"long" => "2"}
+      tokens = fn -> ok!(s, "pane.get", %{"pane_id" => "p1"})["pane"]["tokens"] end
+      # poll: the timer fires about 30 ms after the report
+      assert Enum.find_value(1..200, fn _ ->
+               if tokens.() == %{"long" => "2"}, do: true, else: Process.sleep(10) && nil
+             end)
+
       # one timer, armed for the long key
       assert %{expiry: {_, at}} = :sys.get_state(Store)
       assert at > System.system_time(:millisecond) + 50_000

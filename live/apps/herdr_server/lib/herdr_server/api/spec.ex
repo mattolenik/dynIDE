@@ -587,10 +587,10 @@ defmodule HerdrServer.Api.Spec do
         "pane.report_metadata",
         g,
         "Set or clear a pane's metadata tokens (at most 32), shown under its agent line.",
-        [opt_pane("Target pane; default the focused pane.") | metadata_params()],
+        [pid | metadata_params()],
         "ok",
         [:not_found, :failed],
-        "herdr-live pane report-metadata [<pane_id>] --source S --token K=V... " <>
+        "herdr-live pane report-metadata <pane_id> --source S --token K=V... " <>
           "[--clear-token K]... [--seq N] [--ttl-ms N]"
       ),
       method(
@@ -1165,6 +1165,7 @@ defmodule HerdrServer.Api.Spec do
       ev("workspace.closed", "A workspace was closed.", ws),
       ev("workspace.focused", "The focused workspace changed.", ws_obj),
       ev("workspace.renamed", "A workspace's label changed.", ws_obj),
+      ev("workspace.metadata_updated", "A workspace's metadata tokens changed.", ws_obj),
       ev(
         "workspace.moved",
         "A workspace was moved: its id, the requested insert_index and the new order.",
@@ -1182,7 +1183,7 @@ defmodule HerdrServer.Api.Spec do
       ev("pane.created", "A pane was created.", pane_obj),
       ev("pane.closed", "A pane was closed.", pane),
       ev("pane.focused", "The focused pane changed.", pane_obj),
-      ev("pane.updated", "A pane's title or size changed.", pane_obj),
+      ev("pane.updated", "A pane's title, size or metadata tokens changed.", pane_obj),
       ev(
         "pane.agent_detected",
         "A pane's detected agent changed.",

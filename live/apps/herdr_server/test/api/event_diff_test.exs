@@ -2,7 +2,7 @@ defmodule HerdrServer.Api.EventDiffTest do
   use ExUnit.Case, async: true
 
   alias HerdrServer.Api.{EventDiff, Spec}
-  alias HerdrServer.App.{Actions, Commands}
+  alias HerdrServer.App.{Actions, Commands, Metadata}
 
   defp app, do: elem(Actions.init(%{cols: 80, rows: 24}), 0)
 
@@ -93,6 +93,27 @@ defmodule HerdrServer.Api.EventDiffTest do
              diff(a, c)
   end
 
+  test "workspace tokens give workspace.metadata_updated, on report and on expiry" do
+    a = app()
+    {b, _} = Metadata.report(a, {:workspace, 1}, %{"ci" => "ok"}, "s", 1, 10, 0)
+
+    assert [%{"event" => "workspace.metadata_updated", "workspace" => %{tokens: %{"ci" => "ok"}}}] =
+             diff(a, b)
+
+    # a stale seq changes nothing; an expiry is an update without the token
+    {c, _} = Metadata.report(b, {:workspace, 1}, %{"ci" => "no"}, "s", 1, nil, 0)
+    assert diff(b, c) == []
+    {d, _} = Actions.apply(b, {:metadata_expire, 10})
+    assert [%{"event" => "workspace.metadata_updated", "workspace" => w}] = diff(b, d)
+    refute Map.has_key?(w, :tokens)
+  end
+
+  test "pane tokens give pane.updated" do
+    a = app()
+    {b, _} = Metadata.report(a, {:pane, 1}, %{"pr" => "#1"}, "s", nil, nil, 0)
+    assert [%{"event" => "pane.updated", "pane" => %{tokens: %{"pr" => "#1"}}}] = diff(a, b)
+  end
+
   test "a split gives pane.created and layout.updated, in order" do
     a = app()
     {b, _} = Commands.split_pane(a, 1, :horizontal, 0.5, false)
@@ -141,7 +162,11 @@ defmodule HerdrServer.Api.EventDiffTest do
     {h3, [{:api_event, wm}]} = Commands.move_workspace(h2, 2, 0)
     {i, _} = Commands.close_tab(h3, 2, 2)
     {j, _} = Commands.close_workspace(i, 2)
-    steps = [a, b, c, d, e, f, g, h, h2, h3, i, j]
+
+    {k, _} =
+      Metadata.report(j, {:workspace, 1}, %{"ci" => "ok"}, "s", nil, nil, 0)
+
+    steps = [a, b, c, d, e, f, g, h, h2, h3, i, j, k]
 
     seen =
       steps

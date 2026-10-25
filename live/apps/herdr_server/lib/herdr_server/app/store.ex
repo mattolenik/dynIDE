@@ -67,6 +67,7 @@ defmodule HerdrServer.App.Store do
     Commands,
     CustomCommands,
     Keybinds,
+    Metadata,
     Reconcile,
     Restore,
     Upgrade,
@@ -338,18 +339,11 @@ defmodule HerdrServer.App.Store do
      )}
   end
 
-  # the one metadata timer (`{:expire_at, ms}`) fired: the sweep re-arms the next one
+  # the one metadata timer (`{:expire_at, ms}`) fired: the sweep re-arms the next one; a
+  # sweep that expires nothing only re-arms (no event, no mirror write)
   def handle_info(:metadata_expire, state) do
     state = %{Map.merge(%__MODULE__{}, state) | expiry: nil}
-
-    {:noreply,
-     if(state.app,
-       do:
-         state
-         |> handle_event({:metadata_expire, System.system_time(:millisecond)}, nil, nil)
-         |> Mirror.dirty(),
-       else: state
-     )}
+    {:noreply, if(state.app, do: sweep(state, System.system_time(:millisecond)), else: state)}
   end
 
   def handle_info(_other, state) do
@@ -593,6 +587,16 @@ defmodule HerdrServer.App.Store do
     state
   end
 
+  defp sweep(state, now) do
+    case Guard.run_twice(Metadata, :expire, [state.app, now], server: reload_server()) do
+      {:ok, {app, fx}} when app == state.app ->
+        Enum.reduce(fx, state, &effect(&2, &1, nil))
+
+      _changed_or_failed ->
+        state |> handle_event({:metadata_expire, now}, nil, nil) |> Mirror.dirty()
+    end
+  end
+
   # one timer, for the earliest pending expiry: an earlier one replaces it
   defp effect(%{expiry: {ref, armed}} = state, {:expire_at, ms}, origin) do
     if ms < armed do
@@ -611,7 +615,8 @@ defmodule HerdrServer.App.Store do
   end
 
   defp effect(state, {:expire_at, ms}, _origin) do
-    delay = max(ms - System.system_time(:millisecond), 0)
+    # a wall clock set back must not arm a timer past the longest ttl
+    delay = min(max(ms - System.system_time(:millisecond), 0), 86_400_000)
     %{state | expiry: {Process.send_after(self(), :metadata_expire, delay), ms}}
   end
 

@@ -9,11 +9,13 @@ defmodule HerdrServer.Api.EventDiff do
   Focus follows `Api.View`'s chain: an event fires when the focused workspace, tab or
   pane id changes. `pane.updated` fires when a surviving pane's object changes other than
   `focused` (title, size, tokens). Order: workspace, tab, pane, layout events; within each,
-  closed, created, focused, then updated or renamed. `diff(nil, app)` is `[]`.
+  closed, created, focused, then updated or renamed (workspaces: then
+  `workspace.metadata_updated`, herdr's, when a surviving workspace's tokens change). `diff(nil, app)` is `[]`.
   `tab.moved` / `workspace.moved` are not diffs: the move reports them (`moved/2`).
   """
 
   alias HerdrServer.Api.{Ids, View}
+  alias HerdrServer.App.Metadata
   alias HerdrServer.Layout
 
   @type app :: HerdrServer.App.Actions.app()
@@ -53,7 +55,14 @@ defmodule HerdrServer.Api.EventDiff do
           (prev = o.ws[id]) && prev.name != ws.name,
           do: ws_ev("renamed", new, ws)
 
-    closed ++ created ++ focused ++ renamed
+    # herdr's workspace.metadata_updated: a surviving workspace's tokens changed
+    metadata =
+      for {id, ws} <- n.ws_l,
+          (prev = o.ws[id]) && Map.get(prev, :metadata) != Map.get(ws, :metadata),
+          Metadata.visible(Map.get(prev, :metadata)) != Metadata.visible(Map.get(ws, :metadata)),
+          do: ws_ev("metadata_updated", new, ws)
+
+    closed ++ created ++ focused ++ renamed ++ metadata
   end
 
   defp ws_ev(kind, app, ws) do

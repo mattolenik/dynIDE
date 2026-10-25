@@ -28,7 +28,7 @@ defmodule HerdrCli.Argv do
   @sources ~w(visible recent)
   @agent_states ~w(idle working blocked done unknown)
   @event_types ~w(workspace.created workspace.closed workspace.focused workspace.renamed
-                  workspace.moved tab.created tab.closed tab.focused tab.renamed tab.moved
+                  workspace.metadata_updated workspace.moved tab.created tab.closed tab.focused tab.renamed tab.moved
                   pane.created pane.closed pane.focused pane.updated
                   pane.agent_detected pane.agent_status_changed layout.updated
                   notification.shown)
@@ -414,10 +414,10 @@ defmodule HerdrCli.Argv do
       cmd(
         ~w(pane report-metadata),
         "pane.report_metadata",
-        [opt_id],
+        [env_id],
         @metadata_opts,
         :json,
-        "pane report-metadata [<pane_id>] --source S --token K=V... " <>
+        "pane report-metadata <pane_id> --source S --token K=V... " <>
           "[--clear-token K]... [--seq N] [--ttl-ms N]"
       ),
       cmd(

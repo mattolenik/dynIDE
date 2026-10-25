@@ -548,11 +548,11 @@ Errors: `invalid_params`, `not_available`
 
 Set or clear a pane's metadata tokens (at most 32), shown under its agent line.
 
-CLI: `herdr-live pane report-metadata [<pane_id>] --source S --token K=V... [--clear-token K]... [--seq N] [--ttl-ms N]`
+CLI: `herdr-live pane report-metadata <pane_id> --source S --token K=V... [--clear-token K]... [--seq N] [--ttl-ms N]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
-| `pane_id` | pane id | no | Target pane; default the focused pane. |
+| `pane_id` | pane id | yes | Target pane. |
 | `source` | string | yes | Reporting integration: ASCII letters, digits, `:._-`, 1-80. |
 | `tokens` | object of strings or nulls | yes | 1-16 keys `[A-Za-z0-9_-]{1,32}` (not `__`-prefixed); a value is trimmed, stripped of control characters and cut to 80; null or empty clears the key. |
 | `seq` | integer 0..9007199254740991 | no | Report sequence number; at most the source's last is dropped. |
@@ -822,7 +822,7 @@ CLI: `herdr-live events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] 
 
 | param | type | required | description |
 | --- | --- | --- | --- |
-| `subscriptions` | list of object {type: `workspace.created`, `workspace.closed`, `workspace.focused`, `workspace.renamed`, `workspace.moved`, `tab.created`, `tab.closed`, `tab.focused`, `tab.renamed`, `tab.moved`, `pane.created`, `pane.closed`, `pane.focused`, `pane.updated`, `pane.agent_detected`, `pane.agent_status_changed`, `layout.updated` or `notification.shown`, pane_id?: pane id, tab_id?: tab id, workspace_id?: workspace id} (at least 1) | yes | Subscriptions. |
+| `subscriptions` | list of object {type: `workspace.created`, `workspace.closed`, `workspace.focused`, `workspace.renamed`, `workspace.metadata_updated`, `workspace.moved`, `tab.created`, `tab.closed`, `tab.focused`, `tab.renamed`, `tab.moved`, `pane.created`, `pane.closed`, `pane.focused`, `pane.updated`, `pane.agent_detected`, `pane.agent_status_changed`, `layout.updated` or `notification.shown`, pane_id?: pane id, tab_id?: tab id, workspace_id?: workspace id} (at least 1) | yes | Subscriptions. |
 
 Result: `subscription_started` with `subscriptions` (integer).
 
@@ -1387,6 +1387,15 @@ A workspace's label changed.
 | `workspace_id` | workspace id |
 | `workspace` | `workspace` object |
 
+### `workspace.metadata_updated`
+
+A workspace's metadata tokens changed.
+
+| data field | type |
+| --- | --- |
+| `workspace_id` | workspace id |
+| `workspace` | `workspace` object |
+
 ### `workspace.moved`
 
 A workspace was moved: its id, the requested insert_index and the new order.
@@ -1481,7 +1490,7 @@ The focused pane changed.
 
 ### `pane.updated`
 
-A pane's title or size changed.
+A pane's title, size or metadata tokens changed.
 
 | data field | type |
 | --- | --- |

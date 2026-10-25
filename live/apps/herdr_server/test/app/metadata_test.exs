@@ -33,16 +33,33 @@ defmodule HerdrServer.App.MetadataTest do
     assert Metadata.next_expiry(m) == nil
   end
 
-  test "at most 32 sources: the least recently reported is dropped" do
-    m = Enum.reduce(1..32, nil, &Metadata.apply(&2, %{}, "s#{&1}", 1, nil, 0))
-    # s1 reports again, so s2 is now the oldest
-    m = Metadata.apply(m, %{}, "s1", 2, nil, 0)
-    m = Metadata.apply(m, %{}, "s33", 1, nil, 0)
-    assert map_size(m["__seq"]) == 32
-    refute Map.has_key?(m["__seq"], "s2")
-    assert m["__seq"]["s1"] == 2
-    # a dropped source starts over: its old seq applies again
-    assert Metadata.visible(Metadata.apply(m, %{"k" => "v"}, "s2", 1, nil, 0)) == [{"k", "v"}]
+  test "at most 32 sequenced sources: a 33rd fails, tracked ones go on" do
+    app = fresh()
+
+    app =
+      Enum.reduce(1..32, app, fn i, app ->
+        {app, []} = Metadata.report(app, {:pane, 1}, %{"k" => "#{i}"}, "s#{i}", 1, nil, 0)
+        app
+      end)
+
+    assert {^app, [{:notice, %{level: :warning, text: text}}]} =
+             Metadata.report(app, {:pane, 1}, %{"k" => "x"}, "s33", 1, nil, 0)
+
+    assert text =~ "32 sequenced sources"
+    # pure apply drops it too, so a replay never re-opens
+    m = app.session.panes[1].metadata
+    assert Metadata.apply(m, %{"k" => "x"}, "s33", 1, nil, 0) == m
+    # an unsequenced report and a tracked source still apply
+    assert {_, []} = Metadata.report(app, {:pane, 1}, %{"k" => "y"}, "s33", nil, nil, 0)
+    {app, []} = Metadata.report(app, {:pane, 1}, %{"k" => "z"}, "s1", 2, nil, 0)
+    assert map_size(app.session.panes[1].metadata["__seq"]) == 32
+    assert Metadata.visible(app.session.panes[1].metadata) == [{"k", "z"}]
+  end
+
+  test "a stale seq is dropped before the key cap is checked" do
+    app = fresh()
+    {app, []} = Metadata.report(app, {:pane, 1}, Map.new(1..32, &{"k#{&1}", "v"}), "s", 5, nil, 0)
+    assert {^app, []} = Metadata.report(app, {:pane, 1}, %{"k33" => "v"}, "s", 5, nil, 0)
   end
 
   test "normalize: herdr's source and key rules; values cleaned, empty clears" do

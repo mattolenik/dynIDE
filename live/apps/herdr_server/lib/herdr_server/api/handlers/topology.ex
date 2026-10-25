@@ -180,10 +180,8 @@ defmodule HerdrServer.Api.Handlers.Topology do
   def handle("pane.resize", p),
     do: by_pane(p, "pane_resize", :resize_pane_dir, [min(abs(p[:amount] || 0.05) * 1.0, 0.5)])
 
-  def handle("pane.report_metadata", p) do
-    id = p[:pane_id] || app!().focus.pane
-    report_metadata(p, {:pane, id}, &run_on_pane(id, &1))
-  end
+  def handle("pane.report_metadata", %{pane_id: id} = p),
+    do: report_metadata(p, {:pane, id}, &run_on_pane(id, &1))
 
   def handle("pane.close", %{pane_id: id}) do
     with {:ok, _before, aft, notes} <- run_on_pane(id, {Commands, :close_pane, [id]}) do

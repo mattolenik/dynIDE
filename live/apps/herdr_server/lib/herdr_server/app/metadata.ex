@@ -4,10 +4,10 @@ defmodule HerdrServer.App.Metadata do
   (`session.panes[id].metadata`) or a workspace (its `metadata`). Not persisted.
 
   A meta is `%{key => %{value: binary, expires: ms | nil}}` plus `"__seq"`
-  (`%{source => seq}`) and `"__seq_order"` (its sources, least recently reported
-  first), both kept out of `visible/1`. A report whose `seq` is at most the stored seq
-  of its source is dropped; at most 32 sources are tracked, the least recently
-  reported dropped first. A nil value removes its key. Times are wall-clock ms
+  (`%{source => seq}`), kept out of `visible/1`. A report whose `seq` is at most the
+  stored seq of its source is dropped; at most 32 sequenced sources are tracked and a
+  new one past that fails (herdr's `metadata_sequence_source_limit`). A nil value
+  removes its key. Times are wall-clock ms
   (`System.system_time(:millisecond)`), so a carried app keeps them across a handoff.
 
   `report/7` (an API request through the Store) and the server-internal
@@ -23,7 +23,10 @@ defmodule HerdrServer.App.Metadata do
   @type meta :: %{optional(binary) => term()}
   @type target :: {:pane, term()} | {:workspace, term()}
 
-  @doc "`meta` with `patch` applied (or unchanged: a stale `seq`)."
+  @doc """
+  `meta` with `patch` applied, or unchanged when the report is dropped: a stale `seq`, or
+  a new sequenced source past the #{@max_sources} tracked (`report/7` answers that one).
+  """
   @spec apply(
           meta() | nil,
           %{binary => binary | nil},
@@ -34,11 +37,8 @@ defmodule HerdrServer.App.Metadata do
         ) :: meta()
   def apply(meta, patch, source, seq, ttl_ms, now) do
     meta = meta || %{}
-    seqs = Map.get(meta, "__seq", %{})
 
-    if seq != nil and is_map_key(seqs, source) and seq <= seqs[source] do
-      meta
-    else
+    if fresh?(meta, source, seq) and not sources_full?(meta, source, seq) do
       expires = ttl_ms && now + ttl_ms
 
       patch
@@ -47,17 +47,33 @@ defmodule HerdrServer.App.Metadata do
         {k, v}, m -> Map.put(m, k, %{value: v, expires: expires})
       end)
       |> track(source, seq)
+    else
+      meta
     end
+  end
+
+  # herdr's sequence_is_fresh: no seq, an untracked source, or a seq past its last
+  defp fresh?(_meta, _source, nil), do: true
+
+  defp fresh?(meta, source, seq) do
+    case meta && Map.get(meta, "__seq", %{}) do
+      %{^source => last} -> seq > last
+      _ -> true
+    end
+  end
+
+  # herdr's accept_sequence: a new sequenced source past the cap fails
+  defp sources_full?(_meta, _source, nil), do: false
+
+  defp sources_full?(meta, source, _seq) do
+    seqs = (meta && Map.get(meta, "__seq")) || %{}
+    not is_map_key(seqs, source) and map_size(seqs) >= @max_sources
   end
 
   defp track(meta, _source, nil), do: meta
 
-  defp track(meta, source, seq) do
-    order = List.delete(Map.get(meta, "__seq_order", []), source) ++ [source]
-    {dropped, order} = Enum.split(order, max(length(order) - @max_sources, 0))
-    seqs = meta |> Map.get("__seq", %{}) |> Map.drop(dropped) |> Map.put(source, seq)
-    Map.merge(meta, %{"__seq" => seqs, "__seq_order" => order})
-  end
+  defp track(meta, source, seq),
+    do: Map.put(meta, "__seq", Map.put(Map.get(meta, "__seq", %{}), source, seq))
 
   @doc "The token values, sorted by key."
   @spec visible(meta() | nil) :: [{binary, binary}]
@@ -153,24 +169,35 @@ defmodule HerdrServer.App.Metadata do
   # --- app ---
 
   @doc """
-  A report on `target` (an API request: `Store.request/1`). More than #{@max_keys} keys
-  after the patch is a warning notice and no change; a missing target is no change.
+  A report on `target` (an API request: `Store.request/1`). A missing target or a stale
+  `seq` is no change; more than #{@max_keys} keys after the patch, or a new sequenced
+  source past #{@max_sources}, is a warning notice (the API's `failed`) and no change.
   """
   @spec report(map, target(), map, binary, integer | nil, pos_integer | nil, integer) ::
           {map, [tuple]}
   def report(app, target, patch, source, seq, ttl_ms, now) do
-    case get(app, target) do
-      :error ->
-        {app, []}
+    with {:ok, meta} <- get(app, target),
+         true <- fresh?(meta, source, seq),
+         :ok <- limits(meta, patch, source, seq) do
+      meta = __MODULE__.apply(meta, patch, source, seq, ttl_ms, now)
+      {put(app, target, meta), expire_at(next_expiry(meta))}
+    else
+      {:error, text} -> {app, [{:notice, %{level: :warning, text: text}}]}
+      _missing_or_stale -> {app, []}
+    end
+  end
 
-      {:ok, meta} ->
-        if keys_after(meta, patch) > @max_keys do
-          text = "metadata may contain at most #{@max_keys} tokens"
-          {app, [{:notice, %{level: :warning, text: text}}]}
-        else
-          meta = __MODULE__.apply(meta, patch, source, seq, ttl_ms, now)
-          {put(app, target, meta), expire_at(next_expiry(meta))}
-        end
+  # herdr's order: the stale check first, then the key cap, then the source cap
+  defp limits(meta, patch, source, seq) do
+    cond do
+      keys_after(meta, patch) > @max_keys ->
+        {:error, "metadata may contain at most #{@max_keys} tokens"}
+
+      sources_full?(meta, source, seq) ->
+        {:error, "metadata may track at most #{@max_sources} sequenced sources"}
+
+      true ->
+        :ok
     end
   end
 
