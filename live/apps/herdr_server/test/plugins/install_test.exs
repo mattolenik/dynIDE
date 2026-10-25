@@ -27,9 +27,34 @@ defmodule HerdrServer.Plugins.InstallTest do
       %{exit_code: 0, stdout: out} =
         Command.run(["sh", "-c", "yes | head -c 200000"], base, [], [])
 
-      assert byte_size(out) == 65_536
-      %{stdout: out} = Command.run(["sh", "-c", "yes | head -c 200"], base, [], cap: 10)
-      assert byte_size(out) == 10
+      marker = "\n[herdr truncated plugin output after 65536 bytes]"
+      assert byte_size(out) == 65_536 + byte_size(marker)
+      assert String.ends_with?(out, marker)
+
+      %{stdout: out, stderr: err} =
+        Command.run(
+          ["sh", "-c", "yes 2>/dev/null | head -c 200; printf 0123456789abc >&2"],
+          base,
+          [],
+          cap: 10
+        )
+
+      assert out == "y\ny\ny\ny\ny\n" <> "\n[herdr truncated plugin output after 10 bytes]"
+      assert err == "0123456789" <> "\n[herdr truncated plugin output after 10 bytes]"
+      assert %{stdout: "0123456789"} = Command.run(["printf", "0123456789"], base, [], cap: 10)
+    end
+
+    test "the run ends when the command exits, not when a descendant closes stdout",
+         %{base: base} do
+      pidfile = base <> "/bg.pid"
+      t0 = System.monotonic_time(:millisecond)
+
+      assert %{exit_code: 0, stdout: "hi\n"} =
+               Command.run(["sh", "-c", "sleep 5 & echo $! >#{pidfile}; echo hi"], base, [], [])
+
+      elapsed = System.monotonic_time(:millisecond) - t0
+      System.cmd("kill", [String.trim(File.read!(pidfile))], stderr_to_stdout: true)
+      assert elapsed < 1000
     end
 
     test "a timeout kills the OS process", %{base: base} do

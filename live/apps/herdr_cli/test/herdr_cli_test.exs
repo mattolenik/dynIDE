@@ -13,6 +13,12 @@ defmodule HerdrCliTest do
     assert HerdrCli.chars(:binary.bin_to_list("é api"), :latin1) == "é api"
   end
 
+  test "a confirmed plugin install waits as long as the server's git and builds" do
+    assert HerdrCli.timeout("plugin.install", %{"source" => "o/r", "yes" => true}) == :infinity
+    assert HerdrCli.timeout("plugin.install", %{"source" => "o/r"}) == 60_000
+    assert HerdrCli.timeout("plugin.list", %{}) == 60_000
+  end
+
   test "an unreadable --file exits 1 with a message on stderr" do
     err =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->

@@ -7,13 +7,14 @@ defmodule HerdrServer.Plugins.Command do
   alias HerdrServer.Plugins.Paths
 
   @cap 65_536
-  # ponytail: a sh wrapper sends stderr to a file (ports have one output stream) and, with
-  # job control, starts the command as its own process group so a timeout kills the whole
-  # tree; a NIF if Windows ever matters. The stderr file grows with the command's stderr
-  # until it exits (only the first `cap` bytes are read): bounded by the timeout, if any.
-  # The wrapper's own stderr (job notices) goes to /dev/null.
+  # ponytail: a sh wrapper sends stdout and stderr to files and, with job control, starts
+  # the command as its own process group so a timeout kills the whole tree; a NIF if
+  # Windows ever matters. The port carries only the wrapper, so the run ends when the
+  # command exits even if a descendant still holds its output open (as herdr). The files
+  # grow with the command's output until it exits (only the first `cap` bytes are read):
+  # bounded by the timeout, if any. The wrapper's own stderr (job notices) goes to /dev/null.
   @wrapper ~S(d=$HERDR_LIVE_CMD_DIR; unset HERDR_LIVE_CMD_DIR; exec 2>/dev/null; set -m; ) <>
-             ~S("$0" "$@" </dev/null 2>"$d/err" & echo $! >"$d/pid"; wait $!)
+             ~S("$0" "$@" </dev/null >"$d/out" 2>"$d/err" & echo $! >"$d/pid"; wait $!)
 
   @type result :: %{
           exit_code: integer() | nil,
@@ -23,9 +24,10 @@ defmodule HerdrServer.Plugins.Command do
         }
 
   @doc """
-  `env` is `[{name, value | nil}]` (nil unsets). Options: `:cap` bytes per stream (64 KiB),
+  `env` is `[{name, value | nil}]` (nil unsets). Options: `:cap` bytes per stream (64 KiB;
+  a cut stream ends with herdr's truncation marker),
   `:timeout_ms` (none) after which the OS process is killed, `:tmp_dir`, a private
-  (0700) dir under which each run gets its own fresh dir for the stderr file (default
+  (0700) dir under which each run gets its own fresh dir for the output files (default
   `<state>/tmp`; plugin callers pass the plugin state dir).
   """
   @spec run([String.t()], Path.t(), [{String.t(), String.t() | nil}], keyword()) :: result()
@@ -86,29 +88,24 @@ defmodule HerdrServer.Plugins.Command do
 
     {:os_pid, pid} = Port.info(port, :os_pid)
     deadline = opts[:timeout_ms] && System.monotonic_time(:millisecond) + opts[:timeout_ms]
-    {code, out, error} = collect(port, {pid, dir}, {[], 0}, cap, deadline)
+    {code, error} = collect(port, {pid, dir}, deadline)
+    out = head(Path.join(dir, "out"), cap)
     %{exit_code: code, stdout: out, stderr: head(Path.join(dir, "err"), cap), error: error}
   end
 
-  defp collect(port, who, {acc, n} = buf, cap, deadline) do
+  # the wrapper writes nothing to the port: only its exit status matters
+  defp collect(port, who, deadline) do
     left =
       if deadline, do: max(deadline - System.monotonic_time(:millisecond), 0), else: :infinity
 
     receive do
-      {^port, {:data, _}} when n >= cap ->
-        collect(port, who, buf, cap, deadline)
-
-      {^port, {:data, d}} ->
-        d = binary_part(d, 0, min(byte_size(d), cap - n))
-        collect(port, who, {[acc, d], n + byte_size(d)}, cap, deadline)
-
-      {^port, {:exit_status, s}} ->
-        {s, IO.iodata_to_binary(acc), nil}
+      {^port, {:data, _}} -> collect(port, who, deadline)
+      {^port, {:exit_status, s}} -> {s, nil}
     after
       left ->
         kill(who)
         drain(port)
-        {nil, IO.iodata_to_binary(acc), "timed out"}
+        {nil, "timed out"}
     end
   end
 
@@ -147,9 +144,19 @@ defmodule HerdrServer.Plugins.Command do
   defp head(file, cap) do
     case File.open(file, [:read, :binary]) do
       {:ok, f} ->
-        data = IO.binread(f, cap)
+        data = IO.binread(f, cap + 1)
         File.close(f)
-        if is_binary(data), do: data, else: ""
+
+        case data do
+          data when is_binary(data) and byte_size(data) > cap ->
+            binary_part(data, 0, cap) <> "\n[herdr truncated plugin output after #{cap} bytes]"
+
+          data when is_binary(data) ->
+            data
+
+          _ ->
+            ""
+        end
 
       {:error, _} ->
         ""

@@ -24,7 +24,7 @@ defmodule HerdrServer.Plugins.Env do
   def for_command(plugin, context, kind) do
     id = plugin["plugin_id"]
     socket = Path.expand(SocketPath.path())
-    bin = env("HERDR_LIVE_BIN") || env("HERDR_BIN_PATH")
+    bin = env("HERDR_LIVE_BIN") || launcher()
 
     [
       {"HERDR_SOCKET_PATH", socket},
@@ -50,6 +50,10 @@ defmodule HerdrServer.Plugins.Env do
     ] ++ Enum.map(@vm_only, &{&1, nil})
   end
 
+  @doc "The VM-only names `for_command/3` unsets."
+  @spec vm_only() :: [String.t()]
+  def vm_only, do: @vm_only
+
   @doc "The caller's env with every authoritative name taken from `authoritative`."
   @spec merge(%{String.t() => String.t()}, env()) :: env()
   def merge(caller, authoritative) do
@@ -65,6 +69,12 @@ defmodule HerdrServer.Plugins.Env do
   end
 
   defp modifiers(_), do: nil
+
+  # a VM not started by bin/herdr-live: this checkout's launcher, found from the app's own
+  # dir at runtime (live/_build/<env>/lib/herdr_server); an inherited HERDR_BIN_PATH may
+  # be the real herdr's
+  defp launcher,
+    do: Path.expand("../../../../bin/herdr-live", Application.app_dir(:herdr_server))
 
   defp env(name), do: with(v when v not in [nil, ""] <- System.get_env(name), do: v)
 end

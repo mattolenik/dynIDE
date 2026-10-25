@@ -14,6 +14,12 @@ defmodule HerdrServer.Handoff.LinkTest do
     assert Link.take_adopted("pane/") == []
   end
 
+  test "init is :ignore with an empty HERDR_BROKER_SOCK (a plugin pane's blanked env)" do
+    System.put_env("HERDR_BROKER_SOCK", "")
+    on_exit(fn -> System.delete_env("HERDR_BROKER_SOCK") end)
+    assert Link.init([]) == :ignore
+  end
+
   test "parse_fresh reads the FRESH body" do
     assert Link.parse_fresh(<<>>) == :boot
     assert Link.parse_fresh(<<0>>) == :boot

@@ -3,9 +3,9 @@ defmodule HerdrServer.Plugins.Panes do
   Plugin panes (herdr's `plugin.pane.open`): a manifest `[[panes]]` entry run as a pane's
   pty child. `spec/2` checks the request against the registry and a snapshot of the app
   and builds the launch spec; `open/2` is the `Store.request/1` command that places it.
-  `split` splits the target pane; `tab`, `overlay` and `zoomed` open a new tab in the
-  target workspace (herdr-live has no overlay or zoom; a tab is the nearest full-area
-  placement). `popup` is not available (M17). The pane's meta carries `:name` (the entry's
+  `split` splits the target pane; `tab` and `overlay` open a new tab in the target
+  workspace, `zoomed` in the target pane's (herdr-live has no overlay or zoom; a tab is the
+  nearest full-area placement). `popup` is not available (M17). The pane's meta carries `:name` (the entry's
   title) and `:plugin` (`%{"plugin_id", "entrypoint"}`, plain data); persistence does not
   record `:plugin`, since a restored pane runs `$SHELL`, not the plugin command.
   """
@@ -33,10 +33,8 @@ defmodule HerdrServer.Plugins.Panes do
       ctx = Context.build(app, target, "plugin-pane")
       auth = Env.for_command(pl, ctx, %{entrypoint: entry["id"]})
 
-      # PWD defaults to the cwd (herdr); the pty env cannot unset, so nil entries go
-      env =
-        Env.merge(Map.put_new(caller, "PWD", cwd), auth)
-        |> Enum.reject(fn {k, v} -> v == nil or k in @store_env end)
+      # PWD defaults to the cwd (herdr)
+      env = Env.merge(Map.put_new(caller, "PWD", cwd), auth) |> Enum.flat_map(&pty_env/1)
 
       {:ok,
        %{
@@ -55,6 +53,12 @@ defmodule HerdrServer.Plugins.Panes do
        }}
     end
   end
+
+  # the pty env cannot unset, so nil entries go, except the VM-only names, blanked
+  # ("" reads as unset) so none is inherited
+  defp pty_env({k, _}) when k in @store_env, do: []
+  defp pty_env({k, nil}), do: if(k in Env.vm_only(), do: [{k, ""}], else: [])
+  defp pty_env(kv), do: [kv]
 
   @doc "Places the pane `spec` describes; a vanished target changes nothing."
   @spec open(map(), map()) :: {map(), list()}
@@ -137,6 +141,29 @@ defmodule HerdrServer.Plugins.Panes do
         "width and height are only supported when placement is popup"
       )
 
+  # herdr's per-placement target params
+  defp placeable("overlay", p)
+       when is_map_key(p, :workspace_id) or is_map_key(p, :target_pane_id) or
+              is_map_key(p, :direction),
+       do: err(:invalid_params, "invalid_params", "overlay plugin panes target the active pane")
+
+  defp placeable(placement, p)
+       when placement in ["split", "zoomed"] and is_map_key(p, :workspace_id),
+       do:
+         err(
+           :invalid_params,
+           "invalid_params",
+           "split and zoomed plugin panes target an existing pane; use target_pane_id"
+         )
+
+  defp placeable("tab", p) when is_map_key(p, :target_pane_id) or is_map_key(p, :direction),
+    do:
+      err(
+        :invalid_params,
+        "invalid_params",
+        "tab plugin panes support workspace_id but not target_pane_id or direction"
+      )
+
   defp placeable(_placement, _p), do: :ok
 
   defp caller_env(env) do
@@ -151,14 +178,9 @@ defmodule HerdrServer.Plugins.Panes do
   end
 
   # {:ok, workspace, pane}: a tab goes in the workspace (default the active one) and runs
-  # against its focused pane; a split targets the pane (default the workspace's focused one)
-  defp target(app, "split", p) do
-    pane =
-      p[:target_pane_id] ||
-        if(p[:workspace_id],
-          do: Context.target_pane(app, {:workspace, p.workspace_id}),
-          else: app.focus.pane
-        )
+  # against its focused pane; split and zoomed target the pane (default the focused one)
+  defp target(app, placement, p) when placement in ["split", "zoomed"] do
+    pane = p[:target_pane_id] || app.focus.pane
 
     case pane && Commands.locate(app, pane) do
       {w, _t} -> {:ok, w, pane}

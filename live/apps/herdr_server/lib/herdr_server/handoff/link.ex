@@ -136,7 +136,7 @@ defmodule HerdrServer.Handoff.Link do
 
   def init(_opts) do
     case System.get_env("HERDR_BROKER_SOCK") do
-      nil -> :ignore
+      v when v in [nil, ""] -> :ignore
       path -> connect(path)
     end
   end

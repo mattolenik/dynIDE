@@ -29,6 +29,14 @@ defmodule HerdrServer.Plugins.EnvTest do
              env["HERDR_LIVE_API"] == env["HERDR_SOCKET_PATH"]
   end
 
+  test "HERDR_BIN_PATH is always a herdr-live launcher, never a bare herdr" do
+    env = Map.new(Env.for_command(@plugin, %{}, %{}))
+    bin = env["HERDR_BIN_PATH"]
+    assert env["HERDR_LIVE_BIN"] == bin
+    assert File.regular?(bin), inspect(bin)
+    assert Path.basename(bin) == "herdr-live"
+  end
+
   test "event, entrypoint, link and click modifiers in shift,alt,ctrl order" do
     ctx = %{
       "clicked_url" => "u",

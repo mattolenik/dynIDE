@@ -92,7 +92,12 @@ defmodule HerdrServer.Application do
     )
   end
 
-  defp gen, do: System.get_env("HERDR_LIVE_GEN") || "0"
+  defp gen do
+    case System.get_env("HERDR_LIVE_GEN") do
+      v when v in [nil, ""] -> "0"
+      v -> v
+    end
+  end
 
   # off in test: tests start their own listener on a tmp path (and event hub)
   defp api do

@@ -8,7 +8,7 @@ defmodule HerdrServer.Api.Handlers.Plugins do
 
   alias HerdrServer.Api.{Ids, Spec, View}
   alias HerdrServer.App.{Commands, Store}
-  alias HerdrServer.Client.PointerIo
+  alias HerdrServer.Pane.Links, as: PaneLinks
   alias HerdrServer.Plugins.{Install, Links, Panes, Registry, Runtime}
 
   @invalid ~w(invalid_plugin_id invalid_plugin_source invalid_plugin_path ambiguous_plugin_action)
@@ -85,7 +85,7 @@ defmodule HerdrServer.Api.Handlers.Plugins do
   end
 
   def handle("pane.link.activate", %{pane_id: id} = p) do
-    case PointerIo.url_at(id, p.col, p.viewport_row) do
+    case PaneLinks.url_at(id, p.col, p.viewport_row) do
       :error ->
         {:error, :not_found, "no such pane #{Ids.pane(id)}", %{reason: "pane_not_found"}}
 

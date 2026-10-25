@@ -133,15 +133,19 @@ defmodule HerdrCli do
     end
   end
 
-  # Waits are bounded by the server (timeout_ms); allow a margin for the reply.
-  defp timeout(method, params) when method in ["pane.wait_for_output", "agent.wait"] do
+  @doc false
+  # Waits are bounded by the server (timeout_ms); allow a margin for the reply. A
+  # confirmed install runs git and the builds, each bounded by the server (10 min).
+  @spec timeout(String.t(), map()) :: timeout()
+  def timeout(method, params) when method in ["pane.wait_for_output", "agent.wait"] do
     case params do
       %{"timeout_ms" => ms} when is_integer(ms) and ms > 0 -> ms + 10_000
       _ -> :infinity
     end
   end
 
-  defp timeout(_method, _params), do: 60_000
+  def timeout("plugin.install", %{"yes" => true}), do: :infinity
+  def timeout(_method, _params), do: 60_000
 
   defp subscribe(s, params) do
     case Client.call(s, "events.subscribe", params) do

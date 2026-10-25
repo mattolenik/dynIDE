@@ -10,11 +10,11 @@ defmodule HerdrServer.Client.PointerIo do
   `copy_context/2` is the same for `Client.CopyMode`, whose actions `run/3` executes too.
   """
 
-  alias HerdrScene.Cell
   alias HerdrServer.App.{Actions, Store}
   alias HerdrServer.Client.{Links, Pointer}
   alias HerdrServer.Kernel
   alias HerdrServer.Pane.{Facts, Input, Rows, Server}
+  alias HerdrServer.Pane.Links, as: PaneLinks
   alias HerdrServer.Plugins.Links, as: PluginLinks
 
   @tracking [:mouse_x10, :mouse_normal, :mouse_button, :mouse_any]
@@ -207,38 +207,7 @@ defmodule HerdrServer.Client.PointerIo do
 
   defp open(_url, _id, _t, _io), do: :ok
 
-  @doc """
-  The URL of the link at viewport cell (`x`, `y`) of pane `id`: a text URL or an OSC 8
-  link's URI (any scheme); nil for none, `:error` when the pane has no rows.
-  """
-  @spec url_at(term, non_neg_integer, non_neg_integer) :: String.t() | nil | :error
-  def url_at(id, x, y) do
-    case Rows.fetch(id) do
-      {_gen, rows, _cursor} when tuple_size(rows) > 0 ->
-        uri(id, Links.at(rows, Cell.cols(elem(rows, 0)), x, y), x, y)
-
-      {_gen, _rows, _cursor} ->
-        nil
-
-      nil ->
-        :error
-    end
-  end
-
-  defp uri(_id, %{url: url}, _x, _y), do: url
-
-  defp uri(id, %{id: _}, x, y) do
-    with {:ok, vt} <- vt(id), %{uri: uri} <- Kernel.vt().link_at(vt, x, y), do: uri
-  end
-
-  defp uri(_id, nil, _x, _y), do: nil
-
-  defp vt(id) do
-    with kid when kid != nil <- Rows.kernel_id(id),
-         {:ok, %{vt: vt}} <- Kernel.keeper().lookup(kid),
-         do: {:ok, vt},
-         else: (_ -> :error)
-  end
+  defp vt(id), do: PaneLinks.vt(id)
 
   defp mode?(vt, mode) do
     case Kernel.vt().mode(vt, mode) do

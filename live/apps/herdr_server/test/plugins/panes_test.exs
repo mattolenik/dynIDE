@@ -5,7 +5,7 @@ defmodule HerdrServer.Plugins.PanesTest do
   alias HerdrServer.Api.Handlers.Plugins, as: Handler
   alias HerdrServer.App.{Commands, Store}
   alias HerdrServer.Kernel.Fake
-  alias HerdrServer.Plugins.Install
+  alias HerdrServer.Plugins.{Env, Install}
   alias HerdrServer.Test.PluginDirs
 
   @toml """
@@ -20,6 +20,12 @@ defmodule HerdrServer.Plugins.PanesTest do
   title = "Pop"
   placement = "popup"
   command = ["bash"]
+
+  [[panes]]
+  id = "gone"
+  title = "Gone"
+  placement = "split"
+  command = ["./no-such-script.sh"]
   """
 
   setup do
@@ -103,5 +109,45 @@ defmodule HerdrServer.Plugins.PanesTest do
     assert {:error, :not_found, _, _} = Handler.handle("plugin.pane.close", %{pane_id: 1})
     assert {:error, :not_found, _, _} = Handler.handle("plugin.pane.focus", %{pane_id: 1})
     assert Map.has_key?(Store.snapshot().session.panes, 1)
+  end
+
+  test "the VM-only env is blanked in a plugin pane (the pty env cannot unset)" do
+    System.put_env("HERDR_BROKER_SOCK", "/tmp/live-broker.sock")
+    on_exit(fn -> System.delete_env("HERDR_BROKER_SOCK") end)
+    assert {:ok, _} = open(%{target_pane_id: 1, env: %{"HERDR_BROKER_SOCK" => "/evil"}})
+    e = Map.new(Fake.Keeper.last_spec().env)
+    assert Enum.all?(Env.vm_only(), &(e[&1] == ""))
+    assert e["HERDR_BROKER_SOCK"] == ""
+  end
+
+  test "a disabled plugin is failed / plugin_disabled" do
+    {:ok, _} = Install.set_enabled("gh", false)
+    assert {:error, :failed, _, %{reason: "plugin_disabled"}} = open(%{target_pane_id: 1})
+  end
+
+  test "a missing pane command is failed with the command named" do
+    assert {:error, :failed, msg, %{reason: "plugin_pane_open_failed"}} =
+             open(%{entrypoint: "gone", target_pane_id: 1})
+
+    assert msg =~ "command not found: ./no-such-script.sh"
+  end
+
+  test "placement checks follow herdr" do
+    for {placement, extra} <- [
+          {"split", %{workspace_id: 1}},
+          {"zoomed", %{workspace_id: 1}},
+          {"tab", %{target_pane_id: 1}},
+          {"tab", %{direction: "down"}},
+          {"overlay", %{workspace_id: 1}},
+          {"overlay", %{target_pane_id: 1}},
+          {"overlay", %{direction: "down"}}
+        ] do
+      assert {:error, :invalid_params, _, %{reason: "invalid_params"}} =
+               open(Map.put(extra, :placement, placement)),
+             inspect({placement, extra})
+    end
+
+    assert {:ok, _} = open(%{placement: "zoomed", target_pane_id: 1, focus: false})
+    assert {:ok, _} = open(%{placement: "tab", workspace_id: 1, focus: false})
   end
 end
