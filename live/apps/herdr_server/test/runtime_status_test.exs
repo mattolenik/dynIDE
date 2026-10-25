@@ -73,7 +73,7 @@ defmodule HerdrServer.RuntimeStatusTest do
         ] do
       [n] = RuntimeStatus.nodes(run([{:herdr_reload, ev}]), 80)
       assert %Node{role: :text, id: :reload, text: ^text, token: ^token} = n
-      assert n.props == run([{:herdr_reload, ev}]).reload
+      assert n.props == Map.take(run([{:herdr_reload, ev}]).reload, [:batch, :fanout])
     end
   end
 
@@ -89,7 +89,7 @@ defmodule HerdrServer.RuntimeStatusTest do
       assert [%Node{id: :tests, text: ^text, token: ^token, props: props}] =
                RuntimeStatus.nodes(t, 80)
 
-      assert props == t.tests
+      assert props == Map.take(t.tests, [:files, :failures])
     end
 
     t = run([{:herdr_reload, {:tests, :running, %{files: 2}}}])
@@ -120,6 +120,20 @@ defmodule HerdrServer.RuntimeStatusTest do
     # reload never expires
     t = RuntimeStatus.apply(t, {:herdr_reload, {:loaded, 1, [A]}}, 0)
     assert RuntimeStatus.expire(t, 10_000_000).reload != nil
+  end
+
+  test "node props are counts only: no state atoms or modules a remote client cannot decode" do
+    t =
+      run([
+        {:herdr_reload, {:loaded, 4, [HerdrServer.View, HerdrServer.Mirror]}},
+        {:herdr_reload, {:tests, :passed, %{files: 2, failures: 0, ms: 900}}},
+        {:handoff, %{phase: :adopted, gen: 3, panes: [1], kind: :graceful}}
+      ])
+
+    assert [%{batch: 4, fanout: 2}, %{files: 2, failures: 0}, %{gen: 3, panes: 1}] =
+             props = Enum.map(RuntimeStatus.nodes(t, 200), & &1.props)
+
+    for p <- props, v <- Map.values(p), do: assert(is_integer(v) or is_nil(v))
   end
 
   test "nodes drop handoff first, then tests, then reload, to fit the free columns" do

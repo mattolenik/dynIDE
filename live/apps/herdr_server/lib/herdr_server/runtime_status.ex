@@ -9,7 +9,9 @@ defmodule HerdrServer.RuntimeStatus do
   30 s old (reload and tests never expire); `nodes/2` gives the `:status` children, in
   priority order reload > tests > handoff, dropping from the lowest until they fit.
   A handoff map may carry `:kind` (`:graceful | :crash | nil`, the caller reads
-  `Handoff.Link.adopt_reason/0`); `at` is the caller's monotonic ms.
+  `Handoff.Link.adopt_reason/0`); `at` is the caller's monotonic ms. A node's props
+  are only its counts (`batch`/`fanout`, `files`/`failures`, `gen`/`panes`), never the
+  state atoms or module names a remote client cannot decode.
   """
   import Kernel, except: [apply: 2, apply: 3]
 
@@ -156,7 +158,7 @@ defmodule HerdrServer.RuntimeStatus do
           {"r blocked", :warning}
       end
 
-    node(:reload, text, token, r)
+    node(:reload, text, token, Map.take(r, [:batch, :fanout]))
   end
 
   defp tests_node(nil), do: nil
@@ -170,7 +172,7 @@ defmodule HerdrServer.RuntimeStatus do
         :error -> {"tests error", :error}
       end
 
-    node(:tests, text, token, t)
+    node(:tests, text, token, Map.take(t, [:files, :failures]))
   end
 
   defp handoff_node(nil), do: nil
@@ -184,12 +186,14 @@ defmodule HerdrServer.RuntimeStatus do
         _ -> "handoff..."
       end
 
-    node(:handoff, text, :accent, h)
+    node(:handoff, text, :accent, Map.take(h, [:gen, :panes]))
   end
 
   defp node(id, text, token, props),
     do: %Node{role: :text, id: id, text: text, token: token, props: props}
 
+  # props stay small integers (or nil): a remote client decodes the scene with
+  # `[:safe]` and knows no server atoms (states, kinds, module names, R7)
   # the longest prefix (by priority) whose cells fit
   defp fit([], _free, acc), do: Enum.reverse(acc)
 
