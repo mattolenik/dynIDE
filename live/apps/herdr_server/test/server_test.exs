@@ -359,14 +359,14 @@ defmodule HerdrServer.ServerTest do
     input(s, c, 1, Event.key("b", [:ctrl]))
     input(s, c, 2, Event.key("v"))
     scene_until(c, &(length(&1.panes) == 2))
-    Process.sleep(50)
+    mirrored()
   end
 
   defp split(c, s) do
     input(s, c, 1, Event.key("b", [:ctrl]))
     input(s, c, 2, Event.key("v"))
     scene_until(c, &(length(&1.panes) == 2))
-    Process.sleep(50)
+    mirrored()
   end
 
   defp kill_store do
@@ -413,7 +413,7 @@ defmodule HerdrServer.ServerTest do
     scene_until(c, &match?([%{id: 2}], &1.panes))
     [{p1, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
     assert :sys.get_state(p1).hidden
-    Process.sleep(50)
+    mirrored()
 
     # the switch back to tab 1 reached the mirror, but the Store died before hiding
     # tab 2's pane and showing pane 1
@@ -466,7 +466,7 @@ defmodule HerdrServer.ServerTest do
   test "a Store restart adopts a mapped pane the mirror lost into a scratch tab" do
     {c, s} = client()
     assert_receive {^c, {:scene, _}}, 500
-    Process.sleep(50)
+    mirrored()
     lost = Map.new([:session, :focus], &{&1, HerdrServer.Mirror.get({:app, &1})})
     split(c, s)
     [{pane2, _}] = Registry.lookup(HerdrServer.Pane.Registry, 2)
@@ -516,7 +516,7 @@ defmodule HerdrServer.ServerTest do
   test "a repeat Actions failure restores state_at_load and adopts panes spawned since" do
     {c, s} = client()
     assert_receive {^c, {:scene, _}}, 500
-    Process.sleep(50)
+    mirrored()
     at_load = HerdrServer.Mirror.app()
     split(c, s)
     fake_reload({:ok, 7, at_load})
@@ -556,7 +556,7 @@ defmodule HerdrServer.ServerTest do
   test "a restore after a request's repeat failure tells the requester it failed" do
     {c, _s} = client()
     assert_receive {^c, {:scene, _}}, 500
-    Process.sleep(50)
+    mirrored()
     fake_reload({:ok, 7, HerdrServer.Mirror.app()})
 
     # the test process is not a Store subscriber (an API connection is not either)
@@ -585,7 +585,7 @@ defmodule HerdrServer.ServerTest do
   test "a restore never reuses a pane id spawned and closed since the load" do
     {c, s} = client()
     assert_receive {^c, {:scene, _}}, 500
-    Process.sleep(50)
+    mirrored()
     at_load = HerdrServer.Mirror.app()
     split(c, s)
     input(s, c, 3, Event.key("b", [:ctrl]))
@@ -694,17 +694,16 @@ defmodule HerdrServer.ServerTest do
   test "Store mirror writes are debounced: one write per changed sub-struct" do
     {c, _s} = client()
     scene(c)
-    Process.sleep(50)
+    mirrored()
     store = Process.whereis(Store)
     :erlang.trace_pattern({HerdrServer.Mirror, :put, 2}, true, [:local])
     :erlang.trace(store, true, [:call])
     for n <- 1..10, do: Store.event_async({:pane_title, 1, "t#{n}"})
-    Process.sleep(60)
+    assert eventually(fn -> HerdrServer.Mirror.app().session.panes[1].title == "t10" end)
     :erlang.trace(store, false, [:call])
 
     keys = collect_puts([])
     assert keys == [{:app, :session}]
-    assert HerdrServer.Mirror.app().session.panes[1].title == "t10"
   end
 
   defp collect_puts(acc) do
@@ -978,6 +977,13 @@ defmodule HerdrServer.ServerTest do
     :ok = Fake.Vt.set_cursor_shape(vt(1), :block_hollow)
     Fake.Pty.output(pty(1), "z")
     assert eventually(fn -> match?({_, _, %{x: 2, shape: :default}}, Rows.fetch(1)) end)
+  end
+
+  # waits out the Store's debounced mirror write: a fixed sleep loses to a loaded machine
+  defp mirrored do
+    assert eventually(fn ->
+             HerdrServer.Mirror.app() == Map.take(Store.snapshot(), [:session, :focus, :ui])
+           end)
   end
 
   defp eventually(fun, tries \\ 50) do

@@ -12,6 +12,9 @@ defmodule HerdrServer.Application do
   @impl true
   def start(_type, _args) do
     :ok = HerdrServer.Kernel.load()
+    # interactive mode loads modules lazily: a first View.compute would pay that inside its
+    # 50 ms budget, time out, and leave the client without a scene until the app changes
+    Handoff.Link.preload()
     keeper = HerdrServer.Kernel.keeper()
     # a configured fake keeper runs beside the real one (M1's own tests need Native.Keeper)
     fake_keeper = if keeper == HerdrServer.Native.Keeper, do: [], else: [keeper]
