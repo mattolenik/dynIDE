@@ -17,6 +17,7 @@ defmodule HerdrServer.Client.Remote.Carry do
 
   @max_carried 1_048_576
   @sent_ms 200
+  @internal_seq 4_611_686_018_427_387_904
 
   @doc "A blob whose info can start a session, or `:error`."
   @spec decode(binary) :: {:ok, map} | :error
@@ -59,14 +60,31 @@ defmodule HerdrServer.Client.Remote.Carry do
     :ignore
   end
 
+  @doc """
+  PREPARE: acks already in the mailbox are applied (and sent) first, so the blob's
+  `acked` is current; then the socket is frozen (see below).
+  """
   @spec freeze(map) :: map
-  def freeze(%{socket: nil} = state), do: %{state | frozen: true}
+  def freeze(state), do: state |> drain_acks() |> freeze_socket()
+
+  # the conn's own resize acks (from 2^62) stay for handle_info, which swallows them
+  defp drain_acks(state) do
+    receive do
+      {:ack, w} when is_integer(w) and w < @internal_seq ->
+        # not Out.out: pending scenes stay in the outbox (below)
+        drain_acks(Out.write(%{state | acked: max(state.acked, w)}, {:ack, w}))
+    after
+      0 -> state
+    end
+  end
+
+  defp freeze_socket(%{socket: nil} = state), do: %{state | frozen: true}
 
   # Pending scenes stay in the outbox (the next VM sends a full scene; THAW flushes them):
   # a send could block for send_timeout. A socket whose queued output does not leave the
   # driver in @sent_ms is dropped, not carried: those bytes would interleave with the next
   # VM's frames. Its client reconnects.
-  def freeze(state) do
+  defp freeze_socket(state) do
     _ = :inet.setopts(state.socket, active: false)
     state = drain_tcp(state)
 
