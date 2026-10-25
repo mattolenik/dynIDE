@@ -55,7 +55,8 @@ defmodule HerdrServer.Client.RemotePaneTest do
     Fake.Pty.output(pty(1), "before")
     p = pane!(ctx, 1, :observe)
     sc = scene!(p)
-    assert [%{id: 1, rect: %{x: 0, y: 0, w: 80}}] = sc.panes
+    # the pane at the origin, at its layout width (beside the M13 sidebar)
+    assert [%{id: 1, rect: %{x: 0, y: 0}}] = sc.panes
     assert sc.focus.pane == 1
     assert shows?({:scene, sc}, "before")
 
@@ -85,6 +86,8 @@ defmodule HerdrServer.Client.RemotePaneTest do
     Fake.Pty.output(pty(1), "tab one")
     assert recv_until(s, &shows?(&1, "tab one"))
     prefix!(s, 1, "c")
+    # M13: the new tab asks for its name first
+    :ok = send_frame(s, {:input, 3, Event.key(:enter)})
     assert [%{id: 2}] = scene_until(s, &match?([%{id: 2}], &1.panes)).panes
 
     p = pane!(ctx, 1, :observe)
@@ -92,7 +95,7 @@ defmodule HerdrServer.Client.RemotePaneTest do
 
     # hidden pane 1: nothing of it reaches the session client
     Fake.Pty.output(pty(1), "hidden out")
-    :ok = send_frame(s, {:input, 3, Event.key("y")})
+    :ok = send_frame(s, {:input, 4, Event.key("y")})
 
     seen =
       recv_until(s, fn f ->

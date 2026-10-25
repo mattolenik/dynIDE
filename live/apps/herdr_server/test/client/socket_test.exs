@@ -27,9 +27,9 @@ defmodule HerdrServer.Client.SocketTest do
 
   test "attach yields attached, then a scene with inline rows", ctx do
     s = attached!(attach(ctx))
-    assert {:scene, %Scene{panes: [%{rows: {:inline, rows}}]} = sc} = recv_frame(s)
+    assert {:scene, %Scene{panes: [%{rows: {:inline, rows}, rect: rect}]} = sc} = recv_frame(s)
     assert Scene.validate(sc) == :ok
-    assert length(rows) == 23
+    assert length(rows) == rect.h
   end
 
   test "bad token is refused and closed", ctx do

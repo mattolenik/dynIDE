@@ -116,8 +116,8 @@ defmodule HerdrServer.Client.RemoteTest do
     s = attached!(attach(ctx, client_id: "resume-me"), true)
     sc = scene!(s)
     assert mode_text(sc) == "PREFIX"
-    assert [%{rows: {:inline, rows}}] = sc.panes
-    assert length(rows) == 23
+    assert [%{rows: {:inline, rows}, rect: rect}] = sc.panes
+    assert length(rows) == rect.h
     assert {:input_mode, :prefix} = recv_until(s, &match?({:input_mode, _}, &1))
     assert conn("resume-me") == conn
     assert :sys.get_state(conn).session == session
