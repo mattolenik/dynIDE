@@ -1021,6 +1021,7 @@ Errors: `invalid_params`, `not_found`
 | `tab_id` | tab id |
 | `workspace_id` | workspace id |
 | `title` | string or null |
+| `label` | string or null |
 | `focused` | boolean |
 | `cols` | integer |
 | `rows` | integer |

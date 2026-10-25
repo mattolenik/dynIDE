@@ -87,6 +87,8 @@ defmodule HerdrServer.Api.View do
       tab_id: Ids.tab(ws.id, tab.id),
       workspace_id: Ids.workspace(ws.id),
       title: facts(app, id).title,
+      # herdr's `label`: the name `pane.rename` (or a plugin pane's entry title) set
+      label: get_in(app.session.panes, [id, :name]),
       focused: tab_focused?(app, ws, tab) and tab.layout.focus == id,
       cols: size.cols,
       rows: size.rows

@@ -91,6 +91,7 @@ defmodule HerdrServer.Api.SpecTest do
       "tab_id" => "w1:t1",
       "workspace_id" => "w1",
       "title" => nil,
+      "label" => nil,
       "focused" => true,
       "cols" => 80,
       "rows" => 24

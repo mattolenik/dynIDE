@@ -828,6 +828,7 @@ defmodule HerdrServer.Api.Spec do
         f("tab_id", :tab_id),
         f("workspace_id", :workspace_id),
         f("title", :null_or_string),
+        f("label", :null_or_string),
         f("focused", :boolean),
         f("cols", :integer),
         f("rows", :integer)

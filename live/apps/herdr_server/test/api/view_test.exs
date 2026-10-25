@@ -74,4 +74,13 @@ defmodule HerdrServer.Api.ViewTest do
     {app, _} = Actions.apply(app(), {:pane_title, 1, "vim"})
     assert View.pane(app, 1).title == "vim"
   end
+
+  test "label is the pane's name from pane.rename, nil after a clear" do
+    {app, _} = Commands.rename_pane(app(), 1, "editor")
+    assert View.pane(app, 1).label == "editor"
+    result = %{"type" => "pane_info", "pane" => stringify(View.pane(app, 1))}
+    assert Spec.validate_result("pane.get", result) == :ok
+    {app, _} = Commands.rename_pane(app, 1, "")
+    assert View.pane(app, 1).label == nil
+  end
 end
