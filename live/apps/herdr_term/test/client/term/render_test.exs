@@ -243,7 +243,8 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     assert_receive {:frame, _, _}
     send(render, {:scene, inline.([{1, Cells.text("rowone", @s)}])})
     assert_receive {:frame, _, _}
-    [r0, r1 | _] = Blit.screen(tty)
+    # the pane's rows sit at its rect (below the M13 tab bar)
+    [r0, r1 | _] = Enum.drop(Blit.screen(tty), p.rect.y)
     assert r0 =~ "rowzero" and r1 =~ "rowone"
   end
 

@@ -3,8 +3,12 @@ defmodule HerdrServer.Api.ViewTest do
 
   alias HerdrServer.Api.{Spec, View}
   alias HerdrServer.App.{Actions, Commands}
+  alias HerdrServer.View.Frame
 
   defp app, do: elem(Actions.init(%{cols: 80, rows: 24}), 0)
+
+  # the pane area of the frame (M13 sidebar, tab bar and status row)
+  defp area(app), do: Frame.regions(%{cols: 80, rows: 24}, app.ui).panes
 
   defp stringify(map), do: map |> JSON.encode!() |> JSON.decode!()
 
@@ -23,14 +27,17 @@ defmodule HerdrServer.Api.ViewTest do
     assert Spec.validate_result("workspace.create", result) == :ok
     assert result["workspace"]["focused"] and result["tab"]["focused"]
     assert result["root_pane"] == stringify(View.pane(app, 1))
-    assert %{"cols" => 80, "rows" => 23, "focused" => true, "title" => nil} = result["root_pane"]
+    %{w: w, h: h} = area(app)
+    assert %{"cols" => ^w, "rows" => ^h, "focused" => true, "title" => nil} = result["root_pane"]
   end
 
   test "pane sizes follow the layout and focus follows the layout" do
     {app, _} = Commands.split_pane(app(), 1, :horizontal, 0.5, true)
-    assert %{cols: c1, rows: 21, focused: false} = View.pane(app, 1)
+    %{w: w, h: h} = area(app)
+    rows = h - 2
+    assert %{cols: c1, rows: ^rows, focused: false} = View.pane(app, 1)
     assert %{cols: c2, focused: true} = View.pane(app, 2)
-    assert c1 + c2 == 80 - 4
+    assert c1 + c2 == w - 4
     assert View.pane(app, 99) == nil
   end
 
