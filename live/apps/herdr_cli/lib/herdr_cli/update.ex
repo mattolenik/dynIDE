@@ -10,12 +10,14 @@ defmodule HerdrCli.Update do
   `<lib>/.download/`, size and sha256 check, extract into `releases/.<V>.partial`, rename
   to `releases/<V>` (an existing `releases/<V>` that is that release is reused, never
   replaced). When a broker answers this instance (the runtime-dir env of `herdr-live
-  kernel-restart`), `herdr_broker kernel-restart -- <lib>/releases/<V>/bin/herdr_live
-  start` boots the new release; the broker keeps that VM argv only if the restart
+  kernel-restart`) and its VMs boot this `<lib>/releases/<x>` (else `foreign_broker`),
+  `herdr_broker kernel-restart -- <lib>/releases/<V>/bin/herdr_live start` boots the new
+  release; the broker keeps that VM argv only if the restart
   succeeds. `current` flips (a temp symlink renamed over it) only after that success, or
   when no instance runs, or with `--no-restart`; a failed restart leaves `current` and the
   broker on the old release and exits 1. After a flip, releases older than the previous
-  two are pruned; dot-names in `releases/` (stage and partial dirs) are never touched.
+  two are pruned, except one a live process runs (`ps`); dot-names in `releases/` (stage
+  and partial dirs) are never touched. http(s) honours `http(s)_proxy` / `no_proxy`.
 
   Manifest URL: `--manifest`, else `$HERDR_LIVE_UPDATE_URL`, else `releases/<V>/update.url`.
   Exit 0 updated or up to date, 1 refused (`{"code":..,"message":..}` on stderr), 2 usage.
@@ -103,7 +105,7 @@ defmodule HerdrCli.Update do
          {:ok, cur} <- running_version(ctx),
          {:ok, keys} <- keys(ctx, cur, env),
          {:ok, url} <- manifest_url(opts, ctx, cur, env),
-         :ok <- start_http(url),
+         :ok <- start_http(url, env),
          {:ok, bytes} <- fetch(url),
          {:ok, sig} <- fetch(url <> ".sig"),
          {:ok, m} <- verify(bytes, sig, keys) do
@@ -193,16 +195,53 @@ defmodule HerdrCli.Update do
     end
   end
 
-  defp start_http("http" <> _ = url) do
+  # `env` given: also (re)set httpc's proxies from it (they are per httpc profile, so a
+  # redirect's start_http(next) keeps them)
+  defp start_http(url, env \\ nil)
+
+  defp start_http("http" <> _ = url, env) do
     with {:ok, _} <- Application.ensure_all_started([:inets, :ssl]),
-         :ok <- if(String.starts_with?(url, "https:"), do: :public_key.cacerts_load(), else: :ok) do
+         :ok <- if(String.starts_with?(url, "https:"), do: :public_key.cacerts_load(), else: :ok),
+         :ok <- if(env, do: :httpc.set_options(proxy(env)), else: :ok) do
       :ok
     else
       {:error, r} -> fetch_error(url, "cannot start the http client: #{inspect(r, limit: 10)}")
     end
   end
 
-  defp start_http(_url), do: :ok
+  defp start_http(_url, _env), do: :ok
+
+  @doc false
+  # httpc proxy options from http(s)_proxy / no_proxy (lower case first, as curl): httpc
+  # ignores the env itself. `.example.com` in no_proxy is httpc's `*.example.com`.
+  @spec proxy(map()) :: keyword()
+  def proxy(env) do
+    get = fn k ->
+      Enum.find_value([k, String.upcase(k)], &(env[&1] not in [nil, ""] && env[&1]))
+    end
+
+    no =
+      (get.("no_proxy") || "")
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.map(&String.to_charlist(if String.starts_with?(&1, "."), do: "*" <> &1, else: &1))
+
+    for {opt, var} <- [proxy: "http_proxy", https_proxy: "https_proxy"],
+        hp <- proxy_host(get.(var)),
+        do: {opt, {hp, no}}
+  end
+
+  defp proxy_host(nil), do: []
+
+  defp proxy_host(url) do
+    url = if String.contains?(url, "://"), do: url, else: "http://" <> url
+
+    case URI.parse(url) do
+      %URI{host: h, port: p} when is_binary(h) and h != "" -> [{String.to_charlist(h), p || 80}]
+      _ -> []
+    end
+  end
 
   defp verify(bytes, sig, keys) do
     case Manifest.verify(bytes, sig, keys) do
@@ -440,7 +479,7 @@ defmodule HerdrCli.Update do
   end
 
   defp place_and_activate(art, lib, prev, v, opts, ctx) do
-    with :ok <- place(art, lib, v), do: activate(lib, prev, v, opts, ctx)
+    with :ok <- place(art, lib, v, ctx.env), do: activate(lib, prev, v, opts, ctx)
   end
 
   # one update per prefix at a time; the lock goes when this run ends (a killed run leaves
@@ -485,25 +524,24 @@ defmodule HerdrCli.Update do
   defp ok_text({:ok, text}), do: text
   defp ok_text(_), do: ""
 
-  # gone: `kill -0` says no such process (EPERM, another user's live pid, is not stale)
+  # gone: no /proc/<pid> where /proc exists (Linux), else `kill -0` fails (exit status only,
+  # no message text: locale-free; on macOS another user's live pid also fails, a lock in
+  # a prefix this user owns is this user's)
   defp stale?(pid) do
-    kill = System.find_executable("kill")
-
-    pid =~ ~r/\A[0-9]+\z/ and kill != nil and
-      case System.cmd(kill, ["-0", pid], stderr_to_stdout: true) do
-        {_, 0} -> false
-        {text, _} -> text =~ ~r/no such process/i
-      end
+    pid =~ ~r/\A[0-9]+\z/ and
+      if File.dir?("/proc/self"),
+        do: not File.exists?("/proc/#{pid}"),
+        else: elem(System.cmd("sh", ["-c", "kill -0 #{pid} 2>/dev/null"]), 1) != 0
   end
 
   # releases/<v>: an existing dir is reused when it is that release (an earlier update
   # whose restart failed, or the release a broker runs), never removed or replaced
-  defp place(art, lib, v) do
+  defp place(art, lib, v, env) do
     dest = Path.join([lib, "releases", v])
 
     cond do
       not File.exists?(dest) ->
-        with {:ok, tarball} <- fetch_artifact(art, lib, v), do: unpack(tarball, lib, v)
+        with {:ok, tarball} <- fetch_artifact(art, lib, v, env), do: unpack(tarball, lib, v)
 
       release_dir?(dest, v) ->
         :ok
@@ -558,13 +596,13 @@ defmodule HerdrCli.Update do
     end
   end
 
-  defp fetch_artifact(%{"url" => url, "size" => size, "sha256" => sha}, lib, v) do
+  defp fetch_artifact(%{"url" => url, "size" => size, "sha256" => sha}, lib, v, env) do
     dir = Path.join(lib, ".download")
     dest = Path.join(dir, "herdr-live-#{v}.tar.gz")
     File.rm_rf(dir)
 
     with :ok <- File.mkdir_p(dir),
-         :ok <- start_http(url),
+         :ok <- start_http(url, env),
          :ok <- download(url, dest, size) do
       got = sha256(dest)
       got_size = File.stat!(dest).size
@@ -683,19 +721,46 @@ defmodule HerdrCli.Update do
           lib,
           [prev, v | running(text)],
           v,
-          done <> "restart skipped (--no-restart); run herdr-live kernel-restart to boot #{v}\n"
+          done <> "restart skipped (--no-restart); run herdr-live kernel-restart to boot #{v}\n",
+          ctx
         )
 
       {text, 0} ->
-        kernel_restart(broker, lib, [prev, v | running(text)], {prev, v, done}, ctx)
+        if ours?(text, lib),
+          do: kernel_restart(broker, lib, [prev, v | running(text)], {prev, v, done}, ctx),
+          else: foreign(text, lib, prev, v)
 
       {_, 2} ->
-        flipped(lib, [prev, v], v, done <> "no running instance, restart skipped\n")
+        flipped(lib, [prev, v], v, done <> "no running instance, restart skipped\n", ctx)
 
       {text, code} ->
         {:error, :broker_unreachable,
          "the broker did not answer status (exit #{code}: #{String.trim(text)}); releases/#{v} is installed, current still points at #{prev}; retry herdr-live update"}
     end
+  end
+
+  # the broker on this runtime dir boots this install's releases/<x> (not a source checkout,
+  # nor another prefix's release): the same dir as `lib`, compared by inode (symlinked
+  # prefixes, macOS /private)
+  defp ours?(status, lib) do
+    with [_, dir] <- Regex.run(~r{^vm_argv=(.*)/releases/[^/\n]+/bin/herdr_live start$}m, status),
+         {:ok, a} <- File.stat(dir),
+         {:ok, b} <- File.stat(lib) do
+      {a.major_device, a.inode} == {b.major_device, b.inode}
+    else
+      _ -> false
+    end
+  end
+
+  defp foreign(status, lib, prev, v) do
+    argv =
+      case Regex.run(~r/^vm_argv=(.*)$/m, status) do
+        [_, a] -> a
+        nil -> "(none)"
+      end
+
+    {:error, :foreign_broker,
+     "the running broker's VMs boot #{argv}, not #{lib}/releases/<V>/bin/herdr_live start (a source checkout or another install); not restarting it. releases/#{v} is installed, current still points at #{prev}; stop that instance, or run update with its own HERDR_LIVE_RUNTIME_DIR"}
   end
 
   @doc false
@@ -709,9 +774,9 @@ defmodule HerdrCli.Update do
     end
   end
 
-  defp flipped(lib, keep, v, text) do
+  defp flipped(lib, keep, v, text, ctx) do
     with :ok <- flip(lib, v) do
-      prune(lib, keep)
+      prune(lib, keep, ctx)
       {:ok, text}
     end
   end
@@ -733,7 +798,7 @@ defmodule HerdrCli.Update do
   defp switched(lib, keep, {prev, v, text}, ctx) do
     case Map.get(ctx, :ping, &api_version/1).(ctx.env) do
       {:ok, ^v} ->
-        with {:error, _, msg} <- flipped(lib, keep, v, text) do
+        with {:error, _, msg} <- flipped(lib, keep, v, text, ctx) do
           {:error, :install_failed, "the instance runs #{v}, but #{msg}"}
         end
 
@@ -756,8 +821,33 @@ defmodule HerdrCli.Update do
     end
   end
 
-  # keep the new release, the one it replaced and one more; never a dot-name or a non-semver dir
-  defp prune(lib, keep) do
+  # keep the new release, the one it replaced and one more; never a dot-name, a non-semver
+  # dir, or a release a live process runs (another instance on its own runtime dir pinned to
+  # it: detection only, from `ps`; no ps output, no prune)
+  defp prune(lib, keep, ctx) do
+    with {:ok, ps} <- Map.get(ctx, :ps, &ps/0).() do
+      prune_unused(lib, keep ++ in_use(ps, ls(Path.join(lib, "releases"))))
+    end
+  end
+
+  @doc false
+  # The release dirs some process has in its argv (`.../herdr-live/releases/<n>/`: brokers have its bin/herdr_live, VMs its erts; any
+  # prefix, so a symlinked spelling of this one still counts; another prefix's same version
+  # only keeps one extra dir).
+  @spec in_use(String.t(), [String.t()]) :: [String.t()]
+  def in_use(ps, names),
+    do: Enum.filter(names, &String.contains?(ps, "herdr-live/releases/#{&1}/"))
+
+  defp ps do
+    with ps when is_binary(ps) <- System.find_executable("ps"),
+         {out, 0} <- System.cmd(ps, ["-A", "-o", "args="], stderr_to_stdout: true) do
+      {:ok, out}
+    else
+      _ -> :error
+    end
+  end
+
+  defp prune_unused(lib, keep) do
     rels = Path.join(lib, "releases")
 
     for(

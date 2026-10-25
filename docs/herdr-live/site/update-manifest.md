@@ -64,7 +64,10 @@ checkout, `herdr-live update --check` trusts only `HERDR_LIVE_UPDATE_PUBKEY`.
 
 One update runs per prefix at a time (`<prefix>/lib/herdr-live/.update.lock`, removed
 when the run ends; it holds the run's OS pid, and a lock whose pid no longer exists is
-taken over with a note on stderr).
+taken over with a note on stderr: no `/proc/<pid>` on Linux, `kill -0` failing on macOS).
+
+Downloads honour `http_proxy`, `https_proxy` and `no_proxy` (lower case first, then upper
+case; a `.example.com` entry in `no_proxy` matches its subdomains).
 
 1. Fetch and verify the manifest; compare `version` with the running release
    (`Version.compare`; `--check` stops here and prints `update available <v>` or
@@ -76,7 +79,10 @@ taken over with a note on stderr).
    sha256, extract into `releases/.<v>.partial` (only regular files and directories under
    `herdr-live-<v>/`), check `releases/start_erl.data` names `<v>`, rename to
    `releases/<v>`.
-3. If a broker answers on this instance (the runtime dir rule of `kernel-restart`), run
+3. If a broker answers on this instance (the runtime dir rule of `kernel-restart`), its
+   status `vm_argv=` must be `<prefix>/lib/herdr-live/releases/<x>/bin/herdr_live start` for
+   this prefix; a source checkout's broker or another prefix's release is refused
+   (`foreign_broker`, `current` unchanged, nothing restarted). Then run
    `herdr_broker kernel-restart -- <prefix>/lib/herdr-live/releases/<v>/bin/herdr_live start`:
    the restart target boots the new release and adopts every pane. The broker keeps that
    VM argv for later standbys, crash handoffs and restarts only if the restart succeeds.
@@ -89,8 +95,10 @@ taken over with a note on stderr).
 5. If the restart fails, the broker thaws the old VM and keeps its old argv; `current` is
    not touched and `releases/<v>` stays for a retry; exit 1 with `restart_failed`.
 6. After a flip, releases older than the previous two are removed, except the one the
-   running broker boots from (its status `vm_argv=`). Dot-names in
-   `releases/` are never touched.
+   running broker boots from (its status `vm_argv=`) and any release a live process has in
+   its argv (`ps -A -o args=` showing `.../herdr-live/releases/<n>/`: another instance on
+   its own runtime dir pinned to it; detection only, nothing is killed; when `ps` cannot
+   run, nothing is pruned). Dot-names in `releases/` are never touched.
 
 In a release the broker's VM argv is always pinned to a resolved
 `<prefix>/lib/herdr-live/releases/<x>/bin/herdr_live start`, never `current`: a start
@@ -105,7 +113,7 @@ replaced; a full stop and start picks up a new one.
 on stderr, `{"code": "...", "message": "..."}`, with `code` one of `no_trusted_keys`,
 `no_manifest_url`, `fetch_failed`, `bad_signature`, `bad_schema`, `unsupported_schema`,
 `not_installed`, `no_artifact`, `locked`, `size_mismatch`, `sha256_mismatch`,
-`bad_tarball`, `install_failed`, `broker_unreachable`, `restart_failed`,
+`bad_tarball`, `install_failed`, `broker_unreachable`, `foreign_broker`, `restart_failed`,
 `restart_did_not_switch`. Every refusal
 leaves `current` as it was.
 

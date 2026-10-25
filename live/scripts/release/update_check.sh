@@ -15,6 +15,10 @@
 #     fails, update exits 1 restart_failed, current never left 0.1.2, the old VM thawed
 #     (ping 0.1.2, same panes and pids), releases/0.1.3 kept, and a standby booted from the
 #     broker's unchanged 0.1.2 argv is ready within 30 s
+#   other instance: a second instance (own runtime and state dirs) runs releases/0.0.8 (a
+#     copy of 0.1.0; releases/0.0.9 is an empty decoy, so 0.0.8 is a prune candidate); it
+#     survives the http and file updates: releases/0.0.8 kept, it still answers ping, and
+#     its broker's VM argv is still releases/0.0.8
 # Then log_summary.py on the instance log must end with `session_losses=0 -> OK`.
 # PASS/FAIL lines like release_smoke.sh; kills only the pids it started.
 set -u
@@ -24,12 +28,13 @@ tmp=$(mktemp -d)
 tmp=$(cd "$tmp" && pwd -P)
 log=$tmp/state/herdr-live/herdr-live.log
 
-pid='' hpid=''
+pid='' hpid='' pid2=''
+log2=$tmp/state2/herdr-live/herdr-live.log
 # shellcheck disable=SC2329 # invoked via cleanup
-vm_pids() { sed -n 's/.*herdr-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$log" 2>/dev/null; }
+vm_pids() { sed -n 's/.*herdr-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$log" "$log2" 2>/dev/null; }
 # shellcheck disable=SC2329 # invoked via trap
 cleanup() {
-  for p in $pid $hpid $(vm_pids); do kill -KILL "$p" 2>/dev/null; done
+  for p in $pid $pid2 $hpid $(vm_pids); do kill -KILL "$p" 2>/dev/null; done
   rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -136,6 +141,30 @@ done
 "$x" "$bin" pane wait-output "$p1" --match 3000 --timeout 10000 >/dev/null || fail "seq did not finish"
 echo "PASS: 0.1.0 running, panes $(echo "$ids" | paste -sd' ' -), shell pids$pids"
 
+# the other instance: releases/0.0.8 (0.1.0's files), its own runtime and state dirs
+cp -R "$lib/releases/0.1.0" "$lib/releases/0.0.8" || fail "copy 0.0.8"
+mkdir "$lib/releases/0.0.9" || fail "mkdir 0.0.9"
+sed "s#XDG_STATE_HOME=\"$tmp/state\"#XDG_STATE_HOME=\"$tmp/state2\"#; s#HERDR_LIVE_RUNTIME_DIR=\"$tmp/rt\"#HERDR_LIVE_RUNTIME_DIR=\"$tmp/rt2\"#" "$x" >"$tmp/x2.sh"
+chmod +x "$tmp/x2.sh"
+x2=$tmp/x2.sh bin2=$lib/releases/0.0.8/bin/herdr-live
+# shellcheck disable=SC2016 # expanded by the inner sh
+"$x2" sh -c 'cd / && HERDR_LIVE_HEADLESS=1 exec "$0"' "$bin2" </dev/null >"$tmp/start2.out" 2>&1 &
+pid2=$!
+i=0
+until "$x2" "$bin2" ping >/dev/null 2>&1; do
+  i=$((i + 1))
+  kill -0 "$pid2" 2>/dev/null || fail "other instance exited: $(cat "$tmp/start2.out")"
+  [ "$i" -lt 40 ] || fail "other instance: no ping within 20 s"
+  sleep 0.5
+done
+other() { # the other instance after an update: its release kept, it answers, still pinned
+  [ -d "$lib/releases/0.0.8" ] || fail "$1: prune removed releases/0.0.8, which the other instance runs"
+  "$x2" "$bin2" ping >/dev/null 2>&1 || fail "$1: the other instance does not answer ping"
+  "$x2" "$bin2" status 2>&1 | grep -qxF "vm_argv=$lib/releases/0.0.8/bin/herdr_live start" ||
+    fail "$1: other instance vm argv $("$x2" "$bin2" status 2>&1 | grep '^vm_argv=')"
+}
+echo "PASS: other instance on its own runtime dir runs releases/0.0.8"
+
 tick() { "$x" "$bin" pane read "$p2" --source recent | sed -n 's/^tick\([0-9]*\)$/\1/p' | tail -n 1; }
 same() { # after an update or a refusal: version, panes, pids, scrollback, the date pane ticks
   [ "$(version)" = "$1" ] || fail "$2: ping reports $(version) (wanted $1)"
@@ -160,6 +189,7 @@ done
 update "http://127.0.0.1:$port/http/manifest.json" >"$tmp/out" 2>"$tmp/err" || fail "http update: $(cat "$tmp/out" "$tmp/err")"
 grep -q "updated 0.1.0 -> 0.1.1" "$tmp/out" || fail "http update: $(cat "$tmp/out")"
 same 0.1.1 http
+other http
 "$x" "$bin" status 2>&1 | grep -q '^vm_argv=.*/releases/0.1.1/bin/herdr_live start$' ||
   fail "http: broker vm argv is not releases/0.1.1: $("$x" "$bin" status 2>&1 | grep '^vm_argv=')"
 echo "INFO: update said: $(paste -sd' ' - <"$tmp/out")"
@@ -168,6 +198,11 @@ echo "PASS: http update to 0.1.1 through kernel-restart: same panes, pids alive,
 update "file://$serve/file/manifest.json" >"$tmp/out" 2>"$tmp/err" || fail "file update: $(cat "$tmp/out" "$tmp/err")"
 same 0.1.2 file
 echo "PASS: file:// update to 0.1.2 through kernel-restart: same panes, pids alive, scrollback kept, date ticking"
+other file
+echo "PASS: other instance survived two updates: releases/0.0.8 kept (prune skips a release a live process runs), ping ok, still pinned"
+kill -TERM "$pid2"
+wait "$pid2" || fail "other instance exit status $?"
+pid2=''
 
 update "file://$serve/broken/manifest.json" >"$tmp/out" 2>"$tmp/err" && fail "broken update exit 0"
 grep -q '"code":"restart_failed"' "$tmp/err" || fail "broken update: $(cat "$tmp/err")"

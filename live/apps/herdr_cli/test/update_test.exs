@@ -20,7 +20,9 @@ defmodule HerdrCli.UpdateTest do
       root: Path.join(lib, "current"),
       os: "macos",
       arch: "aarch64",
-      ping: fn _ -> {:ok, "0.1.1"} end
+      ping: fn _ -> {:ok, "0.1.1"} end,
+      # no other process runs a release (the host's own are not this test's)
+      ps: fn -> {:ok, ""} end
     }
 
     {:ok, tmp: tmp, lib: lib, pub: pub, priv: priv, tarball: tarball, ctx: ctx}
@@ -118,6 +120,14 @@ defmodule HerdrCli.UpdateTest do
 
   defp current(lib), do: File.read_link!(Path.join(lib, "current"))
 
+  # a broker answers status on this instance, its VMs booting `vm_lib`/releases/0.1.0
+  defp serving(lib, vm_lib \\ nil) do
+    bin = Path.join(lib, "releases/0.1.0/bin")
+    File.write!(Path.join(bin, "status"), "0")
+    vm = Path.join([vm_lib || lib, "releases/0.1.0/bin/herdr_live"])
+    File.write!(Path.join(bin, "status_text"), "phase=idle\nvm_argv=#{vm} start\n")
+  end
+
   test "a sha256 mismatch refuses and leaves current", c do
     url = write_manifest(c.tmp, c.tarball, c.priv, %{"sha256" => String.duplicate("0", 64)})
     {code, _out, err} = update(["--manifest", url, "--yes"], c.ctx)
@@ -197,7 +207,7 @@ defmodule HerdrCli.UpdateTest do
   end
 
   test "success flips current, restarts the instance and prunes", c do
-    File.write!(Path.join(c.lib, "releases/0.1.0/bin/status"), "0")
+    serving(c.lib)
     url = write_manifest(c.tmp, c.tarball, c.priv)
     {code, out, err} = update(["--manifest", url, "--yes"], c.ctx)
     assert {code, err} == {0, ""}
@@ -224,7 +234,7 @@ defmodule HerdrCli.UpdateTest do
   end
 
   test "a failed kernel-restart leaves current and the new release; a retry reuses it", c do
-    File.write!(Path.join(c.lib, "releases/0.1.0/bin/status"), "0")
+    serving(c.lib)
     File.write!(Path.join(c.lib, "releases/0.1.0/bin/restart"), "1")
     url = write_manifest(c.tmp, c.tarball, c.priv)
     {code, _out, err} = update(["--manifest", url, "--yes"], c.ctx)
@@ -257,7 +267,7 @@ defmodule HerdrCli.UpdateTest do
   end
 
   test "a restart that reports ok but leaves the old version answering does not flip", c do
-    File.write!(Path.join(c.lib, "releases/0.1.0/bin/status"), "0")
+    serving(c.lib)
     url = write_manifest(c.tmp, c.tarball, c.priv)
     ctx = %{c.ctx | ping: fn _ -> {:ok, "0.1.0"} end}
     {1, _out, err} = update(["--manifest", url, "--yes"], ctx)
@@ -280,6 +290,84 @@ defmodule HerdrCli.UpdateTest do
     # kept: new, replaced, the pinned 0.0.7, and the newest other (0.0.9); 0.0.8 goes
     assert c.lib |> Path.join("releases") |> File.ls!() |> Enum.sort() ==
              ~w(.stage.123 0.0.7 0.0.9 0.1.0 0.1.1)
+  end
+
+  test "a broker of a source checkout or another prefix is not restarted (foreign_broker)", c do
+    other = Path.join(c.tmp, "other/lib/herdr-live")
+    fake_release(Path.join(other, "releases/0.1.0"), "0.1.0", c.pub)
+    bin = Path.join(c.lib, "releases/0.1.0/bin")
+    url = write_manifest(c.tmp, c.tarball, c.priv)
+
+    for text <- [
+          "vm_argv=elixir --erl -noshell -noinput +Bi -S mix run --no-halt\n",
+          "vm_argv=#{other}/releases/0.1.0/bin/herdr_live start\n",
+          "phase=idle\n"
+        ] do
+      File.write!(Path.join(bin, "status"), "0")
+      File.write!(Path.join(bin, "status_text"), text)
+      {1, _out, err} = update(["--manifest", url, "--yes"], c.ctx)
+      assert %{"code" => "foreign_broker", "message" => msg} = JSON.decode!(err)
+      assert msg =~ "current still points at 0.1.0"
+      assert current(c.lib) == "releases/0.1.0"
+      refute File.exists?(Path.join(bin, "restart_args"))
+    end
+  end
+
+  test "this prefix through a symlinked path is not foreign", c do
+    link = Path.join(c.tmp, "linked")
+    File.ln_s!(Path.join(c.tmp, "pre fix"), link)
+    serving(c.lib, Path.join(link, "lib/herdr-live"))
+    url = write_manifest(c.tmp, c.tarball, c.priv)
+    assert {0, out, ""} = update(["--manifest", url, "--yes"], c.ctx)
+    assert out =~ "kernel-restart: restarted"
+    assert current(c.lib) == "releases/0.1.1"
+  end
+
+  test "prune keeps a release another process runs, and prunes nothing without ps", c do
+    fake_release(Path.join(c.lib, "releases/0.0.7"), "0.0.7", c.pub)
+    # another instance (its own runtime dir) pinned to 0.0.7, through any prefix spelling
+    ps =
+      "/bin/zsh\n/x/y/lib/herdr-live/current/bin/herdr_broker run -- /x/y/lib/herdr-live/releases/0.0.7/bin/herdr_live start\n"
+
+    url = write_manifest(c.tmp, c.tarball, c.priv)
+    {0, _out, ""} = update(["--manifest", url, "--yes"], %{c.ctx | ps: fn -> {:ok, ps} end})
+    # kept: new, replaced, the running 0.0.7 and the newest other (0.0.9); 0.0.8 goes
+    assert c.lib |> Path.join("releases") |> File.ls!() |> Enum.sort() ==
+             ~w(.stage.123 0.0.7 0.0.9 0.1.0 0.1.1)
+  end
+
+  test "prune does nothing when ps cannot run", c do
+    url = write_manifest(c.tmp, c.tarball, c.priv)
+    {0, _out, ""} = update(["--manifest", url, "--yes"], %{c.ctx | ps: fn -> :error end})
+
+    assert c.lib |> Path.join("releases") |> File.ls!() |> Enum.sort() ==
+             ~w(.stage.123 0.0.8 0.0.9 0.1.0 0.1.1)
+  end
+
+  test "in_use/2 names the releases in process argv" do
+    ps =
+      "beam.smp -- -root /p re/lib/herdr-live/releases/0.0.8 -bindir /p re/lib/herdr-live/releases/0.0.8/erts-16/bin\n"
+
+    assert Update.in_use(ps, ~w(0.0.8 0.0.80 0.0.9)) == ["0.0.8"]
+    assert Update.in_use("", ~w(0.0.8)) == []
+  end
+
+  test "proxy/1 reads http(s)_proxy and no_proxy from the env, lower case first" do
+    assert Update.proxy(%{}) == []
+
+    assert Update.proxy(%{
+             "HTTPS_PROXY" => "http://p.example:3128",
+             "http_proxy" => "proxy.lan:8080",
+             "HTTP_PROXY" => "http://ignored:1",
+             "NO_PROXY" => "localhost, .corp.example,,10.0.0.1"
+           }) == [
+             proxy: {{~c"proxy.lan", 8080}, [~c"localhost", ~c"*.corp.example", ~c"10.0.0.1"]},
+             https_proxy:
+               {{~c"p.example", 3128}, [~c"localhost", ~c"*.corp.example", ~c"10.0.0.1"]}
+           ]
+
+    assert Update.proxy(%{"https_proxy" => "", "HTTPS_PROXY" => "http://u:3128"}) ==
+             [https_proxy: {{~c"u", 3128}, []}]
   end
 
   test "a broker that does not answer status leaves current and exits 1", c do
