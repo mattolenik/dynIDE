@@ -98,6 +98,82 @@ defmodule HerdrServer.Kernel.Fake.Vt do
     do: GenServer.call(vt, {:screen_rows, first, last})
 
   @impl HerdrServer.Kernel.Vt
+  def search(vt, query, %{from: from, direction: dir} = opts) do
+    from = if dir == :backward, do: min(from, max(scrollbar(vt).total - 1, 0)), else: from
+    search_with({__MODULE__, :screen_rows, [vt]}, query, %{opts | from: from})
+  end
+
+  @doc """
+  `Native.Vt.search/3`'s contract over a `screen_rows/3`-shaped reader `{m, f, a}`
+  (called as `apply(m, f, a ++ [first, last])`), in Elixir: the fake's search, and the
+  reference matcher for tests. Going backward, `from` must be a row that exists.
+  """
+  def search_with(_read, "", _opts), do: {:ok, [], :done}
+
+  def search_with(read, query, opts) do
+    fold = if opts.case_sensitive, do: & &1, else: &String.downcase/1
+    dir = if opts.direction == :forward, do: 1, else: -1
+    scan(read, {fold.(query), fold}, opts.from, opts.max_rows, dir, opts.max_matches, [])
+  end
+
+  @window 200
+
+  defp scan(read, q, row, left, dir, max, acc) do
+    n = min(left, @window)
+    {a, b} = if dir == 1, do: {row, row + n - 1}, else: {max(row - n + 1, 0), row}
+    rows = for {r, packed, _} <- read_rows(read, a, b), do: {r, packed}
+    rows = if dir == 1, do: rows, else: Enum.reverse(rows)
+
+    case scan_rows(rows, q, left, dir, max, acc, dir == 1 and length(rows) < n) do
+      {:stop, acc, next} -> {:ok, Enum.reverse(acc), past_end(read, next)}
+      {:more, acc, left} -> scan(read, q, row + dir * n, left, dir, max, acc)
+    end
+  end
+
+  # like the kernel: :done when the row after the stop row does not exist
+  defp past_end(read, next) when is_integer(next),
+    do: if(read_rows(read, next, next) == [], do: :done, else: next)
+
+  defp past_end(_read, next), do: next
+
+  defp read_rows({m, f, args}, a, b), do: apply(m, f, args ++ [a, b])
+
+  defp scan_rows([], _q, left, _dir, _max, acc, false), do: {:more, acc, left}
+  defp scan_rows([], _q, _left, _dir, _max, acc, true), do: {:stop, acc, :done}
+
+  defp scan_rows([{r, packed} | rest], q, left, dir, max, acc, short?) do
+    acc = Enum.reverse(row_matches(packed, r, q), acc)
+    next = r + dir
+
+    cond do
+      next < 0 or (rest == [] and short?) -> {:stop, acc, :done}
+      left == 1 or length(acc) >= max -> {:stop, acc, next}
+      true -> scan_rows(rest, q, left - 1, dir, max, acc, short?)
+    end
+  end
+
+  # non-overlapping matches on one row's glyphs (wide tails skipped, empty reads as a
+  # space) that start and end on glyph boundaries, as {row, col, len}
+  defp row_matches(packed, r, {q, fold}) do
+    tc =
+      for {c, x} <- packed |> Cell.decode_row() |> Enum.with_index(), c.width != 0 do
+        {if(c.glyph == "", do: " ", else: fold.(c.glyph)), x, x + max(c.width, 1) - 1}
+      end
+
+    {bin, starts, ends, _} =
+      Enum.reduce(tc, {[], %{}, %{}, 0}, fn {g, x1, x2}, {bin, s, e, off} ->
+        stop = off + byte_size(g)
+        {[bin, g], Map.put(s, off, x1), Map.put(e, stop, x2), stop}
+      end)
+
+    for {pos, len} <- :binary.matches(IO.iodata_to_binary(bin), q),
+        x1 = starts[pos],
+        x2 = ends[pos + len],
+        x1 != nil and x2 != nil,
+        do: {r, x1, x2 - x1 + 1}
+  end
+
+  @impl HerdrServer.Kernel.Vt
   def resize(vt, cols, rows, _cell_px), do: GenServer.call(vt, {:resize, cols, rows})
 
   @impl HerdrServer.Kernel.Vt

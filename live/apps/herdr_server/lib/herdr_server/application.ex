@@ -45,6 +45,7 @@ defmodule HerdrServer.Application do
         ] ++
         detect_watcher() ++
         [
+          {Task.Supervisor, name: HerdrServer.Client.Tasks},
           HerdrServer.Client.Supervisor,
           HerdrServer.Client.Endpoint,
           HerdrServer.ReloadNotices,

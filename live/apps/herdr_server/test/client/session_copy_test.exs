@@ -137,6 +137,51 @@ defmodule HerdrServer.Client.SessionCopyTest do
     assert eventually(fn -> Fake.Vt.scrollbar(vt(1)).offset == bottom end)
   end
 
+  test "a search runs off the session: it answers during a 20_000-row miss" do
+    {a, sa} = client()
+    scene_until(a, &(&1.panes != []))
+    :ok = Fake.Vt.set_history(vt(1), for(i <- 1..20_000, do: "h#{i}"))
+
+    keys(sa, a, [{"b", [:ctrl]}, "[", "?", "z", "q", "x"])
+    t0 = System.monotonic_time(:millisecond)
+    keys(sa, a, [:enter])
+    assert %{copy: %CopyMode{pending: id, task: task}} = :sys.get_state(sa)
+    assert is_integer(id) and Process.alive?(task)
+
+    {us, %{copy: %{task: ^task}}} = :timer.tc(fn -> :sys.get_state(sa) end)
+    assert us < 50_000
+
+    assert_receive {^a, {:notice, %{text: "no match for zqx"}}}, 30_000
+    took = System.monotonic_time(:millisecond) - t0
+    assert %{copy: %CopyMode{pending: nil, match: nil, task: nil}} = :sys.get_state(sa)
+    # the miss outlasted the ping by far: the session was not waiting on it
+    assert took > 50
+  end
+
+  test "a newer search cancels the older; leaving copy mode cancels it too" do
+    {a, sa} = client()
+    scene_until(a, &(&1.panes != []))
+    :ok = Fake.Vt.set_history(vt(1), for(i <- 1..20_000, do: "h#{i}"))
+
+    keys(sa, a, [{"b", [:ctrl]}, "[", "?", "z", :enter])
+    %{copy: %{pending: old, task: first}} = :sys.get_state(sa)
+    ref = Process.monitor(first)
+    keys(sa, a, ["?", "y", :enter])
+    assert_receive {:DOWN, ^ref, :process, ^first, :killed}, 500
+    %{copy: %{pending: new, task: second}} = :sys.get_state(sa)
+    assert new > old
+
+    # the stale result of the old id is dropped
+    send(sa, {:copy_search, old, {:ok, nil}})
+    assert %{copy: %{pending: ^new}} = :sys.get_state(sa)
+
+    ref = Process.monitor(second)
+    keys(sa, a, ["q"])
+    assert_receive {:DOWN, ^ref, :process, ^second, :killed}, 500
+    assert %{copy: nil} = :sys.get_state(sa)
+    refute_received {^a, {:notice, %{text: "no match" <> _}}}
+  end
+
   test "focus moving off the copy pane ends copy mode" do
     {a, sa} = client()
     {b, sb} = client()

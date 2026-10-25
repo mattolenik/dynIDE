@@ -2,6 +2,7 @@ defmodule HerdrServer.Client.CopyModeTest.Reader do
   @moduledoc false
   # A fake `screen_rows`: `lines` is a tuple of text lines or `{text, :wrap}` (soft wrap).
   alias HerdrScene.Cell
+  alias HerdrServer.Kernel.Fake
 
   def rows(lines, first, last) do
     last = Enum.min([last, first + 999, tuple_size(lines) - 1])
@@ -19,6 +20,16 @@ defmodule HerdrServer.Client.CopyModeTest.Reader do
       pad = List.duplicate(%Cell{}, max(80 - length(cells), 0))
       {y, Cell.encode_row(cells ++ pad), wrapped}
     end
+  end
+
+  # a fake `Native.Vt.search/3` over the same lines (the Elixir reference matcher)
+  def search(lines, query, opts),
+    do: Fake.Vt.search_with({__MODULE__, :rows, [lines]}, query, opts)
+
+  # `search/3` that tells `pid` each call's options
+  def logged_search(lines, pid, query, opts) do
+    send(pid, {:search, opts})
+    search(lines, query, opts)
   end
 
   # `rows/3` that tells `pid` the size of each read
@@ -54,17 +65,35 @@ defmodule HerdrServer.Client.CopyModeTest do
       scroll: %{total: tuple_size(lines), viewport: @h, offset: offset},
       h: @h,
       w: @w,
-      read: {Reader, :rows, [lines]}
+      read: {Reader, :rows, [lines]},
+      search: {Reader, :search, [lines]}
     }
+
+  defp with_lines(ctx, lines),
+    do: %{ctx | read: {Reader, :rows, [lines]}, search: {Reader, :search, [lines]}}
 
   defp enter(ctx, cursor), do: CopyMode.enter(@id, Map.put(ctx, :cursor, cursor))
 
+  # a key, with a search it asks for run at once (as the session's task would)
   defp keys(t, ctx, keys) do
     Enum.reduce(keys, {t, []}, fn
-      k, {%CopyMode{} = t, _} -> CopyMode.key(t, key(k), ctx)
+      k, {%CopyMode{} = t, _} -> t |> CopyMode.key(key(k), ctx) |> searched(ctx)
       _k, exited -> exited
     end)
   end
+
+  defp searched({%CopyMode{} = t, actions}, ctx) do
+    case Enum.split_with(actions, &match?({:search, _, _}, &1)) do
+      {[{:search, id, req}], rest} ->
+        {t, more} = CopyMode.found(t, id, CopyMode.search(req), ctx)
+        {t, rest ++ more}
+
+      {[], _} ->
+        {t, actions}
+    end
+  end
+
+  defp searched(exit, _ctx), do: exit
 
   defp key({k, mods}), do: Event.key(k, mods)
   defp key(k), do: Event.key(k)
@@ -361,10 +390,46 @@ defmodule HerdrServer.Client.CopyModeTest do
              keys(enter(c, {0, 0}), c, ["/", "n", "e", "e", "d", "l", "e", :enter])
 
     near = lines(%{19_999 => "needle"}, 20_100)
-    c = %{c | read: {Reader, :rows, [near]}}
+    c = with_lines(c, near)
 
     assert {%CopyMode{match: {{0, 19_999}, _}}, _} =
              keys(enter(c, {0, 0}), c, ["/", "n", "e", "e", "d", "l", "e", :enter])
+  end
+
+  test "a miss searches in kernel calls of at most 2000 rows, 20_000 in total" do
+    far = lines(%{}, 20_100)
+    c = %{ctx(far, 0) | scroll: %{total: 20_100, viewport: @h, offset: 0}}
+    t = enter(c, {0, 0})
+    {t, [{:search, id, req}]} = keys(t, c, ["/", "z"]) |> elem(0) |> CopyMode.key(key(:enter), c)
+    assert t.pending == id
+    assert %{query: "z", case_sensitive: false, dir: :forward, cursor: {0, 0}} = req
+
+    assert CopyMode.search(%{req | search: {Reader, :logged_search, [far, self()]}}) == nil
+    sizes = collect_searches([])
+    assert Enum.max(sizes) == 2000
+    assert Enum.sum(sizes) == 20_000
+  end
+
+  defp collect_searches(acc) do
+    receive do
+      {:search, %{max_rows: n, max_matches: 1}} -> collect_searches([n | acc])
+    after
+      0 -> acc
+    end
+  end
+
+  test "found/4 drops a stale or cancelled result" do
+    c = ctx(lines(%{250 => "bar"}), 200)
+    {t, _} = keys(enter(c, {0, 0}), c, ["/", "b"])
+    {t, [{:search, id, req}]} = CopyMode.key(t, key(:enter), c)
+    hit = CopyMode.search(req)
+    assert {^t, []} = CopyMode.found(t, id - 1, hit, c)
+
+    # Esc cancels: the result arrives after it
+    {cleared, []} = CopyMode.key(t, key(:escape), c)
+    assert {^cleared, []} = CopyMode.found(cleared, id, hit, c)
+
+    assert {%CopyMode{cursor: {0, 250}, pending: nil}, _} = CopyMode.found(t, id, hit, c)
   end
 
   describe "wrap-around" do
@@ -419,11 +484,11 @@ defmodule HerdrServer.Client.CopyModeTest do
       assert hd(@wrapped) in n
 
       # cursor 20_099: forward 1 row, wrap 19_999 rows (0..19_998)
-      far = %{c | read: {Reader, :rows, [lines(%{19_950 => "needle"}, 20_100)]}}
+      far = with_lines(c, lines(%{19_950 => "needle"}, 20_100))
       assert {%{cursor: {0, 19_950}}, n} = keys(enter(far, {0, 20_099}), far, q)
       assert hd(@wrapped) in n
 
-      past = %{c | read: {Reader, :rows, [lines(%{19_999 => "needle"}, 20_100)]}}
+      past = with_lines(c, lines(%{19_999 => "needle"}, 20_100))
 
       assert {%{match: nil}, [{:notice, %{text: "no match for needle"}}]} =
                keys(enter(past, {0, 20_099}), past, q)

@@ -54,6 +54,14 @@ defmodule HerdrServer.Kernel.Vt do
   @callback screen_rows(vt, non_neg_integer, non_neg_integer) :: [
               {non_neg_integer, row, boolean}
             ]
+  @callback search(vt, binary, %{
+              max_rows: pos_integer,
+              max_matches: pos_integer,
+              case_sensitive: boolean,
+              from: non_neg_integer,
+              direction: :forward | :backward
+            }) ::
+              {:ok, [{non_neg_integer, non_neg_integer, pos_integer}], non_neg_integer | :done}
   @callback set_colors(vt, colors) :: :ok
   @callback set_color_scheme(vt, :dark | :light | nil) :: :ok
   @callback modify_other_keys(vt) :: boolean | {:stale, boolean}

@@ -155,7 +155,14 @@ defmodule HerdrServer.Client.PointerIo do
           _ -> nil
         end
 
-      %{scroll: scroll, h: r.h, w: r.w, read: {Kernel.vt(), :screen_rows, [vt]}, cursor: cursor}
+      %{
+        scroll: scroll,
+        h: r.h,
+        w: r.w,
+        read: {Kernel.vt(), :screen_rows, [vt]},
+        search: {Kernel.vt(), :search, [vt]},
+        cursor: cursor
+      }
     else
       _ -> nil
     end

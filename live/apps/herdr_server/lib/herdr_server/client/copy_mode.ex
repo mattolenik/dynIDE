@@ -10,12 +10,17 @@ defmodule HerdrServer.Client.CopyMode do
   `top` stands (this mode's own `{:scroll_top}` cast may not have landed). `entry` the offset saved
   at entry (`:bottom` when the pane was at the bottom), restored on exit.
 
-  `key/3` takes a context `%{scroll, h, w, read}`: `scroll` is the pane's live
-  `%{total, viewport, offset}`, `h`/`w` its size and `read` an `{m, f, a}` called as
+  `key/3` takes a context `%{scroll, h, w, read, search}`: `scroll` is the pane's live
+  `%{total, viewport, offset}`, `h`/`w` its size, `read` an `{m, f, a}` called as
   `apply(m, f, a ++ [first, last])`, returning `[{row, packed_row, wrapped}]` for
-  inclusive absolute rows (`Native.Vt.screen_rows/3`). It returns `{t, actions}` or
+  inclusive absolute rows (`Native.Vt.screen_rows/3`), and `search` one called as
+  `apply(m, f, a ++ [query, opts])` (`Native.Vt.search/3`). It returns `{t, actions}` or
   `{:exit, actions}`; actions are `{:scroll_top, id, row}`, `{:scroll_bottom, id}`,
-  `{:copy, id, from, to}` and `{:notice, map}`, executed by `Client.PointerIo.run/3`.
+  `{:copy, id, from, to}` and `{:notice, map}`, executed by `Client.PointerIo.run/3`, and
+  `{:search, id, request}`, which the caller runs off its process with `search/1` and
+  hands back to `found/4` (`id` is monotonic: `pending` names the one awaited, so a newer
+  search, Esc or leaving makes an older result stale and `found/4` drops it). `task` is the
+  caller's running search process, kept here for it (set and cleared by the caller).
 
   Keys: `h j k l` and arrows, `C-b C-f` / PageUp PageDown (h - 2 rows), `C-u C-d`
   (h / 2; 1 row when h <= 2), `g G`, `0`/Home, `$`/End, `^`, `w b e W B E` (classes
@@ -23,10 +28,11 @@ defmodule HerdrServer.Client.CopyMode do
   at most 1000 rows), `v`/space and `V` (re-anchor a char or line selection), `y`/Enter
   (copy the selection, else the current match, and exit), `q` (exit), Esc (clear the
   selection and search, then exit), `/ ?` (prompt; Enter submits, Esc closes; smart case;
-  at most 4096 bytes), `n N`. Searches read rows in windows of 200 from the cursor, at
-  most 20_000 rows in total. A search that reaches the end (`/`, `n`) or the top (`?`, `N`)
-  without a match wraps once to the other end and notes `search wrapped`; the wrapped leg
-  spends what is left of the same 20_000-row budget, so a miss never costs more.
+  at most 4096 bytes), `n N`. Searches run in the kernel (`search` from the context) in
+  calls of at most 2000 rows from the cursor, at most 20_000 rows in total. A search that
+  reaches the end (`/`, `n`) or the top (`?`, `N`) without a match wraps once to the other
+  end and notes `search wrapped`; the wrapped leg spends what is left of the same
+  20_000-row budget, so a miss never costs more.
   """
 
   alias HerdrScene.Cell
@@ -46,7 +52,9 @@ defmodule HerdrServer.Client.CopyMode do
           prompt: nil | %{dir: :forward | :backward, query: binary},
           search: nil | %{dir: :forward | :backward, query: binary},
           match: nil | {pos, pos},
-          matches: [{pos, pos}]
+          matches: [{pos, pos}],
+          pending: nil | integer,
+          task: nil | pid
         }
 
   defstruct pane: nil,
@@ -59,12 +67,17 @@ defmodule HerdrServer.Client.CopyMode do
             prompt: nil,
             search: nil,
             match: nil,
-            matches: []
+            matches: [],
+            pending: nil,
+            task: nil
 
   @separators "!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~" |> String.graphemes() |> MapSet.new()
   @query_max 4096
   @search_window 200
+  @search_chunk 2000
   @search_rows 20_000
+  @visible_matches 10_000
+  @wrapped {:notice, %{level: :info, text: "search wrapped"}}
   @paragraph_rows 1000
   @word_rows 4096
   @word_window 64
@@ -164,7 +177,7 @@ defmodule HerdrServer.Client.CopyMode do
   @doc "Handles one key event (see moduledoc)."
   @spec key(t, tuple, map) :: {t, [tuple]} | {:exit, [tuple]}
   def key(t, {:key, %{event: :release}}, _ctx), do: {t, []}
-  def key(t, ev, ctx), do: keyed(observe(t, ctx.scroll.offset), ev, ctx)
+  def key(t, ev, ctx), do: keyed(observe(Map.merge(%__MODULE__{}, t), ctx.scroll.offset), ev, ctx)
 
   defp observe(%{seen: live} = t, live), do: t
   defp observe(t, live), do: %{t | top: live, seen: live}
@@ -244,7 +257,7 @@ defmodule HerdrServer.Client.CopyMode do
   defp run(%{anchor: nil, search: nil, match: nil} = t, :escape, _ctx), do: {:exit, leave(t)}
 
   defp run(t, :escape, _ctx),
-    do: {%{t | anchor: nil, search: nil, match: nil, matches: []}, []}
+    do: {%{t | anchor: nil, search: nil, match: nil, matches: [], pending: nil}, []}
 
   defp run(t, {:prompt, dir}, _ctx), do: {%{t | prompt: %{dir: dir, query: ""}}, []}
   defp run(%{search: nil} = t, {:next, _}, _ctx), do: {t, []}
@@ -307,39 +320,68 @@ defmodule HerdrServer.Client.CopyMode do
 
   # --- search ---
 
-  defp find(%{search: %{query: q}, cursor: {x, y}} = t, dir, ctx) do
-    case search(q, {x, y}, dir, ctx) do
-      {{a, _} = m, wrapped?} ->
-        notice = if wrapped?, do: [{:notice, %{level: :info, text: "search wrapped"}}], else: []
-        {%{t | cursor: a, match: m}, notice}
+  # asks the caller to run the search (see `search/1`); `found/4` applies the result
+  defp find(%{search: %{query: q}, cursor: cursor} = t, dir, ctx) do
+    id = System.unique_integer([:monotonic])
 
-      nil ->
-        {%{t | match: nil}, [{:notice, %{level: :info, text: "no match for " <> q}}]}
+    req = %{
+      query: q,
+      case_sensitive: String.downcase(q) != q,
+      dir: dir,
+      cursor: cursor,
+      last: last(ctx),
+      search: ctx.search
+    }
+
+    {%{t | pending: id}, [{:search, id, req}]}
+  end
+
+  @doc """
+  Applies the result of the search `id` (`search/1`): the cursor goes to the match (with
+  a `search wrapped` notice when it wrapped), or a `no match` notice. A stale `id` (not
+  `pending`) changes nothing.
+  """
+  @spec found(t, integer, {{pos, pos}, boolean} | nil, map) :: {t, [tuple]}
+  def found(t, id, result, ctx) do
+    case observe(Map.merge(%__MODULE__{}, t), ctx.scroll.offset) do
+      %{pending: ^id, search: %{query: q}} = t ->
+        t = %{t | pending: nil}
+
+        case result do
+          {{a, _} = m, true} -> {%{t | cursor: a, match: m}, [@wrapped]}
+          {{a, _} = m, false} -> {%{t | cursor: a, match: m}, []}
+          nil -> {%{t | match: nil}, [{:notice, %{level: :info, text: "no match for " <> q}}]}
+        end
+        |> refresh(ctx)
+
+      t ->
+        {t, []}
     end
   end
 
-  # First leg from the cursor; if it ran into the buffer end within budget, one wrapped leg
-  # from the other end over the remaining budget (cursor row included). Returns {match, wrapped?}.
-  defp search(q, {x, y}, :forward, ctx) do
-    last = last(ctx)
-
-    case scan(q, y, min(y + @search_rows - 1, last), 1, ctx, fn r, mx -> r > y or mx > x end) do
+  @doc """
+  Runs a `{:search, id, request}` action's search through the kernel (`request.search`):
+  first leg from the cursor; if it ran into the buffer end within budget, one wrapped leg
+  from the other end over the remaining budget (cursor row included). Returns
+  `{{from, to}, wrapped?}` or nil. Reads at most 20_000 rows in calls of 2000.
+  """
+  @spec search(map) :: {{pos, pos}, boolean} | nil
+  def search(%{dir: :forward, cursor: {x, y}, last: last} = req) do
+    case scan(req, y, min(y + @search_rows - 1, last), 1, fn r, mx -> r > y or mx > x end) do
       nil when y + @search_rows - 1 >= last ->
         left = @search_rows - (last - y + 1)
-        wrap(scan(q, 0, min(y, left - 1), 1, ctx, fn _, _ -> true end))
+        wrap(scan(req, 0, min(y, left - 1), 1, fn _, _ -> true end))
 
       m ->
         m && {m, false}
     end
   end
 
-  defp search(q, {x, y}, :backward, ctx) do
-    last = last(ctx)
-
-    case scan(q, y, max(y - @search_rows + 1, 0), -1, ctx, fn r, mx -> r < y or mx < x end) do
+  def search(%{dir: :backward, cursor: {x, y}, last: last} = req) do
+    case scan(req, y, max(y - @search_rows + 1, 0), -1, fn r, mx -> r < y or mx < x end) do
       nil when y - @search_rows + 1 <= 0 ->
         left = @search_rows - (y + 1)
-        wrap(scan(q, last, max(y, last - left + 1), -1, ctx, fn _, _ -> true end))
+        wrap(scan(req, last, max(y, last - left + 1), -1, fn _, _ -> true end))
 
       m ->
         m && {m, false}
@@ -350,25 +392,35 @@ defmodule HerdrServer.Client.CopyMode do
   defp wrap(m), do: {m, true}
 
   # first match (in `dir` order) over rows from..to accepted by `ok?.(row, match_x)`
-  defp scan(q, from, to, 1, ctx, ok?) do
-    from
-    |> windows(to, 1, @search_window)
-    |> Stream.flat_map(fn {first, l} -> read(ctx, first, l) end)
-    |> Enum.find_value(fn {r, cells} ->
-      Enum.find(row_matches(cells, r, q), fn {{mx, _}, _} -> ok?.(r, mx) end)
-    end)
+  defp scan(req, from, to, dir, ok?) do
+    rows = (to - from) * dir + 1
+    if rows > 0, do: scan_chunk(req, from, rows, dir, ok?)
   end
 
-  defp scan(q, from, to, -1, ctx, ok?) do
-    from
-    |> windows(to, -1, @search_window)
-    |> Stream.flat_map(fn {first, l} -> ctx |> read(first, l) |> Enum.reverse() end)
-    |> Enum.find_value(fn {r, cells} ->
-      cells
-      |> row_matches(r, q)
-      |> Enum.reverse()
-      |> Enum.find(fn {{mx, _}, _} -> ok?.(r, mx) end)
-    end)
+  # max_matches 1: the kernel stops after the first row with a match, returning all of it
+  defp scan_chunk(req, from, rows, dir, ok?) do
+    opts = %{
+      max_rows: min(rows, @search_chunk),
+      max_matches: 1,
+      case_sensitive: req.case_sensitive,
+      from: from,
+      direction: if(dir == 1, do: :forward, else: :backward)
+    }
+
+    {:ok, ms, next} = call(req.search, req.query, opts)
+    ms = if dir == 1, do: ms, else: Enum.reverse(ms)
+
+    case Enum.find(ms, fn {r, mx, _} -> ok?.(r, mx) end) do
+      {r, mx, len} ->
+        {{mx, r}, {mx + len - 1, r}}
+
+      nil when next == :done ->
+        nil
+
+      nil ->
+        left = rows - (next - from) * dir
+        if left > 0, do: scan_chunk(req, next, left, dir, ok?)
+    end
   end
 
   # inclusive row windows of `n` rows from `from` towards `to`, in reading order
@@ -382,29 +434,18 @@ defmodule HerdrServer.Client.CopyMode do
 
   defp visible_matches(%{search: nil}, _ctx), do: []
 
+  # the viewport's matches: one bounded kernel call of h rows (smart case)
   defp visible_matches(%{search: %{query: q}, top: top}, ctx) do
-    for {r, cells} <- read(ctx, top, min(top + ctx.h - 1, last(ctx))),
-        m <- row_matches(cells, r, q),
-        do: m
-  end
+    opts = %{
+      max_rows: max(min(top + ctx.h - 1, last(ctx)) - top + 1, 1),
+      max_matches: @visible_matches,
+      case_sensitive: String.downcase(q) != q,
+      from: top,
+      direction: :forward
+    }
 
-  # non-overlapping matches of `q` on one row, as {{x1, r}, {x2, r}} (smart case)
-  defp row_matches(cells, r, q) do
-    fold = if String.downcase(q) == q, do: &String.downcase/1, else: & &1
-    tc = cells |> Words.text_cells() |> List.to_tuple()
-
-    {bin, starts, ends, _} =
-      Enum.reduce(0..(tuple_size(tc) - 1)//1, {[], %{}, %{}, 0}, fn i, {bin, s, e, off} ->
-        g = tc |> elem(i) |> elem(0) |> then(&if(&1 == "", do: " ", else: fold.(&1)))
-        stop = off + byte_size(g)
-        {[bin, g], Map.put(s, off, i), Map.put(e, stop, i), stop}
-      end)
-
-    for {pos, len} <- :binary.matches(IO.iodata_to_binary(bin), fold.(q)),
-        si = starts[pos],
-        ei = ends[pos + len],
-        si != nil and ei != nil,
-        do: {{elem(elem(tc, si), 1), r}, {elem(elem(tc, ei), 2), r}}
+    {:ok, ms, _} = call(ctx.search, q, opts)
+    for {r, x, len} <- ms, do: {{x, r}, {x + len - 1, r}}
   end
 
   # --- word motions: a lazy stream of {x | nil, row, class} from the cursor ---
@@ -521,7 +562,7 @@ defmodule HerdrServer.Client.CopyMode do
   defp read(ctx, first, l),
     do: for({r, packed, _} <- call(ctx.read, first, l), do: {r, Cell.decode_row(packed)})
 
-  defp call({m, f, a}, first, l), do: apply(m, f, a ++ [first, l])
+  defp call({m, f, a}, x1, x2), do: apply(m, f, a ++ [x1, x2])
 
   defp last(ctx), do: max(ctx.scroll.total - 1, 0)
   defp max_top(total, h), do: max(total - h, 0)

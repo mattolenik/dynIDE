@@ -81,6 +81,10 @@ defmodule HerdrServer.Client.Session do
   every key and the session hands presses to `CopyMode.key/3` (guarded, context from
   `PointerIo.copy_context/2`), executing its actions with `PointerIo.run/3`. Its exit,
   a failure, or the copy pane losing the app focus sets the mode back to `:terminal`.
+  A `{:search, id, req}` action runs `CopyMode.search/1` in a `Client.Tasks` child
+  (`copy.task`; a newer search or leaving copy mode kills the older), which sends
+  `{:copy_search, id, result}` back; `CopyMode.found/4` drops a stale id. The session
+  never waits on a search.
 
   Navigate mode (M17): while the mode is `:navigate`, each pushed app refreshes
   `state.navigate` (`%{ids, at}`, the workspaces in sidebar order; on entry `at` is the
@@ -356,6 +360,27 @@ defmodule HerdrServer.Client.Session do
     if p.selection == sel and p.press == nil,
       do: {:noreply, repaint(%{state | pointer: %{p | selection: nil}})},
       else: {:noreply, state}
+  end
+
+  def handle_info({:copy_search, id, result}, state) do
+    state = Map.merge(%State{}, state)
+
+    case state.copy do
+      %CopyMode{pending: ^id} = c ->
+        new = copy_found(%{state | copy: %{c | task: nil}}, id, result)
+
+        # the pane went away or the step failed: copy mode ended
+        if new.mode != state.mode do
+          send(new.client, {:input_mode, new.mode})
+          Mirror.put({:client, new.client}, presentation(new))
+        end
+
+        {:noreply, new}
+
+      # stale: a newer search, Esc or leaving copy mode
+      _ ->
+        {:noreply, state}
+    end
   end
 
   # stale damage for closed panes, unknown messages: ignore
@@ -725,11 +750,74 @@ defmodule HerdrServer.Client.Session do
     end
   end
 
-  defp copy_left(state, actions), do: copy_run(%{state | mode: :terminal, copy: nil}, actions)
-
-  defp copy_run(state, []), do: state
+  defp copy_left(state, actions),
+    do: copy_run(%{copy_cancel(state) | mode: :terminal, copy: nil}, actions)
 
   defp copy_run(state, actions) do
+    {searches, actions} = Enum.split_with(actions, &match?({:search, _, _}, &1))
+
+    searches |> Enum.reduce(state, &copy_search(&2, &1)) |> copy_io(actions)
+  end
+
+  defp copy_search(state, {:search, id, req}) do
+    state = copy_cancel(state)
+    args = [self(), id, req]
+
+    # a VM hot-reloaded onto this code without a restart has no Client.Tasks
+    sup = Process.whereis(HerdrServer.Client.Tasks)
+    started = sup && Task.Supervisor.start_child(sup, __MODULE__, :copy_search, args)
+
+    case started do
+      {:ok, pid} ->
+        %{state | copy: %{state.copy | task: pid}}
+
+      other ->
+        state = %{state | copy: state.copy && %{state.copy | pending: nil}}
+        notice(state, %{level: :error, text: "copy mode search failed: #{inspect(other)}"})
+    end
+  end
+
+  @doc false
+  # a `Client.Tasks` child: one copy-mode search, its result sent to `session`
+  def copy_search(session, id, req) do
+    result =
+      case Guard.run_twice(CopyMode, :search, [req], guard()) do
+        {:ok, found} -> {:ok, found}
+        failed -> {:failed, failed}
+      end
+
+    send(session, {:copy_search, id, result})
+  end
+
+  defp copy_cancel(%{copy: %CopyMode{task: pid} = copy} = state) when is_pid(pid) do
+    Process.exit(pid, :kill)
+    %{state | copy: %{copy | task: nil}}
+  end
+
+  defp copy_cancel(state), do: state
+
+  defp copy_found(%{copy: copy} = state, id, {:ok, result}) do
+    ctx = Guard.run_twice(PointerIo, :copy_context, [copy.pane, state.last_scene], guard())
+
+    with {:ok, %{} = ctx} <- ctx,
+         {:ok, {%CopyMode{} = new, actions}} when is_list(actions) <-
+           Guard.run_twice(CopyMode, :found, [copy, id, result, ctx], guard()) do
+      state = copy_run(%{state | copy: new}, actions)
+      if new != copy, do: repaint(state), else: state
+    else
+      {:ok, nil} -> copy_left(state, copy_leave(copy))
+      failed -> copy_failed(state, copy, failed)
+    end
+  end
+
+  defp copy_found(%{copy: copy} = state, _id, {:failed, why}) do
+    state = %{state | copy: %{copy | pending: nil}}
+    notice(state, %{level: :error, text: "copy mode search failed: #{inspect(why)}"})
+  end
+
+  defp copy_io(state, []), do: state
+
+  defp copy_io(state, actions) do
     io = %{client: state.client, size: driving_size(state)}
 
     # impure: never re-run
