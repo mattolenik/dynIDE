@@ -41,6 +41,10 @@ defmodule HerdrServer.Api.EventsTest do
 
   defp store_subscriber?(pid), do: Map.has_key?(:sys.get_state(Store).subs, pid)
 
+  # the app is in the mirror and no debounced flush is pending: a restarted Store starts
+  # from it
+  defp mirrored?, do: HerdrServer.Mirror.app() != nil and :sys.get_state(Store).flush == nil
+
   defp wait_until(f, n \\ 400) do
     cond do
       f.() -> :ok
@@ -168,8 +172,8 @@ defmodule HerdrServer.Api.EventsTest do
     s = subscribe!(path, [%{"type" => "pane.created"}])
     hub = Process.whereis(Events)
     assert store_subscriber?(hub)
-    # let the mirror catch up, then a supervised stop and restart (no restart intensity)
-    Process.sleep(100)
+    # the mirror caught up, then a supervised stop and restart (no restart intensity)
+    wait_until(&mirrored?/0)
     :ok = Supervisor.terminate_child(HerdrServer.Supervisor, Store)
     {:ok, _} = Supervisor.restart_child(HerdrServer.Supervisor, Store)
     wait_until(fn -> store_subscriber?(hub) end)
@@ -189,7 +193,7 @@ defmodule HerdrServer.Api.EventsTest do
     # a move effect whose app never arrives (the Store goes down first)
     send(hub, {:api_event, {:workspace_moved, 1, 0}})
     wait_until(fn -> :sys.get_state(hub).pending != [] end)
-    Process.sleep(100)
+    wait_until(&mirrored?/0)
     :ok = Supervisor.terminate_child(HerdrServer.Supervisor, Store)
     {:ok, _} = Supervisor.restart_child(HerdrServer.Supervisor, Store)
     wait_until(fn -> store_subscriber?(hub) end)
