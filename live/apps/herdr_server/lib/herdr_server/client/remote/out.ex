@@ -30,7 +30,7 @@ defmodule HerdrServer.Client.Remote.Out do
 
   @registry HerdrServer.Client.Remote.Registry
 
-  @doc "Queues a scene or rows in the outbox; a scene loses the root's sound command."
+  @doc "Queues a scene or rows in the outbox; a scene loses the root's sound command and paths."
   @spec put(map, tuple) :: map
   def put(state, msg) do
     msg = local_only(msg)
@@ -46,9 +46,11 @@ defmodule HerdrServer.Client.Remote.Out do
     end
   end
 
-  # [ui.sound] command is for in-VM clients: a socket client never gets a command to run
-  defp local_only({:scene, %{chrome: %{props: %{sound: %{command: _} = snd}}} = scene}),
-    do: {:scene, put_in(scene.chrome.props.sound, Map.delete(snd, :command))}
+  # [ui.sound] command and paths are for in-VM clients: a socket client uses its own
+  defp local_only({:scene, %{chrome: %{props: %{sound: %{} = snd}}} = scene}),
+    do:
+      {:scene,
+       put_in(scene.chrome.props.sound, Map.drop(snd, [:command, :done_path, :request_path]))}
 
   defp local_only(msg), do: msg
 

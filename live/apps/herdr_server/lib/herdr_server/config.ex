@@ -21,7 +21,10 @@ defmodule HerdrServer.Config do
   `"symbols"`), `prompt_new_tab_name`, `window_title` (template of `{hostname}`,
   `{workspace}`, `{tab}`, `{pane}`, `{terminal_title}`); `[ui.sound]` `enabled`,
   `command` (run by an in-VM terminal client with the sound name as its last argument;
-  never sent to a socket client, which runs its own `HERDR_LIVE_SOUND_COMMAND`);
+  never sent to a socket client, which runs its own `HERDR_LIVE_SOUND_COMMAND`),
+  `done_path`, `request_path` (sound files played instead of the built-in ones, same
+  rule: socket clients use `HERDR_LIVE_SOUND_DONE_PATH` / `_REQUEST_PATH`; unset keys
+  are absent from `ui.sound`);
   `[ui.toast]` `delivery`
   (`off | herdr | terminal | system`), `delay_seconds` (0..3600); `[theme]` `name`,
   `auto_switch`, `light_name`, `dark_name`; `[worktrees]` `directory` (new checkouts go
@@ -65,6 +68,8 @@ defmodule HerdrServer.Config do
     {:ui, ["window_title"], :string, [:window_title]},
     {:ui, ["sound", "enabled"], :bool, [:sound, :enabled]},
     {:ui, ["sound", "command"], :string, [:sound, :command]},
+    {:ui, ["sound", "done_path"], :string, [:sound, :done_path]},
+    {:ui, ["sound", "request_path"], :string, [:sound, :request_path]},
     {:ui, ["toast", "delivery"], {:enum, ~w(off herdr terminal system)}, [:toast, :delivery]},
     {:ui, ["toast", "delay_seconds"], :delay, [:toast, :delay_ms]},
     {:theme, ["name"], :string, [:theme, :name]},

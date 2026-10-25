@@ -172,6 +172,8 @@ defmodule HerdrServer.ConfigTest do
     [ui.sound]
     enabled = false
     command = "say"
+    done_path = "~/done.mp3"
+    request_path = "/r.mp3"
 
     [ui.toast]
     delivery = "terminal"
@@ -192,7 +194,14 @@ defmodule HerdrServer.ConfigTest do
     assert ui.prompt_new_tab_name == false
     assert ui.pane_borders == :off
     assert ui.tab_bar == %{position: :bottom, hide_single: true}
-    assert ui.sound == %{enabled: false, command: "say"}
+
+    assert ui.sound == %{
+             enabled: false,
+             command: "say",
+             done_path: "~/done.mp3",
+             request_path: "/r.mp3"
+           }
+
     assert ui.toast == %{delivery: :terminal, delay_ms: 3000}
     assert ui.theme == %{name: "nord", auto_switch: true, light: "one-light", dark: "dracula"}
 

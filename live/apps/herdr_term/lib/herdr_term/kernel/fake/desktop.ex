@@ -26,6 +26,13 @@ defmodule HerdrTerm.Kernel.Fake.Desktop do
   def open_url("https://" <> _ = url), do: call(:open_url, url)
   def open_url(url) when is_binary(url), do: {:error, :bad_url}
 
+  @impl true
+  def notify(title, body) when is_binary(title) and is_binary(body),
+    do: call(:notify, {title, body})
+
+  @impl true
+  def play(path) when is_binary(path), do: call(:play, path)
+
   defp call(fun, arg) do
     case :persistent_term.get(@key, nil) do
       {pid, result} ->

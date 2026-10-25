@@ -197,6 +197,14 @@ defmodule HerdrIntegration.ArchitectureTest do
            {:scene, View.compute(dapp, state.(:navigate, navigate: %{ids: [1, 2], at: 1}))}}
         ]
 
+    # every toast delivery and sound pref the client reads off the root (M17)
+    prefs =
+      for d <- [:off, :herdr, :terminal, :system] do
+        ui = %{app.ui | toast: %{app.ui.toast | delivery: d}}
+        ui = %{ui | sound: Map.merge(ui.sound, %{done_path: "/d.mp3", request_path: "/r.mp3"})}
+        {"scene delivery #{d}", {:scene, View.compute(%{app | ui: ui}, state.(:terminal, []))}}
+      end
+
     # one status state per reload/handoff outcome
     statuses =
       for {n, ev} <- [
@@ -246,6 +254,7 @@ defmodule HerdrIntegration.ArchitectureTest do
       end
 
     scenes ++
+      prefs ++
       drags ++
       statuses ++
       graphics(split, state.(:terminal, [])) ++

@@ -73,4 +73,12 @@ defmodule HerdrTerm.Native do
   @doc false
   @spec desktop_open_url(binary()) :: :ok | {:error, :unavailable | :bad_url}
   def desktop_open_url(_url), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  @spec desktop_notify(binary(), binary()) :: :ok | {:error, :unavailable}
+  def desktop_notify(_title, _body), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  @spec desktop_play(binary()) :: :ok | {:error, :unavailable}
+  def desktop_play(_path), do: :erlang.nif_error(:nif_not_loaded)
 end

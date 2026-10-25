@@ -378,14 +378,26 @@ defmodule HerdrTerm.Client.Term.RenderTest do
       sound: sound
     }
 
-  test "terminal delivery writes OSC 9; a sound without a command is BEL", %{
+  test "terminal delivery writes OSC 9 (an unknown terminal, no tmux)", %{
     render: render,
     tty: tty
   } do
-    alert_scene(render, %{toast: %{delivery: :terminal}, sound: %{enabled: true}})
+    :sys.replace_state(render, &%{&1 | notify_env: %{}})
+    alert_scene(render, %{toast: %{delivery: :terminal}, sound: %{enabled: false}})
     send(render, {:alert, alert(:done)})
     _ = :sys.get_state(render)
-    assert Tty.written(tty) =~ "\e]9;pi finished: w\a\a"
+    assert Tty.written(tty) =~ "\e]9;pi finished: w\e\\"
+  end
+
+  test "terminal delivery under tmux in kitty: OSC 99 in a DCS passthrough", %{
+    render: render,
+    tty: tty
+  } do
+    :sys.replace_state(render, &%{&1 | notify_env: %{"KITTY_WINDOW_ID" => "1", "TMUX" => "x"}})
+    alert_scene(render, %{toast: %{delivery: :terminal}, sound: %{enabled: false}})
+    send(render, {:alert, alert(:done)})
+    _ = :sys.get_state(render)
+    assert Tty.written(tty) =~ "\ePtmux;\e\e]99;i=1:d=0;pi finished\e\e\\"
   end
 
   @tag :tmp_dir
@@ -402,7 +414,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
   end
 
   @tag :tmp_dir
-  test "an inline client never runs a command from the scene: BEL instead", %{
+  test "an inline client never runs a command from the scene: the sound file instead", %{
     render: render,
     tty: tty,
     tmp_dir: dir
@@ -412,7 +424,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     alert_scene(render, %{sound: %{enabled: true, command: script(dir, out)}})
     send(render, {:alert, alert(:done)})
     _ = :sys.get_state(render)
-    assert Tty.written(tty) =~ "\a"
+    refute Tty.written(tty) =~ "\a"
     Process.sleep(100)
     refute File.exists?(out)
   end

@@ -59,7 +59,12 @@ defmodule HerdrServer.App.Ui do
           confirm_close: boolean(),
           onboarding: boolean(),
           toast: %{delivery: atom(), delay_ms: non_neg_integer()},
-          sound: %{enabled: boolean(), command: binary() | nil},
+          sound: %{
+            :enabled => boolean(),
+            :command => binary() | nil,
+            optional(:done_path) => binary(),
+            optional(:request_path) => binary()
+          },
           prompt_new_tab_name: boolean(),
           pane_borders: :auto | :always | :off,
           window_title: binary(),

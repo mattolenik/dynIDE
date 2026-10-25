@@ -341,6 +341,18 @@ mod nif {
         desktop_result(env, crate::desktop::open_url(&url))
     }
 
+    /// Spawns the desktop notifier (osascript / notify-send); a kernel thread reaps it.
+    #[rustler::nif(schedule = "DirtyIo")]
+    fn desktop_notify<'a>(env: Env<'a>, title: String, body: String) -> Term<'a> {
+        desktop_result(env, crate::desktop::notify(&title, &body))
+    }
+
+    /// Spawns an audio player for `path`; a kernel thread reaps it.
+    #[rustler::nif(schedule = "DirtyIo")]
+    fn desktop_play<'a>(env: Env<'a>, path: String) -> Term<'a> {
+        desktop_result(env, crate::desktop::play(&path))
+    }
+
     #[rustler::nif]
     fn tty_kitty_keyboard(tty: ResourceArc<TtyResource>) -> Option<u16> {
         tty.inner.kitty()

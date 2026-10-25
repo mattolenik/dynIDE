@@ -18,6 +18,8 @@ prompt_new_tab_name = true
 [ui.sound]
 enabled = true
 # command = "afplay"         # run with the sound name as its last argument
+# done_path = "~/done.mp3"    # instead of the built-in sound (in-VM client only)
+# request_path = "~/req.mp3"
 
 [ui.toast]
 delivery = "herdr"           # "off" | "herdr" | "terminal" | "system"

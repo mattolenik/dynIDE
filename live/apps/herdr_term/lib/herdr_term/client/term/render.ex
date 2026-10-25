@@ -28,11 +28,17 @@ defmodule HerdrTerm.Client.Term.Render do
 
   Window title: the scene root's `:window_title` goes out as OSC 0 only when it changes.
 
-  Alerts: `{:alert, a}` runs `Alert.actions/2` over the root props: OSC 9 through the
-  tty; a sound runs the sound command with the sound name as its last argument (a port,
-  fire and forget; a missing command logs once), else writes BEL. An in-VM (`:ref`) client
-  runs the scene's `sound.command` (`[ui.sound] command`); an `:inline` client never runs a
-  command it received over the wire, only its own (`sound_command/0`).
+  Alerts: `{:alert, a}` runs `Alert.actions/3` over the root props and this client's
+  notification environment (`TERM_PROGRAM`, `TERM`, `KITTY_WINDOW_ID`, `TMUX`, read at
+  start): OSC 9 / OSC 99 through the tty, `:system` delivery through the desktop
+  notifier (a failure logs). A sound runs the sound command with the sound name as its
+  last argument (a port, fire and forget; a missing command logs once); without one it
+  plays the sound file through the desktop player, and writes BEL only when no player
+  spawns. The file is the configured path when it is a regular file (`~` expanded), else
+  the built-in `priv/sounds/<done|request>.mp3`. An in-VM (`:ref`) client takes the
+  command and paths from the scene (`[ui.sound] command`, `done_path`, `request_path`);
+  an `:inline` client never uses ones it received over the wire, only its own
+  (`sound_command/0`, `sound_path/1`).
 
   `{:detached, reason}` and
   `{:handoff, map}` go to `Tty.Owner`.
@@ -97,6 +103,7 @@ defmodule HerdrTerm.Client.Term.Render do
     :images_mfa,
     :cell_px,
     :title,
+    notify_env: %{},
     hover: nil,
     hovered: nil,
     transport: :ref,
@@ -133,7 +140,8 @@ defmodule HerdrTerm.Client.Term.Render do
        colorfgbg: colorfgbg,
        appearance: Detect.appearance(nil, colorfgbg),
        transport: Keyword.get(opts, :transport, :ref),
-       kitty: kitty()
+       kitty: kitty(),
+       notify_env: Map.take(System.get_env(), ~w(TERM_PROGRAM TERM KITTY_WINDOW_ID TMUX))
      }}
   end
 
@@ -266,12 +274,12 @@ defmodule HerdrTerm.Client.Term.Render do
     {:noreply, state}
   end
 
-  # a protocol alert: OSC 9, BEL or the sound command, per the scene root's props
+  # a protocol alert: OSC 9/99, a desktop notification, a sound or BEL, per the root props
   def handle_info({:alert, a}, state) do
     state = Map.merge(%__MODULE__{}, state)
     props = (state.scene && state.scene.chrome && state.scene.chrome.props) || %{}
 
-    case Guard.run_twice(Alert, :actions, [a, props], scan: false) do
+    case Guard.run_twice(Alert, :actions, [a, props, state.notify_env], scan: false) do
       {:ok, actions} -> {:noreply, Enum.reduce(actions, state, &perform(&2, &1, props))}
       {:failed, _} -> {:noreply, state}
     end
@@ -350,17 +358,25 @@ defmodule HerdrTerm.Client.Term.Render do
 
   # alerts
 
-  defp perform(state, {:osc9, text}, _props), do: tty_write(state, ["\e]9;", text, "\a"])
+  defp perform(state, {:write, bytes}, _props), do: tty_write(state, bytes)
 
-  defp perform(state, {:sound, name}, props) do
-    cmd =
+  defp perform(state, {:system, title, body}, _props) do
+    with {:error, why} <- Kernel.desktop().notify(title, body || ""),
+         do: Logger.warning("desktop notification failed: #{inspect(why)}")
+
+    state
+  end
+
+  defp perform(state, {:sound, sound}, props) when sound in [:done, :request] do
+    {cmd, path} =
       if state.transport == :inline,
-        do: sound_command(),
-        else: get_in(props, [:sound, :command])
+        do: {sound_command(), sound_path(sound)},
+        else: {get_in(props, [:sound, :command]), get_in(props, [:sound, path_key(sound)])}
 
-    case cmd do
-      nil -> tty_write(state, "\a")
-      cmd -> play(state, cmd, name)
+    cond do
+      cmd -> play(state, cmd, Atom.to_string(sound))
+      Kernel.desktop().play(sound_file(path, sound)) == :ok -> state
+      true -> tty_write(state, "\a")
     end
   end
 
@@ -377,6 +393,29 @@ defmodule HerdrTerm.Client.Term.Render do
       "" -> nil
       cmd -> cmd
     end
+  end
+
+  @doc """
+  The client-local sound file for `:done` / `:request`: `$HERDR_LIVE_SOUND_DONE_PATH` /
+  `$HERDR_LIVE_SOUND_REQUEST_PATH`; nil (the built-in sound) when unset.
+  """
+  @spec sound_path(:done | :request) :: binary | nil
+  def sound_path(:done), do: non_empty(System.get_env("HERDR_LIVE_SOUND_DONE_PATH"))
+  def sound_path(:request), do: non_empty(System.get_env("HERDR_LIVE_SOUND_REQUEST_PATH"))
+
+  defp non_empty(""), do: nil
+  defp non_empty(v), do: v
+
+  defp path_key(:done), do: :done_path
+  defp path_key(:request), do: :request_path
+
+  # a configured path that is not a file falls back to the built-in sound
+  defp sound_file(path, sound) do
+    expanded = is_binary(path) && Path.expand(path)
+
+    if expanded && File.regular?(expanded),
+      do: expanded,
+      else: Path.join([:code.priv_dir(:herdr_term), "sounds", "#{sound}.mp3"])
   end
 
   defp tty_write(state, data) do

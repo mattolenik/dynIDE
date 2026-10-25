@@ -17,40 +17,57 @@ defmodule HerdrTerm.Client.Term.AlertTest do
     do: %{toast: %{delivery: delivery}, sound: %{enabled: enabled}}
 
   test "herdr delivery draws from the scene: only the sound" do
-    assert Alert.actions(alert(), props(:herdr)) == [{:sound, "done"}]
-    assert Alert.actions(alert(:request), props(:herdr)) == [{:sound, "request"}]
+    assert Alert.actions(alert(), props(:herdr)) == [{:sound, :done}]
+    assert Alert.actions(alert(:request), props(:herdr)) == [{:sound, :request}]
     assert Alert.actions(alert(nil), props(:herdr)) == []
   end
 
   test "terminal delivery writes OSC 9 with title and body" do
     assert Alert.actions(alert(), props(:terminal)) == [
-             {:osc9, "pi finished: w · 1"},
-             {:sound, "done"}
+             {:write, "\e]9;pi finished: w · 1\e\\"},
+             {:sound, :done}
            ]
   end
 
-  test "off and system (a recorded gap) deliver nothing but the sound" do
-    for d <- [:off, :system], do: assert(Alert.actions(alert(), props(d)) == [{:sound, "done"}])
+  test "terminal delivery follows the client's terminal: kitty OSC 99, tmux-wrapped" do
+    env = %{"KITTY_WINDOW_ID" => "1", "TMUX" => "/tmp/t,1,0"}
+
+    assert [{:write, "\ePtmux;\e\e]99;i=1:d=0;pi finished" <> _}, _] =
+             Alert.actions(alert(), props(:terminal), env)
+  end
+
+  test "system delivery asks for a desktop notification" do
+    assert Alert.actions(alert(), props(:system)) == [
+             {:system, "pi finished", "w · 1"},
+             {:sound, :done}
+           ]
+  end
+
+  test "off delivers nothing but the sound" do
+    assert Alert.actions(alert(), props(:off)) == [{:sound, :done}]
   end
 
   test "a disabled sound is silent" do
-    assert Alert.actions(alert(), props(:terminal, false)) == [{:osc9, "pi finished: w · 1"}]
+    assert Alert.actions(alert(), props(:terminal, false)) == [
+             {:write, "\e]9;pi finished: w · 1\e\\"}
+           ]
   end
 
-  test "a sound-only alert (no title) gets no OSC 9" do
+  test "a sound-only alert (no title) gets no notification" do
     a = %{alert(:request) | title: nil, body: nil}
-    assert Alert.actions(a, props(:terminal)) == [{:sound, "request"}]
+    assert Alert.actions(a, props(:terminal)) == [{:sound, :request}]
+    assert Alert.actions(a, props(:system)) == [{:sound, :request}]
   end
 
   test "missing props: herdr delivery, sound on" do
-    assert Alert.actions(alert(), %{}) == [{:sound, "done"}]
+    assert Alert.actions(alert(), %{}) == [{:sound, :done}]
   end
 
-  test "OSC 9 text has no control characters and is capped" do
+  test "notification text has no control characters and is capped" do
     a = %{alert(nil) | title: "a\e]0;x\a\nb\u009b", body: String.duplicate("z", 500)}
-    [{:osc9, text}] = Alert.actions(a, props(:terminal))
-    refute text =~ ~r/[\x00-\x1f\x7f\x{80}-\x{9f}]/u
-    assert String.starts_with?(text, "a]0;xb: zz")
-    assert String.length(text) == 200
+    [{:system, title, body}] = Alert.actions(a, props(:system))
+    refute title <> body =~ ~r/[\x00-\x1f\x7f\x{80}-\x{9f}]/u
+    assert title == "a]0;xb"
+    assert String.length(body) == 200
   end
 end

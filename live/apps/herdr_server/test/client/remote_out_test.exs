@@ -12,8 +12,9 @@ defmodule HerdrServer.Client.Remote.OutTest do
       panes: []
     }
 
-  test "a socket client's scene never carries the sound command" do
-    state = Out.put(%Remote{}, {:scene, scene(%{enabled: true, command: "/bin/x"})})
+  test "a socket client's scene never carries the sound command or paths" do
+    snd = %{enabled: true, command: "/bin/x", done_path: "/d.mp3", request_path: "/r.mp3"}
+    state = Out.put(%Remote{}, {:scene, scene(snd)})
     assert state.outbox.scene.chrome.props.sound == %{enabled: true}
   end
 
