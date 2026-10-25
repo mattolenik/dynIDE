@@ -985,7 +985,7 @@ defmodule HerdrServer.Api.Spec do
           "plugin is tried (herdr): when any failed the answer is `failed` with `data.reason` " <>
           "`plugin_update_failed`, `data.updated`, `data.up_to_date`, `data.preview` and " <>
           "`data.failed` (`plugin_id`, `reason`, `message` each). `ref` needs `target` " <>
-          "(`invalid_params`)."
+          "(`invalid_params` with `data.reason` `invalid_plugin_source`)."
       ),
       plugin(
         "link",

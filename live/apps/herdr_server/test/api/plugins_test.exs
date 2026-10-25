@@ -58,6 +58,10 @@ defmodule HerdrServer.Api.PluginsTest do
 
     assert %{"code" => "failed", "data" => %{"reason" => "not_applicable"}} =
              err(s, "plugin.update", %{"target" => "t.p"})
+
+    # --ref without a target: invalid_params, herdr's code in data.reason (as the spec says)
+    assert %{"code" => "invalid_params", "data" => %{"reason" => "invalid_plugin_source"}} =
+             err(s, "plugin.update", %{"ref" => "main"})
   end
 
   test "a broken manifest lists with error", %{s: s, base: base} do

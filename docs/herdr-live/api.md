@@ -1042,7 +1042,7 @@ Result: `plugin_update` with `updated` (list of `plugin` object), `up_to_date` (
 
 Errors: `invalid_params`, `not_found`, `failed`
 
-Re-clones each plugin at its ref, checks the plugin id is unchanged, then installs it in a fresh dir like `plugin.install` (build, register, enabled state kept); a failure leaves the old checkout registered. Without `yes`, when anything changed, the answer is `failed` with `data.reason` `confirmation_required` and `data.preview` a list of install previews. A linked or locally copied plugin is `failed` with `data.reason` `not_applicable`; others carry herdr's code in `data.reason`. Updating all, every plugin is tried (herdr): when any failed the answer is `failed` with `data.reason` `plugin_update_failed`, `data.updated`, `data.up_to_date`, `data.preview` and `data.failed` (`plugin_id`, `reason`, `message` each). `ref` needs `target` (`invalid_params`).
+Re-clones each plugin at its ref, checks the plugin id is unchanged, then installs it in a fresh dir like `plugin.install` (build, register, enabled state kept); a failure leaves the old checkout registered. Without `yes`, when anything changed, the answer is `failed` with `data.reason` `confirmation_required` and `data.preview` a list of install previews. A linked or locally copied plugin is `failed` with `data.reason` `not_applicable`; others carry herdr's code in `data.reason`. Updating all, every plugin is tried (herdr): when any failed the answer is `failed` with `data.reason` `plugin_update_failed`, `data.updated`, `data.up_to_date`, `data.preview` and `data.failed` (`plugin_id`, `reason`, `message` each). `ref` needs `target` (`invalid_params` with `data.reason` `invalid_plugin_source`).
 
 ### `plugin.link`
 
