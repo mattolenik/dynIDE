@@ -4,8 +4,8 @@ defmodule HerdrCli do
   socket (`HerdrCli.Client`), print the reply (`HerdrCli.Output`).
 
   Exit codes: 0 success (and `help`, `--help`: usage on stdout), 1 an API error (the
-  whole `{"error","id"}` reply as JSON on stderr, herdr's shape), `herdr-live is not
-  running`, or an event stream the server closed, 2 a usage error.
+  whole `{"error","id"}` reply as JSON on stderr, herdr's shape; no server is herdr's
+  `server_not_running` error) or an event stream the server closed, 2 a usage error.
 
   `bin/herdr-live` starts this as `erl -noinput -run Elixir.HerdrCli main_erl -extra
   <args>` (no Elixir boot, no stdin reads, so it is safe in `while read` loops).
@@ -88,20 +88,20 @@ defmodule HerdrCli do
         run_call(read_files(params), method, out, env)
 
       {:subscribe, params} ->
-        with_socket(env, fn s -> subscribe(s, params) end)
+        with_socket(env, "events.subscribe", fn s -> subscribe(s, params) end)
     end
   end
 
-  defp with_socket(env, fun) do
+  defp with_socket(env, method, fun) do
     path = Client.socket_path(env)
 
     case Client.connect(path) do
       {:ok, s} ->
         fun.(s)
 
+      # herdr's server_not_running reply (src/cli/server_not_running.rs), on stderr
       {:error, r} when r in [:enoent, :econnrefused] ->
-        err("herdr-live is not running\n")
-        1
+        emit(Output.render(:json, not_running(method, path)))
 
       {:error, r} ->
         err("herdr-live: cannot connect to #{path}: #{inspect(r)}\n")
@@ -110,9 +110,21 @@ defmodule HerdrCli do
   end
 
   defp run_call({:ok, params}, method, out, env),
-    do: with_socket(env, fn s -> call(s, method, params, out) end)
+    do: with_socket(env, method, fn s -> call(s, method, params, out) end)
 
   defp run_call({:error, msg}, _method, _out, _env), do: lost_text(msg)
+
+  @doc false
+  @spec not_running(String.t(), String.t()) :: map()
+  def not_running(method, path),
+    do: %{
+      "id" => "cli:" <> method,
+      "error" => %{
+        "code" => "server_not_running",
+        "message" =>
+          "no herdr-live server is running at #{path}; run `herdr-live` to start or attach it"
+      }
+    }
 
   # one request line is at most 1 MiB, so a larger file could never be sent
   @max_file 1_048_576

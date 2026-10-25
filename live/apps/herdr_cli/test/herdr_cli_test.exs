@@ -43,6 +43,22 @@ defmodule HerdrCliTest do
     assert err =~ "is 1048577 bytes, over the 1048576 byte limit"
   end
 
+  test "no server is herdr's server_not_running reply on stderr, exit 1" do
+    path = Path.join(System.tmp_dir!(), "hcli-none-#{System.unique_integer([:positive])}.sock")
+
+    err =
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        assert ExUnit.CaptureIO.capture_io(fn ->
+                 assert HerdrCli.run(["ping"], %{"HERDR_LIVE_API" => path}) == 1
+               end) == ""
+      end)
+
+    assert %{"id" => "cli:ping", "error" => %{"code" => "server_not_running", "message" => m}} =
+             JSON.decode!(err)
+
+    assert m =~ path
+  end
+
   test "a usage error exits 2 without touching the socket" do
     assert ExUnit.CaptureIO.capture_io(:stderr, fn ->
              assert HerdrCli.run(["pane", "split", "--direction", "left"], %{}) == 2

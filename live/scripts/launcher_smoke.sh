@@ -91,7 +91,7 @@ echo "PASS: headless, no terminal client"
 [ "$(cat "$tmp/rb_up" 2>&1)" = "ok none" ] && [ "$(cat "$tmp/rb_up.status")" = 0 ] ||
   fail "rollback while running: $(cat "$tmp/rb_up" "$tmp/rb_up.status" 2>&1)"
 echo "PASS: herdr-live rollback answers ok none"
-[ "$(cat "$tmp/rb_down" 2>&1)" = "herdr-live is not running" ] && [ "$(cat "$tmp/rb_down.status")" = 1 ] ||
+grep -q '^{"error":{"code":"server_not_running",' "$tmp/rb_down" && [ "$(cat "$tmp/rb_down.status")" = 1 ] ||
   fail "rollback after stop: $(cat "$tmp/rb_down" "$tmp/rb_down.status" 2>&1)"
 [ ! -e "$tmp/api.sock" ] || fail "api socket left behind"
 echo "PASS: herdr-live rollback after stop exits 1, socket removed"

@@ -85,6 +85,7 @@ defmodule HerdrServer.Api.Spec.Doc do
       `{"id": "cli:<method>", "result": {...}}`, exit 0. A herdr plugin's
       `jq -r .result.pane.pane_id` after `pane split` reads the new pane's id.
     - Error: the whole response on stderr, `{"error": {...}, "id": "cli:<method>"}`, exit 1.
+      No server listening is herdr's `server_not_running` error in the same shape.
     - Usage error: a usage line on stderr, exit 2.
     - Quiet on success (herdr's `Output::Quiet`): `pane send-text`, `pane send-keys`,
       `pane run`, `pane report-agent`, `pane report-agent-session`, `pane release-agent`,
