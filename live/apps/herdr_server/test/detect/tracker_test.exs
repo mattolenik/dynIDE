@@ -50,6 +50,7 @@ defmodule HerdrServer.Detect.TrackerTest do
     assert Tracker.scan?(t, :same, 100)
     {t, effects} = Tracker.screen(t, :exited, :same, 100)
     assert effects == [{:state, :idle}] and t.visible.idle
+    refute Tracker.scan?(t, :same, 150)
 
     t =
       Enum.reduce(2..5, t, fn i, t ->
@@ -132,6 +133,48 @@ defmodule HerdrServer.Detect.TrackerTest do
     assert {^t, []} = Tracker.release(t, "other", "claude")
     {t, [{:state, :unknown}]} = Tracker.release(t, "claude-hooks", "claude")
     assert t.hook == nil
+  end
+
+  test "agent exit releases its hook and skips the grace" do
+    {t, _} = Tracker.report(acquired(), hook(:working, 9))
+    {t, []} = Tracker.job(%{t | grace_until: 5_000}, nil, true, 100, @osc)
+    assert Tracker.scan?(t, t.scanned, 100)
+    {t, effects} = Tracker.screen(t, :exited, t.scanned, 100)
+    assert effects == [{:state, :idle}] and t.hook == nil and t.grace_until == nil
+    {t, []} = Tracker.job(t, {"claude", 43}, false, 200, @osc)
+    {t, [{:state, :working}]} = Tracker.report(t, hook(:working, 1))
+    assert t.hook.seq == 1
+  end
+
+  test "pending idle rescans unchanged activity" do
+    {t, []} = screen(working(), det(:idle), 100)
+    assert Tracker.scan?(t, t.scanned, 150)
+  end
+
+  test "hook-adopted agent survives non-shell misses" do
+    {t, _} = Tracker.report(Tracker.new(), hook(:working))
+
+    t =
+      Enum.reduce(1..10, t, fn i, t ->
+        {t, []} = Tracker.job(t, nil, false, i * 5_000, @osc)
+        t
+      end)
+
+    assert t.agent == "claude" and t.misses == 0
+  end
+
+  test "replacement agent drops the previous agent's hook" do
+    {t, _} = Tracker.report(acquired("claude"), hook(:working))
+    {t, effects} = Tracker.job(t, {"codex", 7}, false, 0, @osc)
+    assert effects == [{:agent, "codex"}, {:state, :unknown}] and t.hook == nil
+  end
+
+  test "osc_stale clears once both values change" do
+    {t, _} = Tracker.job(acquired("claude"), {"codex", 7}, false, 0, {"a", "1"})
+    {t, []} = Tracker.job(t, {"codex", 7}, false, 100, {"b", "1"})
+    assert t.osc_stale == {nil, "1"}
+    {t, []} = Tracker.job(t, {"codex", 7}, false, 200, {"b", "2"})
+    assert t.osc_stale == nil
   end
 
   test "probe schedule after a pgid change" do

@@ -40,7 +40,8 @@ defmodule HerdrServer.Detect.Tracker do
             hook: nil,
             last_probe: nil,
             acquired_at: nil,
-            exited: false
+            exited: false,
+            exit_reported: false
 
   @type state :: :idle | :working | :blocked | :unknown
   @type effect :: {:agent, binary | nil} | {:state, state}
@@ -73,7 +74,14 @@ defmodule HerdrServer.Detect.Tracker do
   @spec job(t, {binary, pos_integer} | nil, boolean, integer, osc) :: {t, [effect]}
   def job(%__MODULE__{agent: label} = t, {label, pid}, _shell?, _now, osc),
     do:
-      {%{t | agent_pid: pid, misses: 0, exited: false, osc_stale: unstale(t.osc_stale, osc)}, []}
+      {%{
+         t
+         | agent_pid: pid,
+           misses: 0,
+           exited: false,
+           exit_reported: false,
+           osc_stale: unstale(t.osc_stale, osc)
+       }, []}
 
   def job(t, {label, pid}, _shell?, now, osc) do
     t1 = %{
@@ -82,6 +90,7 @@ defmodule HerdrServer.Detect.Tracker do
         agent_pid: pid,
         misses: 0,
         exited: false,
+        exit_reported: false,
         state: :unknown,
         visible: @no_visible,
         pending_idle: nil,
@@ -114,6 +123,7 @@ defmodule HerdrServer.Detect.Tracker do
           agent_pid: nil,
           misses: 0,
           exited: false,
+          exit_reported: false,
           state: :unknown,
           visible: @no_visible,
           pending_idle: nil,
@@ -128,16 +138,27 @@ defmodule HerdrServer.Detect.Tracker do
 
   defp unstale(nil, _osc), do: nil
 
-  defp unstale({st, sp}, {title, progress}),
-    do: {if(st == title, do: st), if(sp == progress, do: sp)}
+  defp unstale({st, sp}, {title, progress}) do
+    case {if(st == title, do: st), if(sp == progress, do: sp)} do
+      {nil, nil} -> nil
+      stale -> stale
+    end
+  end
 
-  @doc "Whether the screen should be scanned now."
+  @doc """
+  Whether the screen should be scanned now.
+
+  An agent exit not yet applied by `screen/4` is scanned at once, even in
+  grace. Otherwise unchanged activity skips the scan in every state, not only
+  idle: activity is the kernel's PTY byte counter, so OSC updates bump it too.
+  """
   @spec scan?(t, term, integer) :: boolean
   def scan?(%__MODULE__{agent: nil}, _activity, _now), do: false
+  def scan?(%__MODULE__{exited: true, exit_reported: false}, _activity, _now), do: true
 
   def scan?(t, activity, now) do
     not (t.grace_until != nil and now < t.grace_until) and
-      (t.exited or t.pending_idle != nil or activity != t.scanned or refresh_due?(t, now))
+      (t.pending_idle != nil or activity != t.scanned or refresh_due?(t, now))
   end
 
   defp refresh_due?(t, now),
@@ -152,8 +173,13 @@ defmodule HerdrServer.Detect.Tracker do
 
   @doc "Applies one screen detection, or `:exited` when the agent's shell returned."
   @spec screen(t, Detection.t() | :exited, term, integer) :: {t, [effect]}
-  def screen(t, :exited, activity, now),
-    do: apply_screen(t, %Detection{state: :idle, visible_idle: true}, true, activity, now)
+  # herdr clears the exited agent's hook authority (with its seq) and the grace.
+  def screen(t, :exited, activity, now) do
+    hook = if t.hook && t.hook.agent != t.agent, do: t.hook
+    t1 = %{t | hook: hook, grace_until: nil, exit_reported: true}
+    {t2, _} = apply_screen(t1, %Detection{state: :idle, visible_idle: true}, true, activity, now)
+    publish(t, t2, [])
+  end
 
   def screen(t, %Detection{skip_state_update: true}, activity, _now),
     do: {%{t | scanned: activity}, []}
