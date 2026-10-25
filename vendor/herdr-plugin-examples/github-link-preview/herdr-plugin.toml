@@ -1,0 +1,23 @@
+id = "examples.github-link-preview"
+name = "GitHub Link Preview"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Open clicked GitHub issue and PR links in a Herdr side pane."
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "open"
+title = "Open GitHub link preview"
+command = ["bash", "open.sh"]
+
+[[panes]]
+id = "preview"
+title = "GitHub preview"
+placement = "split"
+command = ["bash", "preview.sh"]
+
+[[link_handlers]]
+id = "github-issue-or-pr"
+title = "Preview GitHub issue or PR"
+pattern = "^https://github\\.com/[^/]+/[^/]+/(issues|pull)/[0-9]+/?$"
+action = "open"

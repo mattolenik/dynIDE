@@ -1,0 +1,11 @@
+id = "examples.dev-layout-bootstrap"
+name = "Dev Layout Bootstrap"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Create a simple three-pane development layout around the current pane."
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "setup"
+title = "Set up dev layout"
+command = ["lua", "setup.lua"]

@@ -1,0 +1,14 @@
+id = "examples.rust-release-check"
+name = "Rust Release Check"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Build a Rust plugin at install time, then run a small Git cleanliness check."
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["cargo", "build", "--release"]
+
+[[actions]]
+id = "check"
+title = "Run release check"
+command = ["./target/release/rust-release-check"]
