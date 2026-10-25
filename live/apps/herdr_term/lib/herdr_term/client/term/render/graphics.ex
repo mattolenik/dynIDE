@@ -291,7 +291,9 @@ defmodule HerdrTerm.Client.Term.Render.Graphics do
     placements = MapSet.new(places)
 
     # ponytail: no offscreen retention, an image no visible piece uses is deleted and
-    # re-uploaded when it comes back (herdr keeps 16 / 64 MiB); add an LRU if it shows
+    # re-uploaded when it comes back (herdr keeps 16 / 64 MiB): a tab switch, scroll-off
+    # or a dimming modal (which hides every placement) costs a full re-upload of each
+    # image on close; add an LRU if it shows
     deletes =
       for(
         {id, p} <- Enum.sort(cache.placements),

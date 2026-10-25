@@ -39,9 +39,10 @@ defmodule HerdrTerm.Client.Term.Render do
   placements into `opts.graphics` ops against a cache of what the host holds, and
   splices `[image WxH]` labels for withheld images into the rows. Image data comes from
   the attach reply's `images` MFA (fetched once per `{pane, image, fp}` the scene
-  references, guarded) or from `{:image, pane, {image, fp}, payload}` (inline); entries
+  references, guarded; a failed fetch is retried after 500ms) or from `{:image, pane, {image, fp}, payload}` (inline); entries
   the scene no longer references are dropped. The first frame after an attach starts
-  with `:delete_all`; a failing pass sends only `:delete_all` and resets the cache, a
+  with `:delete_all`; a failing pass sends only `:delete_all`, resets the cache and is
+  skipped for 500ms (then retried, without another `:delete_all`), a
   refused frame resets it for the next. Cell px come from `Kernel.tty().size/1`, re-read
   when the scene size changes; unknown px means no placements. Off with
   `config :herdr_term, :kitty_graphics, false` or `HERDR_LIVE_KITTY_GRAPHICS=0`. With no
@@ -105,7 +106,7 @@ defmodule HerdrTerm.Client.Term.Render do
     repaint: true,
     images: %{},
     # host graphics cache (`Render.Graphics.cache`), :reset before the next frame clears
-    # the host; `kitty` nil when the pass is off, else `%{file?: boolean}`
+    # the host, `{:failed, at}` after a failed pass; `kitty` nil when the pass is off, else `%{file?: boolean}`
     gfx: :reset,
     kitty: nil
   ]
@@ -259,6 +260,12 @@ defmodule HerdrTerm.Client.Term.Render do
   # a sound command's output or exit (its port is closed by then): nothing to do
   def handle_info({port, _}, state) when is_port(port),
     do: {:noreply, Map.merge(%__MODULE__{}, state)}
+
+  # a failed graphics pass or image fetch: retry with the current scene
+  def handle_info(:gfx_retry, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, schedule(state)}
+  end
 
   def handle_info(:chrome_retry, state) do
     state = Map.merge(%__MODULE__{}, state)
@@ -534,14 +541,25 @@ defmodule HerdrTerm.Client.Term.Render do
 
   defp graphics(%{kitty: nil} = state, frame), do: {frame, [], state}
 
-  defp graphics(state, frame) do
-    {reset, cache} =
-      if state.gfx == :reset, do: {[:delete_all], Graphics.empty()}, else: {[], state.gfx}
+  # after a failed pass the host is clear: skip until the retry window is over, then
+  # retry without another :delete_all
+  defp graphics(%{gfx: {:failed, at}} = state, frame) do
+    if now() - at < @retry_frame_ms,
+      do: {frame, [], state},
+      else: pass(state, frame, [], Graphics.empty(), [])
+  end
 
+  defp graphics(%{gfx: :reset} = state, frame),
+    do: pass(state, frame, [:delete_all], Graphics.empty(), [:delete_all])
+
+  defp graphics(state, frame), do: pass(state, frame, [], state.gfx, [:delete_all])
+
+  defp pass(state, frame, reset, cache, fail_ops) do
     if cache == Graphics.empty() and Enum.all?(state.scene.panes, &(&1.graphics == [])) do
       {frame, reset, %{state | gfx: cache}}
     else
-      state = fetch_images(state)
+      # nothing can show without cell px or under a dimming modal: no fetch either
+      state = if state.cell_px && !state.chrome.dim, do: fetch_images(state), else: state
 
       ctx = %{
         cell_px: state.cell_px,
@@ -552,12 +570,18 @@ defmodule HerdrTerm.Client.Term.Render do
       }
 
       case Guard.run_twice(Graphics, :run, [frame, state.scene, state.chrome, ctx], @compose) do
-        {:ok, {frame, ops, cache}} -> {frame, reset ++ ops, %{state | gfx: cache}}
-        # the host is cleared and the cache with it
-        {:failed, _} -> {frame, [:delete_all], %{state | gfx: Graphics.empty()}}
+        {:ok, {frame, ops, cache}} ->
+          {frame, reset ++ ops, %{state | gfx: cache}}
+
+        # the host is cleared and the cache with it; one retry per @retry_frame_ms
+        {:failed, _} ->
+          gfx_retry()
+          {frame, fail_ops, %{state | gfx: {:failed, now()}}}
       end
     end
   end
+
+  defp gfx_retry, do: Process.send_after(self(), :gfx_retry, @retry_frame_ms)
 
   defp cell_px(state) do
     case Kernel.tty().size(state.tty) do
@@ -576,20 +600,34 @@ defmodule HerdrTerm.Client.Term.Render do
 
   defp image_key(pane, %{image: {image_id, fp}}), do: {pane.id, image_id, fp}
 
-  # once per key: a nil (unknown, invalid or failed) is kept, not re-fetched every frame
+  # Once per key: a nil (image gone or invalid) is kept. A failed fetch is kept as
+  # `{:failed, at}` and retried after @retry_frame_ms (a timer brings the frame).
   defp fetch_images(%{images_mfa: nil} = state), do: state
 
   defp fetch_images(%{images_mfa: mfa} = state) do
     keys = for p <- state.scene.panes, g <- p.graphics, do: image_key(p, g)
-    %{state | images: Enum.reduce(keys, state.images, &fetch_image(&2, &1, mfa))}
+    {images, failed?} = Enum.reduce(keys, {state.images, false}, &fetch_image(&2, &1, mfa))
+    if failed?, do: gfx_retry()
+    %{state | images: images}
   end
 
-  defp fetch_image(images, key, _mfa) when is_map_key(images, key), do: images
+  defp fetch_image({images, failed?} = acc, key, mfa) do
+    case Map.fetch(images, key) do
+      {:ok, {:failed, at}} ->
+        if now() - at >= @retry_frame_ms, do: fetch_one(acc, key, mfa), else: {images, failed?}
 
-  defp fetch_image(images, {pane, image_id, _fp} = key, {m, f, a}) do
+      {:ok, _} ->
+        acc
+
+      :error ->
+        fetch_one(acc, key, mfa)
+    end
+  end
+
+  defp fetch_one({images, failed?}, {pane, image_id, _fp} = key, {m, f, a}) do
     case Guard.run_twice(m, f, [pane, image_id | a], scan: false) do
-      {:ok, payload} -> Map.put(images, key, valid_image(payload))
-      {:failed, _} -> Map.put(images, key, nil)
+      {:ok, payload} -> {Map.put(images, key, valid_image(payload)), failed?}
+      {:failed, _} -> {Map.put(images, key, {:failed, now()}), true}
     end
   end
 

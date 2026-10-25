@@ -15,6 +15,8 @@ defmodule HerdrTerm.Client.Term.RenderGraphicsTest do
 
   def image(pane, image_id, test, data) do
     send(test, {:image_fetched, pane, image_id})
+    data = if is_pid(data), do: Agent.get(data, & &1), else: data
+    if data == :boom, do: raise("images boom")
     %{format: :rgba, width: 100, height: 100, bytes: 6, data: data}
   end
 
@@ -65,6 +67,17 @@ defmodule HerdrTerm.Client.Term.RenderGraphicsTest do
     ops
   end
 
+  # frames until one has an upload (frames in between may carry no ops)
+  defp until_upload(n \\ 20) do
+    ops = frame_ops()
+
+    cond do
+      Enum.any?(ops, &match?({:upload, _}, &1)) -> ops
+      n == 0 -> flunk("no upload")
+      true -> until_upload(n - 1)
+    end
+  end
+
   test "first frame clears the host, uploads then places; later frames only place" do
     %{render: render} = start()
     send(render, {:scene, scene([graphic()])})
@@ -91,9 +104,33 @@ defmodule HerdrTerm.Client.Term.RenderGraphicsTest do
     assert length(rows) == 24
     assert Enum.at(Blit.screen(tty), 0) != ""
 
-    # the cache was reset: a good scene uploads again
+    # skipped for the retry window: no re-run, no second :delete_all
+    send(render, {:scene, scene([graphic(cols: :bad)])})
+    assert [] = frame_ops()
+
+    # the cache was reset: a good scene uploads again once the window is over
     send(render, {:scene, scene([graphic()])})
-    assert [{:upload, _}, {:place, _}] = frame_ops()
+    assert [{:upload, _}, {:place, _}] = until_upload()
+  end
+
+  test "a failing image fetch is retried after the retry window" do
+    agent = start_supervised!({Agent, fn -> :boom end})
+    %{render: render} = start(agent)
+    send(render, {:scene, scene([graphic()])})
+    assert [:delete_all] = frame_ops()
+    assert_received {:image_fetched, 1, 7}
+    Agent.update(agent, fn _ -> "pixels" end)
+    # no new scene or damage: the retry timer brings the frame
+    assert [{:upload, %{data: "pixels"}}, {:place, _}] = until_upload()
+  end
+
+  test "the pane removed from the scene: placement and image deleted, image pruned" do
+    %{render: render} = start()
+    send(render, {:scene, scene([graphic()])})
+    assert [:delete_all, {:upload, %{id: id}}, {:place, _}] = frame_ops()
+    send(render, {:scene, %{scene([]) | panes: []}})
+    assert [{:delete_placement, ^id, _}, {:delete_image, ^id}] = frame_ops()
+    assert :sys.get_state(render).images == %{}
   end
 
   test "an inline {:image} is used without a fetch" do
@@ -118,6 +155,7 @@ defmodule HerdrTerm.Client.Term.RenderGraphicsTest do
     Tty.set_size(tty, {80, 24, 0, 0})
     send(render, {:scene, scene([graphic()])})
     assert [:delete_all] = frame_ops()
+    refute_received {:image_fetched, _, _}
   end
 
   test "kitty_graphics false: no graphics ops at all" do
