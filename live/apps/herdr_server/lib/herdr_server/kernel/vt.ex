@@ -67,7 +67,8 @@ defmodule HerdrServer.Kernel.Vt do
   @callback kitty_keyboard_flags(vt) :: non_neg_integer | {:stale, non_neg_integer}
   @callback link_at(vt, non_neg_integer, non_neg_integer) ::
               nil | %{uri: binary, kind: :hyperlink | :text}
-  @callback graphics_placements(vt) :: [map]
+  @callback graphics_placements(vt) :: [HerdrScene.Scene.Graphic.t()]
+  @callback graphics_image(vt, pos_integer) :: HerdrScene.Scene.Graphic.image() | nil
   @callback cursor(vt) :: cursor | nil
   @callback encode_key(vt, key_event) :: binary
   @callback encode_mouse(vt, mouse_event) :: binary | nil

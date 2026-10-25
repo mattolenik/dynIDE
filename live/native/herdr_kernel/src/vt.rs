@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 
 use ghostty_vt::{
     ActiveScreen, CellColor, CellStyle, CellWide, ColorScheme, CursorVisualStyle, DefaultColor,
-    Dirty, LinkTarget, RenderState, RgbColor, RowCells, RowIterator, Terminal,
+    Dirty, KittyImageFormat, KittyImagePlacement, LinkTarget, RenderState, RgbColor, RowCells,
+    RowIterator, Terminal,
 };
 
 use crate::cell::RowEncoder;
@@ -137,6 +138,8 @@ pub struct Snapshot {
     pub kitty_flags: u8,
     pub modify_other_keys: bool,
     pub scrollbar: Scrollbar,
+    /// Visible kitty placements sorted by z, without pixel data.
+    pub graphics: Arc<[Placement]>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -186,21 +189,68 @@ pub enum LinkKind {
     Text,
 }
 
+/// A visible kitty placement, in `HerdrScene.Scene.Graphic` terms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Placement {
     pub image_id: u32,
+    pub fingerprint: u64,
     pub placement_id: u32,
     pub z: i32,
-    pub viewport_col: i32,
-    pub viewport_row: i32,
-    pub grid_cols: u32,
-    pub grid_rows: u32,
-    pub pixel_width: u32,
-    pub pixel_height: u32,
-    pub source_x: u32,
-    pub source_y: u32,
-    pub source_width: u32,
-    pub source_height: u32,
+    /// Viewport top-left cell; negative when partly scrolled off.
+    pub x: i32,
+    pub y: i32,
+    pub cols: u32,
+    pub rows: u32,
+    pub x_off: u32,
+    pub y_off: u32,
+    /// `(sx, sy, sw, sh)` in image pixels.
+    pub src: (u32, u32, u32, u32),
+    /// Rendered size in pixels.
+    pub px: (u32, u32),
+    pub width: u32,
+    pub height: u32,
+    pub format: KittyImageFormat,
+    pub bytes: usize,
+}
+
+/// One stored image's pixels as the child sent them (decoded unless PNG-forwarded).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Image {
+    pub format: KittyImageFormat,
+    pub width: u32,
+    pub height: u32,
+    pub data: Vec<u8>,
+}
+
+fn placement(p: &KittyImagePlacement) -> Option<Placement> {
+    let r = &p.render;
+    if r.grid_cols == 0 || r.grid_rows == 0 || p.image_width == 0 || p.image_height == 0 {
+        return None;
+    }
+    Some(Placement {
+        image_id: p.image_id,
+        fingerprint: p.data_fingerprint,
+        // ponytail: ghostty reports implicit placements (no `p=`) as 0 and the contract
+        // wants a positive id, so they all share u32::MAX (several implicit placements of
+        // one image collide on the host, as in herdr); expose ghostty's internal id if needed.
+        placement_id: match p.placement_id {
+            0 => u32::MAX,
+            id => id,
+        },
+        z: p.z,
+        x: r.viewport_col,
+        y: r.viewport_row,
+        cols: r.grid_cols,
+        rows: r.grid_rows,
+        x_off: p.x_offset,
+        y_off: p.y_offset,
+        src: (r.source_x, r.source_y, r.source_width, r.source_height),
+        px: (r.pixel_width, r.pixel_height),
+        width: p.image_width,
+        height: p.image_height,
+        format: p.format,
+        bytes: p.data_len,
+    })
 }
 
 struct VtCore {
@@ -398,7 +448,31 @@ impl VtCore {
                 viewport: sb.len,
                 offset: sb.offset,
             },
+            graphics: self.graphics(&prev),
         })
+    }
+
+    /// Placements for the snapshot; the common no-image case skips the storage walk.
+    fn graphics(&self, prev: &Snapshot) -> Arc<[Placement]> {
+        if !self
+            .terminal
+            .kitty_graphics_may_have_placements()
+            .unwrap_or(false)
+        {
+            return Arc::new([]);
+        }
+        let Ok(ps) = self
+            .terminal
+            .kitty_image_placements_with_data_filter(|_| false)
+        else {
+            // Keep the last good list rather than flashing images off on a ghostty error.
+            return Arc::clone(&prev.graphics);
+        };
+        let ps: Vec<Placement> = ps.iter().filter_map(placement).collect();
+        match *prev.graphics == *ps {
+            true => Arc::clone(&prev.graphics),
+            false => ps.into(),
+        }
     }
 }
 
@@ -429,6 +503,7 @@ impl Vt {
             kitty_flags: 0,
             modify_other_keys: false,
             scrollbar: Scrollbar::default(),
+            graphics: Arc::new([]),
         });
         let vt = Arc::new(Vt {
             core: Mutex::new(VtCore {
@@ -732,34 +807,27 @@ impl Vt {
         }
     }
 
-    pub fn graphics_placements(&self) -> Vec<Placement> {
+    /// The snapshot's placements (sorted by z); never waits on the core lock.
+    pub fn graphics_placements(&self) -> Arc<[Placement]> {
+        Arc::clone(&self.snapshot().graphics)
+    }
+
+    /// Copies image `id`'s pixels; None when it is gone, unplaced, or has no data.
+    pub fn graphics_image(&self, id: u32) -> Option<Image> {
         let core = lock(&self.core);
-        let Ok(ps) = core
+        let ps = core
             .terminal
-            .kitty_image_placements_with_data_filter(|_| false)
-        else {
-            return Vec::new();
-        };
-        ps.iter()
-            .map(|p| {
-                let r = &p.render;
-                Placement {
-                    image_id: p.image_id,
-                    placement_id: p.placement_id,
-                    z: p.z,
-                    viewport_col: r.viewport_col,
-                    viewport_row: r.viewport_row,
-                    grid_cols: r.grid_cols,
-                    grid_rows: r.grid_rows,
-                    pixel_width: r.pixel_width,
-                    pixel_height: r.pixel_height,
-                    source_x: r.source_x,
-                    source_y: r.source_y,
-                    source_width: r.source_width,
-                    source_height: r.source_height,
-                }
-            })
-            .collect()
+            .kitty_image_placements_with_data_filter(|d| d.image_id == id)
+            .ok()?;
+        let p = ps
+            .into_iter()
+            .find(|p| p.image_id == id && !p.data.is_empty())?;
+        Some(Image {
+            format: p.format,
+            width: p.image_width,
+            height: p.image_height,
+            data: p.data,
+        })
     }
 
     pub fn cursor(&self) -> Option<Cursor> {
@@ -1138,6 +1206,81 @@ mod tests {
     #[test]
     fn no_placements_without_images() {
         assert!(vt().graphics_placements().is_empty());
+    }
+
+    fn image_vt() -> Arc<Vt> {
+        let vt = Vt::new(20, 10, 1000).expect("vt");
+        vt.resize(20, 10, Some((10, 20))).expect("resize");
+        vt
+    }
+
+    // 2x2 RGB, bytes 1..=12.
+    const RGB_APC: &[u8] = b"\x1b_Ga=T,f=24,s=2,v=2,i=7,c=4,r=2;AQIDBAUGBwgJCgsM\x1b\\";
+
+    #[test]
+    fn placement_has_contract_fields() {
+        let vt = image_vt();
+        vt.write(RGB_APC);
+        vt.refresh();
+        let ps = vt.graphics_placements();
+        assert_eq!(ps.len(), 1);
+        let p = ps[0];
+        assert_eq!((p.image_id, p.x, p.y, p.cols, p.rows), (7, 0, 0, 4, 2));
+        assert_eq!((p.width, p.height, p.bytes), (2, 2, 12));
+        assert_eq!(p.format, KittyImageFormat::Rgb);
+        assert_eq!(p.placement_id, u32::MAX);
+        let img = vt.graphics_image(7).expect("image");
+        assert_eq!(img.data, (1..=12).collect::<Vec<u8>>());
+        assert_eq!(
+            (img.width, img.height, img.format),
+            (2, 2, KittyImageFormat::Rgb)
+        );
+        assert!(vt.graphics_image(8).is_none());
+    }
+
+    #[test]
+    fn placement_scrolls_and_returns() {
+        let vt = image_vt();
+        vt.write(RGB_APC);
+        vt.write(&b"\n".repeat(15));
+        vt.refresh();
+        assert!(vt.graphics_placements().iter().all(|p| p.y < 0));
+        vt.scroll_to(0).expect("scroll");
+        let ps = vt.graphics_placements();
+        assert_eq!(ps.len(), 1);
+        assert_eq!(ps[0].y, 0);
+    }
+
+    #[test]
+    fn delete_all_empties_placements() {
+        let vt = image_vt();
+        vt.write(RGB_APC);
+        vt.refresh();
+        assert_eq!(vt.graphics_placements().len(), 1);
+        vt.write(b"\x1b_Ga=d,d=A\x1b\\");
+        vt.refresh();
+        assert!(vt.graphics_placements().is_empty());
+    }
+
+    #[test]
+    fn unicode_placeholder_places_and_packs_as_space() {
+        let vt = image_vt();
+        vt.write(b"\x1b_Gq=2,a=t,t=d,f=32,s=1,v=1,i=1193046,m=0;/wAA/w==\x1b\\");
+        vt.write(b"\x1b_Gq=2,a=p,U=1,i=1193046,c=2,r=1\x1b\\");
+        vt.write(
+            "\x1b[2;3H\x1b[38;2;18;52;86m\u{10eeee}\u{0305}\u{0305}\u{10eeee}\u{0305}\u{030d}\x1b[0m"
+                .as_bytes(),
+        );
+        vt.refresh();
+        let ps = vt.graphics_placements();
+        assert_eq!(ps.len(), 1);
+        assert_eq!(
+            (ps[0].image_id, ps[0].x, ps[0].y, ps[0].cols),
+            (1193046, 2, 1, 2)
+        );
+        let cells = row(&vt, 1);
+        assert_eq!(cells[2].glyph, " ");
+        assert_eq!(cells[3].glyph, " ");
     }
 
     fn roundtrip(vt: &Vt, max: usize) -> Arc<Vt> {

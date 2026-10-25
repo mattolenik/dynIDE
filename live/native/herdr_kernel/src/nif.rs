@@ -22,7 +22,7 @@ use crate::pty::{
     AdoptOptions, Event, EventSink, ExitStatus, Pty, SpawnOptions, ThawError, WriteError,
 };
 use crate::vt::{lock, Colors, LinkKind, Mode, RowBatch, Tail, TextRange, Vt};
-use ghostty_vt::{ColorScheme, RgbColor};
+use ghostty_vt::{ColorScheme, KittyImageFormat, RgbColor};
 
 mod atoms {
     rustler::atoms! {
@@ -33,7 +33,7 @@ mod atoms {
         key, mods, event, kind, button, x, y, px, disabled, consumed, not_frozen, released,
         os_pid, adopted, hidden, exited, start_time, alt_screen,
         herdr_link, herdr_link_closed, eof, timeout, noproc, econnrefused, einval,
-        connect_failed, fg, bg, cursor, palette, dark, light,
+        connect_failed, fg, bg, cursor, palette, dark, light, rgb, rgba, png,
     }
 }
 
@@ -534,41 +534,75 @@ fn vt_link_at(vt: ResourceArc<VtRes>, x: u16, y: u16) -> Option<LinkMap> {
 
 #[derive(NifMap)]
 struct PlacementMap {
-    image_id: u32,
-    placement_id: u32,
+    image: (u32, u64),
+    placement: u32,
+    x: i32,
+    y: i32,
+    cols: u32,
+    rows: u32,
+    x_off: u32,
+    y_off: u32,
+    src: (u32, u32, u32, u32),
+    px: (u32, u32),
     z: i32,
-    viewport_col: i32,
-    viewport_row: i32,
-    grid_cols: u32,
-    grid_rows: u32,
-    pixel_width: u32,
-    pixel_height: u32,
-    source_x: u32,
-    source_y: u32,
-    source_width: u32,
-    source_height: u32,
+    size: (u32, u32),
+    format: Atom,
+    bytes: usize,
+}
+
+fn format_atom(f: KittyImageFormat) -> Atom {
+    match f {
+        KittyImageFormat::Rgb => atoms::rgb(),
+        KittyImageFormat::Rgba => atoms::rgba(),
+        KittyImageFormat::Png => atoms::png(),
+    }
+}
+
+/// Reads the snapshot only, so it never waits on the reader thread.
+#[rustler::nif]
+fn vt_graphics_placements(vt: ResourceArc<VtRes>) -> Vec<PlacementMap> {
+    vt.0.graphics_placements()
+        .iter()
+        .map(|p| PlacementMap {
+            image: (p.image_id, p.fingerprint),
+            placement: p.placement_id,
+            x: p.x,
+            y: p.y,
+            cols: p.cols,
+            rows: p.rows,
+            x_off: p.x_off,
+            y_off: p.y_off,
+            src: p.src,
+            px: p.px,
+            z: p.z,
+            size: (p.width, p.height),
+            format: format_atom(p.format),
+            bytes: p.bytes,
+        })
+        .collect()
+}
+
+#[derive(NifMap)]
+struct ImageMap<'a> {
+    format: Atom,
+    width: u32,
+    height: u32,
+    bytes: usize,
+    data: Binary<'a>,
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-fn vt_graphics_placements(vt: ResourceArc<VtRes>) -> Vec<PlacementMap> {
-    vt.0.graphics_placements()
-        .into_iter()
-        .map(|p| PlacementMap {
-            image_id: p.image_id,
-            placement_id: p.placement_id,
-            z: p.z,
-            viewport_col: p.viewport_col,
-            viewport_row: p.viewport_row,
-            grid_cols: p.grid_cols,
-            grid_rows: p.grid_rows,
-            pixel_width: p.pixel_width,
-            pixel_height: p.pixel_height,
-            source_x: p.source_x,
-            source_y: p.source_y,
-            source_width: p.source_width,
-            source_height: p.source_height,
-        })
-        .collect()
+fn vt_graphics_image(env: Env, vt: ResourceArc<VtRes>, image_id: u32) -> Option<ImageMap> {
+    let img = vt.0.graphics_image(image_id)?;
+    let mut b = NewBinary::new(env, img.data.len());
+    b.as_mut_slice().copy_from_slice(&img.data);
+    Some(ImageMap {
+        format: format_atom(img.format),
+        width: img.width,
+        height: img.height,
+        bytes: img.data.len(),
+        data: b.into(),
+    })
 }
 
 #[derive(NifMap)]

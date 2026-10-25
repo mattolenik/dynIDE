@@ -27,6 +27,17 @@ defmodule HerdrServer.Kernel.FakeTest do
     assert Kernel.keeper() == Keeper
   end
 
+  test "set_graphics feeds graphics_placements and graphics_image", %{vt: vt} do
+    assert Vt.graphics_placements(vt) == []
+    assert Vt.graphics_image(vt, 7) == nil
+    p = %{image: {7, 1}, placement: 1, x: 0, y: 0, cols: 2, rows: 1, z: 0}
+    img = %{format: :rgb, width: 1, height: 1, bytes: 3, data: <<1, 2, 3>>}
+    :ok = Vt.set_graphics(vt, [p], %{7 => img})
+    assert Vt.graphics_placements(vt) == [p]
+    assert Vt.graphics_image(vt, 7) == img
+    assert Vt.graphics_image(vt, 8) == nil
+  end
+
   test "write echoes, damage once, dirty rows consumed", %{id: id, vt: vt, pty: pty} do
     :ok = Pty.write(pty, "hi")
     assert_receive {:damage, ^id, gen}, 50

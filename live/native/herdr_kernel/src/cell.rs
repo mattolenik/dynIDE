@@ -76,6 +76,12 @@ impl RowEncoder {
         width: u8,
         link: u32,
     ) {
+        // A kitty unicode placeholder (U+10EEEE) is drawn by the graphics pass; the
+        // cell itself shows as a space, as in herdr.
+        let glyph_utf8 = match glyph_utf8.starts_with("\u{10EEEE}".as_bytes()) {
+            true => b" ",
+            false => glyph_utf8,
+        };
         let r = &mut self.records;
         if glyph_utf8.len() <= GLYPH_BYTES {
             r.extend_from_slice(glyph_utf8);

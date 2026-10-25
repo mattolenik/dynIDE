@@ -227,9 +227,16 @@ defmodule HerdrServer.Native.Vt do
           nil | %{uri: binary, kind: :hyperlink | :text}
   def link_at(vt, x, y), do: Native.vt_link_at(vt, x, y)
 
-  @doc "Kitty graphics placements visible in the viewport."
-  @spec graphics_placements(vt) :: [map]
+  @doc """
+  Kitty graphics placements visible in the viewport (`HerdrScene.Scene.Graphic` maps,
+  sorted by z). Reads the last snapshot, so it never waits on the reader; no pixel data.
+  """
+  @spec graphics_placements(vt) :: [HerdrScene.Scene.Graphic.t()]
   def graphics_placements(vt), do: Native.vt_graphics_placements(vt)
+
+  @doc "Copies image `image_id`'s pixels; nil when it is gone, unplaced, or has no data."
+  @spec graphics_image(vt, pos_integer) :: HerdrScene.Scene.Graphic.image() | nil
+  def graphics_image(vt, image_id), do: Native.vt_graphics_image(vt, image_id)
 
   @doc "The cursor, or nil when it is outside the viewport."
   @spec cursor(vt) :: cursor | nil

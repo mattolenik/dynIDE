@@ -88,6 +88,9 @@ defmodule HerdrServer.Native do
   @spec vt_graphics_placements(term) :: [map]
   def vt_graphics_placements(_vt), do: err()
   @doc false
+  @spec vt_graphics_image(term, term) :: map | nil
+  def vt_graphics_image(_vt, _image_id), do: err()
+  @doc false
   @spec vt_cursor(term) :: map | nil
   def vt_cursor(_vt), do: err()
   @doc false

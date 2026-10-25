@@ -2,6 +2,7 @@ defmodule HerdrServer.Native.VtTest do
   use ExUnit.Case, async: true
 
   alias HerdrScene.Cell
+  alias HerdrScene.Scene.Graphic
   alias HerdrServer.Native.Vt
 
   defp text(row),
@@ -85,6 +86,36 @@ defmodule HerdrServer.Native.VtTest do
     Vt.feed(vt, "\e]8;;https://example.com\e\\ab\e]8;;\e\\")
     assert Vt.link_at(vt, 0, 0) == %{uri: "https://example.com", kind: :hyperlink}
     assert Vt.link_at(vt, 70, 20) == nil
+    assert Vt.graphics_placements(vt) == []
+  end
+
+  # 2x2 RGB, bytes 1..12
+  @rgb_apc "\e_Ga=T,f=24,s=2,v=2,i=7,c=4,r=2;AQIDBAUGBwgJCgsM\e\\"
+
+  test "graphics_placements and graphics_image follow the contract", %{vt: vt} do
+    :ok = Vt.resize(vt, 20, 10, {10, 20})
+    Vt.feed(vt, @rgb_apc)
+
+    assert [p] = Vt.graphics_placements(vt)
+    assert Graphic.validate(p) == :ok
+
+    assert %{image: {7, _fp}, x: 0, y: 0, cols: 4, rows: 2, size: {2, 2}} = p
+    assert %{format: :rgb, bytes: 12} = p
+
+    img = Vt.graphics_image(vt, 7)
+    assert Graphic.validate_image(img) == :ok
+
+    assert img == %{
+             format: :rgb,
+             width: 2,
+             height: 2,
+             bytes: 12,
+             data: :binary.list_to_bin(Enum.to_list(1..12))
+           }
+
+    assert Vt.graphics_image(vt, 8) == nil
+
+    Vt.feed(vt, "\e_Ga=d,d=A\e\\")
     assert Vt.graphics_placements(vt) == []
   end
 end

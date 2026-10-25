@@ -33,7 +33,9 @@ defmodule HerdrServer.Kernel.Fake.Vt do
             colors: nil,
             scheme: nil,
             fail_scroll: false,
-            links: %{}
+            links: %{},
+            graphics: [],
+            images: %{}
 
   @impl HerdrServer.Kernel.Vt
   def new(cols, rows, _max_scrollback), do: GenServer.start_link(__MODULE__, {cols, rows})
@@ -140,8 +142,18 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   @impl HerdrServer.Kernel.Vt
   def link_at(vt, x, y), do: GenServer.call(vt, {:link_at, x, y})
 
+  @doc """
+  Test hook: `graphics_placements/1` answers `placements` and `graphics_image/2` looks
+  ids up in `images` (`%{image_id => payload}`).
+  """
+  def set_graphics(vt, placements, images \\ %{}),
+    do: GenServer.call(vt, {:set_graphics, placements, images})
+
   @impl HerdrServer.Kernel.Vt
-  def graphics_placements(_vt), do: []
+  def graphics_placements(vt), do: GenServer.call(vt, :graphics)
+
+  @impl HerdrServer.Kernel.Vt
+  def graphics_image(vt, image_id), do: GenServer.call(vt, {:graphics_image, image_id})
 
   @impl HerdrServer.Kernel.Vt
   def cursor(vt), do: GenServer.call(vt, :cursor)
@@ -297,6 +309,21 @@ defmodule HerdrServer.Kernel.Fake.Vt do
       _ ->
         {:reply, nil, state}
     end
+  end
+
+  def handle_call({:set_graphics, placements, images}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, %{state | graphics: placements, images: images}}
+  end
+
+  def handle_call(:graphics, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, state.graphics, state}
+  end
+
+  def handle_call({:graphics_image, id}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, Map.get(state.images, id), state}
   end
 
   def handle_call(:fail_scroll, _from, state) do
