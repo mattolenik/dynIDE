@@ -85,6 +85,18 @@ defmodule HerdrServer.Client.RemoteTest do
     assert typed(1) == "x"
   end
 
+  test "an ack does not hold back the echo for a frame", ctx do
+    put_cfg(:frame_ms, 300)
+    s = attached!(attach(ctx))
+    scene!(s)
+    # past the attach flush's frame
+    Process.sleep(350)
+    t0 = System.monotonic_time(:millisecond)
+    :ok = send_frame(s, {:input, 1, Event.key("x")})
+    assert recv_until(s, &shows?(&1, "x"))
+    assert System.monotonic_time(:millisecond) - t0 < 150
+  end
+
   test "list shows the conn", ctx do
     s = attached!(attach(ctx, client_id: "listme12345"))
     scene!(s)

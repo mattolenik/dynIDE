@@ -762,9 +762,12 @@ defmodule HerdrServer.Client.Remote do
 
   defp flush(%{socket: nil} = state), do: state
 
+  # an empty flush (before an ack, say) starts no frame: the echo behind it goes at once
   defp flush(state) do
-    {msgs, outbox} = Outbox.flush(state.outbox)
-    write_all(%{state | outbox: outbox, last_flush: now()}, msgs)
+    case Outbox.flush(state.outbox) do
+      {[], outbox} -> %{state | outbox: outbox}
+      {msgs, outbox} -> write_all(%{state | outbox: outbox, last_flush: now()}, msgs)
+    end
   end
 
   # in arrival order: what is pending goes first
