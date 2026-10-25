@@ -76,7 +76,7 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   clips to the pane, crops around top-layer chrome, overlays and popup panes,
   and `Native.Blit` writes the kitty ops inside synchronized output. A new
   overlay type needs an occluder clause in `Render.Graphics`. Images are not
-  persisted and do not survive a kernel handoff (M17/M18).
+  persisted and do not survive a kernel handoff (M18).
 - Chrome: 19 node roles with required props in `HerdrScene.Chrome`; golden
   fixtures in `live/apps/herdr_scene/priv/fixtures/scenes` (every role must
   have one and render in both the terminal client and the HTML renderer).
@@ -101,7 +101,10 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   VM (`mix run --no-halt` under `-noshell -noinput`) plus one warm standby;
   stdio goes to `$HERDR_LIVE_LOG` (default
   `${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/herdr-live.log`).
-  SIGTERM stops it cleanly with no handoff. Subcommands: `kernel-restart`
+  SIGTERM stops it cleanly with no handoff. Attached (a tty, not
+  `HERDR_LIVE_HEADLESS=1`), the broker runs under `scripts/tty_guard.sh`, which
+  restores the host tty after a broker `kill -9` and logs `herdr-event
+  broker_killed signal=N` (`tty_harness.py broker-kill`). Subcommands: `kernel-restart`
   (graceful handoff), `status`, `rollback [n]`. Smoke tests:
   `live/scripts/launcher_smoke.sh`, `attached_smoke.sh`,
   `live/bench/handoff/smoke.exs`. A VM learns its role over the link when
@@ -221,10 +224,16 @@ Full guide: `docs/herdr-live/editing-live.md`. Human checks: `docs/herdr-live/re
   `just live-log-summary` (`live/scripts/log_summary.py`) summarises the log.
   session_losses = `session_lost` lines (broker fallback restore, Store closing
   or orphaning live panes) + unclean broker restarts; store_restarts are not
-  losses.
+  losses, and neither is an operator kill (`broker_killed signal=9`, counted as
+  operator_kills with the restart and `session_lost` lines around it).
 - Pane shells get `HERDR_PANE_ID`, `HERDR_LIVE_BIN` and `HERDR_LIVE_API` (the API
   socket): `"$HERDR_LIVE_BIN" pane split|run|read|wait-output|list ...` drives the
-  running instance; reference in `docs/herdr-live/api.md`.
+  running instance; reference in `docs/herdr-live/api.md`. M17 verbs: `worktree
+  list|create|open|remove`, `pane zoom|focus-direction|swap|resize`, `pane split
+  --cwd/--env`, `tab move`, `workspace move`, `pane|workspace report-metadata`,
+  `pane report-agent-session`, `notification show`, `title set|clear`, `popup
+  close`; `herdr-live --default-config` prints the commented defaults and
+  `completion bash|zsh|fish` a completion script.
 - Metrics: `just live-bench-reload|handoff|glass|os-floor`;
   `live/bench/gate_round.sh <tag>` runs the whole slice-1 table. Self-hosted
   tty check: `python3 live/scripts/tty_harness.py selfhost`.

@@ -147,6 +147,37 @@ Config: `$HERDR_LIVE_CONFIG`, else `${XDG_CONFIG_HOME:-~/.config}/herdr-live/con
 `continue` writes `onboarding = false`. `prefix R` reloads; a file that fails to parse keeps
 the running config and shows one warning. Settings and keybind edits are written back in
 place. Scripts that drive the launcher export `HERDR_LIVE_CONFIG` with `onboarding = false`.
+`herdr-live --default-config` prints every key with its default, commented.
+
+Added by M17 (herdr's names and defaults unless noted):
+
+- Keys: `prefix z` zooms the focused pane (cleared by a split, a close or a focus move
+  out of it), `prefix g` opens the go-to navigator (filter workspaces, tabs and panes,
+  Enter focuses), `prefix w` is workspace navigate mode (Up/Down/Enter/Esc), `prefix shift+g`
+  creates a git worktree (`open_worktree`, `remove_worktree` are unbound by default).
+  Tabs and sidebar workspaces reorder by drag; menus, tabs and sidebar rows highlight
+  under the pointer.
+- `[ui]`: `pane_borders` (`auto`/`always`/`off`), `window_title` (template with
+  `{hostname}`, `{workspace}`, `{tab}`, `{pane}`, `{terminal_title}`; written as OSC 0,
+  `herdr-live title set|clear` overrides it per client), `hide_tab_bar_when_single_tab`,
+  `tab_bar_position` (`top`/`bottom`).
+- `[ui.sound]`: with no `command` the built-in done/request sounds play (`afplay`;
+  `paplay`/`pw-play` on Linux), else BEL; `done_path`/`request_path` replace them
+  (relative to the config dir, `~` expanded; in-VM client only). `[ui.toast] delivery =
+  "system"` is a desktop notification, `"terminal"` OSC 9 or OSC 99 (kitty), wrapped
+  for tmux.
+- `[worktrees] directory` (herdr-live default `~/.herdr-live/worktrees`): new checkouts
+  go to `<directory>/<repo>/<branch slug>`. Workspaces are named from the root pane's
+  repo or cwd until renamed, and the sidebar shows the git branch and ahead/behind
+  (one `git status` per workspace cwd every 5 s).
+- `[session] resume_agents_on_restore` (default false) and `startup_per_agent_delay_ms`
+  (500): after a disk restore, type each pane's reported resume command into its shell.
+  Config file only, never persisted.
+- `[[keys.command]]` (after `[keys]`): `key`, `command`, `type` = `shell` (background,
+  with the `HERDR_ACTIVE_*` env), `pane` (a split), `popup` (`width`/`height` in cells or
+  `"N%"`, closed by the command's exit or `herdr-live popup close`) or `plugin_action`;
+  `description` shows under "custom" in help. One popup at a time; a second answers
+  `ui_busy`.
 
 ## Reading the status line
 
@@ -268,6 +299,12 @@ JSON on stderr with exit 1, usage errors exit 2.
 - `pane wait-output [<pane_id>] --match S [--timeout MS]`, `pane read [<pane_id>]`
   (omitted id: `$HERDR_PANE_ID`).
 - `pane list`, `pane current`, `workspace ...`, `tab ...`, `events subscribe ...`.
+- M17: `pane split --cwd PATH --env K=V`, `pane zoom|focus-direction|swap|resize`,
+  `tab move`/`workspace move <id> <insert_index>`, `pane|workspace report-metadata`
+  (sidebar tokens, with `--ttl-ms`), `pane report-agent-session`, `notification show`,
+  `title set|clear`, `popup close`, `worktree list|create|open|remove` (remove asks
+  nothing over the API; `--force` for a dirty checkout; the branch is never deleted).
+  `herdr-live completion bash|zsh|fish` prints a completion script.
 - `agent ...` answers `not_available` until M11 detection.
 
 Every verb, param and error: [api.md](api.md). `herdr-live help` lists the verbs.
@@ -319,7 +356,7 @@ lists are comma-joined.
 | `session_lost` | broker: children not carried (`reason` `gen`); Store: live panes closed or orphaned (`proc=store`, `reason` `fresh_restart`/`reconcile_failed`/`carry_unusable`, `panes`) | `reason` and `gen` or `proc` `panes` |
 | `broker_vm_exit`, `broker_start`, `broker_stop` | broker lifecycle | `gen` `status` `role` / `pid` |
 | `broker_killed` | `tty_guard.sh` (attached launches): the broker died of a signal the guard did not forward, e.g. `kill -9` | `signal` |
-| `api_connect` | API connection accepted | `conns` (open count) |
+| `api_connect` | API connections accepted, at most one line per 60 s, plus one when the listener stops (quit, handoff) | `count` (connects since the last line; old logs have none, read as 1) `conns` (open count) |
 | `api_denied` | API request refused before a handler ran | `method` `code` |
 | `api_error` | API handler failed (`internal`/`timeout`/`backpressure`/`events_lost`) | `method` `code` `msg` |
 
@@ -361,7 +398,7 @@ grep -E 'herdr-event (session_lost|crash|broker_handoff_failed)' "$L"
 | rolled back but you do not know why | `herdr-event rollback` `reason`/`detail`, and `guard_failure` `mfa`/`attributed` |
 | edits missing after a crash | `herdr-event sync` (what was loaded), and `herdr-event broker_handoff` `kind=crash` |
 | screen or layout reset | `herdr-event crash proc=store` and `session_lost` |
-| tty left raw | broker restores it at exit; if a VM died early, run `stty sane` |
+| tty left raw | the broker restores it at exit, and an attached launch's `tty_guard.sh` restores it after a broker `kill -9` (`herdr-event broker_killed`); if it is still raw, run `stty sane` |
 | screen frozen, VM still running (log has `crash proc=local_client action=gave_up`: the terminal client crashed past its restart limit and the VM runs headless) | from another terminal, `live/bin/herdr-live rollback` (undo the edit that broke the client), then `live/bin/herdr-live kernel-restart` (the new VM starts a fresh client on the tty) |
 | `herdr-live: not running` from `rollback` or `test-on-save` | the API socket moves with the primary and is gone for a few ms during a graceful handoff; retry |
 
