@@ -134,23 +134,46 @@ defmodule HerdrReload.ServerTest do
     real = String.trim(real)
     respell = fn ps -> Enum.map(ps, &String.replace_prefix(&1, real, dir)) end
 
-    start_supervised!(
-      {HerdrReload.Watcher,
-       dirs: [Path.join(dir, "lib")], on_batch: &Server.reload(srv, respell.(&1))}
-    )
+    watcher =
+      start_supervised!(
+        {HerdrReload.Watcher,
+         dirs: [Path.join(dir, "lib")], on_batch: &Server.reload(srv, respell.(&1))}
+      )
 
-    # let the OS backend arm before the first write
-    Process.sleep(300)
+    armed!(watcher, Path.join(dir, "lib/probe.txt"))
     Notices.subscribe()
     trace_compiles(srv)
     HerdrReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
     File.touch!(p, m)
-    assert_receive {:herdr_reload, {:loaded, 2, [Toy.V]}}, 3000
+    # a Mix compile under host load can take seconds: bounded, a missed event still fails
+    assert_receive {:herdr_reload, {:loaded, 2, [Toy.V]}}, 30_000
     # well past the 50ms debounce: the back-date's own event must not compile again
     Process.sleep(1500)
     refute_received {:herdr_reload, {:loaded, _, _}}
     assert compiles() == 1
     assert posix_mtime(p) == m - 1
+  end
+
+  # the OS backend is armed once it reports a write to `probe` (not a watched extension,
+  # so no batch); rewritten until it does, at most 10 s
+  defp armed!(watcher, probe) do
+    :erlang.trace(watcher, true, [:receive])
+    deadline = System.monotonic_time(:millisecond) + 10_000
+    probe_until_event(watcher, probe, deadline)
+    :erlang.trace(watcher, false, [:receive])
+  end
+
+  defp probe_until_event(watcher, probe, deadline) do
+    File.write!(probe, "#{System.unique_integer()}")
+
+    receive do
+      {:trace, ^watcher, :receive, {:file_event, _, {_, _}}} -> :ok
+    after
+      100 ->
+        if System.monotonic_time(:millisecond) > deadline,
+          do: flunk("the file watcher backend never reported a write"),
+          else: probe_until_event(watcher, probe, deadline)
+    end
   end
 
   test "ring evicts beyond depth" do
