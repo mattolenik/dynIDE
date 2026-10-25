@@ -80,6 +80,7 @@ defmodule HerdrScene.WireTest do
       {:auth, "t"},
       {:attach, @attach},
       {:attach, %{@attach | target: {:pane, 2, :control}}},
+      {:attach, %{@attach | client_id: String.duplicate("aZ0_-", 12) <> "abcd"}},
       {:input, 0, ev},
       {:caps, %{}},
       {:detach}
@@ -90,6 +91,11 @@ defmodule HerdrScene.WireTest do
     bad = [
       {:attach, Map.delete(@attach, :target)},
       {:attach, %{@attach | target: {:pane, 0, :observe}}},
+      {:attach, %{@attach | client_id: ""}},
+      {:attach, %{@attach | client_id: String.duplicate("a", 65)}},
+      {:attach, %{@attach | client_id: "a/b"}},
+      {:attach, %{@attach | client_id: "caf\u00e9"}},
+      {:attach, %{@attach | client_id: :c}},
       {:input, -1, ev},
       {:bogus, 1}
     ]

@@ -41,6 +41,11 @@ defmodule HerdrServer.Native.LinkTest do
     assert Link.send(link, Link.kind(:drop), Link.frame_key("k", ""), []) == {:error, :closed}
   end
 
+  test "frame_key refuses a key its u16 length cannot carry" do
+    assert IO.iodata_length(Link.frame_key(String.duplicate("k", 65_535), "")) == 65_537
+    assert_raise ArgumentError, fn -> Link.frame_key(String.duplicate("k", 65_536), "") end
+  end
+
   test "keys roundtrip" do
     assert "k1" |> Link.frame_key("blob") |> IO.iodata_to_binary() |> Link.parse_key() ==
              {"k1", "blob"}

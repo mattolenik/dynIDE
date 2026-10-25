@@ -20,7 +20,7 @@ defmodule HerdrScene.Wire do
   Client to server frames:
 
     * `{:auth, token :: binary}`
-    * `{:attach, %{version: 1, client_id: binary, session: binary | nil, kind: :term | :gui,
+    * `{:attach, %{version: 1, client_id: 1..64 bytes of [0-9A-Za-z_-], session: binary | nil, kind: :term | :gui,
       size: %{cols, rows}, cell_px: {w, h} | nil, caps: map,
       target: :session | {:pane, pane_id, :observe | :control}}}`
     * `{:input, wire_seq :: non_neg_integer, event}` (event per `HerdrScene.Event`)
@@ -126,13 +126,15 @@ defmodule HerdrScene.Wire do
 
   @attach_keys [:version, :client_id, :session, :kind, :size, :cell_px, :caps, :target]
 
+  defp client_id?(id), do: is_binary(id) and id =~ ~r/\A[0-9A-Za-z_-]{1,64}\z/
+
   defp validate_attach(a) do
     cond do
       not Enum.all?(@attach_keys, &Map.has_key?(a, &1)) ->
         {:error, "attach: missing required keys #{inspect(@attach_keys)}"}
 
-      not is_binary(a.client_id) ->
-        {:error, "attach.client_id: expected binary"}
+      not client_id?(a.client_id) ->
+        {:error, "attach.client_id: expected 1..64 bytes of [0-9A-Za-z_-]"}
 
       not (is_nil(a.session) or is_binary(a.session)) ->
         {:error, "attach.session: expected binary or nil"}

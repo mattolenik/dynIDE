@@ -90,9 +90,12 @@ defmodule HerdrServer.Native.Link do
   @spec close(link) :: :ok
   def close(link), do: Native.link_close(link)
 
-  @doc "`klen: u16 | key | blob`."
+  @doc "`klen: u16 | key | blob`; a key over 65535 bytes raises `ArgumentError`."
   @spec frame_key(binary, iodata) :: iodata
-  def frame_key(key, blob), do: [<<byte_size(key)::16>>, key, blob]
+  def frame_key(key, blob) when byte_size(key) <= 65_535, do: [<<byte_size(key)::16>>, key, blob]
+
+  def frame_key(key, _blob),
+    do: raise(ArgumentError, "link key of #{byte_size(key)} bytes: at most 65535")
 
   @doc "Inverse of `frame_key/2`; `:error` for a body too short for its key."
   @spec parse_key(binary) :: {binary, binary} | :error
