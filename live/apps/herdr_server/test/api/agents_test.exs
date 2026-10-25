@@ -169,19 +169,38 @@ defmodule HerdrServer.Api.AgentsTest do
              ok!(s, "agent.wait", %{"target" => "p1", "until" => ["idle", "done"]})
   end
 
-  test "report_agent sets the hook, release_agent drops it", %{s: s} do
-    hook = %{"pane_id" => "p1", "source" => "claude-hooks", "agent" => "claude"}
+  test "a full-lifecycle hook skips the screen; release drops it", %{s: s} do
+    hook = %{"pane_id" => "p1", "source" => "herdr:pi", "agent" => "pi"}
     ok!(s, "pane.report_agent", Map.merge(hook, %{"state" => "working", "seq" => 1}))
-    assert %{hook_source: "claude-hooks", skipped: true, state: :working} = Facts.agent(1)
+    assert %{hook_source: "herdr:pi", skipped: true, state: :working} = Facts.agent(1)
 
-    # a held state is explained without reading the screen
     r = ok!(s, "agent.explain", %{"target" => "p1"})
-    assert %{"screen_detection_skipped" => true, "state" => "working"} = r["agent"]
+
+    assert %{"screen_detection_skipped" => true, "state" => "working", "agent" => "pi"} =
+             r["agent"]
+
+    assert r["agent"]["matched_rule"] == nil
 
     ok!(s, "pane.release_agent", hook)
     assert %{hook_source: nil, skipped: false} = Facts.agent(1)
 
     assert {"not_found", _} =
              err(s, "pane.report_agent", %{hook | "pane_id" => "p9"} |> Map.put("state", "idle"))
+  end
+
+  test "another hook sets the hook source but explain still reads the screen", %{s: s, pty: pty} do
+    Fake.Pty.output(pty, "\r\n Run a dynamic workflow?\r\n esc to cancel\r\n")
+    hook = %{"pane_id" => "p1", "source" => "claude-hooks", "agent" => "claude"}
+    ok!(s, "pane.report_agent", Map.merge(hook, %{"state" => "working", "seq" => 1}))
+    assert %{hook_source: "claude-hooks", skipped: false} = Facts.agent(1)
+
+    r =
+      Enum.find_value(1..50, fn _ ->
+        r = ok!(s, "agent.explain", %{"target" => "p1"})
+        if r["agent"]["matched_rule"], do: r, else: Process.sleep(20) && nil
+      end) || flunk("explain never matched the blocked dialog")
+
+    assert %{"screen_detection_skipped" => false, "state" => "blocked"} = r["agent"]
+    assert ok!(s, "agent.get", %{"target" => "p1"})["agent"]["hook_source"] == "claude-hooks"
   end
 end

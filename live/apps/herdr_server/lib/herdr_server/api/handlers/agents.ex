@@ -127,7 +127,8 @@ defmodule HerdrServer.Api.Handlers.Agents do
          do: PaneIo.handle(method, Map.put(params, :pane_id, id))
   end
 
-  # herdr: a hook holding the state answers its own explanation, with no screen evaluation
+  # herdr: a full-lifecycle hook holding the state (`Tracker.full_lifecycle?/2`, the
+  # Facts row's `skipped`) answers its own explanation, with no screen evaluation
   defp explain_pane(id, verbose) do
     case {Facts.agent(id), Poller.detect_now(id)} do
       {%{skipped: true} = row, {:ok, _}} -> explained(hooked_explain(row), verbose)

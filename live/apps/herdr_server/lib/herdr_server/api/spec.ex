@@ -915,7 +915,7 @@ defmodule HerdrServer.Api.Spec do
         "Send named keys to an agent.",
         [target(), Map.put(req("keys", {:list, :string}, "Key names."), :min_items, 1)],
         "ok",
-        [:not_found],
+        [:not_found, :backpressure, :failed],
         "herdr-live agent send-keys <target> <key>..."
       )
     ]

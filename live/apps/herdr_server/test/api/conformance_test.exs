@@ -263,16 +263,17 @@ defmodule HerdrServer.Api.ConformanceTest do
   end
 
   defp produce(method, :backpressure, ctx)
-       when method in ~w(pane.send_text pane.send_keys) do
+       when method in ~w(pane.send_text pane.send_keys agent.send_keys) do
     s = listen(ctx)
     Fake.Pty.set_backpressure(pty(), true)
-    call(s, method)
+    call(s, method, %{"target" => "p1"})
   end
 
-  defp produce(method, :failed, ctx) when method in ~w(pane.send_text pane.send_keys) do
+  defp produce(method, :failed, ctx)
+       when method in ~w(pane.send_text pane.send_keys agent.send_keys) do
     s = listen(ctx)
     Fake.Pty.fail_once_after(pty(), 0, :too_large)
-    call(s, method)
+    call(s, method, %{"target" => "p1"})
   end
 
   defp produce("pane.wait_for_output", :timeout, ctx),

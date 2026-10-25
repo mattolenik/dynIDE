@@ -244,7 +244,8 @@ defmodule HerdrServer.Detect.Tracker do
 
   @doc """
   The pane's agent facts (`Pane.Facts.agent/1` without `updated_ms`); `skipped`
-  is herdr's `screen_detection_skipped` (a hook holds the state).
+  is herdr's `screen_detection_skipped` (a full-lifecycle hook holds the state,
+  `full_lifecycle?/2`).
   """
   @spec facts(t) :: map
   def facts(t) do
@@ -253,9 +254,25 @@ defmodule HerdrServer.Detect.Tracker do
       state: effective(t),
       visible: t.visible,
       hook_source: if(is_map(t.hook), do: t.hook[:source]),
-      skipped: t.hook != nil
+      skipped: is_map(t.hook) and full_lifecycle?(t.hook[:source], t.hook[:agent])
     }
   end
+
+  @full_lifecycle [
+    {"herdr:pi", "pi"},
+    {"herdr:omp", "omp"},
+    {"herdr:mastracode", "mastracode"},
+    {"herdr:opencode", "opencode"},
+    {"herdr:kilo", "kilo"},
+    {"herdr:kimi", "kimi"}
+  ]
+
+  @doc """
+  herdr's `full_lifecycle_hook_authority` (detect/mod.rs): the integrations whose
+  hooks report every state, so the screen is not evaluated while they hold it.
+  """
+  @spec full_lifecycle?(term, term) :: boolean
+  def full_lifecycle?(source, agent), do: {source, agent} in @full_lifecycle
 
   @doc "Published state: the hook's, unless a visible blocker overrides it."
   @spec effective(t) :: state

@@ -124,18 +124,34 @@ defmodule HerdrServer.Detect.PollerTest do
 
     # no source: kept, published with a nil hook_source
     assert :ok = Poller.report(1, %{agent: "claude", state: :working, seq: 1}, p)
-    assert %{agent: "claude", hook_source: nil, skipped: true} = Facts.agent(1)
+    assert %{agent: "claude", hook_source: nil, skipped: false} = Facts.agent(1)
     # no agent: Tracker.report has no clause, the Guard catches it
     assert {:error, :failed} = Poller.report(1, %{}, p)
     assert Process.alive?(p)
   end
 
   test "an idle telemetry window logs nothing" do
+    # the poller sees panes through the Mirror (20 ms behind the Store)
+    assert eventually(fn ->
+             Map.has_key?((Mirror.app() || %{session: %{panes: %{}}}).session.panes, 1)
+           end)
+
     p = poller(interval_ms: 3_600_000, window_ms: 0)
     # the first tick probes the new pane
-    log = ExUnit.CaptureLog.capture_log(fn -> send(p, :tick) && :sys.get_state(p) end)
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        _ = send(p, :tick)
+        :sys.get_state(p)
+      end)
+
     assert log =~ "detect_tick"
-    log = ExUnit.CaptureLog.capture_log(fn -> send(p, :tick) && :sys.get_state(p) end)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        _ = send(p, :tick)
+        :sys.get_state(p)
+      end)
+
     refute log =~ "detect_tick"
   end
 
@@ -201,7 +217,8 @@ defmodule HerdrServer.Detect.PollerTest do
 
     hook = %{source: "hooks", agent: "claude", state: :working, seq: 1}
     assert :ok = Poller.report(1, hook, p)
-    assert %{hook_source: "hooks", skipped: true} = Facts.agent(1)
+    # only a full-lifecycle hook skips the screen
+    assert %{hook_source: "hooks", skipped: false} = Facts.agent(1)
     assert {:error, :not_found} = Poller.report(99, hook, p)
 
     assert :ok = Poller.release(1, "hooks", "claude", p)

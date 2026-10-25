@@ -969,7 +969,7 @@ CLI: `herdr-live agent send-keys <target> <key>...`
 
 Result: `ok` (no fields).
 
-Errors: `invalid_params`, `not_found`
+Errors: `invalid_params`, `not_found`, `backpressure`, `failed`
 
 ## Methods: plugin
 
