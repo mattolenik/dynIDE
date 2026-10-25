@@ -165,6 +165,7 @@ defmodule HerdrServer.Api.ConformanceTest do
       "caller_pane_id" in names -> %{"caller_pane_id" => "p99"}
       "tab_id" in names -> %{"tab_id" => "w1:t9"}
       "workspace_id" in names -> %{"workspace_id" => "w9"}
+      "name" in names -> %{"name" => "nope"}
     end
   end
 end

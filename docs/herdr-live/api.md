@@ -83,6 +83,58 @@ Result: `server_status` with `gen` (integer), `os_pid` (integer), `reload_enable
 
 Errors: `invalid_params`
 
+## Methods: session
+
+### `session.list`
+
+The sessions on this socket: one per instance.
+
+CLI: `herdr-live session list`
+
+Params: none.
+
+Result: `session_list` with `sessions` (list of `session` object).
+
+Errors: `invalid_params`
+
+### `session.get`
+
+One session; default this instance's.
+
+CLI: `herdr-live session get [<name>]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `name` | string | no | Session name; default this instance's. |
+
+Result: `session_info` with `session` (`session` object).
+
+Errors: `invalid_params`, `not_found`
+
+### `session.snapshot`
+
+The whole topology in one answer: focus, workspaces, tabs, panes and layouts.
+
+CLI: `herdr-live api snapshot`
+
+Params: none.
+
+Result: `session_snapshot` with `version` (string), `session` (`session` object), `focused` (`focus` object), `workspaces` (list of `workspace` object), `tabs` (list of `tab` object), `panes` (list of `pane` object), `layouts` (list of object).
+
+Errors: `invalid_params`
+
+### `client.list`
+
+Socket clients (remote attach, terminal verbs) with their current size.
+
+CLI: `herdr-live client list`
+
+Params: none.
+
+Result: `client_list` with `clients` (list of `client` object).
+
+Errors: `invalid_params`
+
 ## Methods: reload
 
 ### `reload.rollback`
@@ -844,6 +896,25 @@ Errors: `invalid_params`, `not_available`
 
 ## Objects
 
+### `client`
+
+| field | type |
+| --- | --- |
+| `id` | string |
+| `kind` | string |
+| `target` | string |
+| `cols` | integer |
+| `rows` | integer |
+| `connected` | boolean |
+
+### `focus`
+
+| field | type |
+| --- | --- |
+| `workspace_id` | workspace id |
+| `tab_id` | tab id |
+| `pane_id` | pane id |
+
 ### `layout`
 
 | field | type |
@@ -885,6 +956,17 @@ Errors: `invalid_params`, `not_available`
 | `link_handlers` | list of object |
 | `events` | list of object |
 | `startup` | list of object |
+
+### `session`
+
+| field | type |
+| --- | --- |
+| `name` | string |
+| `os_pid` | integer |
+| `gen` | integer |
+| `api_socket` | string |
+| `client_socket` | string or null |
+| `clients` | integer |
 
 ### `tab`
 

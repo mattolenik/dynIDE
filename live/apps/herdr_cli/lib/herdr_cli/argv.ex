@@ -40,7 +40,23 @@ defmodule HerdrCli.Argv do
   @doc "Every command row; `usage` is the CLI form without the `herdr-live ` prefix."
   @spec commands() :: [map()]
   def commands do
-    server() ++ workspace() ++ tab() ++ pane() ++ agent() ++ events() ++ plugin()
+    server() ++ session() ++ workspace() ++ tab() ++ pane() ++ agent() ++ events() ++ plugin()
+  end
+
+  defp session do
+    [
+      cmd(["session", "list"], "session.list", [], %{}, :json, "session list"),
+      cmd(
+        ["session", "get"],
+        "session.get",
+        [{:opt, "name"}],
+        %{},
+        :json,
+        "session get [<name>]"
+      ),
+      cmd(["api", "snapshot"], "session.snapshot", [], %{}, :json, "api snapshot"),
+      cmd(["client", "list"], "client.list", [], %{}, :json, "client list")
+    ]
   end
 
   defp server do

@@ -519,8 +519,11 @@ defmodule HerdrServer.Client.Remote do
     do: out(state, {:notice, %{level: :warning, text: "frame rejected: already attached"}})
 
   # the client's own resize: what a resume compares against
-  defp own_resize(state, {:resize, %{cols: c, rows: r, cell_px: px}}),
-    do: %{state | info: %{state.info | size: %{cols: c, rows: r}, cell_px: px}}
+  defp own_resize(state, {:resize, %{cols: c, rows: r, cell_px: px}}) do
+    size = %{cols: c, rows: r}
+    Registry.update_value(__MODULE__.Registry, state.id, &%{&1 | size: size})
+    %{state | info: %{state.info | size: size, cell_px: px}}
+  end
 
   defp own_resize(state, _ev), do: state
 

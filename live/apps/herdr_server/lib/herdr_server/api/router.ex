@@ -21,6 +21,12 @@ defmodule HerdrServer.Api.Router do
   def handle("ping", _params, _ctx), do: Handlers.Server.ping()
   def handle("api.schema", _params, _ctx), do: Handlers.Server.schema()
   def handle("server.status", _params, _ctx), do: Handlers.Server.status()
+
+  def handle(method, params, _ctx) when method in ~w(session.list session.get client.list),
+    do: Handlers.Session.handle(method, params)
+
+  def handle("session.snapshot", _params, _ctx), do: Handlers.Session.snapshot()
+
   def handle("reload.rollback", params, ctx), do: Handlers.Server.rollback(params, ctx)
   def handle("reload.test_on_save", params, _ctx), do: Handlers.Server.test_on_save(params)
 

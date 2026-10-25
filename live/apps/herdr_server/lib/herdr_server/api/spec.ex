@@ -93,8 +93,8 @@ defmodule HerdrServer.Api.Spec do
   @spec methods() :: [map()]
   def methods do
     server() ++
-      reload() ++
-      workspace() ++ tab() ++ pane() ++ event_methods() ++ agents() ++ plugins()
+      session() ++ reload() ++
+        workspace() ++ tab() ++ pane() ++ event_methods() ++ agents() ++ plugins()
   end
 
   defp server do
@@ -117,6 +117,47 @@ defmodule HerdrServer.Api.Spec do
         "server_status",
         [],
         "herdr-live server status [--kv]"
+      )
+    ]
+  end
+
+  defp session do
+    [
+      method(
+        "session.list",
+        "session",
+        "The sessions on this socket: one per instance.",
+        [],
+        "session_list",
+        [],
+        "herdr-live session list"
+      ),
+      method(
+        "session.get",
+        "session",
+        "One session; default this instance's.",
+        [opt("name", :string, "Session name; default this instance's.")],
+        "session_info",
+        [:not_found],
+        "herdr-live session get [<name>]"
+      ),
+      method(
+        "session.snapshot",
+        "session",
+        "The whole topology in one answer: focus, workspaces, tabs, panes and layouts.",
+        [],
+        "session_snapshot",
+        [],
+        "herdr-live api snapshot"
+      ),
+      method(
+        "client.list",
+        "session",
+        "Socket clients (remote attach, terminal verbs) with their current size.",
+        [],
+        "client_list",
+        [],
+        "herdr-live client list"
       )
     ]
   end
@@ -714,6 +755,27 @@ defmodule HerdrServer.Api.Spec do
         f("events", {:list, :object}),
         f("startup", {:list, :object})
       ],
+      "session" => [
+        f("name", :string),
+        f("os_pid", :integer),
+        f("gen", :integer),
+        f("api_socket", :string),
+        f("client_socket", :null_or_string),
+        f("clients", :integer)
+      ],
+      "client" => [
+        f("id", :string),
+        f("kind", :string),
+        f("target", :string),
+        f("cols", :integer),
+        f("rows", :integer),
+        f("connected", :boolean)
+      ],
+      "focus" => [
+        f("workspace_id", :workspace_id),
+        f("tab_id", :tab_id),
+        f("pane_id", :pane_id)
+      ],
       "layout" => [
         f("tab_id", :tab_id),
         f("workspace_id", :workspace_id),
@@ -797,6 +859,18 @@ defmodule HerdrServer.Api.Spec do
         f("panes", :integer),
         f("api_conns", :integer)
       ],
+      "session_list" => [f("sessions", {:list, {:ref, "session"}})],
+      "session_info" => [f("session", {:ref, "session"})],
+      "session_snapshot" => [
+        f("version", :string),
+        f("session", {:ref, "session"}),
+        f("focused", {:ref, "focus"}),
+        f("workspaces", {:list, ws}),
+        f("tabs", {:list, tab}),
+        f("panes", {:list, pane}),
+        f("layouts", {:list, :object})
+      ],
+      "client_list" => [f("clients", {:list, {:ref, "client"}})],
       "reload_rollback" => [f("batches", {:list, :integer})],
       "test_on_save" => [f("mode", {:enum, ["gate", "off"]})],
       "workspace_list" => [f("workspaces", {:list, ws})],

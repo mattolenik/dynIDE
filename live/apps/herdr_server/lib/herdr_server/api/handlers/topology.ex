@@ -322,7 +322,9 @@ defmodule HerdrServer.Api.Handlers.Topology do
   # --- store plumbing ---
 
   # The current app, initialised first when no client has attached yet.
-  defp app! do
+  @doc false
+  @spec app!() :: HerdrServer.App.Actions.app()
+  def app! do
     case Store.snapshot() do
       nil ->
         {:ok, _, aft} = Store.request({Commands, :noop, []})

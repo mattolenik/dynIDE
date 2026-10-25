@@ -79,6 +79,14 @@ defmodule HerdrServer.Client.Socket do
     Disk.resolve_name(raw || System.get_env("HERDR_LIVE_SESSION"))
   end
 
+  @doc "The listening path, or nil when no client socket runs."
+  @spec path() :: Path.t() | nil
+  def path do
+    GenServer.call(__MODULE__, :path)
+  catch
+    :exit, _ -> nil
+  end
+
   @impl true
   def init(opts) do
     for entry <- Link.take_adopted("client/"), do: Remote.Supervisor.start_adopted(entry)
@@ -115,6 +123,9 @@ defmodule HerdrServer.Client.Socket do
   @spec socket_opts() :: [:gen_tcp.option()]
   def socket_opts,
     do: [:binary, packet: :raw, active: false, send_timeout: 5000, send_timeout_close: true]
+
+  @impl true
+  def handle_call(:path, _from, state), do: {:reply, state.path, state}
 
   @impl true
   def handle_info({:EXIT, pid, reason}, state) do

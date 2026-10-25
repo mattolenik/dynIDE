@@ -88,9 +88,11 @@ defmodule HerdrServer.Api.Handlers.Server do
 
   defp reload?, do: Application.get_env(:herdr_reload, HerdrReload, [])[:enabled] == true
 
-  defp version, do: to_string(Application.spec(:herdr_server, :vsn) || "0")
+  @doc false
+  def version, do: to_string(Application.spec(:herdr_server, :vsn) || "0")
 
-  defp gen do
+  @doc false
+  def gen do
     case Integer.parse(System.get_env("HERDR_LIVE_GEN") || "0") do
       {n, ""} -> n
       _ -> 0

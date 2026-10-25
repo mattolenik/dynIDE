@@ -217,6 +217,13 @@ defmodule HerdrServer.Client.RemoteTest do
     :gen_tcp.close(a)
   end
 
+  test "list reports the size after a client resize", ctx do
+    s = attached!(attach(ctx, client_id: "list-size"))
+    :ok = send_frame(s, {:input, 1, {:resize, %{cols: 120, rows: 40, cell_px: nil}}})
+    wait_until(fn -> entry("list-size").size == %{cols: 120, rows: 40} end)
+    :gen_tcp.close(s)
+  end
+
   test "a resize, a drop and a resume at the attach size renders at that size", ctx do
     s = attached!(attach(ctx, client_id: "own-resize"))
     scene!(s)
