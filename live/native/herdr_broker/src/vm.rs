@@ -10,14 +10,12 @@ use std::path::PathBuf;
 use std::process::Command;
 
 pub struct Real {
-    pub argv: Vec<OsString>,
     pub sock: PathBuf,
 }
 
 impl Spawner for Real {
-    fn spawn(&mut self, gen: u64, _role: Role) -> io::Result<u32> {
-        let (prog, args) = self
-            .argv
+    fn spawn(&mut self, gen: u64, _role: Role, argv: &[OsString]) -> io::Result<u32> {
+        let (prog, args) = argv
             .split_first()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty vm argv"))?;
         // Dropping the Child neither kills nor waits; the broker reaps with waitpid.

@@ -3,7 +3,9 @@
 //! death or `kernel-restart`.
 //!
 //! herdr_broker run [--runtime-dir DIR] -- <vm argv...>
-//! herdr_broker kernel-restart [--runtime-dir DIR]
+//! herdr_broker kernel-restart [--runtime-dir DIR] [-- <vm argv...>]
+//!   with an argv, the restart target boots it, and the broker keeps it for every later
+//!   VM only when the restart succeeds (herdr-live update: the new release's VM)
 //! herdr_broker status [--runtime-dir DIR]
 
 mod broker;
@@ -20,7 +22,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 
-const USAGE: &str = "usage: herdr_broker run [--runtime-dir DIR] -- <vm argv...>\n       herdr_broker kernel-restart|status [--runtime-dir DIR]";
+const USAGE: &str = "usage: herdr_broker run [--runtime-dir DIR] -- <vm argv...>\n       herdr_broker kernel-restart [--runtime-dir DIR] [-- <vm argv...>]\n       herdr_broker status [--runtime-dir DIR]";
 
 fn main() {
     std::process::exit(real_main());
@@ -45,7 +47,7 @@ fn real_main() -> i32 {
     let sock = dir.join("broker.sock");
     match cmd.to_str() {
         Some("run") if !vm.is_empty() => run(&dir, sock, vm),
-        Some("kernel-restart") => ctl::restart(&sock),
+        Some("kernel-restart") => ctl::restart(&sock, &vm),
         Some("status") => ctl::status(&sock),
         _ => {
             eprintln!("{USAGE}");
@@ -93,8 +95,8 @@ fn run(dir: &Path, sock: PathBuf, argv: Vec<OsString>) -> i32 {
         .then(|| tty::Guard::open_path("/dev/tty"))
         .flatten();
     event!("broker_start", "pid" => std::process::id());
-    let cfg = broker::Config::new(sock.clone());
-    let spawner = vm::Real { argv, sock };
+    let cfg = broker::Config::new(sock.clone(), argv);
+    let spawner = vm::Real { sock };
     let outcome = broker::Broker::new(cfg, spawner, sig).and_then(|mut b| b.run());
     let (code, crashed) = match outcome {
         Ok(o) => (o.code, o.crashed),

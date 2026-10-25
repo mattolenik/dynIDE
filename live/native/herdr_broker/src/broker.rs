@@ -6,6 +6,7 @@
 use crate::log::{event, log};
 use herdr_fdpass::{self as fp, kind, Frame};
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::ffi::OsString;
 use std::io::{self, Read};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
@@ -32,7 +33,8 @@ impl Role {
 
 /// VM process control. The real one is `vm::Real`; tests connect fake VMs.
 pub trait Spawner {
-    fn spawn(&mut self, gen: u64, role: Role) -> io::Result<u32>;
+    /// Starts `argv` (the broker's current VM argv, or a restart's own) as VM `gen`.
+    fn spawn(&mut self, gen: u64, role: Role, argv: &[OsString]) -> io::Result<u32>;
     fn signal(&mut self, pid: u32, sig: i32);
     /// Children reaped since the last call: `(pid, exit code or -signal)`.
     fn reap(&mut self) -> Vec<(u32, i32)>;
@@ -41,6 +43,8 @@ pub trait Spawner {
 /// Ruling 12 timeouts; tests shorten them.
 pub struct Config {
     pub sock: PathBuf,
+    /// The VM argv every spawn uses until a CTL_RESTART with its own argv succeeds.
+    pub argv: Vec<OsString>,
     pub hello_timeout: Duration,
     pub prepared_timeout: Duration,
     pub restored_timeout: Duration,
@@ -54,10 +58,11 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(sock: PathBuf) -> Config {
+    pub fn new(sock: PathBuf, argv: Vec<OsString>) -> Config {
         let s = Duration::from_secs;
         Config {
             sock,
+            argv,
             hello_timeout: s(120),
             prepared_timeout: s(5),
             restored_timeout: s(5),
@@ -196,6 +201,9 @@ pub struct Broker<S: Spawner> {
     queue: VecDeque<(u64, Vec<u8>)>,
     /// The ctl slot waiting for the graceful result.
     restart: Option<(u64, u64)>,
+    /// The running restart's own VM argv (CTL_RESTART body): adopted as `cfg.argv`
+    /// only when that restart succeeds, so a failure never boots it again.
+    restart_argv: Option<Vec<OsString>>,
     handoffs: u64,
     last_kind: Option<&'static str>,
     last_ms: Option<u128>,
@@ -208,6 +216,34 @@ fn be_u64(b: &[u8], at: usize) -> Option<u64> {
 
 fn be_u32(b: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_be_bytes(b.get(at..at + 4)?.try_into().ok()?))
+}
+
+/// CTL_RESTART body: empty, or the VM argv with each argument NUL-terminated.
+pub fn encode_argv(argv: &[OsString]) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut b = Vec::new();
+    for a in argv {
+        b.extend(a.as_bytes());
+        b.push(0);
+    }
+    b
+}
+
+fn decode_argv(body: &[u8]) -> Option<Vec<OsString>> {
+    use std::os::unix::ffi::OsStrExt;
+    let args = body.strip_suffix(&[0])?;
+    let argv: Vec<OsString> = args
+        .split(|b| *b == 0)
+        .map(|a| std::ffi::OsStr::from_bytes(a).to_os_string())
+        .collect();
+    argv.first().is_some_and(|a| !a.is_empty()).then_some(argv)
+}
+
+fn show_argv(argv: &[OsString]) -> String {
+    argv.iter()
+        .map(|a| a.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn result_body(ok: bool, text: &str) -> Vec<u8> {
@@ -254,6 +290,7 @@ impl<S: Spawner> Broker<S> {
             requests: HashMap::new(),
             queue: VecDeque::new(),
             restart: None,
+            restart_argv: None,
             handoffs: 0,
             last_kind: None,
             last_ms: None,
@@ -616,7 +653,7 @@ impl<S: Spawner> Broker<S> {
                 let s = self.status_text();
                 self.ctl_fill(t, id, kind::CTL_STATUS_REPLY, s.into_bytes());
             }
-            kind::CTL_RESTART => self.begin_graceful(t, id),
+            kind::CTL_RESTART => self.begin_graceful(t, id, decode_argv(&f.body)),
             _ => {
                 self.requests.insert(
                     id,
@@ -907,7 +944,7 @@ impl<S: Spawner> Broker<S> {
         }
     }
 
-    fn begin_graceful(&mut self, t: u64, id: u64) {
+    fn begin_graceful(&mut self, t: u64, id: u64, argv: Option<Vec<OsString>>) {
         let old = match (self.primary, &self.plan) {
             (Some(p), Plan::Idle) => p,
             _ => {
@@ -917,10 +954,15 @@ impl<S: Spawner> Broker<S> {
             }
         };
         self.restart = Some((t, id));
+        if let Some(a) = &argv {
+            log!("restart with vm argv {}", show_argv(a));
+        }
+        let target = argv.clone().unwrap_or_else(|| self.cfg.argv.clone());
+        self.restart_argv = argv;
         if let Some(s) = self.standby.take() {
             self.terminate(s, self.cfg.stop_grace);
         }
-        match self.spawn_vm(Role::Target) {
+        match self.spawn_with(Role::Target, &target) {
             Some(to) => {
                 self.plan = Plan::Graceful {
                     old,
@@ -980,6 +1022,11 @@ impl<S: Spawner> Broker<S> {
     }
 
     fn reply_restart(&mut self, ok: bool, text: &str) {
+        // before any standby or crash boot that follows: those use the adopted argv
+        if let (true, Some(a)) = (ok, self.restart_argv.take()) {
+            log!("vm argv now {}", show_argv(&a));
+            self.cfg.argv = a;
+        }
         if let Some((t, id)) = self.restart.take() {
             self.ctl_fill(t, id, kind::CTL_RESULT, result_body(ok, text));
         }
@@ -994,9 +1041,14 @@ impl<S: Spawner> Broker<S> {
     // ---- vm lifecycle ----
 
     fn spawn_vm(&mut self, role: Role) -> Option<u64> {
+        let argv = self.cfg.argv.clone();
+        self.spawn_with(role, &argv)
+    }
+
+    fn spawn_with(&mut self, role: Role, argv: &[OsString]) -> Option<u64> {
         let gen = self.next_gen;
         self.next_gen += 1;
-        match self.spawner.spawn(gen, role) {
+        match self.spawner.spawn(gen, role, argv) {
             Ok(pid) => {
                 log!("started vm gen={gen} pid={pid} role={}", role.name());
                 self.vms.insert(
@@ -1255,7 +1307,7 @@ impl<S: Spawner> Broker<S> {
         format!(
             "broker_pid={}\nprimary_gen={}\nprimary_pid={}\nstandby_gen={}\nstandby_pid={}\n\
              standby_ready={}\nentries={}\nphase={}\nhandoffs={}\nlast_handoff_kind={}\n\
-             last_handoff_ms={}\n",
+             last_handoff_ms={}\nvm_argv={}\n",
             std::process::id(),
             gen(self.primary),
             pid(self.primary),
@@ -1267,6 +1319,7 @@ impl<S: Spawner> Broker<S> {
             self.handoffs,
             self.last_kind.unwrap_or("-"),
             dash(self.last_ms.map(|m| m.to_string())),
+            show_argv(&self.cfg.argv),
         )
     }
 }
@@ -1285,15 +1338,20 @@ mod tests {
         10_000 + gen as u32
     }
 
+    /// `(gen, argv)` of every spawn.
+    type Argvs = Arc<Mutex<Vec<(u64, Vec<OsString>)>>>;
+
     struct Fake {
         sock: PathBuf,
+        argvs: Argvs,
         vms: Sender<(u64, Role, UnixStream)>,
         sigs: Sender<(u32, i32)>,
         reaps: Arc<Mutex<Vec<(u32, i32)>>>,
     }
 
     impl Spawner for Fake {
-        fn spawn(&mut self, gen: u64, role: Role) -> io::Result<u32> {
+        fn spawn(&mut self, gen: u64, role: Role, argv: &[OsString]) -> io::Result<u32> {
+            self.argvs.lock().unwrap().push((gen, argv.to_vec()));
             let s = UnixStream::connect(&self.sock)?;
             fp::set_timeouts(s.as_fd(), WAIT)?;
             let _ = self.vms.send((gen, role, s));
@@ -1309,6 +1367,7 @@ mod tests {
 
     struct H {
         sock: PathBuf,
+        argvs: Argvs,
         vms: Receiver<(u64, Role, UnixStream)>,
         sigs: Receiver<(u32, i32)>,
         reaps: Arc<Mutex<Vec<(u32, i32)>>>,
@@ -1321,7 +1380,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let sock = dir.join("b.sock");
-        let mut cfg = Config::new(sock.clone());
+        let mut cfg = Config::new(sock.clone(), vec!["old".into(), "start".into()]);
         let ms = Duration::from_millis;
         cfg.hello_timeout = ms(2000);
         cfg.prepared_timeout = ms(2000);
@@ -1334,8 +1393,10 @@ mod tests {
         let (vtx, vms) = channel();
         let (stx, sigs) = channel();
         let reaps = Arc::new(Mutex::new(Vec::new()));
+        let argvs = Arc::new(Mutex::new(Vec::new()));
         let fake = Fake {
             sock: sock.clone(),
+            argvs: argvs.clone(),
             vms: vtx,
             sigs: stx,
             reaps: reaps.clone(),
@@ -1345,6 +1406,7 @@ mod tests {
         let thread = std::thread::spawn(move || b.run());
         H {
             sock,
+            argvs,
             vms,
             sigs,
             reaps,
@@ -1507,12 +1569,17 @@ mod tests {
     /// Primary 1 holding `pane/1`, standby 2 ready, restart requested: returns
     /// (vm1, target vm3, ctl) with vm1 already PREPAREd.
     fn to_preparing(h: &H) -> (UnixStream, UnixStream, UnixStream) {
+        to_preparing_with(h, &[])
+    }
+
+    /// `to_preparing` with a CTL_RESTART body (the target's own VM argv).
+    fn to_preparing_with(h: &H, body: &[u8]) -> (UnixStream, UnixStream, UnixStream) {
         let (vm1, _vm2) = h.boot();
         let (_pr, pw) = UnixStream::pair().unwrap();
         send(&vm1, kind::HOLD, &keyed(b"pane/1", b"a"), &[pw.as_fd()]);
         h.wait_status("entries=1");
         let c = h.ctl();
-        send(&c, kind::CTL_RESTART, &[], &[]);
+        send(&c, kind::CTL_RESTART, body, &[]);
         h.wait_signal(pid(2), libc::SIGTERM);
         let (g, r, vm3) = h.vm();
         assert_eq!((g, r), (3, Role::Target));
@@ -1544,6 +1611,60 @@ mod tests {
         h.wait_status("phase=idle");
         let (g, r, _vm4) = h.vm();
         assert_eq!((g, r), (4, Role::Standby));
+    }
+
+    fn argv_of(h: &H, gen: u64) -> Vec<OsString> {
+        let argvs = h.argvs.lock().unwrap();
+        argvs.iter().find(|(g, _)| *g == gen).unwrap().1.clone()
+    }
+
+    fn new_argv() -> Vec<OsString> {
+        vec!["/r/0.1.1/bin/herdr_live".into(), "start".into()]
+    }
+
+    #[test]
+    fn restart_argv_round_trips() {
+        let a = new_argv();
+        assert_eq!(decode_argv(&encode_argv(&a)), Some(a));
+        assert_eq!(decode_argv(&[]), None);
+        assert_eq!(decode_argv(b"\0"), None);
+        assert_eq!(decode_argv(b"no-terminator"), None);
+    }
+
+    #[test]
+    fn graceful_restart_with_argv_adopts_it() {
+        let h = start("gargv");
+        let (vm1, vm3, c) = to_preparing_with(&h, &encode_argv(&new_argv()));
+        assert_eq!(argv_of(&h, 3), new_argv());
+        send(&vm1, kind::PREPARED, &[], &[]);
+        expect(&vm3, kind::ADOPT);
+        expect(&vm3, kind::ADOPT_END);
+        send(&vm3, kind::RESTORED, &1u32.to_be_bytes(), &[]);
+        expect(&vm1, kind::RELEASE);
+        assert_eq!(expect(&c, kind::CTL_RESULT).body[0], 1);
+        drop(vm1);
+        h.wait_status("phase=idle");
+        let (g, r, _vm4) = h.vm();
+        assert_eq!((g, r), (4, Role::Standby));
+        assert_eq!(argv_of(&h, 4), new_argv());
+        h.wait_status("vm_argv=/r/0.1.1/bin/herdr_live start");
+    }
+
+    #[test]
+    fn failed_restart_with_argv_keeps_the_old_argv() {
+        let h = start("gargvfail");
+        let (vm1, vm3, c) = to_preparing_with(&h, &encode_argv(&new_argv()));
+        send(&vm1, kind::PREPARED, &[], &[]);
+        expect(&vm3, kind::ADOPT);
+        expect(&vm3, kind::ADOPT_END);
+        h.wait_signal(pid(3), libc::SIGKILL);
+        drop(vm3);
+        expect(&vm1, kind::THAW);
+        assert_eq!(expect(&c, kind::CTL_RESULT).body[0], 0);
+        let (g, r, _vm4) = h.vm();
+        assert_eq!((g, r), (4, Role::Standby));
+        assert_eq!(argv_of(&h, 4), vec![OsString::from("old"), "start".into()]);
+        h.wait_status("vm_argv=old start");
     }
 
     #[test]
