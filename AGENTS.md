@@ -63,6 +63,13 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   dev-only HTML scene renderer (`mix herdr.scene.html`), depends only on
   herdr_scene, nothing depends on it. `live/apps/herdr_integration`:
   test-only, may depend on all of them.
+- Plugins (M14): herdr's external-process plugin model, unchanged, under
+  `HerdrServer.Plugins.*`; plugins run as OS processes (argv, never a shell)
+  driven through the manifest, the pane env (`HERDR_PANE_ID`,
+  `HERDR_LIVE_BIN`/`HERDR_BIN_PATH`, `HERDR_LIVE_API`/`HERDR_SOCKET_PATH`)
+  and the API. No plugin code is ever loaded into the VM (human ruling).
+  `vendor/herdr-plugin-examples/` holds two upstream examples for the
+  install smoke; they have no upstream licence and must go before any publish.
 - Chrome: 19 node roles with required props in `HerdrScene.Chrome`; golden
   fixtures in `live/apps/herdr_scene/priv/fixtures/scenes` (every role must
   have one and render in both the terminal client and the HTML renderer).
