@@ -48,12 +48,12 @@ defmodule HerdrServer.Detect.Identify do
     "muse-cli" => "muse"
   }
 
-  # Contiguous (normalised) path components of a script inside an installed package.
+  # Normalised trailing path components of a package's entry script (suffix match, like herdr).
   @packages [
-    {~w(node_modules @anthropic-ai claude-code), "claude"},
-    {~w(node_modules @openai codex), "codex"},
-    {~w(node_modules opencode-ai), "opencode"},
-    {~w(node_modules @google gemini-cli), "gemini"},
+    {~w(node_modules @anthropic-ai claude-code cli), "claude"},
+    {~w(node_modules @openai codex bin codex), "codex"},
+    {~w(node_modules opencode-ai bin opencode), "opencode"},
+    {~w(node_modules @google gemini-cli dist index), "gemini"},
     {~w(node_modules @earendil-works pi-coding-agent dist cli), "pi"},
     {~w(node_modules @earendil-works pi-coding-agent dist bundle cli), "pi"},
     {~w(node_modules @oh-my-pi pi-coding-agent dist cli), "omp"},
@@ -90,7 +90,7 @@ defmodule HerdrServer.Detect.Identify do
 
   def agent(%{pgid: pgid, processes: processes}) do
     cands =
-      for p <- processes, c = candidate(p), l = label(c), do: {p, c, l}
+      for p <- processes, c = candidate(p), l = label(c), interactive?(l, p), do: {p, c, l}
 
     case Enum.find(cands, fn {p, _, _} -> p.pid == pgid end) do
       {p, _, l} ->
@@ -108,6 +108,11 @@ defmodule HerdrServer.Detect.Identify do
     {p, _, l} = Enum.max_by(cands, fn {p, c, _} -> priority(p, c) end)
     {l, p.pid}
   end
+
+  # ponytail: partial of herdr's is_interactive_letta_process (flag scan only).
+  @letta_batch ~w(-p --print -h --help -v --version --update --upgrade)
+  defp interactive?("letta", p), do: not Enum.any?(Map.get(p, :argv) || [], &(&1 in @letta_batch))
+  defp interactive?(_, _), do: true
 
   # herdr `normalized_process_name`: argv[0] over the OS name; generic runtimes
   # and shells resolve through their script argument.
@@ -175,8 +180,7 @@ defmodule HerdrServer.Detect.Identify do
     comps = path |> String.split(["/", "\\"], trim: true) |> Enum.map(&normalize/1)
 
     Enum.find_value(@packages, fn {seq, l} ->
-      n = length(seq)
-      Enum.any?(Enum.chunk_every(comps, n, 1, :discard), &(&1 == seq)) && l
+      Enum.take(comps, -length(seq)) == seq && l
     end)
   end
 

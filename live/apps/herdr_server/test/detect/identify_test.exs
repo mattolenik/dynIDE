@@ -79,4 +79,38 @@ defmodule HerdrServer.Detect.IdentifyTest do
                {label, 72_441}
     end
   end
+
+  test "helper files under a package dir are not agents" do
+    for path <- [
+          "/x/node_modules/@anthropic-ai/claude-code/vendor/ripgrep/arm64-darwin/rg",
+          "/x/node_modules/@openai/codex/vendor/rg",
+          "/x/node_modules/opencode-ai/lib/helper",
+          "/x/node_modules/@google/gemini-cli/dist/other.js",
+          "/x/node_modules/@earendil-works/pi-coding-agent/dist/other.js"
+        ] do
+      assert Identify.agent(job([proc(10, "node", ["node", path])])) == nil
+    end
+  end
+
+  test "letta batch invocations are not agents" do
+    assert Identify.agent(job([proc(10, "letta", ["letta"])])) == {"letta", 10}
+
+    for flag <- ~w(-p --print -h --help -v --version --update --upgrade) do
+      assert Identify.agent(job([proc(10, "letta", ["letta", flag])])) == nil
+    end
+  end
+
+  test "script argument resolution" do
+    cc = "/x/node_modules/@anthropic-ai/claude-code/cli.js"
+
+    assert Identify.agent(job([proc(10, "npx", ["npx", "-y", "@anthropic-ai/claude-code"])])) ==
+             {"claude", 10}
+
+    assert Identify.agent(job([proc(10, "env", ["env", "FOO=1", "claude"])])) == nil
+    assert Identify.agent(job([proc(10, "python3", ["python3", "-c", "codex"])])) == nil
+    assert Identify.agent(job([proc(10, "python3", ["python3", "-m", "codex"])])) == nil
+    assert Identify.agent(job([proc(10, "node", ["node", "--", cc])])) == {"claude", 10}
+    assert Identify.agent(job([proc(10, "node", ["node", "-r", "x", cc])])) == {"claude", 10}
+    assert Identify.agent(job([proc(10, "node", ["node", "-r", cc])])) == nil
+  end
 end
