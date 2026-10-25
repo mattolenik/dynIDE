@@ -123,7 +123,7 @@ left in the results files. Each entry names its source.
   `pane.link.resolve`, stale-target checks on `pane.link.activate`, cleanup of old
   managed installs. ([m14](../results/m14.md))
 - Plugin commands have no default timeout (as in herdr); 32 hung commands block plugin
-  runs. `popup` and `overlay` placements follow M17's popup rules; `pane.exited` and
+  runs. `pane.exited` and
   `pane.moved` hooks never fire. ([m14](../results/m14.md))
 - `pane.read` has no `recent-unwrapped`, `detection` or ANSI source; `pane.process_info`
   has no foreground process list. ([m12](../results/m12.md))

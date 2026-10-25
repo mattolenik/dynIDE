@@ -14,7 +14,7 @@ The prefix key is `ctrl+b`. Defaults (see the in-app keybind help for the full l
 | `ctrl+b q` | quit the client (detaches only that client when attached) |
 
 The UI is mouse-first: click tabs, workspaces and menus; drag to reorder; select text and
-it is copied. Configuration is a TOML file; `herdr-live --default-config` prints the
+it is copied. Configuration is `${XDG_CONFIG_HOME:-~/.config}/herdr-live/config.toml` (`HERDR_LIVE_CONFIG`); `herdr-live --default-config` prints the
 commented defaults.
 
 ## From another shell or a pane

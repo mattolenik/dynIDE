@@ -18,4 +18,4 @@ the tty even after `kill -9` of the broker. If you still see garbage, run `reset
 pending.
 
 **Does it work with herdr's config and plugins?** Plugins yes
-([plugins.md](plugins.md)). The config is `config.toml` in herdr-live's own directory.
+([plugins.md](plugins.md)). The config is `${XDG_CONFIG_HOME:-~/.config}/herdr-live/config.toml`.
