@@ -64,7 +64,12 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
 
   # a connected pair whose server end exists only as the returned fd resource
   defp socket_pair do
-    path = Path.join(System.tmp_dir!(), "hlh#{System.unique_integer([:positive])}.sock")
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "hlh#{System.pid()}-#{System.unique_integer([:positive])}.sock"
+      )
+
     {:ok, l} = :gen_tcp.listen(0, ifaddr: {:local, path}, mode: :binary, active: false)
     on_exit(fn -> File.rm(path) end)
     {:ok, c} = :gen_tcp.connect({:local, path}, 0, [:binary, active: false], 5000)
@@ -175,7 +180,7 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
 
   test "thaw restarts the client socket without calling back into the Link" do
     :ok = Link.put_adopted_for_test([])
-    dir = Path.join(System.tmp_dir!(), "hlt#{System.unique_integer([:positive])}")
+    dir = Path.join(System.tmp_dir!(), "hlt#{System.pid()}-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     path = Path.join(dir, "c.sock")
     opts = [path: path, token_path: Path.join(dir, "c.token")]

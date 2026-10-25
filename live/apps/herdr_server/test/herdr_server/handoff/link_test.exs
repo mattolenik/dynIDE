@@ -27,7 +27,12 @@ defmodule HerdrServer.Handoff.LinkTest do
   end
 
   test "hold is sent before open replies" do
-    path = "/tmp/hh-#{System.unique_integer([:positive])}.sock"
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "hh-#{System.pid()}-#{System.unique_integer([:positive])}.sock"
+      )
+
     {:ok, l} = :gen_tcp.listen(0, ifaddr: {:local, path}, mode: :binary, active: false)
     {:ok, link} = NLink.connect(path, self())
     {:ok, peer} = :gen_tcp.accept(l, 5_000)
@@ -76,7 +81,12 @@ defmodule HerdrServer.Handoff.LinkTest do
 
   # Starts the Link against a fake broker that answers HELLO with `answer`.
   defp start_link_with(answer) do
-    path = "/tmp/hb-#{System.unique_integer([:positive])}.sock"
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "hb-#{System.pid()}-#{System.unique_integer([:positive])}.sock"
+      )
+
     {:ok, l} = :gen_tcp.listen(0, ifaddr: {:local, path}, mode: :binary, active: false)
     System.put_env("HERDR_BROKER_SOCK", path)
     System.put_env("HERDR_LIVE_GEN", "7")
@@ -349,7 +359,12 @@ defmodule HerdrServer.Handoff.LinkTest do
   end
 
   test "thaw clears the input held in the broker before writing it back" do
-    path = "/tmp/hh-#{System.unique_integer([:positive])}.sock"
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "hh-#{System.pid()}-#{System.unique_integer([:positive])}.sock"
+      )
+
     {:ok, l} = :gen_tcp.listen(0, ifaddr: {:local, path}, mode: :binary, active: false)
     {:ok, link} = NLink.connect(path, self())
     {:ok, peer} = :gen_tcp.accept(l, 5_000)

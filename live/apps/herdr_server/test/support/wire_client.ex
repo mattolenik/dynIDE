@@ -16,7 +16,7 @@ defmodule HerdrServer.Test.WireClient do
   def setup_listener do
     reset()
     on_exit(&reset/0)
-    dir = Path.join(System.tmp_dir!(), "hlc#{System.unique_integer([:positive])}")
+    dir = Path.join(System.tmp_dir!(), "hlc#{System.pid()}-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf!(dir) end)
     path = Path.join(dir, "c.sock")

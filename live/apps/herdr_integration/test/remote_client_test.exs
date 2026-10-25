@@ -17,7 +17,7 @@ defmodule HerdrIntegration.RemoteClientTest do
   setup do
     Driver.reset()
     on_exit(&Driver.reset/0)
-    dir = Path.join(System.tmp_dir!(), "hlr#{System.unique_integer([:positive])}")
+    dir = Path.join(System.tmp_dir!(), "hlr#{System.pid()}-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf!(dir) end)
     sock = Path.join(dir, "c.sock")

@@ -111,7 +111,7 @@ defmodule HerdrIntegration.ArchitectureTest do
   """
 
   defp missing_on_client(atoms) do
-    dir = Path.join(System.tmp_dir!(), "r7_#{System.unique_integer([:positive])}")
+    dir = Path.join(System.tmp_dir!(), "r7_#{System.pid()}-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     file = Path.join(dir, "atoms")
     File.write!(file, Enum.map_join(atoms, "\n", &Base.encode16(Atom.to_string(&1))))

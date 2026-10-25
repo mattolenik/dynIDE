@@ -11,7 +11,7 @@ defmodule HerdrTerm.Remote.ConnTest do
   @size %{cols: 80, rows: 24}
 
   setup do
-    dir = Path.join(System.tmp_dir!(), "hlc#{System.unique_integer([:positive])}")
+    dir = Path.join(System.tmp_dir!(), "hlc#{System.pid()}-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     sock = Path.join(dir, "c.sock")
     token = Path.join(dir, "c.token")

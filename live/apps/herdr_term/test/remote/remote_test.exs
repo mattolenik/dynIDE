@@ -10,7 +10,7 @@ defmodule HerdrTerm.RemoteTest do
   alias HerdrTerm.Remote.Notice
 
   test "start wires the conn and a remote inline client: the server's scene is drawn" do
-    dir = Path.join(System.tmp_dir!(), "hlr#{System.unique_integer([:positive])}")
+    dir = Path.join(System.tmp_dir!(), "hlr#{System.pid()}-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     sock = Path.join(dir, "c.sock")
     File.write!(Path.join(dir, "c.token"), "t")
