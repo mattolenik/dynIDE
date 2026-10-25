@@ -1,6 +1,6 @@
 defmodule HerdrServer.App.WorkspacesTest do
   use ExUnit.Case, async: true
-  alias HerdrServer.App.{Actions, Keybinds}
+  alias HerdrServer.App.{Actions, Keybinds, Workspaces}
   alias HerdrServer.Layout
 
   defp fresh, do: elem(Actions.init(%{cols: 100, rows: 25}), 0)
@@ -85,6 +85,15 @@ defmodule HerdrServer.App.WorkspacesTest do
     assert app.session.active_workspace == 1
     assert app.focus.pane == 1
     assert Map.keys(app.session.panes) == [1]
+  end
+
+  test "close_workspace/2 of an inactive workspace keeps the active one" do
+    {app, _} = Workspaces.new_workspace(fresh(), "bg", false)
+    assert app.session.active_workspace == 1
+    {app, [{:close, 2}]} = Workspaces.close_workspace(app, 2)
+    assert {app.session.active_workspace, app.focus.pane} == {1, 1}
+    assert names(app) == ["1"]
+    assert Workspaces.close_workspace(app, 9) == {app, []}
   end
 
   test "closing the last workspace replaces it with a fresh one" do

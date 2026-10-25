@@ -4,10 +4,12 @@ defmodule HerdrServer.App.Commands do
   Each is `(app, ...) -> {app, [effect]}` with the effects of `App.Actions`; an unknown id
   is a no-op returning the app unchanged and `[]`. Unlike `Actions`, nothing here depends
   on which workspace or tab is active; `app.focus.pane` is re-derived from the active
-  tab's layout after every change.
+  tab's layout after every change. Workspace, close and rename commands delegate to
+  `App.Workspaces` and the `App.Actions` close paths (run in the target workspace with
+  `Workspaces.within/3`), so there is one implementation of each.
   """
 
-  alias HerdrServer.App.{Actions, Session}
+  alias HerdrServer.App.{Actions, Session, Workspaces}
   alias HerdrServer.Layout
 
   @type app :: Actions.app()
@@ -19,32 +21,16 @@ defmodule HerdrServer.App.Commands do
 
   @spec create_workspace(app(), String.t() | nil, boolean()) :: result()
   def create_workspace(app, label, focus?) do
-    {id, app} = take_id(app)
-    ws_id = Enum.max([0 | Enum.map(app.session.workspaces, & &1.id)]) + 1
-    layout = Layout.new(id)
-
-    ws = %{
-      id: ws_id,
-      name: label || Integer.to_string(ws_id),
-      tabs: [%{id: 1, name: "1", layout: layout}],
-      active_tab: 1
-    }
-
-    app = update_in(app.session.workspaces, &(&1 ++ [ws]))
-    app = put_in(app.session.panes[id], new_meta())
-    app = if focus?, do: put_in(app.session.active_workspace, ws_id), else: app
-    {sync(app), [{:spawn, id, size_of(layout, app.session.area, id)}]}
+    {app, fx} = Workspaces.new_workspace(app, label, focus?)
+    ws = List.last(app.session.workspaces)
+    if label, do: {app, fx}, else: {put_ws(app, %{ws | name: Integer.to_string(ws.id)}), fx}
   end
 
   @spec focus_workspace(app(), integer()) :: result()
-  def focus_workspace(app, ws_id) do
-    with_ws(app, ws_id, fn _ -> {sync(put_in(app.session.active_workspace, ws_id)), []} end)
-  end
+  defdelegate focus_workspace(app, ws_id), to: Workspaces, as: :switch_workspace_id
 
   @spec rename_workspace(app(), integer(), String.t()) :: result()
-  def rename_workspace(app, ws_id, label) do
-    with_ws(app, ws_id, fn ws -> {put_ws(app, %{ws | name: label}), []} end)
-  end
+  defdelegate rename_workspace(app, ws_id, label), to: Workspaces
 
   @spec close_workspace(app(), integer()) :: result()
   def close_workspace(%{session: %{workspaces: [_only]}} = app, ws_id) do
@@ -53,34 +39,18 @@ defmodule HerdrServer.App.Commands do
     end)
   end
 
-  def close_workspace(app, ws_id), do: with_ws(app, ws_id, &drop_workspace(app, &1))
-
-  defp drop_workspace(app, ws) do
-    all = app.session.workspaces
-    ids = Enum.flat_map(ws.tabs, &Layout.pane_ids(&1.layout))
-    idx = Enum.find_index(all, &(&1.id == ws.id))
-    rest = List.delete_at(all, idx)
-    app = app |> put_in([Access.key(:session), Access.key(:workspaces)], rest) |> drop_meta(ids)
-
-    app =
-      if app.session.active_workspace == ws.id,
-        do: put_in(app.session.active_workspace, Enum.at(rest, max(idx - 1, 0)).id),
-        else: app
-
-    {sync(app), Enum.map(ids, &{:close, &1})}
-  end
+  def close_workspace(app, ws_id), do: Workspaces.close_workspace(app, ws_id)
 
   @spec create_tab(app(), integer(), String.t() | nil, boolean()) :: result()
   def create_tab(app, ws_id, label, focus?) do
     with_ws(app, ws_id, fn ws ->
-      {id, app} = take_id(app)
-      tab_id = next_tab_id(ws.tabs)
-      layout = Layout.new(id)
-      tab = %{id: tab_id, name: label || Integer.to_string(tab_id), layout: layout}
-      active = if focus?, do: tab_id, else: ws.active_tab
-      app = put_ws(app, %{ws | tabs: ws.tabs ++ [tab], active_tab: active})
-      app = put_in(app.session.panes[id], new_meta())
-      {sync(app), [{:spawn, id, size_of(layout, app.session.area, id)}]}
+      {app, fx} = Workspaces.within(app, ws_id, &Actions.new_tab/1)
+      %{tabs: tabs} = new_ws = find_ws(app, ws_id)
+      tab = List.last(tabs)
+      tab = if label, do: %{tab | name: label}, else: tab
+      active = if focus?, do: tab.id, else: ws.active_tab
+      new_ws = %{new_ws | tabs: List.replace_at(tabs, -1, tab), active_tab: active}
+      {sync(put_ws(app, new_ws)), fx}
     end)
   end
 
@@ -93,16 +63,13 @@ defmodule HerdrServer.App.Commands do
   end
 
   @spec rename_tab(app(), integer(), integer(), String.t()) :: result()
-  def rename_tab(app, ws_id, tab_id, label) do
-    with_tab(app, ws_id, tab_id, fn ws, _tab ->
-      tabs = Enum.map(ws.tabs, &if(&1.id == tab_id, do: %{&1 | name: label}, else: &1))
-      {put_ws(app, %{ws | tabs: tabs}), []}
-    end)
-  end
+  defdelegate rename_tab(app, ws_id, tab_id, label), to: Workspaces
 
   @spec close_tab(app(), integer(), integer()) :: result()
   def close_tab(app, ws_id, tab_id) do
-    with_tab(app, ws_id, tab_id, fn _ws, _tab -> drop_tab(app, ws_id, tab_id) end)
+    with_tab(app, ws_id, tab_id, fn _ws, _tab ->
+      Workspaces.within(app, ws_id, &Actions.close_tab(&1, tab_id))
+    end)
   end
 
   @spec split_pane(app(), integer(), :horizontal | :vertical, float(), boolean()) :: result()
@@ -132,37 +99,13 @@ defmodule HerdrServer.App.Commands do
   @spec close_pane(app(), integer()) :: result()
   def close_pane(app, pane) do
     case locate(app, pane) do
-      nil ->
-        {app, []}
-
-      {ws_id, tab_id} ->
-        case Layout.close(tab_layout(app, ws_id, tab_id), pane) do
-          {:ok, l} ->
-            app = app |> put_tab_layout(ws_id, tab_id, l) |> drop_meta([pane]) |> sync()
-            {app, [{:close, pane}]}
-
-          :last ->
-            drop_tab(app, ws_id, tab_id)
-        end
+      nil -> {app, []}
+      {ws_id, _tab_id} -> Workspaces.within(app, ws_id, &Actions.close_pane(&1, pane))
     end
   end
 
   @spec focus_pane(app(), integer()) :: result()
-  def focus_pane(app, pane) do
-    case locate(app, pane) do
-      nil ->
-        {app, []}
-
-      {ws_id, tab_id} ->
-        ws = find_ws(app, ws_id)
-        app = put_ws(app, %{ws | active_tab: tab_id})
-
-        app =
-          put_tab_layout(app, ws_id, tab_id, Layout.focus(tab_layout(app, ws_id, tab_id), pane))
-
-        {sync(put_in(app.session.active_workspace, ws_id)), []}
-    end
-  end
+  defdelegate focus_pane(app, pane), to: Workspaces
 
   @doc "The `{workspace_id, tab_id}` holding `pane`, or nil."
   @spec locate(app(), integer()) :: {integer(), integer()} | nil
@@ -222,38 +165,6 @@ defmodule HerdrServer.App.Commands do
   defp take_id(app), do: {app.session.next_id, update_in(app.session.next_id, &(&1 + 1))}
 
   defp new_meta, do: %{title: nil, layout_gen: 0}
-
-  defp next_tab_id(tabs), do: Enum.max([0 | Enum.map(tabs, & &1.id)]) + 1
-
-  defp drop_meta(app, ids), do: update_in(app.session.panes, &Map.drop(&1, ids))
-
-  defp drop_tab(app, ws_id, tab_id) do
-    ws = find_ws(app, ws_id)
-    tab = Enum.find(ws.tabs, &(&1.id == tab_id))
-    ids = Layout.pane_ids(tab.layout)
-    idx = Enum.find_index(ws.tabs, &(&1.id == tab_id))
-    tabs = List.delete_at(ws.tabs, idx)
-    app = drop_meta(app, ids)
-    closes = Enum.map(ids, &{:close, &1})
-
-    case tabs do
-      [] ->
-        {id, app} = take_id(app)
-        l = Layout.new(id)
-        t = %{id: 1, name: "1", layout: l}
-        app = put_ws(app, %{ws | tabs: [t], active_tab: 1})
-        app = put_in(app.session.panes[id], new_meta())
-        {sync(app), closes ++ [{:spawn, id, size_of(l, app.session.area, id)}]}
-
-      _ ->
-        active =
-          if ws.active_tab == tab_id,
-            do: Enum.at(tabs, max(idx - 1, 0)).id,
-            else: ws.active_tab
-
-        {sync(put_ws(app, %{ws | tabs: tabs, active_tab: active})), closes}
-    end
-  end
 
   defp size_of(l, area, id) do
     %{rect: r} = Enum.find(Layout.borders(Layout.panes(l, area), area), &(&1.id == id))

@@ -18,15 +18,20 @@ defmodule HerdrServer.App.Workspaces do
   @type effect :: Actions.effect()
 
   @spec new_workspace(app()) :: {app(), [effect()]}
-  def new_workspace(app) do
+  def new_workspace(app), do: new_workspace(app, nil, true)
+
+  @doc "Adds a workspace named `name` (nil: the next free default name), focused when `focus?`."
+  @spec new_workspace(app(), binary | nil, boolean) :: {app(), [effect()]}
+  def new_workspace(app, name, focus?) do
     s = app.session
     {id, layout} = {s.next_id, Layout.new(s.next_id)}
     ws_id = Enum.max([0 | Enum.map(s.workspaces, & &1.id)]) + 1
-    ws = %{id: ws_id, name: free_name(s.workspaces), tabs: [tab(layout)], active_tab: 1}
+    ws = %{id: ws_id, name: name || free_name(s.workspaces), tabs: [tab(layout)], active_tab: 1}
 
     app = %{app | session: %{s | workspaces: s.workspaces ++ [ws], next_id: id + 1}}
     app = put_in(app.session.panes[id], %{title: nil, layout_gen: 0})
-    {activate(app, ws_id), [{:spawn, id, spawn_size(layout, s.area, id)}]}
+    app = if focus?, do: activate(app, ws_id), else: app
+    {app, [{:spawn, id, spawn_size(layout, s.area, id)}]}
   end
 
   @doc "Switch to the `n`th workspace (1-based); out of range is a no-op."
@@ -55,12 +60,25 @@ defmodule HerdrServer.App.Workspaces do
 
   @doc "Closes the active workspace; the last one is replaced by a fresh one."
   @spec close_workspace(app()) :: {app(), [effect()]}
-  def close_workspace(app) do
-    s = app.session
-    ws = Enum.find(s.workspaces, &(&1.id == s.active_workspace))
+  def close_workspace(app), do: close_workspace(app, app.session.active_workspace)
+
+  @doc """
+  Closes workspace `ws_id`; the active workspace stays active unless it is the one closed
+  (then the previous one is), and the last one is replaced by a fresh one. Unknown ids
+  are a no-op.
+  """
+  @spec close_workspace(app(), term()) :: {app(), [effect()]}
+  def close_workspace(app, ws_id) do
+    case Enum.find_index(app.session.workspaces, &(&1.id == ws_id)) do
+      nil -> {app, []}
+      i -> drop_workspace(app, i)
+    end
+  end
+
+  defp drop_workspace(app, i) do
+    ws = Enum.at(app.session.workspaces, i)
     ids = Enum.flat_map(ws.tabs, &Layout.pane_ids(&1.layout))
     closes = Enum.map(ids, &{:close, &1})
-    i = Enum.find_index(s.workspaces, &(&1.id == ws.id))
     app = update_in(app.session.panes, &Map.drop(&1, ids))
     app = update_in(app.session.workspaces, &List.delete_at(&1, i))
 
@@ -69,8 +87,26 @@ defmodule HerdrServer.App.Workspaces do
         {app, spawn} = new_workspace(app)
         {app, closes ++ spawn}
 
-      rest ->
+      rest when app.session.active_workspace == ws.id ->
         {activate(app, Enum.at(rest, max(i - 1, 0)).id), closes}
+
+      _ ->
+        {app, closes}
+    end
+  end
+
+  @doc """
+  Runs `fun` (an active-workspace action) with workspace `ws_id` active, then re-activates
+  the workspace that was active (when it still exists).
+  """
+  @spec within(app(), term(), (app() -> {app(), [effect()]})) :: {app(), [effect()]}
+  def within(app, ws_id, fun) do
+    back = app.session.active_workspace
+    {app, []} = switch_workspace_id(app, ws_id)
+    {app, effects} = fun.(app)
+
+    case switch_workspace_id(app, back) do
+      {app, []} -> {app, effects}
     end
   end
 

@@ -38,7 +38,7 @@ defmodule HerdrServer.App.Modal.Confirm do
     cond do
       w == nil or not Enum.any?(w.tabs, &(&1.id == tab_id)) -> {app, []}
       length(w.tabs) == 1 -> whole(app, w)
-      true -> within(app, ws_id, &Actions.close_tab(&1, tab_id))
+      true -> Workspaces.within(app, ws_id, &Actions.close_tab(&1, tab_id))
     end
   end
 
@@ -55,10 +55,10 @@ defmodule HerdrServer.App.Modal.Confirm do
       [{w, t} | _] when length(w.tabs) == 1 ->
         if Layout.count(t.layout) == 1,
           do: whole(app, w),
-          else: within(app, w.id, &Actions.close_pane(&1, id))
+          else: Workspaces.within(app, w.id, &Actions.close_pane(&1, id))
 
       [{w, _t} | _] ->
-        within(app, w.id, &Actions.close_pane(&1, id))
+        Workspaces.within(app, w.id, &Actions.close_pane(&1, id))
 
       [] ->
         {app, []}
@@ -82,11 +82,7 @@ defmodule HerdrServer.App.Modal.Confirm do
   Gone already is a no-op.
   """
   @spec close_workspace_now(map, term) :: {map, [tuple]}
-  def close_workspace_now(app, ws_id) do
-    if Enum.any?(app.session.workspaces, &(&1.id == ws_id)),
-      do: within(app, ws_id, &Workspaces.close_workspace/1),
-      else: {app, []}
-  end
+  def close_workspace_now(app, ws_id), do: Workspaces.close_workspace(app, ws_id)
 
   # the action removes workspace `w`: ask when confirm_close, else close it; the same
   # close either way
@@ -98,18 +94,6 @@ defmodule HerdrServer.App.Modal.Confirm do
       {Modal.push(app, modal), []}
     else
       close_workspace_now(app, w.id)
-    end
-  end
-
-  # runs `fun` with workspace `ws_id` active, then re-activates the one that was active
-  # (when it still exists)
-  defp within(app, ws_id, fun) do
-    back = app.session.active_workspace
-    {app, []} = Workspaces.switch_workspace_id(app, ws_id)
-    {app, effects} = fun.(app)
-
-    case Workspaces.switch_workspace_id(app, back) do
-      {app, []} -> {app, effects}
     end
   end
 
