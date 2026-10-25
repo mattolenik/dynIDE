@@ -1,24 +1,41 @@
 defmodule HerdrServer.App.ActionsTest do
   use ExUnit.Case, async: true
   alias HerdrScene.Event
-  alias HerdrServer.App.{Actions, Keybinds}
+  alias HerdrServer.App.{Actions, Commands, Keybinds}
   alias HerdrServer.Layout
 
   defp fresh, do: elem(Actions.init(%{cols: 100, rows: 25}), 0)
 
-  test "new_tab and close_tab reframe when the tab bar hides for a single tab" do
+  defp hiding do
     app = fresh()
+    {app, _} = Actions.apply(app, {:resize, %{cols: 100, rows: 25}})
+    app = put_in(app, [Access.key(:ui), Access.key(:tab_bar), :hide_single], true)
+    Actions.reframe(app)
+  end
 
-    app =
-      app
-      |> put_in([Access.key(:ui), Access.key(:tab_bar), :hide_single], true)
-      |> Actions.reframe()
-
+  test "new_tab and close_tab reframe when the tab bar hides for a single tab" do
+    app = hiding()
     assert app.session.area.y == 0
     {app, [{:spawn, _, _}]} = Actions.new_tab(app)
     assert app.session.area.y == 1
     {app, _} = Actions.close_tab(app)
-    assert Actions.reframe(app).session.area.y == 0
+    assert app.session.area.y == 0
+  end
+
+  test "switching to a workspace with another tab count reframes" do
+    {app, _} = Actions.new_tab(hiding())
+    {app, _} = Actions.new_workspace(app)
+    assert app.session.area.y == 0
+    {app, _} = Actions.switch_workspace(app, 1)
+    assert app.session.area.y == 1
+  end
+
+  test "API tab create and close reframe" do
+    app = hiding()
+    {app, _} = Commands.create_tab(app, 1, nil, true)
+    assert app.session.area.y == 1
+    {app, _} = Commands.close_tab(app, 1, 2)
+    assert app.session.area.y == 0
   end
 
   defp press(app, key, mods \\ []), do: Actions.apply(app, Event.key(key, mods))

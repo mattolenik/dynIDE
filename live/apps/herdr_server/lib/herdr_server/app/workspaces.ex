@@ -41,7 +41,7 @@ defmodule HerdrServer.App.Workspaces do
     app = %{app | session: s}
     app = put_in(app.session.panes[id], %{title: nil, layout_gen: 0})
     app = if focus?, do: activate(app, ws_id), else: app
-    {app, [{:spawn, id, Layout.size(layout, s.area, Layout.opts(nil, app.ui), id)}]}
+    {app, [{:spawn, id, Layout.size(layout, app.session.area, Layout.opts(nil, app.ui), id)}]}
   end
 
   @doc "Switch to the `n`th workspace (1-based); out of range is a no-op."
@@ -213,7 +213,8 @@ defmodule HerdrServer.App.Workspaces do
     app = put_in(app.session.active_workspace, ws_id)
     ws = Enum.find(app.session.workspaces, &(&1.id == ws_id))
     t = Enum.find(ws.tabs, &(&1.id == ws.active_tab))
-    put_in(app.focus.pane, t.layout.focus)
+    # the new workspace's tab count may show or hide the tab bar
+    Actions.reframe(put_in(app.focus.pane, t.layout.focus))
   end
 
   defp put_ws(app, ws) do

@@ -3,8 +3,8 @@ defmodule HerdrServer.View do
   Pure per-client scene computation: `compute(app, client)` turns app state into a
   frontend-neutral `HerdrScene.Scene`.
 
-    * Regions come from `View.Frame.regions/2` at the client's own size (sidebar, top tab
-      bar, full-width status row, pane area), so every client gets its own rects; pane ids
+    * Regions come from `View.Frame.regions/3` at the client's own size and the active workspace's
+      tab count (sidebar, tab bar top or bottom or hidden for a single tab, full-width status row, pane area), so every client gets its own rects; pane ids
       are shared.
     * Panes are `Layout.rects/3` (zoom, `ui.pane_borders`) in `Layout.panes` preorder inside
       the pane area. `Pane.rect` is the content rect, the border carries the outer rect. Rows are

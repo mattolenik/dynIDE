@@ -351,9 +351,15 @@ defmodule HerdrServer.App.Actions do
 
   @doc false
   # `session.area` from `session.size` and the ui (also used by `App.Chrome`)
+  # (also after a tab-count change: new_tab, drop_tab, `Workspaces.activate/2`); unchanged
+  # when the area is
   def reframe(app) do
     n = if w = ws(app), do: length(w.tabs), else: 2
-    put_in(app.session.area, area(app.session.size, app.ui, n))
+
+    case area(app.session.size, app.ui, n) do
+      same when same == app.session.area -> app
+      area -> put_in(app.session.area, area)
+    end
   end
 
   defp ws(%{session: s}), do: Enum.find(s.workspaces, &(&1.id == s.active_workspace))
@@ -474,6 +480,7 @@ defmodule HerdrServer.App.Actions do
         t = %{id: tab_id, name: "1", layout: l}
         app = put_ws(app, %{ws | tabs: [t], active_tab: t.id})
         app = put_in(app.session.panes[id], %{title: nil, layout_gen: 0})
+        app = reframe(app)
         {sync(app), closes ++ [{:spawn, id, size_of(app, t, l, id)}]}
 
       _ ->
@@ -482,7 +489,7 @@ defmodule HerdrServer.App.Actions do
             do: Enum.at(tabs, max(idx - 1, 0)).id,
             else: ws.active_tab
 
-        {sync(put_ws(app, %{ws | tabs: tabs, active_tab: active})), closes}
+        {sync(reframe(put_ws(app, %{ws | tabs: tabs, active_tab: active}))), closes}
     end
   end
 end

@@ -2,7 +2,7 @@ defmodule HerdrServer.App.Session do
   @moduledoc """
   Session organisation: workspaces, tabs (each owning a `HerdrServer.Layout`), per-pane
   metadata. `size` is the driving client's size and `area` its pane area, the `panes` rect
-  of `View.Frame.regions(size, ui)` (sidebar, tab bar and status row excluded).
+  of `View.Frame.regions(size, ui, tabs_count)` (sidebar, tab bar and status row excluded).
 
   `next_workspace_id` and `next_tab_id` only count up, so a closed workspace's or tab's id
   is never handed out again (tab ids are per workspace; a new workspace's first tab is 1).
