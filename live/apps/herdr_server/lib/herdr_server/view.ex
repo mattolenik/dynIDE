@@ -11,7 +11,7 @@ defmodule HerdrServer.View do
       `{:ref, id, layout_gen}` (or `{:inline, []}` for inline clients; the caller fills
       rows). Pane cursors are nil here.
     * Chrome: `:root` (props `theme`, `indicators`, `mouse: true`, the `sound` prefs
-      `%{enabled}` and `toast: %{delivery}`, plain data a client acts on) holding the
+      `%{enabled, command}` and `toast: %{delivery}`, plain data a client acts on) holding the
       `:sidebar` region (`View.Sidebar`, omitted when the frame has none), the `:tabs`
       region (`View.Tabs`, omitted when the frame has no tab bar), one `:divider` node per
       split in `Layout.splits` preorder, then the `:status` region (`View.Status`), this
@@ -96,8 +96,7 @@ defmodule HerdrServer.View do
       theme: app.ui.theme,
       indicators: app.ui.indicators,
       mouse: true,
-      # never the command: a client runs only its own (a scene crosses the socket)
-      sound: %{enabled: app.ui.sound.enabled},
+      sound: app.ui.sound,
       toast: %{delivery: app.ui.toast.delivery}
     }
 

@@ -367,12 +367,26 @@ defmodule HerdrTerm.Client.Term.RenderTest do
   end
 
   @tag :tmp_dir
-  test "a command in the scene is never run: BEL instead", %{
+  test "an in-VM client runs the sound command from the scene with the sound name", %{
     render: render,
     tty: tty,
     tmp_dir: dir
   } do
     out = Path.join(dir, "out")
+    alert_scene(render, %{sound: %{enabled: true, command: script(dir, out)}})
+    send(render, {:alert, alert(:done)})
+    assert wait_file(out) == "done\n"
+    refute Tty.written(tty) =~ "\a"
+  end
+
+  @tag :tmp_dir
+  test "an inline client never runs a command from the scene: BEL instead", %{
+    render: render,
+    tty: tty,
+    tmp_dir: dir
+  } do
+    out = Path.join(dir, "out")
+    inline!(render)
     alert_scene(render, %{sound: %{enabled: true, command: script(dir, out)}})
     send(render, {:alert, alert(:done)})
     _ = :sys.get_state(render)
@@ -382,9 +396,10 @@ defmodule HerdrTerm.Client.Term.RenderTest do
   end
 
   @tag :tmp_dir
-  test "a client-local sound command runs with the sound name, a missing one logs once",
+  test "an inline client runs its own sound command, a missing one logs once",
        %{render: render, tty: tty, tmp_dir: dir} do
     out = Path.join(dir, "out")
+    inline!(render)
     Application.put_env(:herdr_term, :sound_command, script(dir, out))
     on_exit(fn -> Application.delete_env(:herdr_term, :sound_command) end)
     alert_scene(render, %{toast: %{delivery: :herdr}, sound: %{enabled: true}})
@@ -403,6 +418,9 @@ defmodule HerdrTerm.Client.Term.RenderTest do
 
     assert length(String.split(log, "sound command")) == 2
   end
+
+  # a socket client's Render (only the sound command depends on it here)
+  defp inline!(render), do: :sys.replace_state(render, &%{&1 | transport: :inline})
 
   defp script(dir, out) do
     cmd = Path.join(dir, "snd")

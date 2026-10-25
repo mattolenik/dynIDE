@@ -7,8 +7,8 @@ defmodule HerdrTerm.Client.Term.Alert do
     * `delivery: :terminal` and a title: `{:osc9, "<title>: <body>"}`, control
       characters stripped, at most 200 characters. `:herdr` toasts come in the scene;
       `:off` shows nothing; `:system` (an OS notifier) is a recorded gap.
-    * A sound when enabled: `{:sound, "done" | "request"}` (`Render` runs the client-local
-      sound command with it, else writes BEL).
+    * A sound when enabled: `{:sound, "done" | "request"}` (`Render` runs the sound
+      command with it, else writes BEL).
   """
 
   @max 200

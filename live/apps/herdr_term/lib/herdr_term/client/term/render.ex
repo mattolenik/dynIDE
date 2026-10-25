@@ -27,10 +27,10 @@ defmodule HerdrTerm.Client.Term.Render do
   cursor keeps the last frame.
 
   Alerts: `{:alert, a}` runs `Alert.actions/2` over the root props: OSC 9 through the
-  tty; a sound runs this client's own sound command (`sound_command/0`) with the sound
-  name as its last argument (a port, fire and forget; a missing command logs once), else
-  writes BEL. The command is never taken from the scene: a remote client must not run a
-  command it received over the wire.
+  tty; a sound runs the sound command with the sound name as its last argument (a port,
+  fire and forget; a missing command logs once), else writes BEL. An in-VM (`:ref`) client
+  runs the scene's `sound.command` (`[ui.sound] command`); an `:inline` client never runs a
+  command it received over the wire, only its own (`sound_command/0`).
 
   `{:detached, reason}` and
   `{:handoff, map}` go to `Tty.Owner`.
@@ -228,8 +228,13 @@ defmodule HerdrTerm.Client.Term.Render do
 
   defp perform(state, {:osc9, text}, _props), do: tty_write(state, ["\e]9;", text, "\a"])
 
-  defp perform(state, {:sound, name}, _props) do
-    case sound_command() do
+  defp perform(state, {:sound, name}, props) do
+    cmd =
+      if state.transport == :inline,
+        do: sound_command(),
+        else: get_in(props, [:sound, :command])
+
+    case cmd do
       nil -> tty_write(state, "\a")
       cmd -> play(state, cmd, name)
     end
