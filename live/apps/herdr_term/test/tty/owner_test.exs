@@ -183,9 +183,10 @@ defmodule HerdrTerm.Tty.OwnerTest do
       assert is_pid(new) and new != old
 
       # a completed handoff ends the starter
+      ref2 = Process.monitor(new)
       :persistent_term.put(Protocol.handoff_key(), :begin)
       send(render2, {:handoff, %{phase: :begin, gen: 2, panes: []}})
-      Process.sleep(100)
+      assert_receive {:DOWN, ^ref2, :process, _, :shutdown}, 5000
       :persistent_term.put(Protocol.handoff_key(), :released)
       assert Task.await(starter) == :ok
       assert Process.whereis(Protocol.local_client_name()) == nil
