@@ -27,8 +27,6 @@ defmodule HerdrServer.Handoff.Notice do
     dispatch(event)
   end
 
-  def broadcast(event), do: dispatch(event)
-
   defp dispatch(event) do
     Registry.dispatch(__MODULE__, :handoff, fn subs ->
       for {pid, _} <- subs, do: send(pid, event)
