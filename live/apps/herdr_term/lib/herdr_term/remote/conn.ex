@@ -23,7 +23,15 @@ defmodule HerdrTerm.Remote.Conn do
   disconnected (R14, backoff `{min_ms, max_ms}` doubling, reset on attach), and when a
   frame cannot be decoded (R7; the socket is closed, a reconnect after the longest
   delay resyncs). `{:refused, why}` and `{:detached, _}` stop reconnecting; a refusal
-  ends the VM (`HerdrTerm.Client.local_exit/1`), a detach does through `Tty.Owner`.
+  ends the VM with status 1 and its reason for the launcher (`HerdrTerm.Remote.fail/1`,
+  then `HerdrTerm.Client.local_exit/1`), a detach ends it through `Tty.Owner`. So does an
+  ssh relay that exits nonzero before the first attach (a host that cannot be reached is
+  not retried). A missing or empty token file is retried with the notice "no client token
+  at <path>".
+
+  A fresh session (`{:attached, %{resumed: false}}` after an earlier attach: the old one's
+  grace expired) never gets the input typed while disconnected: it is acked locally and
+  dropped, with a client-local notice. A first attach, a resume or a handoff resends it.
   """
 
   use GenServer
@@ -31,7 +39,7 @@ defmodule HerdrTerm.Remote.Conn do
   require Logger
 
   alias HerdrScene.{Scene, Wire}
-  alias HerdrTerm.Client
+  alias HerdrTerm.{Client, Remote}
   alias HerdrTerm.Remote.{Args, Keys, Notice}
 
   @decode_text "server sent a term this client cannot decode; same commit on both ends?"
@@ -54,6 +62,7 @@ defmodule HerdrTerm.Remote.Conn do
     delay: 100,
     buf: "",
     attached: false,
+    attaches: 0,
     hold: false,
     stopped: false,
     keys: :idle,
@@ -134,7 +143,14 @@ defmodule HerdrTerm.Remote.Conn do
   def handle_info({s, {:exit_status, n}}, %{sock: s} = state) do
     state = Map.merge(%__MODULE__{}, state)
     # the port is gone already: close/1 must not close it again
-    {:noreply, lost(%{state | sock: nil}, "ssh relay exited (#{n})")}
+    state = %{state | sock: nil}
+
+    if state.attaches == 0 and n != 0 do
+      {:ssh, host, _} = state.transport
+      {:noreply, fatal(state, "ssh relay to #{host} exited (#{n}) before attaching")}
+    else
+      {:noreply, lost(state, "ssh relay exited (#{n})")}
+    end
   end
 
   def handle_info({:input, from, seq, ev}, state) do
@@ -183,18 +199,31 @@ defmodule HerdrTerm.Remote.Conn do
 
         state
 
+      {:error, {:not_found, exe}} ->
+        fatal(state, "ssh command not found: #{exe}")
+
       {:error, why} ->
         Logger.warning("remote: cannot connect: #{inspect(why)}")
-        retry(state, "cannot reach the server")
+        retry(state, unreachable(why))
     end
+  end
+
+  defp unreachable({:no_token, path}), do: "no client token at #{path}"
+  defp unreachable(_why), do: "cannot reach the server"
+
+  defp token(path) do
+    with {:ok, t} <- File.read(path),
+         t when t != "" <- String.trim(t),
+         do: {:ok, t},
+         else: (_ -> {:error, {:no_token, path}})
   end
 
   defp open({:unix, path, token_path}) do
     opts = [:binary, packet: :raw, active: :once]
 
-    with {:ok, token} <- File.read(token_path),
+    with {:ok, token} <- token(token_path),
          {:ok, s} <- :gen_tcp.connect({:local, path}, 0, opts, @connect_ms) do
-      _ = :gen_tcp.send(s, Wire.encode({:auth, String.trim(token)}))
+      _ = :gen_tcp.send(s, Wire.encode({:auth, token}))
       {:ok, s}
     end
   end
@@ -276,15 +305,20 @@ defmodule HerdrTerm.Remote.Conn do
     Logger.info("remote: attached #{inspect(info)}")
     {min, _} = state.backoff
     if state.notice && state.scene, do: to_render(state, {:scene, state.scene})
-    flush(%{state | attached: true, hold: false, delay: min, sent: 0, notice: nil})
+    state = if fresh_session?(state, info), do: discard(state), else: state
+
+    flush(%{
+      state
+      | attached: true,
+        attaches: state.attaches + 1,
+        hold: false,
+        delay: min,
+        sent: 0,
+        notice: nil
+    })
   end
 
-  defp frame(state, {:refused, why}) do
-    Logger.error("remote: refused by the server: #{inspect(why)}")
-    state = state |> close() |> show(%{level: :error, text: "refused: #{why}"})
-    Client.local_exit({:refused, why})
-    %{state | stopped: true}
-  end
+  defp frame(state, {:refused, why}), do: fatal(state, "refused: #{why}")
 
   defp frame(state, {:ack, w}) do
     case Map.pop(state.pending, w) do
@@ -324,6 +358,28 @@ defmodule HerdrTerm.Remote.Conn do
   defp frame(state, msg) do
     to_render(state, msg)
     state
+  end
+
+  # the session this input was typed for is gone
+  defp fresh_session?(state, info), do: state.attaches > 0 and Map.get(info, :resumed) == false
+
+  defp discard(%{pending: pending} = state) when map_size(pending) == 0, do: state
+
+  defp discard(state) do
+    for {_w, {{pid, seq}, _ev}} <- state.pending, do: send(pid, {:ack, seq})
+    n = map_size(state.pending)
+    text = "session restarted; #{n} keystrokes discarded"
+    to_render(state, {:notice, %{level: :warning, text: text}})
+    %{state | pending: %{}}
+  end
+
+  # the VM ends with status 1 and `text` as the launcher's reason
+  defp fatal(state, text) do
+    Logger.error("remote: #{text}")
+    state = state |> close() |> show(%{level: :error, text: text})
+    Remote.fail(text)
+    Client.local_exit({:refused, text})
+    %{state | stopped: true}
   end
 
   defp to_render(state, msg), do: if(state.render, do: send(state.render, msg))

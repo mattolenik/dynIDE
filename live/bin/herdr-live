@@ -34,6 +34,12 @@
 # or over ssh to <host>, which runs `herdr-live attach-relay` there (HERDR_LIVE_SSH,
 # HERDR_LIVE_REMOTE_BIN; BatchMode, so ssh needs key or agent auth). The launcher checks the
 # argv shape and prints usage itself (the client VM's output goes to its log); ids are checked there.
+# A client that exits nonzero (a refusal, an unreachable host) gets one line on stderr with
+# its reason and the log path. The relay runs in ssh's non-interactive environment: it finds
+# the server's sockets from that environment's HERDR_LIVE_API / HERDR_LIVE_CLIENT_SOCK /
+# XDG_STATE_HOME defaults and herdr-live on that PATH, so a server with custom paths or an
+# install off the non-interactive PATH needs HERDR_LIVE_REMOTE_BIN (e.g. a wrapper that
+# exports them).
 # `status` prints the broker's status, then the server's (key=value) when it answers.
 #
 # herdr-live rollback [n]: roll back the newest n live reload batches (default 1)
@@ -92,9 +98,21 @@ client() { # attach | terminal: the remote client VM, stdio to its log (R18)
   [ -z "${HERDR_LIVE_API:-}" ] || export HERDR_LIVE_API
   [ -z "${HERDR_LIVE_CLIENT_SOCK:-}" ] || export HERDR_LIVE_CLIENT_SOCK
   (umask 077 && mkdir -p "$(dirname "$clog")") || exit 1
+  command -v elixir >/dev/null 2>&1 || {
+    echo "herdr-live: elixir not found on PATH (the attach client runs under mix)" >&2
+    exit 1
+  }
   cd "$root" || exit 1
-  exec </dev/null >>"$clog" 2>&1
-  MIX_ENV=dev HERDR_LIVE_HEADLESS=1 exec elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt --no-start -e 'HerdrTerm.Remote.main(System.argv())' -- "$@"
+  # not exec'd: a failure's reason (HerdrTerm.Remote.fail/1) goes to this stderr
+  reason=$(mktemp "${TMPDIR:-/tmp}/herdr-live-client.XXXXXX") || exit 1
+  trap 'rm -f "$reason"' EXIT
+  MIX_ENV=dev HERDR_LIVE_HEADLESS=1 HERDR_LIVE_CLIENT_REASON=$reason elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt --no-start -e 'HerdrTerm.Remote.main(System.argv())' -- "$@" </dev/null >>"$clog" 2>&1
+  rc=$?
+  if [ $rc -ne 0 ]; then
+    why=$(cat "$reason" 2>/dev/null)
+    echo "herdr-live: client exited ($rc)${why:+: $why}; see $clog" >&2
+  fi
+  exit $rc
 }
 # dispatch on $#: only no argument at all starts a server (an empty verb is usage)
 if [ $# -gt 0 ]; then

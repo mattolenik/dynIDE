@@ -189,12 +189,74 @@ defmodule HerdrTerm.Remote.ConnTest do
     assert {:error, :timeout} = next(s, 300)
   end
 
-  test "refused stops via local_exit and does not reconnect", ctx do
+  test "refused stops via local_exit with its reason and does not reconnect", ctx do
+    reason = reason_file(ctx)
     start(ctx)
     {:ok, s} = :gen_tcp.accept(ctx.l, @wait)
     push(s, {:refused, "bad token"})
     assert_receive :local_exit, @wait
+    assert File.read!(reason) == "refused: bad token"
     assert {:error, :timeout} = :gen_tcp.accept(ctx.l, 500)
+  end
+
+  test "an ssh relay that exits nonzero before any attach ends the VM with its reason",
+       ctx do
+    reason = reason_file(ctx)
+    ssh = Path.join(ctx.dir, "fake-ssh")
+    File.write!(ssh, "#!/bin/sh\nexit 255\n")
+    File.chmod!(ssh, 0o755)
+    System.put_env("HERDR_LIVE_SSH", ssh)
+    on_exit(fn -> System.delete_env("HERDR_LIVE_SSH") end)
+    start(ctx, transport: {:ssh, "nosuchhost", nil})
+    assert_receive :local_exit, @wait
+    assert File.read!(reason) == "ssh relay to nosuchhost exited (255) before attaching"
+  end
+
+  test "a missing or empty token file says so and retries", ctx do
+    {:unix, path, _} = ctx.transport
+    empty = Path.join(ctx.dir, "empty.token")
+    File.write!(empty, " \n")
+
+    for token <- [Path.join(ctx.dir, "none.token"), empty] do
+      _ = start(ctx, transport: {:unix, path, token})
+      assert_receive {:scene, sc}, @wait
+      assert notice(sc).text =~ "no client token at #{token}, reconnecting"
+      :ok = stop_supervised(Conn)
+      flush_scenes()
+    end
+  end
+
+  test "a fresh session after an earlier attach discards the input typed while away", ctx do
+    conn = start(ctx)
+    {s, _} = handshake(ctx.l)
+    input(conn, 1, Event.key("a"))
+    assert {:input, 1, _} = next(s)
+    :ok = :gen_tcp.close(s)
+    input(conn, 2, Event.key("b"))
+    {s2, _} = handshake(ctx.l, false)
+    assert_receive {:ack, 1}, @wait
+    assert_receive {:ack, 2}, @wait
+
+    assert_receive {:notice,
+                    %{level: :warning, text: "session restarted; 2 keystrokes discarded"}},
+                   @wait
+
+    assert {:error, :timeout} = next(s2, 300)
+  end
+
+  defp flush_scenes do
+    receive do
+      {:scene, _} -> flush_scenes()
+    after
+      0 -> :ok
+    end
+  end
+
+  defp reason_file(ctx) do
+    path = Path.join(ctx.dir, "reason")
+    System.put_env("HERDR_LIVE_CLIENT_REASON", path)
+    on_exit(fn -> System.delete_env("HERDR_LIVE_CLIENT_REASON") end)
+    path
   end
 
   test "undecodable frame gives a notice and reconnects after the longest delay", ctx do
@@ -273,12 +335,16 @@ defmodule HerdrTerm.Remote.ConnTest do
     d = ctx.dir
     ssh = Path.join(d, "fake-ssh")
 
-    # run 1 reads the attach frame (exactly) and exits 3; run 2 stays and records stdin
+    # run 1 attaches, reads the attach frame (exactly) and exits 3; run 2 stays and
+    # records stdin (a relay that exits before any attach ends the VM instead)
+    File.write!(Path.join(d, "frames"), Wire.encode({:attached, %{resumed: false, session: "s"}}))
+
     File.write!(ssh, """
     #!/bin/sh
     n=$(( $(cat #{d}/count 2>/dev/null || echo 0) + 1 ))
     echo $n > #{d}/count
     if [ $n = 1 ]; then
+      cat #{d}/frames
       dd bs=1 count=4 of=#{d}/out.1 2>/dev/null
       len=$(od -An -tu1 #{d}/out.1 | awk '{print $1*16777216 + $2*65536 + $3*256 + $4}')
       dd bs=1 count=$len 2>/dev/null >> #{d}/out.1
