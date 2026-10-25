@@ -136,10 +136,16 @@ defmodule HerdrServer.Native do
   @doc false
   @spec fd_dup_raw(integer) :: {:ok, reference} | {:error, binary}
   def fd_dup_raw(_raw), do: err()
-
+  @doc false
   @spec fd_into_raw(term) :: {:ok, non_neg_integer} | {:error, :consumed}
   def fd_into_raw(_fd), do: err()
-
+  @doc false
+  @spec fd_raw(term) :: {:ok, non_neg_integer} | {:error, :consumed}
+  def fd_raw(_fd), do: err()
+  @doc false
+  @spec fd_close(term) :: :ok | {:error, :consumed}
+  def fd_close(_fd), do: err()
+  @doc false
   @spec link_send(term, term, term, term) :: :ok | {:error, atom | binary}
   def link_send(_link, _kind, _body, _fds), do: err()
   @doc false

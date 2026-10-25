@@ -24,14 +24,31 @@ defmodule HerdrServer.Client.Remote do
   the old socket after `{:detached, :replaced}`. Expiry stops the conn normally, which
   ends the session. A session that ends sends `{:detached, reason}` (if it did not) and
   stops the conn.
+
+  Handoff (R11): while it has a socket the conn HOLDs `client/<client_id>` in the broker
+  (blob `%{v: 1, client_id, info, acked, buffer}`, fd a dup of the socket) and DROPs it
+  before any server-side close (the broker's dup would keep the peer from seeing EOF).
+  `prepare_all/0` freezes every conn: passive socket, received bytes into the buffer,
+  pending output flushed (up to 200 ms to leave the driver), an UPDATE, then no reads and
+  no writes (output is kept) until `thaw_all/0`. A new VM's `Client.Socket` starts one
+  adopted conn per entry: it attaches a new session with the blob's info, takes
+  `last_seq := acked`, sends `{:attached, %{resumed: :handoff}}` and a full scene, then
+  reads the carried buffer. A bad blob is unclaimed and its fd closed (the client
+  reconnects). The hold module is `config :herdr_server, :client_hold` (tests record).
   """
   use GenServer, restart: :temporary
 
+  require Logger
+
   alias HerdrScene.{Protocol, Wire}
   alias HerdrServer.Client.{Outbox, Socket}
+  alias HerdrServer.Handoff.Link
+  alias HerdrServer.Native.Link, as: NLink
   alias HerdrServer.Persist.Schema
 
   @internal_seq 4_611_686_018_427_387_904
+  @max_carried 1_048_576
+  @sent_ms 200
   @immediate [:notice, :alert, :handoff, :clipboard, :bell, :open_url, :damage]
 
   defstruct id: nil,
@@ -54,7 +71,13 @@ defmodule HerdrServer.Client.Remote do
             frame_ms: 8,
             grace_ms: 60_000,
             stuck_ms: 30_000,
-            pend_since: nil
+            pend_since: nil,
+            held: false,
+            # an adopted socket's fd: its fdopen'd port never closes it
+            fd: nil,
+            # PREPARE..THAW: no reads, writes kept in frozen_out (newest first)
+            frozen: false,
+            frozen_out: []
 
   def start_link(info), do: GenServer.start_link(__MODULE__, info)
 
@@ -68,13 +91,41 @@ defmodule HerdrServer.Client.Remote do
     |> Enum.map(fn {id, meta} -> Map.put(meta, :id, id) end)
   end
 
-  @doc "Handoff PREPARE for every conn (Task 5 freezes them; nothing yet)."
+  @doc "Handoff PREPARE: freezes every conn (1 s each, in parallel; a timeout is logged)."
   @spec prepare_all() :: :ok
-  def prepare_all, do: :ok
+  def prepare_all do
+    HerdrReload.Telemetry.event(:client_handoff_freeze, conns: each_conn(:prepare))
+  end
 
-  @doc "Handoff THAW for every conn (Task 5)."
+  @doc "Handoff THAW: every conn reads and writes again."
   @spec thaw_all() :: :ok
-  def thaw_all, do: :ok
+  def thaw_all do
+    _ = each_conn(:thaw)
+    :ok
+  end
+
+  @doc "Whether a handoff is under way: no conn takes a new socket now."
+  @spec handoff?() :: boolean
+  def handoff?, do: :persistent_term.get(Protocol.handoff_key(), nil) in [:begin, :released]
+
+  defp each_conn(msg) do
+    pids = Registry.select(__MODULE__.Registry, [{{:_, :"$1", :_}, [], [:"$1"]}])
+
+    pids
+    |> Task.async_stream(&call_conn(&1, msg),
+      timeout: :infinity,
+      max_concurrency: max(length(pids), 1)
+    )
+    |> Stream.run()
+
+    length(pids)
+  end
+
+  defp call_conn(pid, msg) do
+    GenServer.call(pid, msg, 1000)
+  catch
+    :exit, reason -> Logger.warning("client conn #{msg}: #{inspect(reason, limit: 5)}")
+  end
 
   @doc false
   # by Client.Socket after giving `pid` the socket; `buf` is what followed the attach frame
@@ -87,6 +138,22 @@ defmodule HerdrServer.Client.Remote do
   end
 
   @impl true
+  def init({:adopted, {key, blob, fds}}) do
+    case carried(blob, fds) do
+      {:ok, b, s, fd} ->
+        HerdrReload.Telemetry.event(:client_held, id: short(b.client_id), carried: true)
+        adopt(key, b, s, fd)
+
+      :error ->
+        HerdrReload.Telemetry.event(:client_held,
+          id: short(String.replace_prefix(key, "client/", "")),
+          carried: false
+        )
+
+        not_carried(key, nil, fds)
+    end
+  end
+
   def init(info) do
     case Registry.register(__MODULE__.Registry, info.client_id, meta(info, false)) do
       {:ok, _} -> attach(info)
@@ -138,6 +205,159 @@ defmodule HerdrServer.Client.Remote do
   @impl true
   def handle_call({:resume, s, info, buf}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
+
+    if state.frozen or handoff?() do
+      # a handshake that raced the freeze: the client reconnects to the next VM
+      :gen_tcp.close(s)
+      {:reply, :error, state}
+    else
+      state = state |> connect(s, info, not state.fresh) |> hold()
+      {:reply, :ok, received(state, buf)}
+    end
+  end
+
+  def handle_call(:prepare, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, freeze(state)}
+  end
+
+  def handle_call(:thaw, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    held = Enum.reverse(state.frozen_out)
+    state = write_all(%{state | frozen: false, frozen_out: []}, held)
+    # what arrived before the freeze is still in the buffer
+    state = if state.socket, do: received(state, ""), else: state
+    {:reply, :ok, schedule(state)}
+  end
+
+  # --- handoff ---
+
+  defp carried(blob, fds) do
+    with {:ok, %{v: 1, client_id: id, info: info, acked: acked, buffer: buf} = b}
+         when is_binary(id) and is_integer(acked) and is_binary(buf) and
+                byte_size(buf) <= @max_carried <- decode(blob),
+         :ok <- Wire.validate_client_frame({:attach, info}),
+         [fd] <- fds,
+         {:ok, raw} <- NLink.fd_raw(fd),
+         {:ok, s} <- :gen_tcp.fdopen(raw, [:local | Socket.socket_opts()]) do
+      {:ok, b, s, fd}
+    else
+      _ -> :error
+    end
+  end
+
+  defp decode(blob) do
+    {:ok, :erlang.binary_to_term(blob, [:safe])}
+  rescue
+    ArgumentError -> :error
+  end
+
+  defp adopt(key, b, s, fd) do
+    case init(b.info) do
+      {:ok, state} ->
+        # the broker still holds this socket under `key`; the old buffer is ours now
+        state = %{state | last_seq: b.acked, acked: b.acked, held: true, fd: fd}
+        state = state |> connect(s, b.info, :handoff) |> update_hold()
+        {:ok, received(state, b.buffer)}
+
+      _ ->
+        not_carried(key, s, [fd])
+    end
+  end
+
+  defp not_carried(key, s, fds) do
+    :ok = Link.unclaim(key)
+    if s, do: :gen_tcp.close(s)
+    Enum.each(fds, &NLink.fd_close/1)
+    :ignore
+  end
+
+  defp freeze(%{socket: nil} = state), do: %{state | frozen: true}
+
+  defp freeze(state) do
+    _ = :inet.setopts(state.socket, active: false)
+    state = state |> drain_tcp() |> flush()
+
+    if state.socket do
+      sent(state.socket, now() + @sent_ms)
+      %{update_hold(state) | frozen: true}
+    else
+      %{state | frozen: true}
+    end
+  end
+
+  # the message `active: :once` may already have delivered
+  defp drain_tcp(%{socket: s} = state) do
+    receive do
+      {:tcp, ^s, data} -> drain_tcp(%{state | buf: state.buf <> data})
+      {:tcp_closed, ^s} -> drop(state)
+      {:tcp_error, ^s, _} -> drop(state)
+    after
+      0 -> state
+    end
+  end
+
+  defp sent(s, deadline) do
+    if not drained?(s) and now() < deadline do
+      receive do
+      after
+        5 -> sent(s, deadline)
+      end
+    end
+  end
+
+  defp hold_mod, do: Application.get_env(:herdr_server, :client_hold, Link)
+
+  # no broker, nothing to dup (a dup would also keep the peer from seeing our close)
+  defp holding?, do: hold_mod() != Link or Link.enabled?()
+
+  defp key(state), do: "client/" <> state.id
+
+  defp blob(state),
+    do:
+      :erlang.term_to_binary(%{
+        v: 1,
+        client_id: state.id,
+        info: state.info,
+        acked: state.acked,
+        buffer: state.buf
+      })
+
+  defp hold(%{socket: nil} = state), do: state
+
+  defp hold(state) do
+    with true <- holding?(),
+         {:ok, n} <- :inet.getfd(state.socket),
+         {:ok, fd} <- NLink.fd_dup(n) do
+      :ok = hold_mod().hold(key(state), blob(state), [fd])
+      # the broker got its own dup; ours must not outlive a close
+      _ = NLink.fd_close(fd)
+      %{state | held: true}
+    else
+      false ->
+        state
+
+      {:error, why} ->
+        Logger.warning("client #{short(state.id)}: not held: #{inspect(why)}")
+        state
+    end
+  end
+
+  defp update_hold(%{held: true} = state) do
+    :ok = hold_mod().update(key(state), blob(state))
+    state
+  end
+
+  defp update_hold(state), do: state
+
+  defp unhold(%{held: true} = state) do
+    :ok = hold_mod().drop(key(state))
+    %{state | held: false}
+  end
+
+  defp unhold(state), do: state
+
+  defp connect(state, s, info, resumed) do
     state = if state.socket, do: replaced(state), else: state
 
     unless state.fresh,
@@ -147,7 +367,6 @@ defmodule HerdrServer.Client.Remote do
           away_ms: now() - (state.away_since || now())
         )
 
-    resumed = not state.fresh
     state = resized(state, info)
     Registry.update_value(__MODULE__.Registry, state.id, fn _ -> meta(info, true) end)
 
@@ -164,8 +383,7 @@ defmodule HerdrServer.Client.Remote do
     state = write(state, {:attached, %{resumed: resumed, session: Socket.session_name()}})
     {msgs, outbox} = Outbox.full(state.outbox)
     state = write_all(%{state | outbox: outbox, last_flush: now()}, msgs)
-    state = if state.mode != :terminal, do: write(state, {:input_mode, state.mode}), else: state
-    {:reply, :ok, received(state, buf)}
+    if state.mode != :terminal, do: write(state, {:input_mode, state.mode}), else: state
   end
 
   @impl true
@@ -232,7 +450,7 @@ defmodule HerdrServer.Client.Remote do
   def handle_info({:DOWN, ref, :process, _, _}, %{session_ref: ref} = state) do
     state = Map.merge(%__MODULE__{}, state)
     state = if state.detached, do: state, else: out(state, {:detached, :session_ended})
-    if state.socket, do: close(state.socket)
+    state = if state.socket, do: close(state), else: state
     HerdrReload.Telemetry.event(:client_detach, id: short(state.id), reason: :session_ended)
     {:stop, :normal, state}
   end
@@ -321,6 +539,7 @@ defmodule HerdrServer.Client.Remote do
   # --- output ---
 
   defp schedule(%{socket: nil} = state), do: state
+  defp schedule(%{frozen: true} = state), do: state
   defp schedule(%{flush_timer: t} = state) when t != nil, do: state
 
   defp schedule(state) do
@@ -351,11 +570,18 @@ defmodule HerdrServer.Client.Remote do
   end
 
   # in arrival order: what is pending goes first
-  defp out(state, msg), do: state |> flush() |> write(msg)
+  defp out(state, msg), do: state |> unstick() |> flush() |> write(msg)
+
+  # a drained socket is not stuck: a stale pend_since would drop it early later
+  defp unstick(%{pend_since: t, socket: s} = state) when t != nil and s != nil,
+    do: if(drained?(s), do: %{state | pend_since: nil}, else: state)
+
+  defp unstick(state), do: state
 
   defp write_all(state, msgs), do: Enum.reduce(msgs, state, &write(&2, &1))
 
   defp write(%{socket: nil} = state, _msg), do: state
+  defp write(%{frozen: true} = state, msg), do: %{state | frozen_out: [msg | state.frozen_out]}
 
   defp write(state, msg) do
     case :gen_tcp.send(state.socket, Wire.encode(msg)) do
@@ -371,22 +597,25 @@ defmodule HerdrServer.Client.Remote do
     if drained?(state.socket),
       do: _ = :gen_tcp.send(state.socket, Wire.encode({:detached, :replaced}))
 
-    close(state.socket)
-    %{state | socket: nil, away_since: now()}
+    %{close(state) | away_since: now()}
   end
 
   defp drop(%{socket: nil} = state), do: state
 
   defp drop(state) do
-    close(state.socket)
+    state = close(state)
     Registry.update_value(__MODULE__.Registry, state.id, &%{&1 | connected: false})
-    away(%{state | socket: nil, buf: ""})
+    away(%{state | buf: ""})
   end
 
-  # a plain close waits (send_timeout) for queued output; a stuck reader never drains it
-  defp close(s) do
+  # DROP first: while the broker holds a dup the peer never sees our close. A plain close
+  # waits (send_timeout) for queued output; a stuck reader never drains it.
+  defp close(%{socket: s} = state) do
+    state = unhold(state)
     unless drained?(s), do: :inet.setopts(s, linger: {true, 0})
     :gen_tcp.close(s)
+    if state.fd, do: NLink.fd_close(state.fd)
+    %{state | socket: nil, fd: nil}
   end
 
   defp away(state) do

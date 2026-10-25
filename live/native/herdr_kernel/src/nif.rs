@@ -3,7 +3,7 @@
 //! `docs/herdr-live/results/m1.md` ("Events").
 
 use std::cell::Cell;
-use std::os::fd::{AsFd, BorrowedFd, IntoRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, IntoRawFd, OwnedFd};
 use std::path::Path;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -612,6 +612,28 @@ fn fd_dup_raw(env: Env, raw: i64) -> Term {
 fn fd_into_raw(env: Env, fd: ResourceArc<FdRes>) -> Term {
     match lock(&fd.0).take() {
         Some(f) => (atoms::ok(), f.into_raw_fd()).encode(env),
+        None => (atoms::error(), atoms::consumed()).encode(env),
+    }
+}
+
+/// The fd number, still owned by the resource: for `:gen_tcp.fdopen`, whose port never
+/// closes an fd it did not open (inet_drv marks it prebound).
+#[rustler::nif]
+fn fd_raw(env: Env, fd: ResourceArc<FdRes>) -> Term {
+    match lock(&fd.0).as_ref() {
+        Some(f) => (atoms::ok(), f.as_raw_fd()).encode(env),
+        None => (atoms::error(), atoms::consumed()).encode(env),
+    }
+}
+
+/// Closes the fd now instead of when the resource is collected.
+#[rustler::nif]
+fn fd_close(env: Env, fd: ResourceArc<FdRes>) -> Term {
+    match lock(&fd.0).take() {
+        Some(f) => {
+            drop(f);
+            atoms::ok().encode(env)
+        }
         None => (atoms::error(), atoms::consumed()).encode(env),
     }
 }

@@ -10,4 +10,9 @@ defmodule HerdrServer.Client.Remote.Supervisor do
   @spec start_conn(map) :: DynamicSupervisor.on_start_child()
   def start_conn(info),
     do: DynamicSupervisor.start_child(__MODULE__, {HerdrServer.Client.Remote, info})
+
+  @doc "A conn for a `client/<id>` entry a new VM adopted (R11)."
+  @spec start_adopted({binary, binary, list}) :: DynamicSupervisor.on_start_child()
+  def start_adopted(entry),
+    do: DynamicSupervisor.start_child(__MODULE__, {HerdrServer.Client.Remote, {:adopted, entry}})
 end

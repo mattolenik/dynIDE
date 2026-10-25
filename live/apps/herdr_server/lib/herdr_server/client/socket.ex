@@ -14,6 +14,12 @@ defmodule HerdrServer.Client.Socket do
   `client_id` (a resume) or a new one under `Client.Remote.Supervisor`. Pane targets are
   refused until pane mode exists.
 
+  Handoff (R11): `init` first claims the broker's `client/` entries
+  (`Handoff.Link.take_adopted/1`, before `restored/0`) and starts one adopted conn per
+  entry. During a handoff (`Client.Remote.handoff?/0`) a handshake closes its socket
+  instead of serving it, so no conn starts or resumes after the freeze; the client
+  reconnects to the next VM.
+
   Options: `path`, `token_path` (defaults from `Wire.paths/2` of the environment).
   """
   use GenServer
@@ -23,6 +29,7 @@ defmodule HerdrServer.Client.Socket do
   alias HerdrScene.Wire
   alias HerdrServer.Api.{Listener, SocketPath}
   alias HerdrServer.Client.Remote
+  alias HerdrServer.Handoff.Link
   alias HerdrServer.Persist.{Disk, Schema}
 
   @handshake_ms 5000
@@ -74,6 +81,7 @@ defmodule HerdrServer.Client.Socket do
 
   @impl true
   def init(opts) do
+    for entry <- Link.take_adopted("client/"), do: Remote.Supervisor.start_adopted(entry)
     paths = Wire.paths(System.get_env(), System.user_home!())
     path = Keyword.get(opts, :path, paths.socket)
     token_path = Keyword.get(opts, :token_path, paths.token)
@@ -100,17 +108,13 @@ defmodule HerdrServer.Client.Socket do
     e in File.Error -> {:error, Exception.message(e)}
   end
 
-  # accepted sockets inherit these; a write blocked 5 s closes that connection
-  defp listen(path) do
-    :gen_tcp.listen(0, [
-      :binary,
-      packet: :raw,
-      active: false,
-      send_timeout: 5000,
-      send_timeout_close: true,
-      ifaddr: {:local, path}
-    ])
-  end
+  defp listen(path), do: :gen_tcp.listen(0, [{:ifaddr, {:local, path}} | socket_opts()])
+
+  @doc false
+  # accepted (and adopted) sockets get these; a write blocked 5 s closes that connection
+  @spec socket_opts() :: [:gen_tcp.option()]
+  def socket_opts,
+    do: [:binary, packet: :raw, active: false, send_timeout: 5000, send_timeout_close: true]
 
   @impl true
   def handle_info({:EXIT, pid, reason}, state) do
@@ -167,7 +171,8 @@ defmodule HerdrServer.Client.Socket do
         with {:ok, auth, buf} <- frame(s, "", deadline),
              :ok <- auth(auth, ctx.token),
              {:ok, attach, buf} <- frame(s, buf, deadline),
-             {:ok, info} <- attach(attach, ctx.session) do
+             {:ok, info} <- attach(attach, ctx.session),
+             false <- Remote.handoff?() do
           serve(s, info, buf)
         else
           {:refused, _} = r ->

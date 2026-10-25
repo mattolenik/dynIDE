@@ -75,6 +75,17 @@ defmodule HerdrServer.Native.Link do
   @spec fd_take(Pty.fd()) :: {:ok, non_neg_integer} | {:error, :consumed}
   def fd_take(fd), do: Native.fd_into_raw(fd)
 
+  @doc """
+  The fd number, still owned by the resource (closed by `fd_close/1` or when the resource
+  is collected). For `:gen_tcp.fdopen/2`: its port never closes an fd it did not open.
+  """
+  @spec fd_raw(Pty.fd()) :: {:ok, non_neg_integer} | {:error, :consumed}
+  def fd_raw(fd), do: Native.fd_raw(fd)
+
+  @doc "Closes the fd now. A consumed resource is `{:error, :consumed}`."
+  @spec fd_close(Pty.fd()) :: :ok | {:error, :consumed}
+  def fd_close(fd), do: Native.fd_close(fd)
+
   @doc "Shuts the socket down; the reader then reports `:eof`. Idempotent."
   @spec close(link) :: :ok
   def close(link), do: Native.link_close(link)
