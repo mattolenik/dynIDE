@@ -34,7 +34,8 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
     do: screen(scene, rows_by_pane, cursors, theme, layout(scene, theme))
 
   @spec screen(Scene.t(), rows_by_pane, %{pos_integer => map | nil}, Theme.t(), Chrome.t()) ::
-          {[{non_neg_integer, binary}], {{non_neg_integer, non_neg_integer}, Scene.shape()} | nil}
+          {[{non_neg_integer, binary}],
+           {{non_neg_integer, non_neg_integer}, HerdrTerm.Native.Blit.shape()} | nil}
   def screen(scene, rows_by_pane, cursors, theme, chrome),
     do: {frame(scene, rows_by_pane, theme, chrome), cursor(scene, cursors)}
 
@@ -285,5 +286,4 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
 
     Overlays.apply(row, p.overlays, n, p.ctx, p.theme)
   end
-
 end

@@ -434,7 +434,7 @@ defmodule HerdrServer.Client.Session do
 
   # a capturing modal (keybind capture) takes every key, the prefix too: no Client.Keys
   defp apply_input(%{capture: true} = state, {:key, _} = ev, _from) do
-    Foreground.mark(self())
+    become_foreground(state)
     Store.event(ev, driving_size(state))
     state
   end
@@ -457,13 +457,15 @@ defmodule HerdrServer.Client.Session do
   end
 
   defp apply_input(state, {:focus, f} = ev, _from) do
-    Foreground.mark(self())
+    become_foreground(state)
     Store.event(ev, driving_size(state))
     %{state | focused: f}
   end
 
   # a toast is this client's: a click dismisses it and focuses its pane
   defp apply_input(state, {:chrome, [{:toast, id} | _], {kind, _}}, _from) do
+    become_foreground(state)
+
     case Toasts.drop(state.toasts, id) do
       {%{pane: pane}, rest} when kind == :click ->
         if pane, do: Store.run({Actions, :focus_pane, [pane]}, driving_size(state))
