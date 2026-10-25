@@ -78,6 +78,15 @@ defmodule HerdrServer.Pane.ServerM9Test do
 
   defp sync(id), do: :sys.get_state(pane_pid(id))
 
+  # facts messages until none arrives for 100 ms
+  defp count_facts(n) do
+    receive do
+      {:pane_facts, 1} -> count_facts(n + 1)
+    after
+      100 -> n
+    end
+  end
+
   defp drain do
     receive do
       {:pane_facts, _} -> drain()
@@ -160,12 +169,51 @@ defmodule HerdrServer.Pane.ServerM9Test do
       assert Facts.scrolled?(1)
     end
 
+    test "a scrolled pane streaming output sends throttled facts, the last one trailing" do
+      Server.scroll(1, {:delta, -5})
+      assert_receive {:pane_facts, 1}, 500
+      drain()
+      t0 = System.monotonic_time(:millisecond)
+
+      for i <- 1..60 do
+        :ok = Fake.Vt.set_history(vt(1), ["s#{i}"])
+        Fake.Pty.output(pty(1), "z")
+        Process.sleep(1)
+      end
+
+      sync(1)
+      ms = System.monotonic_time(:millisecond) - t0
+      n = count_facts(0)
+      # at most one per 16 ms window, plus the trailing one
+      assert n >= 1 and n <= div(ms, 16) + 2, "#{n} facts messages in #{ms} ms"
+      assert Facts.get(1).scroll.total == Fake.Vt.scrollbar(vt(1)).total
+    end
+
+    test "queued scroll requests coalesce into one move and one repaint" do
+      pid = pane_pid(1)
+      :sys.suspend(pid)
+      for row <- 0..15, do: Server.scroll(1, {:top, row})
+      Server.scroll(1, {:delta, -2})
+      :sys.resume(pid)
+      sync(1)
+      assert Fake.Vt.scrollbar(vt(1)).offset == 13
+      assert_receive {:pane_damage, 1, _}, 500
+      refute_receive {:pane_damage, 1, _}, 100
+    end
+
     test "resize keeps the distance from the bottom" do
       Server.scroll(1, {:delta, -5})
       assert_receive {:pane_facts, 1}, 500
       :ok = Server.resize(1, 80, 10, nil)
       assert %{scrolled: true, scroll: %{total: 30, viewport: 10, offset: 15}} = Facts.get(1)
     end
+  end
+
+  test "a write to a pane whose server is gone is closed and leaves no pending count" do
+    :ok = HerdrServer.Pane.Supervisor.stop_pane(1)
+    assert Server.write(1, "x") == {:error, :closed}
+    refute Facts.pending?(1)
+    {:ok, _} = HerdrServer.Pane.Supervisor.start_pane(1)
   end
 
   test "a bell reaches only the marked foreground client" do
@@ -295,7 +343,10 @@ defmodule HerdrServer.Pane.ServerM9Test do
     sync(1)
     assert pane_pid(1) == pid
     assert eventually(fn -> :ets.whereis(:herdr_pane_facts) != :undefined end)
+    assert :ets.info(:herdr_pane_facts, :write_concurrency) == true
     Server.scroll(1, :bottom)
+    # queued scrolls fold into one move: let this one land first
+    sync(1)
     Server.scroll(1, {:delta, -1})
     assert eventually(fn -> Facts.scrolled?(1) end)
   end

@@ -62,7 +62,8 @@ defmodule HerdrServer.Client.Session do
   before the scene is computed. This session becomes the foreground client
   (`Client.Foreground`) on attach and on each slow-path input; pane bells and child clipboard writes sent to it
   go to the client as `{:bell, id}` and `{:clipboard, %{source: :pane}}`, and
-  `{:pane_facts, id}` repaints when the pane is in the last scene. `{:caps, map}` merges
+  `{:pane_facts, id}` repaints when the pane is in the last scene (at once, then at most
+  once per 16 ms, `HerdrServer.Throttle`, the last one trailing). `{:caps, map}` merges
   into `state.caps`; the foreground session's also go to `Pane.Colors.apply_all/1`, and
   a session that becomes the foreground client re-applies its stored colours.
 
@@ -82,6 +83,7 @@ defmodule HerdrServer.Client.Session do
   alias HerdrServer.Layout
   alias HerdrServer.Mirror
   alias HerdrServer.Pane.{Colors, Rows}
+  alias HerdrServer.Throttle
   alias HerdrServer.View
 
   @presentation [:viewports, :hover, :mode, :swallow]
@@ -289,8 +291,13 @@ defmodule HerdrServer.Client.Session do
         else: state
 
     if state.last_scene != nil and Enum.any?(state.last_scene.panes, &(&1.id == id)),
-      do: {:noreply, repaint(state)},
+      do: {:noreply, facts_repaint(state, &Throttle.hit/1)},
       else: {:noreply, state}
+  end
+
+  def handle_info(:facts_tick, state) do
+    state = Map.merge(%State{}, state)
+    {:noreply, facts_repaint(state, &Throttle.tick/1)}
   end
 
   def handle_info({:autoscroll, ref}, %{pointer_refs: %{autoscroll: ref}} = state) do
@@ -367,6 +374,18 @@ defmodule HerdrServer.Client.Session do
     case state.notice do
       %{level: ^level, text: ^text} -> %{state | notice: new}
       _ -> repaint(%{state | notice: new})
+    end
+  end
+
+  # facts repaints: at once, then at most one per 16 ms window (the last one trailing)
+  defp facts_repaint(state, step) do
+    case step.(state.facts_tick) do
+      {:fire, tick} ->
+        Process.send_after(self(), :facts_tick, 16)
+        repaint(%{state | facts_tick: tick})
+
+      {:skip, tick} ->
+        %{state | facts_tick: tick}
     end
   end
 

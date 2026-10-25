@@ -457,23 +457,27 @@ defmodule HerdrServer.Client.CopyMode do
   # --- paragraphs ---
 
   defp paragraph(y, 1, ctx),
-    do: blank_row(ctx, {y + 1, min(y + @paragraph_rows, last(ctx))}, & &1, last(ctx), y)
+    do: blank_row(ctx, {y + 1, min(y + @paragraph_rows, last(ctx))}, 1, last(ctx), y)
 
   defp paragraph(y, -1, ctx),
-    do: blank_row(ctx, {max(y - @paragraph_rows, 0), y - 1}, &Enum.reverse/1, 0, y)
+    do: blank_row(ctx, {y - 1, max(y - @paragraph_rows, 0)}, -1, 0, y)
 
-  # the first blank row of `first..l` in `order`, else `edge` when the range reaches it,
-  # else `y`
-  defp blank_row(_ctx, {first, l}, _order, _edge, y) when first > l, do: y
+  # the first blank row from `from` towards `to` (read in windows, like search), else
+  # `edge` when the range reaches it, else `y`
+  defp blank_row(ctx, {from, to}, dir, edge, y) do
+    order = if dir == 1, do: & &1, else: &Enum.reverse/1
 
-  defp blank_row(ctx, {first, l}, order, edge, y) do
     found =
-      ctx
-      |> read(first, l)
-      |> order.()
+      from
+      |> windows(to, dir, @search_window)
+      |> Stream.flat_map(fn {first, l} -> ctx |> read(first, l) |> order.() end)
       |> Enum.find_value(fn {r, cells} -> if Enum.all?(cells, &Words.blank?(&1.glyph)), do: r end)
 
-    found || if(edge in first..l, do: edge, else: y)
+    cond do
+      found -> found
+      dir * (to - from) >= 0 and edge == to -> edge
+      true -> y
+    end
   end
 
   # --- reading ---

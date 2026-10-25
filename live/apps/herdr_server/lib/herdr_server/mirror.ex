@@ -53,10 +53,14 @@ defmodule HerdrServer.Mirror do
   defp ensure_tables do
     for t <- @tables,
         :ets.whereis(t) == :undefined,
-        do: :ets.new(t, [:named_table, :public, :set, read_concurrency: true])
+        do: :ets.new(t, [:named_table, :public, :set | concurrency(t)])
 
     :ok
   end
+
+  # facts rows carry a pending-write counter that every writer process updates
+  defp concurrency(:herdr_pane_facts), do: [read_concurrency: true, write_concurrency: true]
+  defp concurrency(_table), do: [read_concurrency: true]
 
   @doc "The mirrored app (`%{session, focus, ui}`), or nil when any part is missing."
   @spec app() :: map | nil

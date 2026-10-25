@@ -21,6 +21,12 @@ defmodule HerdrServer.Client.CopyModeTest.Reader do
     end
   end
 
+  # `rows/3` that tells `pid` the size of each read
+  def logged(lines, pid, first, last) do
+    send(pid, {:read, last - first + 1})
+    rows(lines, first, last)
+  end
+
   defp cells(g) do
     if g =~ ~r/\p{Han}/u,
       do: [%Cell{glyph: g, width: 2}, %Cell{glyph: "", width: 0}],
@@ -155,6 +161,26 @@ defmodule HerdrServer.Client.CopyModeTest do
     assert {%CopyMode{cursor: {2, 295}}, _} = keys(t, c, ["{"])
     assert {%CopyMode{cursor: {2, 290}}, _} = keys(t, c, ["{", "{"])
     assert {%CopyMode{cursor: {2, 299}}, _} = keys(t, c, ["}"])
+  end
+
+  test "{ and } read in windows of at most 200 rows and stop at 1000" do
+    n = 2600
+    l = lines(%{1699 => "", 599 => ""}, n)
+    c = %{ctx(l, n - @h) | read: {Reader, :logged, [l, self()]}}
+    t = enter(c, {2, @h - 1})
+    assert {%CopyMode{cursor: {2, 1699}}, _} = keys(t, c, ["{"])
+    # the next blank is 1100 rows up: past the 1000-row limit
+    assert {%CopyMode{cursor: {2, 1699}}, _} = keys(t, c, ["{", "{"])
+    sizes = collect_reads([])
+    assert sizes != [] and Enum.max(sizes) <= 200, inspect(sizes)
+  end
+
+  defp collect_reads(acc) do
+    receive do
+      {:read, n} -> collect_reads([n | acc])
+    after
+      0 -> acc
+    end
   end
 
   test "v l l y copies the char selection and exits back to the entry offset" do

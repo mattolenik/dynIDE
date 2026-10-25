@@ -15,7 +15,9 @@ defmodule HerdrServer.Pane.Server do
   screen switch dirties at least the cursor row; not every row) and after a scroll,
   resize or init. Facts are written when `scrolled`, the scroll values while scrolled,
   or a non-scroll fact change; sessions get `{:pane_facts, id}` only when the pane becomes
-  scrolled or unscrolled, or its scroll values change while scrolled. Raw titles, OSC 7
+  scrolled or unscrolled (at once), or its scroll values change while scrolled (at most
+  once per 16 ms, `HerdrServer.Throttle`, the last change trailing). Scroll requests
+  already queued fold into one move and one repaint (a scrollbar drag). Raw titles, OSC 7
   and the `:osc` codes are parsed by `Pane.Osc`; bells and child OSC 52 go to the
   foreground client (`Client.Foreground`). Host colours (`Pane.Facts.host_colors/0`)
   are applied on init, since the vt's colours do not survive a restore or handoff.
@@ -40,11 +42,12 @@ defmodule HerdrServer.Pane.Server do
   alias HerdrReload.Guard
   alias HerdrServer.App.Store
   alias HerdrServer.Client.Foreground
-  alias HerdrServer.{Kernel, Mirror}
+  alias HerdrServer.{Kernel, Mirror, Throttle}
   alias HerdrServer.Pane.{Colors, Facts, Osc, Rows, State}
 
   # facts a restarted server reads back from `Pane.Facts`
   @kept [:cwd, :title, :stripped_title, :progress]
+  @facts_ms 16
 
   def start_link(id), do: GenServer.start_link(__MODULE__, id, name: via(id))
 
@@ -70,12 +73,19 @@ defmodule HerdrServer.Pane.Server do
   Appends `iodata` to the pane's write queue (see moduledoc). The pending count goes up
   in the caller, before the cast, so the caller's next input sees it. `paste_origin`
   marks a paste payload: if the queue is dropped before it is out, that pid gets
-  `{:notice, %{level: :warning, text: "paste truncated after N bytes"}}`.
+  `{:notice, %{level: :warning, text: "paste truncated after N bytes"}}`. A pane with no
+  server is `{:error, :closed}` (nothing counted, so the count cannot leak).
   """
-  @spec write(pos_integer, iodata, pid | nil) :: :ok
+  @spec write(pos_integer, iodata, pid | nil) :: :ok | {:error, :closed}
   def write(id, iodata, paste_origin \\ nil) do
-    :ok = Facts.add_pending(id, 1)
-    GenServer.cast(via(id), {:write, iodata, paste_origin})
+    # the Registry drops a dead server's entry asynchronously: check it is alive
+    with [{pid, _}] <- Registry.lookup(HerdrServer.Pane.Registry, id),
+         true <- Process.alive?(pid) do
+      :ok = Facts.add_pending(id, 1)
+      GenServer.cast(pid, {:write, iodata, paste_origin})
+    else
+      _ -> {:error, :closed}
+    end
   end
 
   defp call(id, msg) do
@@ -143,7 +153,8 @@ defmodule HerdrServer.Pane.Server do
     state = Map.merge(%State{}, state)
     sb = Kernel.vt().scrollbar(state.vt)
 
-    target = scroll_target(req, sb)
+    # scrolls already queued (a scrollbar drag) fold into one move and one repaint
+    target = more_scrolls(scroll_target(req, sb), sb)
 
     with true <- target != sb.offset,
          :ok <- kernel(state.id, :scroll_to, fn -> Kernel.vt().scroll_to(state.vt, target) end) do
@@ -230,6 +241,11 @@ defmodule HerdrServer.Pane.Server do
     {:noreply, foreground(state, {:pane_bell, state.id})}
   end
 
+  def handle_info(:facts_tick, state) do
+    state = Map.merge(%State{}, state)
+    {:noreply, throttled(state, &Throttle.tick/1)}
+  end
+
   def handle_info(:write, state) do
     state = Map.merge(%State{}, state)
     {:noreply, write_next(%{state | write_retry: retry_timer(state.write_retry)})}
@@ -304,10 +320,31 @@ defmodule HerdrServer.Pane.Server do
     {was, now} = {facts(old), facts(new)}
     if relevant(now) != relevant(was), do: Facts.put(new.id, now)
 
-    if now.scrolled != was.scrolled or (now.scrolled and now.scroll != was.scroll),
-      do: dispatch({:pane_facts, new.id})
+    cond do
+      now.scrolled != was.scrolled ->
+        dispatch({:pane_facts, new.id})
+        new
 
-    new
+      now.scrolled and now.scroll != was.scroll ->
+        throttled(new, &Throttle.hit/1)
+
+      true ->
+        new
+    end
+  end
+
+  # scroll values drifting while scrolled (output streaming under a scrolled-back
+  # viewport): at most one `{:pane_facts, id}` per window, the last one trailing
+  defp throttled(state, step) do
+    case step.(state.facts_tick) do
+      {:fire, tick} ->
+        dispatch({:pane_facts, state.id})
+        Process.send_after(self(), :facts_tick, @facts_ms)
+        %{state | facts_tick: tick}
+
+      {:skip, tick} ->
+        %{state | facts_tick: tick}
+    end
   end
 
   defp relevant(%{scrolled: true} = f), do: f
@@ -432,6 +469,15 @@ defmodule HerdrServer.Pane.Server do
     end
     |> max(0)
     |> min(bottom)
+  end
+
+  defp more_scrolls(target, sb) do
+    receive do
+      {:"$gen_cast", {:scroll, req}} ->
+        more_scrolls(scroll_target(req, %{sb | offset: target}), sb)
+    after
+      0 -> target
+    end
   end
 
   defp keep_from_bottom(_state, from_bottom) when from_bottom <= 0, do: :ok
