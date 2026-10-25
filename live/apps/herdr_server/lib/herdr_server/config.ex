@@ -208,6 +208,9 @@ defmodule HerdrServer.Config do
     end
   end
 
+  defp command(_other, name, {kb, cmds, d}),
+    do: {kb, cmds, d ++ ["config: #{name}: expected a table"]}
+
   defp entry(t, key, cmd, type) do
     popup = type == "popup"
     desc = t["description"]
@@ -230,9 +233,6 @@ defmodule HerdrServer.Config do
       else: []
     ) ++ if(held, do: ["config: #{name}.key: #{key} replaces #{action(held)}"], else: [])
   end
-
-  defp command(_other, name, {kb, cmds, d}),
-    do: {kb, cmds, d ++ ["config: #{name}: expected a table"]}
 
   defp action(mfa) do
     case Enum.find(Catalog.entries(), &(&1.mfa == mfa)) do

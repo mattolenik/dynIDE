@@ -15,9 +15,9 @@ defmodule HerdrServer.App.Modal.Keybinds do
 
   Capture: Enter (or a click on a row) sets `capture: true`, so `Client.Session` sends
   every key here, the prefix too (subtitle `"press a key for <action> · esc cancels"`).
-  The next press rebinds the action through `Keybinds.rebind/3`: after the prefix key it is `prefix+<key>`;
-  a ctrl / alt / super chord is a direct bind; any other key is a prefix bind. Esc
-  cancels. Success updates `ui.keybinds` (the Store republishes the fast path) and emits
+  The next press rebinds the action through `Keybinds.rebind/3`: after the prefix key it
+  is `prefix+<key>`; a ctrl / alt / super chord is a direct bind; any other key is a
+  prefix bind. Esc cancels. Success updates `ui.keybinds` (the Store republishes the fast path) and emits
   `{:config_write, ["keys"], kv}` with every action whose bindings changed (the action's
   `[spec]`, `[]` for one that lost its key); a refused spec shows its error.
   """

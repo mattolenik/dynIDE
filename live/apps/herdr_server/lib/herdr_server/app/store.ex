@@ -635,7 +635,9 @@ defmodule HerdrServer.App.Store do
   # is not killed when the Task or the VM goes away (no timeout; add a Port + os_pid kill if
   # commands that never exit show up). Its memory is bounded by the output Excerpt.
   defp io({:custom_command, cmd, env, pane}, _origin) do
-    run = fn -> Guard.run(CustomCommands, :exec, [cmd, env, pane], server: reload_server()) end
+    run = fn ->
+      Guard.run_twice(CustomCommands, :exec, [cmd, env, pane], server: reload_server())
+    end
 
     with {:error, why} <- Task.Supervisor.start_child(tasks(), run),
          do: Logger.error("custom command not started: #{inspect(why)}")
