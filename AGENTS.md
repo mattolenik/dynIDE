@@ -108,6 +108,11 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   and the relay on the server host reads the token, so it never travels
   (`$HERDR_LIVE_SSH`, `$HERDR_LIVE_REMOTE_BIN`). Contract: `HerdrScene.Wire`.
   Results: `docs/herdr-live/results/m16.md`.
+- Plugins (M14): `HerdrServer.Plugins.*` runs herdr's external-process plugins
+  (manifest, registry, runtime, panes, link handlers) under herdr's paths re-rooted
+  at `herdr-live/`; no plugin code ever loads into the VM.
+- The `plugins` tty harness mode (two herdr example plugins from
+  `vendor/herdr-plugin-examples`, unmodified) is in `just live-check`.
 - Persistence (M8, ADR 0002): under the broker the session saves to
   `<state dir>/session.<name>.etf` (schema v2, atomic, 0600) and scrollback
   (last 1000 rows as VT) to `session.<name>.scrollback/<pane id>.etf`. State dir:

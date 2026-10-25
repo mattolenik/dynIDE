@@ -1194,8 +1194,12 @@ def remote():
 
 def plugins():
     """Two of herdr's example plugins, unmodified, end to end (M14's exit criterion)."""
+    global DEADLINE
     with tempfile.TemporaryDirectory() as tmp:
         compile_then_start_clock(tmp)
+        # about 25 sequential waits, each a CLI round trip or more: 300 s, not 120 (a loaded
+        # host, Linux podman)
+        DEADLINE += 180
         t = lambda *name: os.path.join(tmp, *name)
         # offline stubs first on the PATH: github-link-preview's preview.sh calls gh (network),
         # dev-layout-bootstrap's setup.lua runs `nvim .` in the first pane
@@ -1234,10 +1238,10 @@ def plugins():
         def logs(plugin):
             return cli_json("plugin", "log", "list", "--plugin", plugin)["logs"]
 
-        def ended(plugin, n):
-            """The newest record once `plugin` has more than `n` finished ones."""
-            done = [r for r in logs(plugin) if r.get("status") != "running"]
-            return done[0] if len(done) > n else None
+        def ended(plugin, log_id):
+            """The record `log_id` (the invoke's answer) once it is no longer running."""
+            return next((r for r in logs(plugin) if r.get("log_id") == log_id and r.get("status") != "running"),
+                        None)
 
         # 1. install both from the first pane's shell
         shell(f"{bin_} plugin install {examples}/dev-layout-bootstrap --yes > {t('i1.json')} 2>&1"
@@ -1252,8 +1256,11 @@ def plugins():
         # 2. dev layout: three named panes
         shell(f"echo \"$HERDR_PANE_ID\" > {t('me.txt')}; {bin_} plugin action invoke {layout}.setup"
               f" > {t('inv.json')} 2>&1", "s2", "plugin action invoke setup")
-        h.until(lambda: ended(layout, 0), "the setup run to end", timeout=60)
-        run = ended(layout, 0)
+        try:
+            setup = json.loads(read_text(t("inv.json")))["log"]["log_id"]
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            fail(f"plugins: invoke answer has no log.log_id ({e}: {read_text(t('inv.json'))!r})")
+        run = h.until(lambda: ended(layout, setup), "the setup run to end", timeout=60)
         ok(run.get("status") == "succeeded", f"plugins: plugin log has the setup run succeeded"
            f" (exit {run.get('exit_code')}, stdout {run.get('stdout', '')[:40]!r})")
         names = {p.get("label"): p["pane_id"] for p in panes()}
@@ -1317,12 +1324,14 @@ def plugins():
         for plugin, action in ((preview, "open"), ("smoke.good", "hi")):
             code, out = h.cli("plugin", "action", "invoke", f"{plugin}.{action}")
             if plugin == "smoke.good":
-                ok(code != 0, f"plugins: the broken plugin cannot run ({out.strip()})")
+                ok(code != 0 and '"code":"not_found"' in out and "plugin_action_not_found" in out,
+                   f"plugins: the broken plugin cannot run ({out.strip()})")
             else:
                 if code != 0:
                     fail(f"plugins: {plugin}.{action} invoke failed ({out.strip()})")
-                h.until(lambda: ended(preview, 2), f"{preview}.open to end", timeout=30)
-                ok(ended(preview, 2)["status"] == "succeeded", f"plugins: {preview}.open still runs (succeeded)")
+                opened = json.loads(out)["log"]["log_id"]
+                rec = h.until(lambda: ended(preview, opened), f"{preview}.open to end", timeout=30)
+                ok(rec["status"] == "succeeded", f"plugins: {preview}.open still runs (succeeded)")
         h.until(lambda: "plugin: smoke.good:" in read_text(h.log), "the plugin warning line", timeout=30)
         ok(True, "plugins: the log has a plugin warning line for smoke.good")
 

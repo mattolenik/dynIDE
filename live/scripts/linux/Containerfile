@@ -1,6 +1,7 @@
 # Linux check image for herdr-live (used by ../linux_check.sh).
 # lua5.4: tty_harness.py plugins runs herdr's dev-layout-bootstrap (`lua setup.lua`);
-# git is in the base image (linux_check.sh runs git init).
+# git comes from the herdr-m2-check base (its apt layer installs it; checked with
+# `podman image history` and `git --version` in the image).
 FROM localhost/herdr-m2-check
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

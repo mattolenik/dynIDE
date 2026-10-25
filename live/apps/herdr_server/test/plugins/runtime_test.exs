@@ -47,6 +47,28 @@ defmodule HerdrServer.Plugins.RuntimeTest do
     end
   end
 
+  defp read_pids(path) do
+    case File.read(path) do
+      {:ok, text} -> String.split(text)
+      {:error, _} -> []
+    end
+  end
+
+  defp kill_pids(path) do
+    case read_pids(path) do
+      [] -> :ok
+      pids -> System.cmd("kill", ["-9" | pids], stderr_to_stdout: true)
+    end
+  end
+
+  defp wait_lines(path, n, tries \\ 200) do
+    cond do
+      length(read_pids(path)) >= n -> :ok
+      tries > 0 -> Process.sleep(50) && wait_lines(path, n, tries - 1)
+      true -> flunk("#{path}: #{length(read_pids(path))} of #{n} pids written")
+    end
+  end
+
   defp wait_file(path, tries \\ 100) do
     cond do
       File.exists?(path) and File.read!(path) != "" -> File.read!(path)
@@ -96,8 +118,11 @@ defmodule HerdrServer.Plugins.RuntimeTest do
     assert {:error, :invalid_params, _, %{reason: "ambiguous_plugin_action"}} =
              Handler.handle("plugin.action.invoke", %{action_id: "go"})
 
-    assert {:ok, %{type: "plugin_action_invoked"}} =
+    assert {:ok, %{type: "plugin_action_invoked", log: %{"log_id" => run}}} =
              Handler.handle("plugin.action.invoke", %{action_id: "go", plugin_id: "b.two"})
+
+    # ends before the tmp dir goes (a run left in flight starts in a removed cwd)
+    finished(run)
 
     assert {:error, :failed, _, %{reason: "plugin_disabled"}} =
              Handler.handle("plugin.action.invoke", %{action_id: "c.off.stop"})
@@ -118,9 +143,13 @@ defmodule HerdrServer.Plugins.RuntimeTest do
     pids = Path.join(base, "pids")
     sleeper = ~s(["sh", "-c", "echo $$ >> #{pids}; exec sleep 5"])
     link(base, "t.p", action(sleeper))
+    # kill exactly the sleeps this test started, also when an assertion fails, before
+    # PluginDirs removes the tmp dir (on_exit runs in reverse order)
+    on_exit(fn -> kill_pids(pids) end)
     start_runtime()
 
     for _ <- 1..32, do: assert({:ok, _} = Runtime.invoke("go", nil, %{}, "api"))
+    wait_lines(pids, 32)
 
     assert {:error, "plugin_command_limit_reached", msg} = Runtime.invoke("go", nil, %{}, "api")
     assert msg =~ "32"
@@ -128,8 +157,8 @@ defmodule HerdrServer.Plugins.RuntimeTest do
     # still responsive
     assert length(Runtime.logs(nil, 200)) == 33
 
-    # kill exactly the sleeps this test started, and let their runs finish
-    System.cmd("kill", ["-9" | String.split(File.read!(pids))], stderr_to_stdout: true)
+    # let their runs finish
+    kill_pids(pids)
     for %{"log_id" => id} <- Runtime.logs(nil, 200), do: finished(id, 200)
   end
 

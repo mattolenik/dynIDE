@@ -69,6 +69,8 @@ defmodule HerdrServer.Plugins.Manifest do
     end
   end
 
+  # Toml.reason() is `{:invalid_toml, binary} | binary`: no other shape to inspect
+  # (dialyzer rejects a catch-all clause here)
   defp first_line(text), do: text |> String.split("\n", trim: true) |> List.first("")
 
   defp build(raw, file) do

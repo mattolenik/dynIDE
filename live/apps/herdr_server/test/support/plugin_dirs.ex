@@ -11,7 +11,9 @@ defmodule HerdrServer.Test.PluginDirs do
   @doc "Sets `:plugins` config/state dirs (plus `extra`) under a new tmp base; returns the base."
   @spec use_tmp(keyword()) :: Path.t()
   def use_tmp(extra \\ []) do
-    base = Path.join(System.tmp_dir!(), "hlplug#{System.unique_integer([:positive])}")
+    base =
+      Path.join(System.tmp_dir!(), "hlplug#{System.pid()}-#{System.unique_integer([:positive])}")
+
     File.mkdir_p!(base)
     prev = Application.get_env(:herdr_server, :plugins)
 

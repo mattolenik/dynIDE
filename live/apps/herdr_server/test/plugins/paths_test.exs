@@ -4,7 +4,9 @@ defmodule HerdrServer.Plugins.PathsTest do
   alias HerdrServer.Plugins.Paths
 
   setup do
-    base = Path.join(System.tmp_dir!(), "paths-#{System.unique_integer([:positive])}")
+    base =
+      Path.join(System.tmp_dir!(), "paths-#{System.pid()}-#{System.unique_integer([:positive])}")
+
     prev = Application.get_env(:herdr_server, :plugins)
 
     Application.put_env(:herdr_server, :plugins,
