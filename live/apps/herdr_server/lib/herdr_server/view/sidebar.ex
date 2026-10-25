@@ -3,7 +3,9 @@ defmodule HerdrServer.View.Sidebar do
   The sidebar region (pure): a `:spaces` section (one `:item` per workspace, the `:new`
   and `:menu` buttons), the `:split` divider row (expanded only, and only when both
   sections get 3 rows), an `:agents` section (one `:item` per pane of every workspace in
-  preorder), the `:toggle` button and the `:edge` divider on the right column.
+  preorder, or with `ui.agent_panel_sort` `:priority` by state, stable within one; the
+  `:sort` button names the order, `"grouped"` / `"priority"`), the `:toggle` button
+  and the `:edge` divider on the right column.
 
   A workspace badge is the highest-priority `agent_state` of its panes (blocked > done >
   working > idle > unknown; panes without one are `:unknown`). An agent line names the
@@ -61,6 +63,12 @@ defmodule HerdrServer.View.Sidebar do
           id: :list,
           props: %{offset: offset(app, :agents_offset)},
           children: agents(app)
+        },
+        %Node{
+          role: :button,
+          id: :sort,
+          text: if(app.ui.agent_panel_sort == :priority, do: "priority", else: "grouped"),
+          props: %{action: :toggle_agent_sort}
         }
       ]
     }
@@ -131,21 +139,30 @@ defmodule HerdrServer.View.Sidebar do
     end)
   end
 
-  defp agents(app) do
+  defp agents(%{ui: %{agent_panel_sort: :priority}} = app),
+    do: app |> agent_items() |> Enum.sort_by(&(-@prio[&1.state])) |> Enum.map(& &1.node)
+
+  defp agents(app), do: app |> agent_items() |> Enum.map(& &1.node)
+
+  defp agent_items(app) do
     for ws <- app.session.workspaces, tab <- ws.tabs, id <- Layout.pane_ids(tab.layout) do
       meta = Map.get(app.session.panes, id) || %{}
       tab_text = if length(ws.tabs) > 1, do: [text(:tab, tab.name)], else: []
       name = Map.get(meta, :agent) || Map.get(meta, :title) || "terminal"
 
-      %Node{
+      state = state(app, id)
+
+      node = %Node{
         role: :item,
         id: {:pane, id},
         props: detail(%{active: id == app.focus.pane}, [], Map.get(meta, :metadata)),
         children: [
-          line(0, [badge(state(app, id)), text(:workspace, ws.name)] ++ tab_text),
+          line(0, [badge(state), text(:workspace, ws.name)] ++ tab_text),
           line(1, [text(:agent, name)])
         ]
       }
+
+      %{state: state, node: node}
     end
   end
 

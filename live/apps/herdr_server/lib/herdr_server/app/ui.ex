@@ -3,7 +3,9 @@ defmodule HerdrServer.App.Ui do
   UI configuration carried in app state, with herdr's defaults: sidebar geometry
   (`width` clamped to `min..max` while expanded, `split` the spaces/agents ratio, the
   lists' scroll `spaces_offset` / `agents_offset`), tab bar
-  position, theme names, agent state indicators, confirmations, toast and sound delivery, `pane_borders` (`Layout.borders/3`),
+  position, theme names, agent state indicators, the agents list order
+  (`agent_panel_sort`: `:spaces` in workspace order, `:priority` by state), confirmations,
+  toast and sound delivery, `pane_borders` (`Layout.borders/3`),
   `custom_commands` (`[[keys.command]]`, plain maps; `App.CustomCommands`).
   Older apps get the new keys from `App.Upgrade.app/1`.
   """
@@ -29,6 +31,7 @@ defmodule HerdrServer.App.Ui do
     },
     tab_bar: %{position: :top, hide_single: false},
     indicators: :dots,
+    agent_panel_sort: :spaces,
     confirm_close: true,
     onboarding: false,
     toast: %{delivery: :herdr, delay_ms: 1000},
@@ -58,6 +61,7 @@ defmodule HerdrServer.App.Ui do
           },
           tab_bar: %{position: :top | :bottom, hide_single: boolean()},
           indicators: :dots | :symbols,
+          agent_panel_sort: :spaces | :priority,
           confirm_close: boolean(),
           onboarding: boolean(),
           toast: %{delivery: atom(), delay_ms: non_neg_integer()},

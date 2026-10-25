@@ -21,7 +21,8 @@ defmodule HerdrServer.App.Chrome do
       `[:sidebar, :toggle]` click collapses / expands. Each recomputes `session.area`.
     * `[:sidebar, :spaces, :list, {:workspace, id}]` click switches workspace,
       `[:sidebar, :spaces, :new]` click creates one, `[:sidebar, :agents, :list, {:pane,
-      id}]` click focuses the pane.
+      id}]` click focuses the pane, `[:sidebar, :agents, :sort]` click toggles
+      `ui.agent_panel_sort` between `:spaces` and `:priority`.
     * Wheel over `[:sidebar, :spaces | _]` / `[:sidebar, :agents | _]` moves
       `ui.sidebar.spaces_offset` / `agents_offset` by one, clamped to `0..items - 1`
       (the server does not know the client's row heights). `View.Sidebar` puts it in the
@@ -120,6 +121,11 @@ defmodule HerdrServer.App.Chrome do
 
   def apply(app, [:sidebar, :agents, :list, {:pane, id}], {:click, _}),
     do: Actions.focus_pane(app, id)
+
+  def apply(app, [:sidebar, :agents, :sort], {:click, _}) do
+    sort = if app.ui.agent_panel_sort == :priority, do: :spaces, else: :priority
+    {put_in(app.ui.agent_panel_sort, sort), []}
+  end
 
   def apply(app, [:sidebar, section | _], {kind, _})
       when section in [:spaces, :agents] and kind in [:scroll_up, :scroll_down],

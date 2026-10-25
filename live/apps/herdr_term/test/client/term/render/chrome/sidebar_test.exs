@@ -38,6 +38,9 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.SidebarTest do
     split = Enum.find_index(rows, &String.starts_with?(&1, "─"))
     assert split
     assert String.starts_with?(Enum.at(rows, split + 1), " agents")
+    assert String.ends_with?(Enum.at(rows, split + 1), "grouped│")
+    assert %{rect: %{x: 18, y: y, w: 7}} = hit(l, [:sidebar, :agents, :sort])
+    assert y == split + 1
     assert Enum.at(rows, split + 2) |> String.starts_with?(" · 1")
     assert Enum.at(rows, split + 3) |> String.starts_with?("   terminal")
 
@@ -61,6 +64,9 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.SidebarTest do
 
     assert Enum.find_index(paths, &(&1 == [:sidebar, :spaces, :new])) <
              Enum.find_index(paths, &(&1 == [:sidebar, :spaces]))
+
+    assert Enum.find_index(paths, &(&1 == [:sidebar, :agents, :sort])) <
+             Enum.find_index(paths, &(&1 == [:sidebar, :agents]))
 
     assert List.last(Enum.filter(paths, &match?([:sidebar | _], &1))) == [:sidebar]
   end

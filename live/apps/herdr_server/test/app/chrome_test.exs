@@ -114,6 +114,13 @@ defmodule HerdrServer.App.ChromeTest do
     refute app.ui.sidebar.collapsed
   end
 
+  test "the agents sort button toggles the order" do
+    {app, []} = chrome(fresh(), [:sidebar, :agents, :sort], :click)
+    assert app.ui.agent_panel_sort == :priority
+    {app, []} = chrome(app, [:sidebar, :agents, :sort], :click)
+    assert app.ui.agent_panel_sort == :spaces
+  end
+
   test "workspace click switches, new creates, agent click focuses" do
     {app, _} = Actions.new_workspace(fresh())
     assert app.session.active_workspace == 2

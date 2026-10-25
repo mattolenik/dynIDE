@@ -78,6 +78,23 @@ defmodule HerdrServer.View.SidebarTest do
     assert Enum.map(items(sb, :agents), &badge/1) == [:blocked, :working]
   end
 
+  test "agents sort: grouped in workspace order, priority by state (stable); the sort button" do
+    app = fresh(120, 40) |> pfx("v") |> pfx("v") |> pfx("v")
+
+    app =
+      Enum.reduce([{1, :idle}, {2, :done}, {3, :working}, {4, :done}], app, fn {id, s}, app ->
+        put_in(app.session.panes[id], Map.put(app.session.panes[id], :agent_state, s))
+      end)
+
+    ids = &Enum.map(items(Sidebar.node(&1, @rect), :agents), fn i -> i.id end)
+    assert ids.(app) == [{:pane, 1}, {:pane, 2}, {:pane, 3}, {:pane, 4}]
+    assert %{role: :button, text: "grouped"} = find(Sidebar.node(app, @rect), [:agents, :sort])
+
+    app = put_in(app.ui.agent_panel_sort, :priority)
+    assert ids.(app) == [{:pane, 2}, {:pane, 4}, {:pane, 3}, {:pane, 1}]
+    assert find(Sidebar.node(app, @rect), [:agents, :sort]).text == "priority"
+  end
+
   test "an agent name, else the pane title, names the agent line; tabs show with > 1 tab" do
     app = new_tab(fresh(120, 40))
     app = put_in(app.session.panes[1], %{app.session.panes[1] | title: "vim"})

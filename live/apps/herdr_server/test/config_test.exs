@@ -187,6 +187,7 @@ defmodule HerdrServer.ConfigTest do
     pane_borders = "off"
     hide_tab_bar_when_single_tab = true
     tab_bar_position = "bottom"
+    agent_panel_sort = "priority"
 
     [ui.sound]
     enabled = false
@@ -215,6 +216,7 @@ defmodule HerdrServer.ConfigTest do
     assert ui.prompt_new_tab_name == false
     assert ui.pane_borders == :off
     assert ui.tab_bar == %{position: :bottom, hide_single: true}
+    assert ui.agent_panel_sort == :priority
 
     assert ui.sound == %{
              enabled: false,

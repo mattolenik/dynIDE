@@ -54,7 +54,7 @@ defmodule HerdrScene.Chrome do
   @ids [:agent, :fill, :gap2, :global_menu, :goto, :heading, :help_text, :hint_text] ++
          [:horizontal, :keybinds, :new_workspace, :onboarding, :reload_config, :save] ++
          [:settings, :sidebar_split, :sidebar_width, :split_down, :split_right, :subtitle] ++
-         [:toasts, :toggle_sidebar, :workspace, :zoomed]
+         [:toasts, :toggle_agent_sort, :toggle_sidebar, :workspace, :zoomed]
 
   @required %{
     tab: [:index, :active],

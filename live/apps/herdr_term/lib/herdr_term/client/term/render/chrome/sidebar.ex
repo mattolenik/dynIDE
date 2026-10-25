@@ -6,7 +6,8 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Sidebar do
   Expanded: the spaces section (header `" spaces"` muted and bold, a blank row, one row
   per workspace line, the footer `" new"` left and `"menu"` right on its last row), then
   from the `:split` divider's row the agents section (a `─` rule, the drag hit, header
-  `" agents"`, the agent items). `«` sits at (right-2, bottom-1).
+  `" agents"` with the `:sort` button's text right-aligned in the same style, the agent
+  items). `«` sits at (right-2, bottom-1).
 
   Collapsed: one row per workspace (index padded to 2, then its badge), a `─` rule, one
   badge row per agent when the sidebar has at least 7 rows, `»` bottom-centre.
@@ -100,14 +101,14 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Sidebar do
        agent_hits.split ++
        agent_hits.items ++
        space_hits.items ++
-       space_hits.buttons ++ space_hits.section ++ agent_hits.section}
+       space_hits.buttons ++ agent_hits.buttons ++ space_hits.section ++ agent_hits.section}
   end
 
   defp spaces(nil, _y0, _y1, _ctx), do: {[], %{items: [], buttons: [], section: []}}
 
   defp spaces(%Node{children: cs} = sec, y0, y1, ctx) do
     kids = Map.new(cs, &{&1.id, &1})
-    header = header(sec.text, y0, ctx)
+    {header, _} = header(sec.text, y0, nil, [], ctx)
     footer_y = if y1 >= y0 + 2, do: y1
     list_end = if footer_y, do: footer_y - 1, else: y1
     {item_lines, item_hits} = list(kids[:list], [:sidebar, sec.id, :list], y0 + 2, list_end, ctx)
@@ -147,25 +148,41 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Sidebar do
     {[{y, row}], hits}
   end
 
-  defp agents(nil, _split, _bottom, _ctx), do: {[], %{split: [], items: [], section: []}}
+  defp agents(nil, _split, _bottom, _ctx),
+    do: {[], %{split: [], items: [], buttons: [], section: []}}
 
   defp agents(%Node{children: cs} = sec, split, bottom, %{cw: cw, theme: theme, g: g} = ctx) do
     y = split.rect.y
     rule = {y, Text.text(String.duplicate(g.rule, cw), :muted, theme)}
-    header = header(sec.text, y + 1, ctx)
+    sort = Enum.find(cs, &(&1.id == :sort))
+    {header, buttons} = header(sec.text, y + 1, sort, [:sidebar, sec.id], ctx)
     list = Enum.find(cs, &(&1.id == :list))
     {item_lines, item_hits} = list(list, [:sidebar, sec.id, :list], y + 2, bottom, ctx)
     split_hit = Chrome.hit(split.rect, [:sidebar, split.id], :divider, true)
     section = [Chrome.hit(rect(ctx, y + 1, bottom), [:sidebar, sec.id], :section)]
-    {[rule | header ++ item_lines], %{split: [split_hit], items: item_hits, section: section}}
+
+    {[rule | header ++ item_lines],
+     %{split: [split_hit], items: item_hits, buttons: buttons, section: section}}
   end
 
-  defp header(nil, _y, _ctx), do: []
+  # `" <text>"` muted and bold; a button's text right-aligned in the same style
+  defp header(nil, _y, _button, _path, _ctx), do: {[], []}
 
-  defp header(text, y, %{theme: theme, cw: cw, base: base}) do
+  defp header(text, y, button, path, %{r: r, theme: theme, cw: cw, base: base}) do
     style = Theme.style(theme, :muted)
     style = %{style | attrs: Enum.uniq(style.attrs ++ Theme.style(theme, :strong).attrs)}
-    [{y, Text.clip(Cells.text(" " <> text, style), cw, base)}]
+    left = Cells.text(" " <> text, style)
+    right = Cells.text((button && button.text) || "", style)
+    bw = Cell.cols(right)
+    gap = max(cw - Cell.cols(left) - bw, 0)
+    row = [left, Cells.blank(gap, base), right] |> Cells.concat() |> Text.clip(cw, base)
+
+    hits =
+      if button && bw > 0,
+        do: [Chrome.hit(%{x: r.x + cw - bw, y: y, w: bw, h: 1}, path ++ [button.id], :button)],
+        else: []
+
+    {[{y, row}], hits}
   end
 
   # items top-down from the list's offset, one row per line, rows y0..y1

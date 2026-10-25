@@ -300,6 +300,15 @@
                     ]
                   }
                 ]
+              },
+              %HerdrScene.Scene.Node{
+                role: :button,
+                id: :sort,
+                rect: nil,
+                text: "grouped",
+                token: nil,
+                props: %{action: :toggle_agent_sort},
+                children: []
               }
             ]
           },
