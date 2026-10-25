@@ -10,7 +10,7 @@ defmodule HerdrServer.Api.ConformanceTest do
   alias HerdrServer.Api.{Events, Listener, Spec}
   alias HerdrServer.App.{Store, Worktrees}
   alias HerdrServer.Kernel.Fake
-  alias HerdrServer.Pane.{Facts, Rows}
+  alias HerdrServer.Pane.Rows
   alias HerdrServer.Plugins.{Install, Menu, Paths, Runtime}
   alias HerdrServer.Test.{ApiClient, PluginDirs}
 
@@ -262,23 +262,12 @@ defmodule HerdrServer.Api.ConformanceTest do
     end)
   end
 
-  # the paste goes through the queue; once it has drained the Enter is written directly
+  # an empty command queues no paste, so the Enter is written straight to the pty
   defp produce(method, code, ctx)
        when method in ~w(pane.run agent.prompt) and code in [:backpressure, :failed] do
     s = listen(ctx)
-    reason = if code == :failed, do: :too_large, else: :backpressure
-    Fake.Pty.fail_once_after(pty(), 1, reason)
-    # keep the queue looking drained so the Enter takes the direct path
-    spinner = spawn_link(fn -> spin() end)
-    reply = call(s, method, %{"target" => "p1"})
-    Process.unlink(spinner)
-    Process.exit(spinner, :kill)
-    reply
-  end
-
-  defp spin do
-    Facts.reset_pending(1)
-    spin()
+    Fake.Pty.reject_write(pty(), "\r", if(code == :failed, do: :too_large, else: :backpressure))
+    call(s, method, %{"target" => "p1", "command" => "", "text" => ""})
   end
 
   defp produce(method, :backpressure, ctx)

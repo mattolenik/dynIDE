@@ -25,6 +25,7 @@ defmodule HerdrServer.Kernel.Fake.Pty do
             reject_after: nil,
             reject_with: :backpressure,
             reject_next: 0,
+            reject_data: nil,
             close_after: nil,
             writes: [],
             closed: false,
@@ -67,6 +68,10 @@ defmodule HerdrServer.Kernel.Fake.Pty do
 
   @doc "Test hook: like `backpressure_once_after/2`, but the rejected write is `{:error, reason}`."
   def fail_once_after(pty, k, reason), do: GenServer.call(pty, {:reject_after, k, reason})
+
+  @doc "Test hook: while set, a write of exactly `data` answers `{:error, reason}` (`nil` clears)."
+  def reject_write(pty, data, reason),
+    do: GenServer.call(pty, {:reject_data, data && {data, reason}})
 
   @doc "Test hook: reject the next `n` writes with backpressure, then accept."
   def backpressure_next(pty, n), do: GenServer.call(pty, {:reject_next, n})
@@ -177,12 +182,21 @@ defmodule HerdrServer.Kernel.Fake.Pty do
 
   def handle_call({:write, bin}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    left = if state.reject_after, do: state.reject_after - 1
-    close = if state.close_after, do: state.close_after - 1
-    log = Enum.take([IO.iodata_to_binary(bin) | state.writes], 100)
-    state = %{state | reject_after: left, close_after: close, writes: log}
-    {:noreply, state} = handle_cast({:output, IO.iodata_to_binary(bin)}, state)
-    {:reply, :ok, state}
+
+    case state.reject_data do
+      {data, reason} when is_binary(data) ->
+        if IO.iodata_to_binary(bin) == data,
+          do: {:reply, {:error, reason}, state},
+          else: accept(bin, state)
+
+      _ ->
+        accept(bin, state)
+    end
+  end
+
+  def handle_call({:reject_data, spec}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, %{state | reject_data: spec}}
   end
 
   def handle_call({:reject_after, k, reason}, _from, state) do
@@ -306,4 +320,13 @@ defmodule HerdrServer.Kernel.Fake.Pty do
 
   defp notify(state, msg), do: Enum.each(state.subs, &send(&1, msg))
   defp now, do: System.monotonic_time(:millisecond)
+
+  defp accept(bin, state) do
+    left = if state.reject_after, do: state.reject_after - 1
+    close = if state.close_after, do: state.close_after - 1
+    log = Enum.take([IO.iodata_to_binary(bin) | state.writes], 100)
+    state = %{state | reject_after: left, close_after: close, writes: log}
+    {:noreply, state} = handle_cast({:output, IO.iodata_to_binary(bin)}, state)
+    {:reply, :ok, state}
+  end
 end

@@ -5,7 +5,7 @@ defmodule HerdrServer.Api.PaneIoTest do
   alias HerdrServer.Api.{Listener, Spec}
   alias HerdrServer.App.Store
   alias HerdrServer.Kernel.Fake
-  alias HerdrServer.Pane.{Facts, Rows}
+  alias HerdrServer.Pane.Rows
   alias HerdrServer.Test.ApiClient
 
   setup do
@@ -135,31 +135,11 @@ defmodule HerdrServer.Api.PaneIoTest do
     assert {"backpressure", _} = err(s, "pane.send_keys", Map.put(@p, "keys", ["a"]))
   end
 
-  # The Enter is written straight to the pty only if the paste has already drained; else
-  # it queues (and the queue retries), so `ok`. Retry until the direct write is hit.
+  # an empty command queues no paste, so the Enter is written straight to the pty
   test "run answers backpressure or failed from the enter write", %{s: s, pty: pty} do
     for {reason, code} <- [backpressure: "backpressure", too_large: "failed"] do
-      assert {^code, _} = enter_error(s, pty, reason)
-    end
-  end
-
-  defp spin do
-    Facts.reset_pending(1)
-    spin()
-  end
-
-  defp enter_error(s, pty, reason, tries \\ 500) do
-    Fake.Pty.fail_once_after(pty, 1, reason)
-    # keep the queue looking drained so the Enter takes the direct path
-    spinner = spawn_link(fn -> spin() end)
-
-    reply = ApiClient.call(s, "pane.run", Map.put(@p, "command", "cmd"))
-    Process.unlink(spinner)
-    Process.exit(spinner, :kill)
-
-    case reply do
-      %{"error" => e} -> {e["code"], e}
-      _ when tries > 1 -> enter_error(s, pty, reason, tries - 1)
+      Fake.Pty.reject_write(pty, "\r", reason)
+      assert {^code, _} = err(s, "pane.run", Map.put(@p, "command", ""))
     end
   end
 

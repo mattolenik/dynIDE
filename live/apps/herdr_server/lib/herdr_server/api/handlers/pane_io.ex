@@ -38,7 +38,7 @@ defmodule HerdrServer.Api.Handlers.PaneIo do
   # write) or failed. A later kernel failure of queued bytes is logged by the pane.
   def handle("pane.run", %{pane_id: id, command: cmd}) do
     with {:ok, _} <- lookup(id) do
-      case Input.paste(cmd, id) do
+      case paste(cmd, id) do
         :ok -> id |> then(&Input.key(Keys.parse("enter") |> elem(1), &1)) |> send_err() |> ok()
         err -> err |> send_err() |> ok()
       end
@@ -160,6 +160,10 @@ defmodule HerdrServer.Api.Handlers.PaneIo do
   end
 
   # :ok stays :ok; an error becomes the {:error, code, msg} the router returns
+  # an empty command pastes nothing: only the Enter is written
+  defp paste("", _id), do: :ok
+  defp paste(cmd, id), do: Input.paste(cmd, id)
+
   defp send_err(:ok), do: nil
   defp send_err({:error, :backpressure}), do: {:error, :backpressure, "pane input is backed up"}
   defp send_err({:error, {:truncated, _}}), do: {:error, :backpressure, "pane input is backed up"}
