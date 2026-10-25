@@ -98,16 +98,31 @@ defmodule HerdrServer.ConfigTest do
     command = "demo.other"
 
     [[keys.command]]
+    key = ["alt+h"]
+    type = "plugin_action"
+    command = "demo.hello"
+
+    [[keys.command]]
     key = "prefix+t"
     type = "popup"
     command = "lazygit"
+
+    [[keys.command]]
+    key = "prefix+u"
+    command = "make"
     """
 
     {kb, _ui, diags} = apply_cfg(load(dir, toml))
     assert Keybinds.lookup(kb, :prefix, {"g", []}) == Keybind.mfa("demo.hello")
     assert Keybinds.lookup(kb, :terminal, {"g", [:alt]}) == Keybind.mfa("demo.other")
     assert Keybinds.lookup(kb, :prefix, {"t", []}) == Keybinds.default().prefix_binds[{"t", []}]
-    assert diags == ["config: keys.command type popup is not supported yet"]
+    # one command, two entries: both keys stay bound
+    assert Keybinds.lookup(kb, :terminal, {"h", [:alt]}) == Keybind.mfa("demo.hello")
+
+    assert diags == [
+             "config: keys.command type popup is not supported yet",
+             "config: keys.command type shell is not supported yet"
+           ]
   end
 
   test "bad TOML is the defaults and one diagnostic", %{tmp_dir: dir} do

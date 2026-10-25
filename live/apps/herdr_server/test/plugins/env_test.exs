@@ -50,6 +50,13 @@ defmodule HerdrServer.Plugins.EnvTest do
            } = env
   end
 
+  test "the VM's handoff and launcher vars are unset" do
+    env = Map.new(Env.for_command(@plugin, %{}, %{}))
+
+    for v <- ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN HERDR_LIVE_RUNTIME_DIR HERDR_LIVE_STATE_DIR),
+        do: assert(Map.fetch(env, v) == {:ok, nil}, v)
+  end
+
   test "authoritative values win over the caller's" do
     auth = Env.for_command(@plugin, %{"focused_pane_id" => "p2"}, %{})
 

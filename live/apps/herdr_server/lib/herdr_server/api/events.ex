@@ -37,6 +37,10 @@ defmodule HerdrServer.Api.Events do
   @spec subscribe(pid(), [filter()]) :: :ok
   def subscribe(pid, filters), do: GenServer.call(__MODULE__, {:subscribe, pid, filters})
 
+  @doc "Stops sending `pid` events; the last subscriber gone, the hub stops watching the Store."
+  @spec unsubscribe(pid()) :: :ok
+  def unsubscribe(pid), do: GenServer.call(__MODULE__, {:unsubscribe, pid})
+
   @doc """
   The `events.subscribe` handler, run in the connection process: every referenced id must
   exist (else `not_found`), then `conn` is subscribed and the router answers
@@ -106,6 +110,13 @@ defmodule HerdrServer.Api.Events do
       end
 
     {:reply, :ok, watch_store(%{state | subs: subs})}
+  end
+
+  def handle_call({:unsubscribe, pid}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {sub, subs} = Map.pop(state.subs, pid)
+    if sub, do: Process.demonitor(elem(sub, 0), [:flush])
+    {:reply, :ok, unwatch_store(%{state | subs: subs})}
   end
 
   @impl true

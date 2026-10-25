@@ -13,6 +13,12 @@ defmodule HerdrServer.Plugins.Env do
 
   @modifiers ~w(shift alt ctrl)
 
+  # this VM's own handoff and launcher state (bin/herdr-live, config/runtime.exs): never a
+  # plugin's, above all not the kernel handoff socket
+  @vm_only ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN HERDR_LIVE_RUNTIME_DIR HERDR_LIVE_LOG
+              HERDR_LIVE_HEADLESS HERDR_LIVE_TEST_ON_SAVE HERDR_LIVE_PERSIST
+              HERDR_LIVE_STATE_DIR HERDR_LIVE_SESSION)
+
   @doc "`kind` holds any of `:action_id`, `:event`, `:event_json`, `:entrypoint`."
   @spec for_command(map(), map(), map()) :: env()
   def for_command(plugin, context, kind) do
@@ -41,7 +47,7 @@ defmodule HerdrServer.Plugins.Env do
       {"HERDR_PLUGIN_CLICKED_URL", context["clicked_url"]},
       {"HERDR_PLUGIN_LINK_HANDLER_ID", context["link_handler_id"]},
       {"HERDR_PLUGIN_CLICK_MODIFIERS", modifiers(context["click_modifiers"])}
-    ]
+    ] ++ Enum.map(@vm_only, &{&1, nil})
   end
 
   @doc "The caller's env with every authoritative name taken from `authoritative`."

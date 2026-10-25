@@ -168,27 +168,51 @@ defmodule HerdrServer.Config do
   end
 
   # M14 stopgap: M17's [[keys.command]] parser replaces this clause. Only
-  # `type = "plugin_action"` binds (to `Plugins.Keybind.mfa(command)`); other types get
-  # one diagnostic each.
+  # `type = "plugin_action"` binds (to `Plugins.Keybind.mfa(command)`, each command once
+  # with all its keys); other types (herdr's default is "shell") get one diagnostic each.
   defp commands(entries, kb, d) when is_list(entries) do
-    Enum.reduce(entries, {kb, d}, fn
-      %{"type" => "plugin_action", "key" => key, "command" => cmd}, {kb, d}
-      when is_binary(key) and is_binary(cmd) ->
-        case Keybinds.bind_mfa(kb, Keybind.mfa(cmd), [key]) do
-          {:ok, kb} -> {kb, d}
-          {:error, why} -> {kb, d ++ ["config: keys.command #{cmd}: #{why}"]}
+    {binds, d} =
+      Enum.reduce(entries, {[], d}, fn e, {binds, d} ->
+        case command(e) do
+          {:ok, cmd, specs} -> {[{cmd, specs} | binds], d}
+          {:error, why} -> {binds, d ++ ["config: keys.command#{why}"]}
         end
+      end)
 
-      %{"type" => t}, {kb, d} when is_binary(t) and t != "plugin_action" ->
-        {kb, d ++ ["config: keys.command type #{t} is not supported yet"]}
-
-      e, {kb, d} ->
-        {kb, d ++ ["config: keys.command: invalid entry #{inspect(e)}"]}
+    binds
+    |> Enum.reverse()
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Enum.reduce({kb, d}, fn {cmd, specs}, {kb, d} ->
+      case Keybinds.bind_mfa(kb, Keybind.mfa(cmd), Enum.concat(specs)) do
+        {:ok, kb} -> {kb, d}
+        {:error, why} -> {kb, d ++ ["config: keys.command #{cmd}: #{why}"]}
+      end
     end)
   end
 
   defp commands(v, kb, d),
     do: {kb, d ++ ["config: keys.command: expected an array of tables, got #{inspect(v)}"]}
+
+  defp command(%{} = e) do
+    case Map.get(e, "type", "shell") do
+      "plugin_action" ->
+        with {:ok, specs} <- specs(e["key"]),
+             cmd when is_binary(cmd) and cmd != "" <- e["command"] do
+          {:ok, cmd, specs}
+        else
+          {:error, why} -> {:error, ": #{why}"}
+          _ -> {:error, ": a plugin_action needs a command"}
+        end
+
+      t ->
+        {:error, " type #{inspect_type(t)} is not supported yet"}
+    end
+  end
+
+  defp command(e), do: {:error, ": invalid entry #{inspect(e)}"}
+
+  defp inspect_type(t) when is_binary(t), do: t
+  defp inspect_type(t), do: inspect(t)
 
   defp specs(v) when is_binary(v), do: {:ok, [v]}
 

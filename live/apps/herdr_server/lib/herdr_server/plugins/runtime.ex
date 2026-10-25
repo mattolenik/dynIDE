@@ -10,11 +10,13 @@ defmodule HerdrServer.Plugins.Runtime do
 
   Every 2 s and on `refresh/0` (sent by `Registry.update/1`) it rebuilds the
   `Plugins.Menu` catalog and subscribes to `Api.Events` for exactly the hooked event
-  types (none without hooks, so no hub cost; nothing when the hub is not running).
+  types; without hooks it unsubscribes, so there is no hub cost (nothing when the hub is
+  not running). Startup hooks run once per VM, not again when the Runtime restarts.
 
   A failing keybind or menu invocation (not found, disabled, limit, start error) is an
   `Alert`; a command exiting non-zero is only logged `failed`. Startup and event hook
-  passes run through `HerdrReload.Guard`, so a bad hook never stops the server.
+  invocations, hook passes and refreshes run through `HerdrReload.Guard`, so a failure
+  never crashes the Runtime (which would drop its in-flight count) or stops the server.
   """
   use GenServer
 
@@ -28,6 +30,9 @@ defmodule HerdrServer.Plugins.Runtime do
   @max_in_flight 32
   @log_limit 200
   @refresh_ms 2_000
+  # set once this VM ran its startup hooks: a restarted Runtime skips them (a new VM, as
+  # after a handoff takeover, runs them again, as herdr does)
+  @startup_ran {__MODULE__, :startup_ran}
 
   defstruct logs: [], next_log: 1, in_flight: %{}, hooked: [], events: nil, tasks: nil
 
@@ -79,20 +84,26 @@ defmodule HerdrServer.Plugins.Runtime do
   @impl true
   def handle_continue(:startup, state) do
     state = Map.merge(%__MODULE__{}, state)
-    state = guarded(state, :run_startup, [])
+
+    state =
+      if :persistent_term.get(@startup_ran, false) do
+        state
+      else
+        :persistent_term.put(@startup_ran, true)
+        guarded(state, :run_startup, [])
+      end
+
     Process.send_after(self(), :tick, @refresh_ms)
-    {:noreply, sync(state)}
+    {:noreply, guarded(state, :run_sync, [])}
   end
 
   @impl true
   def handle_call({:invoke, id, plugin_id, overrides, source}, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    extra = Map.new(overrides, fn {k, v} -> {to_string(k), v} end)
-
-    case run_action(state, id, plugin_id, source, nil, extra) do
-      {:ok, reply, state} -> {:reply, {:ok, reply}, state}
-      {:error, reason, msg, state} -> {:reply, {:error, reason, msg}, state}
-    end
+    args = [state, id, plugin_id, overrides, source]
+    failed = fn msg -> {{:error, "plugin_runtime_failed", msg}, state} end
+    {reply, state} = guard(:run_invoke, args, failed)
+    {:reply, reply, state}
   end
 
   def handle_call({:logs, plugin_id, limit}, _from, state) do
@@ -149,16 +160,28 @@ defmodule HerdrServer.Plugins.Runtime do
   def handle_info(:tick, state) do
     state = Map.merge(%__MODULE__{}, state)
     Process.send_after(self(), :tick, @refresh_ms)
-    {:noreply, sync(state)}
+    {:noreply, guarded(state, :run_sync, [])}
   end
 
-  def handle_info(:refresh, state), do: {:noreply, sync(Map.merge(%__MODULE__{}, state))}
+  def handle_info(:refresh, state),
+    do: {:noreply, guarded(Map.merge(%__MODULE__{}, state), :run_sync, [])}
+
   def handle_info(_msg, state), do: {:noreply, Map.merge(%__MODULE__{}, state)}
 
   @impl true
   def code_change(_old, state, _extra), do: {:ok, Map.merge(%__MODULE__{}, state)}
 
   # --- runs (public for Guard.run/4) ---
+
+  @doc false
+  def run_invoke(state, id, plugin_id, overrides, source) do
+    extra = Map.new(overrides, fn {k, v} -> {to_string(k), v} end)
+
+    case run_action(state, id, plugin_id, source, nil, extra) do
+      {:ok, reply, state} -> {{:ok, reply}, state}
+      {:error, reason, msg, state} -> {{:error, reason, msg}, state}
+    end
+  end
 
   @doc false
   def run_startup(state) do
@@ -314,6 +337,8 @@ defmodule HerdrServer.Plugins.Runtime do
       (err = Paths.ensure_user_dirs(id)) != :ok ->
         {:error, "plugin_user_dir_create_failed", inspect(err), state}
 
+      # ponytail: no default timeout (as herdr), so 32 hung commands block every plugin
+      # run until one exits; pass Command's :timeout_ms if that bites
       true ->
         env = Env.for_command(p, ctx, kind)
         opts = [tmp_dir: Paths.plugin_state_dir(id)]
@@ -350,8 +375,9 @@ defmodule HerdrServer.Plugins.Runtime do
 
   defp push(state, log), do: %{state | logs: Enum.take([log | state.logs], @log_limit)}
 
+  @doc false
   # the menu catalog and the event subscription, from a fresh registry read
-  defp sync(state) do
+  def run_sync(state) do
     plugins = Registry.plugins()
     Menu.refresh(plugins)
 
@@ -360,9 +386,19 @@ defmodule HerdrServer.Plugins.Runtime do
 
     case GenServer.whereis(Events) do
       nil -> state
-      _ when hooked == state.hooked and (hooked == [] or state.events != nil) -> state
+      _ when hooked == [] and state.events == nil -> state
+      _ when hooked == [] -> unsubscribe(state)
+      _ when hooked == state.hooked and state.events != nil -> state
       pid -> subscribe(state, pid, hooked)
     end
+  end
+
+  defp unsubscribe(state) do
+    Process.demonitor(state.events, [:flush])
+    :ok = Events.unsubscribe(self())
+    %{state | hooked: [], events: nil}
+  catch
+    :exit, _ -> %{state | hooked: [], events: nil}
   end
 
   defp subscribe(state, pid, hooked) do
@@ -379,14 +415,18 @@ defmodule HerdrServer.Plugins.Runtime do
     :exit, _ -> nil
   end
 
-  defp guarded(state, fun, args) do
-    case Guard.run(__MODULE__, fun, [state | args], server: Store.reload_server(), scan: false) do
-      {:ok, new} ->
-        new
+  defp guarded(state, fun, args), do: guard(fun, [state | args], fn _msg -> state end)
+
+  # the Guard boundary: a failure is logged and answered by `on_failure.(message)`
+  defp guard(fun, args, on_failure) do
+    case Guard.run(__MODULE__, fun, args, server: Store.reload_server(), scan: false) do
+      {:ok, value} ->
+        value
 
       {:failed, why} ->
-        Logger.warning("plugin runtime #{fun} failed: #{Guard.message(why)}")
-        state
+        msg = Guard.message(why)
+        Logger.warning("plugin runtime #{fun} failed: #{msg}")
+        on_failure.(msg)
     end
   end
 

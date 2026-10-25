@@ -13,6 +13,8 @@ defmodule HerdrServer.Plugins.RuntimeTest do
     Store.reset()
     on_exit(&Store.reset/0)
     on_exit(fn -> Menu.put([]) end)
+    # startup hooks run once per VM; each test is a fresh "VM" here
+    :persistent_term.erase({Runtime, :startup_ran})
     %{base: base}
   end
 
@@ -34,6 +36,14 @@ defmodule HerdrServer.Plugins.RuntimeTest do
       %{"status" => s} = log when s != "running" -> log
       _ when tries > 0 -> Process.sleep(50) && finished(log_id, tries - 1)
       other -> flunk("not finished: #{inspect(other)}")
+    end
+  end
+
+  defp wait_restart(old, tries \\ 100) do
+    case Process.whereis(Runtime) do
+      pid when is_pid(pid) and pid != old -> pid
+      _ when tries > 0 -> Process.sleep(20) && wait_restart(old, tries - 1)
+      _ -> flunk("runtime never restarted")
     end
   end
 
@@ -105,7 +115,9 @@ defmodule HerdrServer.Plugins.RuntimeTest do
   end
 
   test "the 33rd command in flight is refused and logged", %{base: base} do
-    link(base, "t.p", action(~s(["sleep", "5"])))
+    pids = Path.join(base, "pids")
+    sleeper = ~s(["sh", "-c", "echo $$ >> #{pids}; exec sleep 5"])
+    link(base, "t.p", action(sleeper))
     start_runtime()
 
     for _ <- 1..32, do: assert({:ok, _} = Runtime.invoke("go", nil, %{}, "api"))
@@ -115,6 +127,10 @@ defmodule HerdrServer.Plugins.RuntimeTest do
     assert %{"status" => "failed", "error" => ^msg} = List.last(Runtime.logs(nil, 200))
     # still responsive
     assert length(Runtime.logs(nil, 200)) == 33
+
+    # kill exactly the sleeps this test started, and let their runs finish
+    System.cmd("kill", ["-9" | String.split(File.read!(pids))], stderr_to_stdout: true)
+    for %{"log_id" => id} <- Runtime.logs(nil, 200), do: finished(id, 200)
   end
 
   test "a startup hook runs once when the runtime starts", %{base: base} do
@@ -124,8 +140,49 @@ defmodule HerdrServer.Plugins.RuntimeTest do
     """)
 
     start_runtime()
-    assert wait_file(Path.join(Paths.plugin_state_dir("t.p"), "started")) == "startup t.p"
+    started = Path.join(Paths.plugin_state_dir("t.p"), "started")
+    assert wait_file(started) == "startup t.p"
     assert [%{"event" => "startup"}] = Runtime.logs(nil, 10)
+
+    # a crashed Runtime restarts in the same VM without running them again
+    File.rm!(started)
+    old = Process.whereis(Runtime)
+    Process.exit(old, :kill)
+    new = wait_restart(old)
+    _ = :sys.get_state(new)
+    assert Runtime.logs(nil, 10) == []
+    refute File.exists?(started)
+  end
+
+  test "removing the last hook unsubscribes from the hub", %{base: base} do
+    link(base, "t.p", """
+    [[events]]
+    on = "tab.created"
+    command = ["true"]
+    """)
+
+    start_supervised!(Events)
+    start_runtime()
+    rt = Process.whereis(Runtime)
+    _ = :sys.get_state(rt)
+    assert Map.has_key?(:sys.get_state(Events).subs, rt)
+
+    {:ok, _} = Install.set_enabled("t.p", false)
+    _ = :sys.get_state(rt)
+    assert %{subs: subs, store?: false, last: nil} = :sys.get_state(Events)
+    assert subs == %{}
+  end
+
+  test "a failing invoke answers failed and keeps the runtime", %{base: base} do
+    link(base, "t.p", action(~s(["true"])))
+    start_runtime()
+    rt = Process.whereis(Runtime)
+    # an override that cannot be encoded as context JSON raises inside the invoke
+    assert {:error, "plugin_runtime_failed", _} =
+             Runtime.invoke("go", nil, %{"clicked_url" => {:not, :json}}, "api")
+
+    assert Process.whereis(Runtime) == rt
+    assert {:ok, _} = Runtime.invoke("go", nil, %{}, "api")
   end
 
   test "an event hook on tab.created runs after a tab is created", %{base: base} do
