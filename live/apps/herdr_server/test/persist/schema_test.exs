@@ -22,17 +22,18 @@ defmodule HerdrServer.Persist.SchemaTest do
   end
 
   describe "capture/2" do
-    test "an initial app has exactly the v3 shape" do
-      assert Schema.version() == 3
+    test "an initial app has exactly the v4 shape" do
+      assert Schema.version() == 4
 
       assert Schema.capture(fresh(), %{1 => %{cwd: "/tmp", command: ["/bin/zsh"], hidden: true}}) ==
                %{
-                 v: 3,
+                 v: 4,
                  session: %{
                    workspaces: [
                      %{
                        id: 1,
                        name: "1",
+                       auto_name: true,
                        active_tab: 1,
                        tabs: [
                          %{
@@ -164,6 +165,19 @@ defmodule HerdrServer.Persist.SchemaTest do
       assert {:ok, a3, _} = Schema.restore(v2)
       refute Map.has_key?(a3.session.panes[2], :name)
       assert {:error, {:invalid, :panes}} = Schema.restore(put_in(s.panes[2].name, 7))
+    end
+
+    test "a v3 snapshot restores with auto_name false; auto_name round-trips" do
+      s = Schema.capture(three(), %{})
+      assert {:ok, a, _} = Schema.restore(s)
+      assert [%{auto_name: true}] = a.session.workspaces
+      v3 = %{s | v: 3} |> put_ws(&Map.delete(&1, :auto_name))
+      assert {:ok, a3, _} = Schema.restore(v3)
+      assert [%{name: "1", auto_name: false}] = a3.session.workspaces
+      assert {:error, {:invalid, :workspaces}} = Schema.restore(put_ws(s, &%{&1 | auto_name: 1}))
+      # the cwd is runtime only
+      {a, []} = Actions.apply(a, {:workspace_cwd, 1, "/nonexistent-herdr-test/x"})
+      refute Map.has_key?(hd(Schema.capture(a, %{}).session.workspaces), :cwd)
     end
 
     test "a v2 snapshot gets id counters above every workspace and tab id" do
@@ -354,7 +368,7 @@ defmodule HerdrServer.Persist.SchemaTest do
     def up(%{v: 0} = m), do: m |> Map.delete(:old) |> Map.put(:v, 1)
 
     test "a newer version is refused" do
-      assert Schema.migrate(%{v: 4}) == {:error, {:newer, 4}}
+      assert Schema.migrate(%{v: 5}) == {:error, {:newer, 5}}
     end
 
     test "a non-integer or missing version is unknown" do
@@ -367,12 +381,12 @@ defmodule HerdrServer.Persist.SchemaTest do
     end
 
     test "the current version is unchanged" do
-      assert Schema.migrate(%{v: 3, x: 2}) == {:ok, %{v: 3, x: 2}}
+      assert Schema.migrate(%{v: 4, x: 2}) == {:ok, %{v: 4, x: 2}}
     end
 
     test "a synthetic chain is applied in order" do
-      chain = %{0 => {__MODULE__, :up}, 1 => :v1_to_v2, 2 => :v2_to_v3}
-      assert Schema.migrate(%{v: 0, old: true, x: 1}, chain) == {:ok, %{v: 3, x: 1}}
+      chain = %{0 => {__MODULE__, :up}, 1 => :v1_to_v2, 2 => :v2_to_v3, 3 => :v3_to_v4}
+      assert Schema.migrate(%{v: 0, old: true, x: 1}, chain) == {:ok, %{v: 4, x: 1}}
     end
   end
 

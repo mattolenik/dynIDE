@@ -7,11 +7,14 @@ defmodule HerdrServer.App.Workspaces do
   Panes of inactive workspaces stay alive; the Store's `settle/1` hides every pane that is
   not in the active tab, so switching needs no effect here.
 
-  Gap vs herdr: a new workspace is named `"workspace"`, `"workspace 2"`, ... instead of
-  from the cwd.
+  A workspace created without a name is `auto_name: true`: it starts as `"workspace"`,
+  `"workspace 2"`, ... and the server-internal `workspace_cwd/3` (from `WorkspaceFacts`)
+  renames it after its root pane's repo or cwd (`Workspaces.Label.auto/1`) until a user
+  renames it.
   """
 
   alias HerdrServer.App.Actions
+  alias HerdrServer.App.Workspaces.Label
   alias HerdrServer.Layout
 
   @type app :: Actions.app()
@@ -26,7 +29,15 @@ defmodule HerdrServer.App.Workspaces do
     s = app.session
     {id, layout} = {s.next_id, Layout.new(s.next_id)}
     ws_id = s.next_workspace_id
-    ws = %{id: ws_id, name: name || free_name(s.workspaces), tabs: [tab(layout)], active_tab: 1}
+
+    ws = %{
+      id: ws_id,
+      name: name || free_name(s.workspaces),
+      auto_name: name == nil,
+      tabs: [tab(layout)],
+      active_tab: 1
+    }
+
     s = %{s | workspaces: s.workspaces ++ [ws], next_id: id + 1, next_workspace_id: ws_id + 1}
     app = %{app | session: s}
     app = put_in(app.session.panes[id], %{title: nil, layout_gen: 0})
@@ -140,11 +151,32 @@ defmodule HerdrServer.App.Workspaces do
      end), []}
   end
 
+  @doc "A user rename: the workspace keeps `name` (`auto_name: false`)."
   @spec rename_workspace(app(), term(), binary()) :: {app(), [effect()]}
-  def rename_workspace(app, ws_id, name) do
-    {update_in(app.session.workspaces, fn l ->
-       Enum.map(l, &if(&1.id == ws_id, do: %{&1 | name: name}, else: &1))
-     end), []}
+  def rename_workspace(app, ws_id, name),
+    do: {update_ws(app, ws_id, &Map.merge(&1, %{name: name, auto_name: false})), []}
+
+  @doc """
+  Server-internal: stores workspace `ws_id`'s root-pane `cwd` (not persisted) and, while
+  it is `auto_name`, renames it to `Label.auto(cwd)` when that is non-nil.
+  """
+  @spec workspace_cwd(app(), term(), binary() | nil) :: {app(), [effect()]}
+  def workspace_cwd(app, ws_id, cwd),
+    do: {update_ws(app, ws_id, &auto_name(Map.put(&1, :cwd, cwd))), []}
+
+  defp auto_name(%{auto_name: true} = ws) do
+    case Label.auto(ws.cwd) do
+      nil -> ws
+      name -> %{ws | name: name}
+    end
+  end
+
+  defp auto_name(ws), do: ws
+
+  defp update_ws(app, ws_id, fun) do
+    update_in(app.session.workspaces, fn l ->
+      Enum.map(l, &if(&1.id == ws_id, do: fun.(&1), else: &1))
+    end)
   end
 
   @doc "Stores `name` in the pane's meta; the border shows it when the program set no title."

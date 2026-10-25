@@ -4,10 +4,10 @@ defmodule HerdrServer.Persist.Schema do
   runtime facts into a plain, versioned snapshot; `restore/1` migrates, validates and
   rebuilds the app. `restore(capture(app, facts))` captures back to the same snapshot.
 
-  Snapshot (v3):
+  Snapshot (v4):
 
-      %{v: 3,
-        session: %{workspaces: [%{id, name, active_tab,
+      %{v: 4,
+        session: %{workspaces: [%{id, name, auto_name, active_tab,
                                   tabs: [%{id, name, layout: %{root, focus, prev_focus}}]}],
                    active_workspace, next_id, next_workspace_id, next_tab_id,
                    size: %{cols, rows}, area: %{x, y, w, h}},
@@ -26,14 +26,16 @@ defmodule HerdrServer.Persist.Schema do
   it at `from_v + 1`; `:v` is set to `from_v + 1` after each step. Registered: v1 -> v2
   (`v1_to_v2/1`) adds `session.size` with `App.Session`'s default; v2 -> v3 (`v2_to_v3/1`)
   adds the id counters `session.next_workspace_id` and `next_tab_id`, just above the
-  snapshot's workspace and tab ids, and `name: nil` to every pane. A restore never puts
-  a counter at or below an existing id.
+  snapshot's workspace and tab ids, and `name: nil` to every pane; v3 -> v4
+  (`v3_to_v4/1`) adds `auto_name: false` to every workspace, so a restore keeps the names
+  users saw. A restore never puts a counter at or below an existing id. A workspace's
+  `cwd` is not persisted.
   """
 
   alias HerdrServer.App.{Keybinds, Upgrade}
 
-  @version 3
-  @migrations %{1 => :v1_to_v2, 2 => :v2_to_v3}
+  @version 4
+  @migrations %{1 => :v1_to_v2, 2 => :v2_to_v3, 3 => :v3_to_v4}
 
   @session HerdrServer.App.Session
   @focus HerdrServer.App.Focus
@@ -76,6 +78,7 @@ defmodule HerdrServer.Persist.Schema do
     %{
       id: ws.id,
       name: ws.name,
+      auto_name: Map.get(ws, :auto_name) == true,
       active_tab: ws.active_tab,
       tabs: Enum.map(ws.tabs, &capture_tab/1)
     }
@@ -168,8 +171,9 @@ defmodule HerdrServer.Persist.Schema do
 
   defp shape_session(_s), do: {:error, {:invalid, :session}}
 
-  defp ws?(%{id: id, name: name, active_tab: at, tabs: tabs}) when is_list(tabs),
-    do: id?(id) and is_binary(name) and id?(at) and Enum.all?(tabs, &tab?/1)
+  defp ws?(%{id: id, name: name, auto_name: auto, active_tab: at, tabs: tabs})
+       when is_list(tabs) and is_boolean(auto),
+       do: id?(id) and is_binary(name) and id?(at) and Enum.all?(tabs, &tab?/1)
 
   defp ws?(_), do: false
 
@@ -340,6 +344,16 @@ defmodule HerdrServer.Persist.Schema do
       end)
 
   defp v2_panes(panes), do: panes
+
+  @doc false
+  # v3 had no auto_name: restored workspaces keep their names
+  @spec v3_to_v4(map()) :: map()
+  def v3_to_v4(%{session: %{workspaces: wss} = s} = map) when is_list(wss) do
+    wss = Enum.map(wss, &if(is_map(&1), do: Map.put_new(&1, :auto_name, false), else: &1))
+    %{map | session: %{s | workspaces: wss}}
+  end
+
+  def v3_to_v4(map), do: map
 
   defp ids?(%{id: id, tabs: tabs}) when is_integer(id) and is_list(tabs),
     do: Enum.all?(tabs, &match?(%{id: t} when is_integer(t), &1))

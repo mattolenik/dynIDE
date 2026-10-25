@@ -41,6 +41,10 @@ config :herdr_server, :client_socket,
 # Handoff (M5): with a broker, changed panes are snapshotted to it this often.
 config :herdr_server, HerdrServer.Handoff, snapshot_ms: 1000
 
+# Workspace facts (M17): root-pane cwd polling for automatic names. Off in test: tests
+# start their own with injected readers, so the shared Store's names stay put.
+config :herdr_server, HerdrServer.WorkspaceFacts, enabled: config_env() != :test
+
 # Persistence (M8): snapshot polling and scrollback cadence. runtime.exs sets `enabled`
 # and the raw `dir`/`name` env values; HerdrServer.Persist.Disk.config/0 resolves them.
 config :herdr_server, HerdrServer.Persist,

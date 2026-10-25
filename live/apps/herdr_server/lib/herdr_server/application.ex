@@ -35,6 +35,7 @@ defmodule HerdrServer.Application do
           # before the Store: an adopting Store starts its panes' servers in init
           HerdrServer.Pane.Supervisor,
           HerdrServer.App.Store,
+          HerdrServer.WorkspaceFacts,
           HerdrServer.Client.Supervisor,
           HerdrServer.Client.Endpoint,
           HerdrServer.ReloadNotices,

@@ -44,6 +44,11 @@ defmodule HerdrServer.Persist.FactsTest do
     assert %{@a => %{cwd: "/moved"}} = Facts.collect(app([@a]))
   end
 
+  test "cwd/1 reads one pane's pty cwd; an unmapped pane has none" do
+    assert Facts.cwd(@a) == "/spawn/dir"
+    assert Facts.cwd(@b) == nil
+  end
+
   test "a nil cwd keeps the previous one", %{res: res} do
     prev = Facts.collect(app([@a]))
     Fake.Pty.set_cwd(res.pty, nil)

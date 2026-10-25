@@ -30,6 +30,15 @@ defmodule HerdrServer.Persist.Facts do
     }
   end
 
+  @doc "Pane `id`'s cwd from the pty (process cwd), falling back to its OSC 7 cwd, or nil."
+  @spec cwd(pos_integer) :: binary | nil
+  def cwd(id) do
+    case row(id) do
+      nil -> pane_cwd(id)
+      r -> Kernel.pty().cwd(r.pty) || pane_cwd(id)
+    end
+  end
+
   defp pane_cwd(id) do
     case Facts.get(id) do
       %{cwd: cwd} -> cwd
