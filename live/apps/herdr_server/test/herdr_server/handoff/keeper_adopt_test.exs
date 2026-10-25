@@ -84,6 +84,42 @@ defmodule HerdrServer.Handoff.KeeperAdoptTest do
     System.cmd("kill", ["-9", "#{os_pid}"])
   end
 
+  defp image_pane do
+    {:ok, id} = Keeper.open(spec(%{cmd: "/bin/sleep", args: ["30"]}))
+    {:ok, %{vt: vt} = row} = Keeper.lookup(id)
+    Vt.feed(vt, "\e[3;5H\e_Ga=T,q=2,f=24,s=2,v=2,i=7,c=4,r=2;AQIDBAUGBwgJCgsM\e\\")
+    {id, row}
+  end
+
+  test "a failing or oversize kitty replay drops only the images, with a log line" do
+    {id, row} = image_pane()
+
+    for opts <- [[gfx_cap: -1], [gfx_frame_max: 1]] do
+      log =
+        ExUnit.CaptureLog.capture_log([level: :info], fn ->
+          st = State.build(id, row, [gfx: true] ++ opts)
+          send(self(), {:st, st})
+        end)
+
+      assert_received {:st, st}
+      refute Map.has_key?(st, :gfx)
+      assert is_binary(st.vt)
+      assert log =~ "pane #{id} kitty images dropped"
+    end
+
+    assert Map.has_key?(State.build(id, row, gfx: true), :gfx)
+    :ok = Keeper.close(id)
+  end
+
+  test "carried images are not fed onto the empty fallback screen" do
+    {id, row} = image_pane()
+    hand_over(id, 440, &%{&1 | vt: "not a snapshot"}, gfx: true)
+    assert {:ok, %{vt: vt2}} = Keeper.lookup(440)
+    assert Vt.graphics_placements(vt2) == []
+    :ok = Keeper.close(440)
+    System.cmd("kill", ["-9", "#{row.os_pid}"])
+  end
+
   test "the blob carries the start time; a recycled pid is adopted as exited" do
     {:ok, id} = Keeper.open(spec(%{cmd: "/bin/sleep", args: ["30"]}))
     {:ok, %{os_pid: os_pid} = row} = Keeper.lookup(id)

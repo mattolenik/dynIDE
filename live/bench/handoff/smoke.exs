@@ -1,6 +1,7 @@
 # Handoff smoke (run by `just live-check`): 3 shells survive one kill -9 of the
 # primary VM and one graceful kernel-restart with the same pids, each answers
-# afterwards, and the broker stops with exit 0.
+# afterwards, a kitty image placed through the pty before the graceful restart keeps
+# its placements, and the broker stops with exit 0.
 # Usage: cd live && elixir bench/handoff/smoke.exs
 Code.require_file("driver.exs", __DIR__)
 alias HandoffDriver, as: D
@@ -44,7 +45,15 @@ run = fn b ->
 
   check.("crash")
 
+  # 2x2 RGB through the child's output; q=2 so no reply reaches the shell
+  img = ~S"printf '\033_Ga=T,q=2,f=24,s=2,v=2,i=7,c=4,r=2;AQIDBAUGBwgJCgsM\033\\'; echo"
+  :ok = D.request(c, {:write, hd(ids), img <> "\n"})
+  gfx = fn -> elem(D.request(c, {:graphics, hd(ids)}), 1) end
+  D.wait(fn -> gfx.() != [] end, 10_000, 20)
+  placed = gfx.()
+
   {true, _} = D.restart(b.dir)
+  gfx.() == placed || raise "graceful: placements #{inspect(placed)} became #{inspect(gfx.())}"
   s2 = D.status(b.dir)
   s2["last_handoff_kind"] == "graceful" || raise "graceful: #{inspect(s2)}"
   check.("graceful")

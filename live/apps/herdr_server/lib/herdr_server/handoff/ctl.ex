@@ -28,6 +28,11 @@ defmodule HerdrServer.Handoff.Ctl do
     with {:ok, %{vt: vt}} <- Keeper.lookup(id), do: {:ok, Vt.read_text(vt, :screen)}
   end
 
+  # kitty placements (benches: images across a handoff)
+  def handle({:graphics, id}) do
+    with {:ok, %{vt: vt}} <- Keeper.lookup(id), do: {:ok, Vt.graphics_placements(vt)}
+  end
+
   def handle(:panes) do
     for id <- Keeper.ids(), {:ok, %{os_pid: p}} <- [Keeper.lookup(id)], do: {id, p}
   end

@@ -5,6 +5,8 @@ defmodule HerdrServer.Handoff.State do
   rest is pure.
   """
 
+  require Logger
+
   alias HerdrServer.Native.{Pty, Vt}
 
   # pixels carried per pane, the kitty transmission cap
@@ -35,7 +37,8 @@ defmodule HerdrServer.Handoff.State do
   @doc """
   The state of keeper row `row` as pane `id`. Options: `vt: false` leaves the snapshot
   out (the HOLD blob), `pending_input:` (default `""`), `gfx: true` adds the kitty
-  replay (`Vt.graphics_replay/2`) when it fits beside the snapshot. Raises `ErlangError` when
+  replay (`Vt.graphics_replay/2`) when it fits beside the snapshot (`gfx_cap:` and
+  `gfx_frame_max:` override the 16 / 48 MiB limits). Raises `ErlangError` when
   ghostty refuses the snapshot.
   """
   @spec build(pos_integer, map, keyword) :: t
@@ -66,19 +69,40 @@ defmodule HerdrServer.Handoff.State do
       vt: snap,
       taken_at: System.system_time(:millisecond)
     }
-    |> put_gfx(vt, snap, Keyword.get(opts, :gfx, false))
+    |> put_gfx(vt, snap, opts, id)
   end
 
-  # optional key (v stays 1): absent in older blobs and when nothing is carried
-  defp put_gfx(st, vt, snap, true) when is_binary(snap) do
-    case Vt.graphics_replay(vt, @gfx_cap) do
-      "" -> st
-      gfx when byte_size(gfx) + byte_size(snap) <= @gfx_frame_max -> Map.put(st, :gfx, gfx)
-      _ -> st
+  # optional key (v stays 1): absent in older blobs and when nothing is carried; a
+  # failing or oversize replay drops only the images, never the snapshot
+  defp put_gfx(st, vt, snap, opts, id) when is_binary(snap) do
+    if Keyword.get(opts, :gfx, false), do: replay(st, vt, snap, opts, id), else: st
+  end
+
+  defp put_gfx(st, _vt, _snap, _opts, _id), do: st
+
+  defp replay(st, vt, snap, opts, id) do
+    max = Keyword.get(opts, :gfx_frame_max, @gfx_frame_max)
+
+    case Vt.graphics_replay(vt, Keyword.get(opts, :gfx_cap, @gfx_cap)) do
+      "" ->
+        st
+
+      gfx when byte_size(gfx) + byte_size(snap) <= max ->
+        Map.put(st, :gfx, gfx)
+
+      gfx ->
+        Logger.info(
+          "handoff: pane #{id} kitty images dropped: replay #{byte_size(gfx)} + snapshot " <>
+            "#{byte_size(snap)} bytes over #{max}"
+        )
+
+        st
     end
+  rescue
+    e in [ArgumentError, ErlangError] ->
+      Logger.info("handoff: pane #{id} kitty images dropped: #{Exception.message(e)}")
+      st
   end
-
-  defp put_gfx(st, _vt, _snap, _gfx), do: st
 
   @spec encode(t) :: binary
   def encode(state), do: :erlang.term_to_binary(state)

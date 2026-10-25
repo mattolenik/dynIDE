@@ -2066,10 +2066,12 @@ impl Terminal {
 
     /// Image `image_id`'s payload as placements report it (decoded, PNG-forwarded or a
     /// retained file's RGBA), whether or not it is visible; `None` when it is not stored
-    /// or still compressed.
+    /// or still compressed. The data is copied only when it is at most `max_len` bytes
+    /// (empty otherwise; the descriptor still says how long it is).
     pub fn kitty_image(
         &self,
         image_id: u32,
+        max_len: usize,
     ) -> Result<Option<(KittyImageDescriptor, Vec<u8>)>, Error> {
         let graphics = self.kitty_graphics()?;
         if graphics.is_null() {
@@ -2092,7 +2094,9 @@ impl Terminal {
         )?;
         let format = kitty_image_format(image)?;
         let (descriptor, data, _) =
-            self.kitty_placement_payload(image, image_id, 0, width, height, format, &mut |_| true)?;
+            self.kitty_placement_payload(image, image_id, 0, width, height, format, &mut |d| {
+                d.data_len <= max_len
+            })?;
         Ok(Some((descriptor, data)))
     }
 

@@ -24,6 +24,7 @@ defmodule HerdrServer.Native do
   @doc false
   @spec vt_encode_snapshot(term) :: binary
   def vt_encode_snapshot(_vt), do: err()
+  @doc false
   @spec vt_graphics_replay(term, term) :: binary
   def vt_graphics_replay(_vt, _cap), do: err()
   @doc false

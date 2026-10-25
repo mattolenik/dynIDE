@@ -300,9 +300,12 @@ defmodule HerdrServer.Native.Keeper do
   end
 
   defp adopt_one(id, st, fd, reason) do
-    vt = restore_vt(id, st)
-    # before Pty.adopt: no reader yet, and q=2 replies nothing to the child
-    with gfx when is_binary(gfx) and gfx != "" <- Map.get(st, :gfx), do: Vt.feed(vt, gfx)
+    {vt, restored?} = restore_vt(id, st)
+    # before Pty.adopt: no reader yet, and q=2 replies nothing to the child; never onto
+    # the empty fallback screen
+    with true <- restored?,
+         gfx when is_binary(gfx) and gfx != "" <- Map.get(st, :gfx),
+         do: Vt.feed(vt, gfx)
 
     exited = st.exited != nil
     start = Map.get(st, :start_time)
@@ -341,7 +344,7 @@ defmodule HerdrServer.Native.Keeper do
 
   defp restore_vt(id, %{vt: snap} = st) do
     with true <- is_binary(snap), {:ok, vt} <- Vt.restore(snap, st.max_scrollback) do
-      vt
+      {vt, true}
     else
       err ->
         Logger.warning(
@@ -349,7 +352,7 @@ defmodule HerdrServer.Native.Keeper do
         )
 
         {:ok, vt} = Vt.new(st.cols, st.rows, st.max_scrollback)
-        vt
+        {vt, false}
     end
   end
 

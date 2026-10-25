@@ -345,16 +345,19 @@ fn replay_graphics(t: &Terminal, cap: usize) -> Result<Vec<u8>, VtError> {
 
     let mut out = Vec::new();
     let mut carried = HashSet::new();
+    let mut seen = HashSet::new();
     let mut budget = cap;
     let ids = virt
         .iter()
         .map(|v| v.image_id)
         .chain(placed.iter().map(|p| p.image_id));
     for id in ids {
-        if carried.contains(&id) {
+        // once per image: a skipped one is not copied again for its next placement
+        if !seen.insert(id) {
             continue;
         }
-        let Some((d, data)) = t.kitty_image(id)? else {
+        // the length check comes before the copy, under the core lock
+        let Some((d, data)) = t.kitty_image(id, budget)? else {
             continue;
         };
         if data.is_empty() || data.len() > budget {
@@ -394,7 +397,9 @@ fn replay_graphics(t: &Terminal, cap: usize) -> Result<Vec<u8>, VtError> {
         }
         cmd.push_str("\x1b\\");
     }
+    let mut moved = false;
     for p in placed.iter().filter(|p| carried.contains(&p.image_id)) {
+        moved = true;
         let r = &p.render;
         let _ = write!(
             cmd,
@@ -419,7 +424,10 @@ fn replay_graphics(t: &Terminal, cap: usize) -> Result<Vec<u8>, VtError> {
         }
         cmd.push_str("\x1b\\");
     }
-    let _ = write!(cmd, "\x1b[{};{}H", t.cursor_y()? + 1, t.cursor_x()? + 1);
+    // only after a CUP of ours: under origin mode a CUP would be margin-relative
+    if moved {
+        let _ = write!(cmd, "\x1b[{};{}H", t.cursor_y()? + 1, t.cursor_x()? + 1);
+    }
     out.extend_from_slice(cmd.as_bytes());
     Ok(out)
 }
@@ -1823,6 +1831,44 @@ mod tests {
         vt.refresh();
         assert_eq!(vt.graphics_placements()[0].y, -1);
         assert!(vt.graphics_replay(16 << 20).is_empty());
+    }
+
+    #[test]
+    fn graphics_replay_over_budget_image_is_skipped_once_with_all_its_placements() {
+        let vt = image_vt();
+        vt.write(RGB_APC);
+        vt.write(b"\x1b[5;1H\x1b_Ga=p,q=2,i=7,p=2,c=2,r=1\x1b\\");
+        vt.write(b"\x1b[7;1H\x1b_Ga=T,q=2,f=24,s=2,v=2,i=8,c=2,r=1;AQIDBAUGBwgJCgsM\x1b\\");
+        vt.refresh();
+        let s = String::from_utf8(vt.graphics_replay(12)).expect("utf8");
+        assert_eq!(s.matches("a=t,").count(), 1, "{s}");
+        let carried = if s.contains("a=t,q=2,f=24,s=2,v=2,i=7") {
+            7
+        } else {
+            8
+        };
+        let other = 15 - carried;
+        assert!(!s.contains(&format!("i={other},")), "{s}");
+        // the length is known before any copy
+        let core = lock(&vt.core);
+        let (d, data) = core
+            .terminal
+            .kitty_image(7, 11)
+            .expect("ok")
+            .expect("image");
+        assert_eq!((d.data_len, data.len()), (12, 0));
+    }
+
+    #[test]
+    fn graphics_replay_under_origin_mode_carries_virtual_only_and_no_cup() {
+        let vt = image_vt();
+        vt.write(RGB_APC);
+        vt.write(b"\x1b_Gq=2,a=t,t=d,f=32,s=1,v=1,i=9,m=0;/wAA/w==\x1b\\");
+        vt.write(b"\x1b_Gq=2,a=p,U=1,i=9,c=2,r=1\x1b\\\x1b[2;5r\x1b[?6h");
+        vt.refresh();
+        let s = String::from_utf8(vt.graphics_replay(16 << 20)).expect("utf8");
+        assert!(s.contains("U=1,i=9") && !s.contains("i=7"), "{s}");
+        assert!(!s.contains("\x1b["), "no CUP under origin mode: {s:?}");
     }
 
     fn roundtrip(vt: &Vt, max: usize) -> Arc<Vt> {
