@@ -26,6 +26,8 @@ defmodule HerdrServer.Client.Socket do
   alias HerdrServer.Persist.{Disk, Schema}
 
   @handshake_ms 5000
+  # auth and attach frames are small; nothing bigger is read before the token is checked
+  @handshake_frame 65_536
 
   defstruct path: nil, listen: nil, acceptor: nil
 
@@ -162,9 +164,9 @@ defmodule HerdrServer.Client.Socket do
       {:socket, s} ->
         deadline = System.monotonic_time(:millisecond) + @handshake_ms
 
-        with {:ok, [auth], buf} <- frames(s, "", 1, deadline),
+        with {:ok, auth, buf} <- frame(s, "", deadline),
              :ok <- auth(auth, ctx.token),
-             {:ok, [attach], buf} <- frames(s, buf, 1, deadline),
+             {:ok, attach, buf} <- frame(s, buf, deadline),
              {:ok, info} <- attach(attach, ctx.session) do
           serve(s, info, buf)
         else
@@ -181,29 +183,28 @@ defmodule HerdrServer.Client.Socket do
     :ok
   end
 
-  # exactly `n` frames (the rest of the buffer stays), or an error
-  defp frames(s, buf, n, deadline) do
-    case Wire.decode(buf, Wire.max_client_frame()) do
-      {:ok, terms, _} when length(terms) >= n ->
-        {:ok, Enum.take(terms, n), drop_frames(buf, n)}
+  # the next frame (at most @handshake_frame; what follows it stays in the buffer for the
+  # conn, which applies the client limit), or an error
+  defp frame(s, buf, deadline) do
+    case buf do
+      <<len::32-big, _::binary>> when len > @handshake_frame ->
+        {:error, :too_large}
 
-      {:ok, _, _} ->
+      <<len::32-big, etf::binary-size(len), rest::binary>> ->
+        case Wire.decode(<<len::32-big, etf::binary>>, @handshake_frame) do
+          {:ok, [term], ""} -> {:ok, term, rest}
+          other -> other
+        end
+
+      _partial ->
         left = deadline - System.monotonic_time(:millisecond)
 
         with true <- left > 0,
              {:ok, data} <- :gen_tcp.recv(s, 0, left),
-             do: frames(s, buf <> data, n, deadline),
+             do: frame(s, buf <> data, deadline),
              else: (_ -> :closed)
-
-      {:error, _} = e ->
-        e
     end
   end
-
-  defp drop_frames(buf, 0), do: buf
-
-  defp drop_frames(<<len::32-big, _::binary-size(len), rest::binary>>, n),
-    do: drop_frames(rest, n - 1)
 
   defp auth({:auth, t}, token) when is_binary(t) and byte_size(t) == byte_size(token) do
     if :crypto.hash_equals(t, token), do: :ok, else: {:refused, "bad token"}

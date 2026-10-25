@@ -31,11 +31,12 @@ config :herdr_server, :api, enabled: config_env() != :test
 
 # The client socket (M16): remote and socket clients. Off in test: tests start their own
 # listener on a tmp path. A dropped session-mode client lingers grace_ms; frames to a
-# socket client are at least frame_ms apart.
+# socket client are at least frame_ms apart; one that reads nothing for stuck_ms is dropped.
 config :herdr_server, :client_socket,
   enabled: config_env() != :test,
   grace_ms: 60_000,
-  frame_ms: 8
+  frame_ms: 8,
+  stuck_ms: 30_000
 
 # Handoff (M5): with a broker, changed panes are snapshotted to it this often.
 config :herdr_server, HerdrServer.Handoff, snapshot_ms: 1000

@@ -121,4 +121,21 @@ defmodule HerdrServer.Client.SocketTest do
     s = connect(ctx.path)
     assert recv_frame(s, 8000) == {:error, :closed}
   end
+
+  test "a handshake frame over 64 KiB closes the connection", ctx do
+    s = connect(ctx.path)
+    :ok = :gen_tcp.send(s, <<65_537::32-big, 0>>)
+    assert recv_closed(s) == :closed
+  end
+
+  test "an input seq from 2^62 is rejected", ctx do
+    s = attached!(attach(ctx))
+    :ok = send_frame(s, {:input, 4_611_686_018_427_387_904, Event.key("a")})
+
+    assert {:notice, %{text: "frame rejected: input: wire_seq too large"}} =
+             recv_until(s, &match?({:notice, _}, &1))
+
+    :ok = send_frame(s, {:input, 1, Event.key("a")})
+    assert {:ack, 1} = recv_until(s, &match?({:ack, _}, &1))
+  end
 end

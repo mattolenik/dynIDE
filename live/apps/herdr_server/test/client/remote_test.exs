@@ -45,6 +45,37 @@ defmodule HerdrServer.Client.RemoteTest do
 
   defp typed(id), do: Fake.Pty.writes(pty(id)) |> Enum.join()
 
+  defp put_cfg(key, value) do
+    old = Application.get_env(:herdr_server, :client_socket, [])
+    Application.put_env(:herdr_server, :client_socket, Keyword.put(old, key, value))
+    on_exit(fn -> Application.put_env(:herdr_server, :client_socket, old) end)
+  end
+
+  # pane 1 rewrites a row every millisecond until the test ends
+  defp flood! do
+    pty = pty(1)
+
+    flood =
+      spawn(fn ->
+        Stream.iterate(0, &(&1 + 1))
+        |> Enum.each(fn i ->
+          Fake.Pty.output(pty, "\e[5;1H" <> String.pad_leading("#{i}", 40, "f"))
+          Process.sleep(1)
+        end)
+      end)
+
+    on_exit(fn -> Process.exit(flood, :kill) end)
+    flood
+  end
+
+  # a never-reading client's socket buffers are full
+  defp stuck!(id) do
+    wait_until(fn ->
+      s = :sys.get_state(conn(id)).socket
+      s != nil and match?({:ok, [send_pend: n]} when n > 0, :inet.getstat(s, [:send_pend]))
+    end)
+  end
+
   test "typing echoes as rows", ctx do
     s = attached!(attach(ctx))
     scene!(s)
@@ -108,9 +139,7 @@ defmodule HerdrServer.Client.RemoteTest do
   end
 
   test "grace expiry ends the session", ctx do
-    old = Application.get_env(:herdr_server, :client_socket, [])
-    Application.put_env(:herdr_server, :client_socket, Keyword.put(old, :grace_ms, 100))
-    on_exit(fn -> Application.put_env(:herdr_server, :client_socket, old) end)
+    put_cfg(:grace_ms, 100)
 
     s = attached!(attach(ctx, client_id: "grace-me"))
     scene!(s)
@@ -175,23 +204,8 @@ defmodule HerdrServer.Client.RemoteTest do
     a = attached!(attach(ctx, client_id: "blocked"))
     b = attached!(attach(ctx))
     scene!(b)
-    pty = pty(1)
-
-    flood =
-      spawn(fn ->
-        Stream.iterate(0, &(&1 + 1))
-        |> Enum.each(fn i ->
-          Fake.Pty.output(pty, "\e[5;1H" <> String.pad_leading("#{i}", 40, "f"))
-          Process.sleep(1)
-        end)
-      end)
-
-    on_exit(fn -> Process.exit(flood, :kill) end)
-    # let a's socket buffers fill
-    wait_until(fn ->
-      {:ok, [send_pend: n]} = :inet.getstat(:sys.get_state(conn("blocked")).socket, [:send_pend])
-      n > 0
-    end)
+    flood = flood!()
+    stuck!("blocked")
 
     :ok = send_frame(b, {:input, 1, Event.key("z")})
     assert recv_until(b, &shows?(&1, "z"), 500)
@@ -201,5 +215,60 @@ defmodule HerdrServer.Client.RemoteTest do
     assert n < 1000
     Process.exit(flood, :kill)
     :gen_tcp.close(a)
+  end
+
+  test "a resize, a drop and a resume at the attach size renders at that size", ctx do
+    s = attached!(attach(ctx, client_id: "own-resize"))
+    scene!(s)
+    :ok = send_frame(s, {:input, 1, {:resize, %{cols: 120, rows: 40, cell_px: nil}}})
+    assert recv_until(s, &match?({:scene, %{size: %{cols: 120}}}, &1))
+    ack!(s, 1)
+    :gen_tcp.close(s)
+    wait_until(fn -> entry("own-resize").connected == false end)
+
+    s = attached!(attach(ctx, client_id: "own-resize"), true)
+
+    assert {:scene, %{size: %{rows: 24}}} =
+             recv_until(s, &match?({:scene, %{size: %{cols: 80}}}, &1))
+  end
+
+  test "same client_id while the first is a blocked reader resumes promptly", ctx do
+    a = attached!(attach(ctx, client_id: "stuck-twin"))
+    scene!(a)
+    flood!()
+    stuck!("stuck-twin")
+    t = System.monotonic_time(:millisecond)
+    b = attached!(attach(ctx, client_id: "stuck-twin"), true)
+    assert System.monotonic_time(:millisecond) - t < 2000
+    scene!(b)
+    :ok = send_frame(b, {:input, 1, Event.key("a")})
+    ack!(b, 1)
+    :gen_tcp.close(a)
+  end
+
+  test "a reader stuck past stuck_ms is dropped; grace applies", ctx do
+    put_cfg(:stuck_ms, 200)
+    a = attached!(attach(ctx, client_id: "stuck"))
+    scene!(a)
+    flood!()
+    wait_until(fn -> entry("stuck").connected == false end, 500)
+    assert Process.alive?(conn("stuck"))
+    :gen_tcp.close(a)
+  end
+
+  test "input after attach in the same packet as the handshake, over the handshake cap", ctx do
+    s = connect(ctx.path)
+    big = :binary.copy("q", 100_000)
+
+    :ok =
+      :gen_tcp.send(s, [
+        HerdrScene.Wire.encode({:auth, ctx.token}),
+        HerdrScene.Wire.encode({:attach, attach_info()}),
+        HerdrScene.Wire.encode({:input, 1, {:paste, big}})
+      ])
+
+    attached!(s)
+    assert {:ack, 1} = recv_until(s, &match?({:ack, _}, &1), 10_000)
+    assert byte_size(typed(1)) == byte_size(big)
   end
 end

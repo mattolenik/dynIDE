@@ -7,7 +7,8 @@ defmodule HerdrServer.Client.Remote do
 
   Output: scenes and rows go through `Client.Outbox` (coalesced, only changed rows) and
   are flushed when the last flush is `frame_ms` old and the previous frames have left
-  the driver queue (`send_pend == 0`), so a slow reader coalesces instead of queueing.
+  the driver queue (`send_pend == 0`), so a slow reader coalesces instead of queueing. A
+  reader that has not drained for `stuck_ms` (default 30 s) is dropped like a lost socket.
   Every other session message flushes what is pending first, then goes at once.
 
   Input (R8): a client frame is rejected with a warning notice unless it is plain data
@@ -51,7 +52,9 @@ defmodule HerdrServer.Client.Remote do
             mode: :terminal,
             fresh: true,
             frame_ms: 8,
-            grace_ms: 60_000
+            grace_ms: 60_000,
+            stuck_ms: 30_000,
+            pend_since: nil
 
   def start_link(info), do: GenServer.start_link(__MODULE__, info)
 
@@ -77,7 +80,8 @@ defmodule HerdrServer.Client.Remote do
   # by Client.Socket after giving `pid` the socket; `buf` is what followed the attach frame
   @spec resume(pid, :gen_tcp.socket(), map, binary) :: :ok | :error
   def resume(pid, socket, info, buf) do
-    GenServer.call(pid, {:resume, socket, info, buf})
+    # the conn may be closing a stuck old socket first: never time out (and retry) here
+    GenServer.call(pid, {:resume, socket, info, buf}, :infinity)
   catch
     :exit, _ -> :error
   end
@@ -119,7 +123,8 @@ defmodule HerdrServer.Client.Remote do
           session: session,
           session_ref: Process.monitor(session),
           frame_ms: Keyword.get(cfg, :frame_ms, 8),
-          grace_ms: Keyword.get(cfg, :grace_ms, 60_000)
+          grace_ms: Keyword.get(cfg, :grace_ms, 60_000),
+          stuck_ms: Keyword.get(cfg, :stuck_ms, 30_000)
         }
 
         # the socket comes with resume/4; a conn that never gets one ends like a drop
@@ -146,7 +151,16 @@ defmodule HerdrServer.Client.Remote do
     state = resized(state, info)
     Registry.update_value(__MODULE__.Registry, state.id, fn _ -> meta(info, true) end)
 
-    state = %{state | socket: s, buf: "", grace_ref: nil, away_since: nil, fresh: false}
+    state = %{
+      state
+      | socket: s,
+        buf: "",
+        grace_ref: nil,
+        away_since: nil,
+        pend_since: nil,
+        fresh: false
+    }
+
     state = write(state, {:attached, %{resumed: resumed, session: Socket.session_name()}})
     {msgs, outbox} = Outbox.full(state.outbox)
     state = write_all(%{state | outbox: outbox, last_flush: now()}, msgs)
@@ -218,7 +232,7 @@ defmodule HerdrServer.Client.Remote do
   def handle_info({:DOWN, ref, :process, _, _}, %{session_ref: ref} = state) do
     state = Map.merge(%__MODULE__{}, state)
     state = if state.detached, do: state, else: out(state, {:detached, :session_ended})
-    if state.socket, do: :gen_tcp.close(state.socket)
+    if state.socket, do: close(state.socket)
     HerdrReload.Telemetry.event(:client_detach, id: short(state.id), reason: :session_ended)
     {:stop, :normal, state}
   end
@@ -245,18 +259,25 @@ defmodule HerdrServer.Client.Remote do
 
   defp frame(f, state) do
     with true <- Schema.plain?(f) || {:error, "not plain data"},
-         :ok <- Wire.validate_client_frame(f) do
+         :ok <- Wire.validate_client_frame(f),
+         :ok <- client_seq(f) do
       client_frame(f, state)
     else
       {:error, why} -> out(state, {:notice, %{level: :warning, text: "frame rejected: " <> why}})
     end
   end
 
+  # seqs from 2^62 are the conn's own (their acks are swallowed)
+  defp client_seq({:input, w, _}) when w >= @internal_seq,
+    do: {:error, "input: wire_seq too large"}
+
+  defp client_seq(_frame), do: :ok
+
   defp client_frame({:input, w, ev}, state) do
     cond do
       w > state.last_seq ->
         send(state.session, {:input, self(), w, ev})
-        %{state | last_seq: w}
+        own_resize(%{state | last_seq: w}, ev)
 
       w <= state.acked ->
         out(state, {:ack, w})
@@ -279,6 +300,12 @@ defmodule HerdrServer.Client.Remote do
   defp client_frame(_handshake_frame, state),
     do: out(state, {:notice, %{level: :warning, text: "frame rejected: already attached"}})
 
+  # the client's own resize: what a resume compares against
+  defp own_resize(state, {:resize, %{cols: c, rows: r, cell_px: px}}),
+    do: %{state | info: %{state.info | size: %{cols: c, rows: r}, cell_px: px}}
+
+  defp own_resize(state, _ev), do: state
+
   defp resized(state, info) do
     new = {Map.take(info.size, [:cols, :rows]), info.cell_px}
 
@@ -300,17 +327,19 @@ defmodule HerdrServer.Client.Remote do
     wait = state.last_flush + state.frame_ms - now()
 
     cond do
-      not Outbox.pending?(state.outbox) ->
-        state
-
-      wait <= 0 and drained?(state.socket) ->
-        flush(state)
-
-      true ->
-        delay = if wait > 0, do: wait, else: state.frame_ms
-        %{state | flush_timer: Process.send_after(self(), :flush, delay)}
+      not Outbox.pending?(state.outbox) -> state
+      wait > 0 -> later(state, wait)
+      drained?(state.socket) -> flush(%{state | pend_since: nil})
+      stuck?(state) -> drop(state)
+      true -> later(%{state | pend_since: state.pend_since || now()}, state.frame_ms)
     end
   end
+
+  # a reader that has not drained for stuck_ms is lost (grace applies)
+  defp stuck?(%{pend_since: nil}), do: false
+  defp stuck?(state), do: now() - state.pend_since > state.stuck_ms
+
+  defp later(state, ms), do: %{state | flush_timer: Process.send_after(self(), :flush, ms)}
 
   defp drained?(s), do: match?({:ok, [send_pend: 0]}, :inet.getstat(s, [:send_pend]))
 
@@ -337,16 +366,27 @@ defmodule HerdrServer.Client.Remote do
 
   # --- connection ---
 
+  # a stuck old reader gets no detached frame: the write would block
   defp replaced(state) do
-    _ = :gen_tcp.send(state.socket, Wire.encode({:detached, :replaced}))
-    :gen_tcp.close(state.socket)
+    if drained?(state.socket),
+      do: _ = :gen_tcp.send(state.socket, Wire.encode({:detached, :replaced}))
+
+    close(state.socket)
     %{state | socket: nil, away_since: now()}
   end
 
+  defp drop(%{socket: nil} = state), do: state
+
   defp drop(state) do
-    :gen_tcp.close(state.socket)
+    close(state.socket)
     Registry.update_value(__MODULE__.Registry, state.id, &%{&1 | connected: false})
     away(%{state | socket: nil, buf: ""})
+  end
+
+  # a plain close waits (send_timeout) for queued output; a stuck reader never drains it
+  defp close(s) do
+    unless drained?(s), do: :inet.setopts(s, linger: {true, 0})
+    :gen_tcp.close(s)
   end
 
   defp away(state) do
