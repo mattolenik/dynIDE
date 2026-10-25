@@ -104,6 +104,13 @@ defmodule HerdrServer.Api.Conn do
     __MODULE__.drain(s, System.monotonic_time(:millisecond) + @drain_ms, @drain_bytes)
   end
 
+  defp line(s, line, ctx) do
+    # re-armed before the handler runs, so a close during a long handler is a message
+    _ = :inet.setopts(s, active: :once)
+    {id, method, outcome} = answer(line, ctx)
+    answered(s, id, method, outcome, ctx)
+  end
+
   @doc false
   # Discards input until the peer closes, #{@drain_ms} ms pass or #{@drain_bytes} bytes
   # were read, then closes. A remote call per read, like `loop/2`.
@@ -117,13 +124,6 @@ defmodule HerdrServer.Api.Conn do
     else
       _ -> :gen_tcp.close(s)
     end
-  end
-
-  defp line(s, line, ctx) do
-    # re-armed before the handler runs, so a close during a long handler is a message
-    _ = :inet.setopts(s, active: :once)
-    {id, method, outcome} = answer(line, ctx)
-    answered(s, id, method, outcome, ctx)
   end
 
   defp answered(s, id, _method, {:subscribe, filters}, ctx), do: start_stream(s, id, filters, ctx)

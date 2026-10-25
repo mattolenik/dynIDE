@@ -28,7 +28,12 @@ defmodule HerdrServer.Handoff.SnapshotterTest do
   # UPDATEs of one tick, by key. Drained while the tick runs: a big pane left over
   # from another test can fill the socket.
   defp tick(peer) do
-    t = Task.async(fn -> Snapshotter.tick() && Snapshotter.stats() end)
+    t =
+      Task.async(fn ->
+        Snapshotter.tick()
+        Snapshotter.stats()
+      end)
+
     drain(peer, t, %{})
   end
 
