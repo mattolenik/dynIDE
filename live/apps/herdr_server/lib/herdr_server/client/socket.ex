@@ -1,0 +1,273 @@
+defmodule HerdrServer.Client.Socket do
+  @moduledoc """
+  The client protocol's unix socket (`HerdrScene.Wire`): remote and socket clients attach
+  here. Mode 0600, removed on stop; path rules and stale-socket handling are
+  `Api.SocketPath.prepare/1`'s. A refused path or a failed listen runs this VM without a
+  client socket (logged), never failing app start.
+
+  An acceptor process (linked; 1 s accept timeout and a remote call per loop, so a reload
+  moves it onto new code) hands each connection to a short-lived handshake process: it
+  reads `{:auth, token}` then `{:attach, info}` within 5 s (else closes), compares the
+  token in constant time, validates the attach (plain data, `Wire.validate_client_frame/1`,
+  protocol version, session name per R16) and answers `{:refused, why}` plus a close on
+  failure. A session target is served by a `Client.Remote` conn: the one registered under
+  `client_id` (a resume) or a new one under `Client.Remote.Supervisor`. Pane targets are
+  refused until pane mode exists.
+
+  Options: `path`, `token_path` (defaults from `Wire.paths/2` of the environment).
+  """
+  use GenServer
+
+  require Logger
+
+  alias HerdrScene.Wire
+  alias HerdrServer.Api.{Listener, SocketPath}
+  alias HerdrServer.Client.Remote
+  alias HerdrServer.Persist.{Disk, Schema}
+
+  @handshake_ms 5000
+
+  defstruct path: nil, listen: nil, acceptor: nil
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  @doc "The token at `token_path`, created once (32 random bytes, hex, mode 0600)."
+  @spec token(Path.t()) :: binary
+  def token(token_path) do
+    case File.read(token_path) do
+      {:ok, t} when byte_size(t) > 0 ->
+        _ = File.chmod(token_path, 0o600)
+        String.trim(t)
+
+      _ ->
+        create_token(token_path)
+    end
+  end
+
+  # 0600 before the token is in it; :exclusive so a racing creator's token wins
+  defp create_token(path) do
+    hex = Base.encode16(:crypto.strong_rand_bytes(32), case: :lower)
+
+    case File.write(path, "", [:exclusive]) do
+      :ok ->
+        File.chmod!(path, 0o600)
+        File.write!(path, hex)
+        hex
+
+      {:error, :eexist} ->
+        token(path)
+
+      {:error, why} ->
+        raise File.Error, reason: why, action: "create token", path: path
+    end
+  end
+
+  @doc "This instance's session name (R16)."
+  @spec session_name() :: binary
+  def session_name do
+    raw = Application.get_env(:herdr_server, HerdrServer.Persist, [])[:name]
+    Disk.resolve_name(raw || System.get_env("HERDR_LIVE_SESSION"))
+  end
+
+  @impl true
+  def init(opts) do
+    paths = Wire.paths(System.get_env(), System.user_home!())
+    path = Keyword.get(opts, :path, paths.socket)
+    token_path = Keyword.get(opts, :token_path, paths.token)
+
+    with :ok <- SocketPath.prepare(path),
+         {:ok, token} <- read_token(token_path),
+         {:ok, listen} <- listen(path) do
+      # connecting needs write permission on Linux; macOS ignores socket modes
+      _ = File.chmod(path, 0o600)
+      Process.flag(:trap_exit, true)
+      ctx = %{token: token, session: session_name()}
+      acceptor = spawn_link(__MODULE__, :accept, [listen, ctx])
+      {:ok, %__MODULE__{path: path, listen: listen, acceptor: acceptor}}
+    else
+      {:error, why} ->
+        Logger.warning("no client socket at #{path}: #{inspect(why)}")
+        :ignore
+    end
+  end
+
+  defp read_token(path) do
+    {:ok, token(path)}
+  rescue
+    e in File.Error -> {:error, Exception.message(e)}
+  end
+
+  # accepted sockets inherit these; a write blocked 5 s closes that connection
+  defp listen(path) do
+    :gen_tcp.listen(0, [
+      :binary,
+      packet: :raw,
+      active: false,
+      send_timeout: 5000,
+      send_timeout_close: true,
+      ifaddr: {:local, path}
+    ])
+  end
+
+  @impl true
+  def handle_info({:EXIT, pid, reason}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    if pid == state.acceptor, do: {:stop, reason, state}, else: {:noreply, state}
+  end
+
+  def handle_info(_other, state), do: {:noreply, Map.merge(%__MODULE__{}, state)}
+
+  @impl true
+  def terminate(_reason, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    :gen_tcp.close(state.listen)
+    File.rm(state.path)
+  end
+
+  @impl true
+  def code_change(_old, state, _extra), do: {:ok, Map.merge(%__MODULE__{}, state)}
+
+  @doc false
+  @spec accept(:gen_tcp.socket(), map) :: :ok
+  def accept(listen, ctx) do
+    case :gen_tcp.accept(listen, 1000) do
+      {:ok, s} ->
+        pid = spawn(__MODULE__, :handshake, [ctx])
+
+        case :gen_tcp.controlling_process(s, pid) do
+          :ok -> send(pid, {:socket, s})
+          {:error, _} -> :gen_tcp.close(s)
+        end
+
+        __MODULE__.accept(listen, ctx)
+
+      {:error, :timeout} ->
+        __MODULE__.accept(listen, ctx)
+
+      {:error, :closed} ->
+        :ok
+
+      {:error, reason} ->
+        Listener.accept_failed(reason)
+        Process.sleep(100)
+        __MODULE__.accept(listen, ctx)
+    end
+  end
+
+  @doc false
+  @spec handshake(map) :: :ok
+  def handshake(ctx) do
+    receive do
+      {:socket, s} ->
+        deadline = System.monotonic_time(:millisecond) + @handshake_ms
+
+        with {:ok, [auth], buf} <- frames(s, "", 1, deadline),
+             :ok <- auth(auth, ctx.token),
+             {:ok, [attach], buf} <- frames(s, buf, 1, deadline),
+             {:ok, info} <- attach(attach, ctx.session) do
+          serve(s, info, buf)
+        else
+          {:refused, _} = r ->
+            refuse(s, r)
+
+          _closed_or_garbage ->
+            :gen_tcp.close(s)
+        end
+    after
+      @handshake_ms -> :ok
+    end
+
+    :ok
+  end
+
+  # exactly `n` frames (the rest of the buffer stays), or an error
+  defp frames(s, buf, n, deadline) do
+    case Wire.decode(buf, Wire.max_client_frame()) do
+      {:ok, terms, _} when length(terms) >= n ->
+        {:ok, Enum.take(terms, n), drop_frames(buf, n)}
+
+      {:ok, _, _} ->
+        left = deadline - System.monotonic_time(:millisecond)
+
+        with true <- left > 0,
+             {:ok, data} <- :gen_tcp.recv(s, 0, left),
+             do: frames(s, buf <> data, n, deadline),
+             else: (_ -> :closed)
+
+      {:error, _} = e ->
+        e
+    end
+  end
+
+  defp drop_frames(buf, 0), do: buf
+
+  defp drop_frames(<<len::32-big, _::binary-size(len), rest::binary>>, n),
+    do: drop_frames(rest, n - 1)
+
+  defp auth({:auth, t}, token) when is_binary(t) and byte_size(t) == byte_size(token) do
+    if :crypto.hash_equals(t, token), do: :ok, else: {:refused, "bad token"}
+  end
+
+  defp auth(_other, _token), do: {:refused, "bad token"}
+
+  defp attach(frame, session) do
+    with true <- Schema.plain?(frame) || {:refused, "attach: not plain data"},
+         {:attach, info} <- frame,
+         :ok <- valid(Wire.validate_client_frame(frame)) do
+      cond do
+        info.version != Wire.version() ->
+          {:refused, "protocol version"}
+
+        info.session not in [nil, session] ->
+          {:refused, "no session #{info.session} here (this server runs #{session})"}
+
+        info.target != :session ->
+          {:refused, "pane targets are not supported by this server"}
+
+        true ->
+          {:ok, info}
+      end
+    else
+      {:refused, _} = r -> r
+      _ -> {:refused, "expected attach"}
+    end
+  end
+
+  defp valid(:ok), do: :ok
+  defp valid({:error, why}), do: {:refused, why}
+
+  # a resume (a conn under this client_id), else a new conn; one that just stopped
+  # (grace expiry) or raced us to the id is retried once
+  defp serve(s, info, buf, tries \\ 2) do
+    pid =
+      case Registry.lookup(Remote.Registry, info.client_id) do
+        [{pid, _}] -> pid
+        [] -> start_conn(info)
+      end
+
+    with pid when is_pid(pid) <- pid,
+         :ok <- :gen_tcp.controlling_process(s, pid),
+         :ok <- Remote.resume(pid, s, info, buf) do
+      :ok
+    else
+      {:refused, _} = r -> refuse(s, r)
+      _ when tries > 1 -> serve(s, info, buf, tries - 1)
+      _ -> :gen_tcp.close(s)
+    end
+  end
+
+  defp start_conn(info) do
+    case Remote.Supervisor.start_conn(info) do
+      {:ok, pid} -> pid
+      :ignore -> :retry
+      {:error, why} -> {:refused, "attach failed: #{inspect(why)}"}
+    end
+  end
+
+  defp refuse(s, {:refused, why}) do
+    HerdrReload.Telemetry.event(:client_refused, reason: why)
+    _ = :gen_tcp.send(s, Wire.encode({:refused, why}))
+    :gen_tcp.close(s)
+  end
+end

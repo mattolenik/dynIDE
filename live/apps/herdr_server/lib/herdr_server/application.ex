@@ -37,8 +37,11 @@ defmodule HerdrServer.Application do
           HerdrServer.App.Store,
           HerdrServer.Client.Supervisor,
           HerdrServer.Client.Endpoint,
-          HerdrServer.ReloadNotices
+          HerdrServer.ReloadNotices,
+          {Registry, keys: :unique, name: HerdrServer.Client.Remote.Registry},
+          HerdrServer.Client.Remote.Supervisor
         ] ++
+        client_socket() ++
         api() ++
         [
           # last: it stops first, writing a final snapshot while Store and Keeper still run;
@@ -91,6 +94,13 @@ defmodule HerdrServer.Application do
   defp api do
     if Application.get_env(:herdr_server, :api, [])[:enabled],
       do: [HerdrServer.Api.Events, {HerdrServer.Api.Listener, []}],
+      else: []
+  end
+
+  # off in test: tests start their own listener on a tmp path
+  defp client_socket do
+    if Application.get_env(:herdr_server, :client_socket, [])[:enabled],
+      do: [{HerdrServer.Client.Socket, []}],
       else: []
   end
 
