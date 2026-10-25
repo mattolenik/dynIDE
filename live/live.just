@@ -72,3 +72,9 @@ live-bench-reload:
 live-bench-handoff:
     elixir '{{live_dir}}/bench/handoff/kill9.exs'
     elixir '{{live_dir}}/bench/handoff/typing.exs'
+
+# M16 remote attach bench (headless instance per transport): typing latency over the unix
+# client socket and over the fake_ssh.sh relay, then a 15-pane flood. Args: keys= flood= mb= panes= only=
+live-bench-remote *args:
+    elixir '{{live_dir}}/bench/remote/bench.exs' unix {{args}}
+    elixir '{{live_dir}}/bench/remote/bench.exs' relay {{args}}
