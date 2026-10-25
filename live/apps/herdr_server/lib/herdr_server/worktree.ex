@@ -148,9 +148,9 @@ defmodule HerdrServer.Worktree do
   under `dir`), and returns its checkout path as git reports it.
   """
   @spec create(Path.t(), binary, binary | nil, Path.t() | nil, binary | nil) ::
-          {:ok, Path.t()} | {:error, binary}
+          {:ok, Path.t()} | {:error, :linked_worktree_source | binary}
   def create(cwd, branch, base, path, dir) do
-    with {:ok, repo} <- repo(cwd),
+    with {:ok, repo} <- parent_repo(cwd),
          path = path || default_path(dir, repo.name, branch),
          :ok <- add(repo.root, path, branch, base),
          {:ok, %{root: root}} <- repo(path) do
@@ -168,12 +168,27 @@ defmodule HerdrServer.Worktree do
     end
   end
 
-  # a linked worktree's checkout has a `.git` file; the main checkout a `.git` directory
-  defp linked(root) do
-    if File.regular?(Path.join(root, ".git")),
-      do: :ok,
-      else: {:error, "#{root} is not a linked worktree"}
+  @doc """
+  `repo/1` for a source of new and open worktree actions: like herdr, a linked worktree is
+  refused (`{:error, :linked_worktree_source}`); they start from the main checkout.
+  """
+  @spec parent_repo(Path.t()) :: {:ok, map} | {:error, :linked_worktree_source | binary}
+  def parent_repo(cwd) do
+    with {:ok, repo} <- repo(cwd) do
+      if linked?(repo.root), do: {:error, :linked_worktree_source}, else: {:ok, repo}
+    end
   end
+
+  @doc "herdr's message for a linked-worktree source."
+  @spec linked_source_message() :: binary
+  def linked_source_message,
+    do: "New and open worktree actions start from the repo parent workspace."
+
+  defp linked(root),
+    do: if(linked?(root), do: :ok, else: {:error, "#{root} is not a linked worktree"})
+
+  # a linked worktree's checkout has a `.git` file; the main checkout a `.git` directory
+  defp linked?(root), do: File.regular?(Path.join(root, ".git"))
 
   @doc "The main checkout of a `repo/1` result (a bare repo: its git dir)."
   @spec main_root(%{:common => Path.t(), optional(atom) => term}) :: Path.t()

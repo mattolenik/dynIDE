@@ -67,7 +67,11 @@ defmodule HerdrServer.Api.WorktreesTest do
 
     # a second create of the same branch is git's error
     assert %{"code" => "failed", "message" => msg} =
-             err(s, "worktree.create", %{"cwd" => c.root, "branch" => "feat"})
+             err(s, "worktree.create", %{
+               "cwd" => c.root,
+               "branch" => "feat",
+               "path" => Path.join(c.base, "dup")
+             })
 
     assert msg =~ "feat"
   end
@@ -108,6 +112,11 @@ defmodule HerdrServer.Api.WorktreesTest do
     assert %{"already_open" => true, "workspace" => %{"workspace_id" => "w2", "focused" => true}} =
              again
 
+    # a label on an already-open checkout renames it (a custom name)
+    renamed = ok!(s, "worktree.open", %{"cwd" => c.root, "branch" => "other", "label" => "ren"})
+    assert %{"already_open" => true, "workspace" => %{"label" => "ren"}} = renamed
+    assert %{auto_name: false} = Enum.find(Store.snapshot().session.workspaces, &(&1.id == 2))
+
     assert %{"code" => "not_found"} =
              err(s, "worktree.open", %{"cwd" => c.root, "branch" => "nope"})
 
@@ -137,6 +146,28 @@ defmodule HerdrServer.Api.WorktreesTest do
     # the main checkout is not a linked worktree
     ok!(s, "worktree.open", %{"cwd" => c.root, "branch" => "main"})
     assert %{"code" => "failed"} = err(s, "worktree.remove", %{"workspace_id" => "w3"})
+  end
+
+  test "create and open refuse a linked-worktree source; list allows it", %{s: s} = c do
+    create!(s, c.root, c.base, "feat")
+    wt = Path.join(c.base, "wt-feat")
+    msg = "New and open worktree actions start from the repo parent workspace."
+
+    for {method, params} <- [
+          {"worktree.create",
+           %{"cwd" => wt, "branch" => "b2", "path" => Path.join(c.base, "b2")}},
+          {"worktree.open", %{"workspace_id" => "w2", "branch" => "main"}}
+        ] do
+      assert %{
+               "code" => "failed",
+               "message" => ^msg,
+               "data" => %{"reason" => "linked_worktree_source"}
+             } =
+               err(s, method, params)
+    end
+
+    refute File.exists?(Path.join(c.base, "b2"))
+    assert length(ok!(s, "worktree.list", %{"cwd" => wt})["worktrees"]) == 2
   end
 
   test "a non-repo cwd and a missing git answer failed with git's message", %{s: s} = c do

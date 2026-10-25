@@ -4,6 +4,7 @@ defmodule HerdrServer.App.WorktreesTest do
   alias HerdrScene.Event
   alias HerdrServer.App.{Actions, Keybinds, Modal, Worktrees}
   alias HerdrServer.App.Modal.{Confirm, Menu, Prompt}
+  alias HerdrServer.Config
 
   defp fresh, do: elem(Actions.init(%{cols: 100, rows: 25}), 0)
   defp press(app, key), do: Actions.apply(app, Event.key(key))
@@ -26,7 +27,7 @@ defmodule HerdrServer.App.WorktreesTest do
     app = Enum.reduce(["f", "/", "x"], app, &elem(press(&2, &1), 0))
     {app, fx} = press(app, :enter)
     assert app.focus.modal == []
-    assert fx == [{:worktree, :create, %{pane: 1, branch: "f/x"}}]
+    assert fx == [{:worktree, :create, %{ws: 1, pane: 1, cwd: nil, dir: nil, branch: "f/x"}}]
   end
 
   test "prefix+G opens the new_worktree prompt; open and remove are unbound" do
@@ -40,12 +41,12 @@ defmodule HerdrServer.App.WorktreesTest do
     {app, []} = Confirm.remove_worktree(fresh())
     assert %{title: "Remove worktree?", tone: :danger} = Modal.top(app)
     {app, fx} = press(app, :enter)
-    assert fx == [{:worktree, :remove, %{pane: 1, force: false}}]
+    assert fx == [{:worktree, :remove, %{ws: 1, pane: 1, cwd: nil, dir: nil, force: false}}]
 
     {app, []} = Worktrees.done(app, {:dirty, 1})
     assert %{kind: :confirm, title: "Worktree has changes"} = Modal.top(app)
     {_app, fx} = press(app, :enter)
-    assert fx == [{:worktree, :remove, %{pane: 1, force: true}}]
+    assert [{:worktree, :remove, %{ws: 1, force: true}}] = fx
   end
 
   test "done: open, removed, error" do
@@ -64,7 +65,7 @@ defmodule HerdrServer.App.WorktreesTest do
 
   test "the open-worktree menu opens new checkouts and focuses open ones" do
     {app, fx} = Menu.open_worktree(fresh())
-    assert fx == [{:worktree, :list, %{pane: 1}}]
+    assert fx == [{:worktree, :list, %{ws: 1, pane: 1, cwd: nil, dir: nil}}]
 
     {app, _} = Worktrees.open(app, "/w/a", "a", false)
     entries = [%{path: "/w/a", label: "a", branch: "a"}, %{path: "/w/b", label: "b", branch: nil}]
@@ -81,6 +82,25 @@ defmodule HerdrServer.App.WorktreesTest do
     assert ws(app).name == "b"
 
     assert {_, [{:notice, %{level: :info}}]} = Worktrees.done(fresh(), {:list, []})
+  end
+
+  test "[worktrees] directory reaches the effects; the polled cwd rides along" do
+    cfg = %{
+      keys: %{},
+      ui: %{},
+      theme: %{},
+      worktrees: %{"directory" => "/d"},
+      onboarding: false,
+      diagnostics: []
+    }
+
+    app = fresh()
+    {_kb, ui, []} = Config.apply(cfg, Keybinds.default(), app.ui)
+    assert ui.worktrees_dir == "/d"
+    app = put_in(app.ui, ui)
+    app = update_in(app.session.workspaces, fn [w] -> [Map.put(w, :cwd, "/r")] end)
+    {_, [{:worktree, :create, %{dir: "/d", cwd: "/r"}}]} = Worktrees.create(app, 1, "b")
+    assert Worktrees.create(app, 99, "b") == {app, []}
   end
 
   test "owner picks the deepest checkout holding a workspace's cwd" do

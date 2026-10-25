@@ -8,8 +8,9 @@ defmodule HerdrServer.App.Worktrees do
   In the Store (pure): `open/4,5` adds a workspace whose first pane starts in the checkout
   (`auto_name: true`, named by the caller's `Workspaces.Label.auto/1`, and `cwd` set
   right away), `close/2` closes workspaces, `done/2` applies a task's result, and
-  `create/3`, `list/2`, `remove/3` emit the effects. A source is the root pane id of the
-  workspace the action started from; its cwd is read off the Store.
+  `create/3`, `list/2`, `remove/3` emit the effects for a source workspace id. The
+  effect carries its root pane, polled cwd and `ui.worktrees_dir` (config `[worktrees]
+  directory`); `run/2` reads the live cwd off the Store.
 
   Off the Store: `run/2`, `root_cwd/1`, `open_ids/1`.
   """
@@ -52,14 +53,27 @@ defmodule HerdrServer.App.Worktrees do
     end)
   end
 
-  @spec create(app, pos_integer, binary) :: {app, [tuple]}
-  def create(app, pane, branch), do: {app, [{:worktree, :create, %{pane: pane, branch: branch}}]}
+  @spec create(app, term, binary) :: {app, [tuple]}
+  def create(app, ws_id, branch), do: effect(app, ws_id, :create, %{branch: branch})
 
-  @spec list(app, pos_integer) :: {app, [tuple]}
-  def list(app, pane), do: {app, [{:worktree, :list, %{pane: pane}}]}
+  @spec list(app, term) :: {app, [tuple]}
+  def list(app, ws_id), do: effect(app, ws_id, :list, %{})
 
-  @spec remove(app, pos_integer, boolean) :: {app, [tuple]}
-  def remove(app, pane, force?), do: {app, [{:worktree, :remove, %{pane: pane, force: force?}}]}
+  @spec remove(app, term, boolean) :: {app, [tuple]}
+  def remove(app, ws_id, force?), do: effect(app, ws_id, :remove, %{force: force?})
+
+  # args: the source workspace, its root pane and polled cwd (`run/2` prefers the live
+  # one, as `root_cwd/1` does) and the configured checkout directory
+  defp effect(app, ws_id, op, args) do
+    case Enum.find(app.session.workspaces, &(&1.id == ws_id)) do
+      nil ->
+        {app, []}
+
+      ws ->
+        src = %{ws: ws_id, pane: root_pane(ws), cwd: ws[:cwd], dir: app.ui.worktrees_dir}
+        {app, [{:worktree, op, Map.merge(src, args)}]}
+    end
+  end
 
   @doc "Applies a `run/2` result."
   @spec done(app, result) :: {app, [tuple]}
@@ -68,19 +82,21 @@ defmodule HerdrServer.App.Worktrees do
   def done(app, {:list, []}), do: notice(app, :info, "no worktrees to open")
   def done(app, {:list, entries}), do: Menu.worktrees(app, entries)
 
+  # the Store side matches checkouts on the polled `ws.cwd`: the live cwd is a kernel read,
+  # which `root_cwd/1` does only off the Store
   def done(app, {:removed, path}) do
     ids = for ws <- app.session.workspaces, under?(ws[:cwd], path), do: ws.id
     {app, fx} = close(app, ids)
     {app, fx ++ [{:notice, %{level: :info, text: "removed worktree #{path}"}}]}
   end
 
-  def done(app, {:dirty, pane}) do
+  def done(app, {:dirty, ws_id}) do
     modal =
       Confirm.new(
         "Worktree has changes",
         "remove it anyway? uncommitted changes are lost",
         :danger,
-        {__MODULE__, :remove, [pane, true]}
+        {__MODULE__, :remove, [ws_id, true]}
       )
 
     {Modal.push(app, modal), []}
@@ -111,15 +127,18 @@ defmodule HerdrServer.App.Worktrees do
 
   @doc "Runs git for an effect `{:worktree, op, args}`; the result goes to `done/2`."
   @spec run(:create | :list | :remove, map) :: result
-  def run(:create, %{pane: pane, branch: branch}) do
-    with {:ok, cwd} <- pane_cwd(pane),
-         {:ok, path} <- Worktree.create(cwd, branch, nil, nil, nil) do
+  def run(:create, %{branch: branch} = src) do
+    with {:ok, cwd} <- src_cwd(src),
+         {:ok, path} <- Worktree.create(cwd, branch, nil, nil, src.dir) do
       {:open, path, Label.auto(path)}
+    else
+      {:error, :linked_worktree_source} -> {:error, Worktree.linked_source_message()}
+      err -> err
     end
   end
 
-  def run(:list, %{pane: pane}) do
-    with {:ok, cwd} <- pane_cwd(pane),
+  def run(:list, src) do
+    with {:ok, cwd} <- src_cwd(src),
          {:ok, repo} <- Worktree.repo(cwd),
          {:ok, entries} <- Worktree.list(repo.root) do
       {:list,
@@ -131,11 +150,11 @@ defmodule HerdrServer.App.Worktrees do
     end
   end
 
-  def run(:remove, %{pane: pane, force: force?}) do
-    with {:ok, cwd} <- pane_cwd(pane) do
+  def run(:remove, %{force: force?} = src) do
+    with {:ok, cwd} <- src_cwd(src) do
       case Worktree.remove_at(cwd, force?) do
         {:ok, path} -> {:removed, path}
-        {:error, :dirty} -> {:dirty, pane}
+        {:error, :dirty} -> {:dirty, src.ws}
         err -> err
       end
     end
@@ -145,14 +164,14 @@ defmodule HerdrServer.App.Worktrees do
   @spec root_cwd(map) :: binary | nil
   def root_cwd(ws), do: Facts.cwd(root_pane(ws)) || ws[:cwd]
 
-  @doc "`{workspace_id, root cwd}` for every workspace of `app`."
-  @spec open_ids(app) :: [{term, binary | nil}]
-  def open_ids(app), do: for(ws <- app.session.workspaces, do: {ws.id, root_cwd(ws)})
-
-  defp pane_cwd(pane) do
-    case Facts.cwd(pane) do
+  defp src_cwd(%{pane: pane, cwd: cwd}) do
+    case Facts.cwd(pane) || cwd do
       nil -> {:error, "the workspace's directory is not known"}
       cwd -> {:ok, cwd}
     end
   end
+
+  @doc "`{workspace_id, root cwd}` for every workspace of `app`."
+  @spec open_ids(app) :: [{term, binary | nil}]
+  def open_ids(app), do: for(ws <- app.session.workspaces, do: {ws.id, root_cwd(ws)})
 end

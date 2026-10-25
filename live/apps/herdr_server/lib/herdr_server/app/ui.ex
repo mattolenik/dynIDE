@@ -36,7 +36,8 @@ defmodule HerdrServer.App.Ui do
     prompt_new_tab_name: true,
     pane_borders: :auto,
     window_title: "{hostname}: {workspace}",
-    custom_commands: []
+    custom_commands: [],
+    worktrees_dir: nil
   ]
 
   @type t :: %__MODULE__{

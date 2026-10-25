@@ -46,13 +46,14 @@ defmodule HerdrServer.App.Modal.Menu do
 
   @spec open_worktree(map) :: {map, [tuple]}
   def open_worktree(app) do
-    Worktrees.list(app, Worktrees.root_pane(ws(app)))
+    Worktrees.list(app, app.session.active_workspace)
   end
 
   @doc "Lists worktrees (`App.Worktrees.run(:list, _)` entries) to open or focus."
   @spec worktrees(map, [map]) :: {map, [tuple]}
   def worktrees(app, entries) do
     paths = Enum.map(entries, & &1.path)
+    # the polled cwd: the live one is a kernel read (App.Worktrees.root_cwd/1, off the Store)
     cwds = for ws <- app.session.workspaces, do: {ws.id, ws[:cwd]}
 
     items =

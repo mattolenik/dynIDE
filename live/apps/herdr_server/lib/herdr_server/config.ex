@@ -4,7 +4,7 @@ defmodule HerdrServer.Config do
 
     * `path/0`: `config :herdr_server, :config_path`, else `$HERDR_LIVE_CONFIG`, else
       `${XDG_CONFIG_HOME:-$HOME/.config}/herdr-live/config.toml`.
-    * `load/1` reads and decodes the file into its raw `keys`, `ui` and `theme` tables
+    * `load/1` reads and decodes the file into its raw `keys`, `ui`, `theme` and `worktrees` tables
       plus `onboarding` (true unless the file sets `onboarding = false`). A missing file
       is the defaults with onboarding and no diagnostics; a file that does not decode or
       cannot be read is the defaults, no onboarding, one `"config: <reason>"` diagnostic
@@ -24,7 +24,8 @@ defmodule HerdrServer.Config do
   never sent to a socket client, which runs its own `HERDR_LIVE_SOUND_COMMAND`);
   `[ui.toast]` `delivery`
   (`off | herdr | terminal | system`), `delay_seconds` (0..3600); `[theme]` `name`,
-  `auto_switch`, `light_name`, `dark_name`; top-level `onboarding`.
+  `auto_switch`, `light_name`, `dark_name`; `[worktrees]` `directory` (new checkouts go
+  under it, default `~/.herdr-live/worktrees`); top-level `onboarding`.
 
   `[[keys.command]]` (herdr's custom commands): `key` (a spec), `command`, `type`
   (`shell`, the default, | `pane` | `popup` | `plugin_action`), optional `description`,
@@ -42,6 +43,7 @@ defmodule HerdrServer.Config do
           keys: map,
           ui: map,
           theme: map,
+          worktrees: map,
           onboarding: boolean,
           diagnostics: [binary],
           failed: boolean
@@ -66,7 +68,8 @@ defmodule HerdrServer.Config do
     {:theme, ["name"], :string, [:theme, :name]},
     {:theme, ["auto_switch"], :bool, [:theme, :auto_switch]},
     {:theme, ["light_name"], :string, [:theme, :light]},
-    {:theme, ["dark_name"], :string, [:theme, :dark]}
+    {:theme, ["dark_name"], :string, [:theme, :dark]},
+    {:worktrees, ["directory"], :string, [:worktrees_dir]}
   ]
 
   @spec path() :: Path.t()
@@ -92,13 +95,16 @@ defmodule HerdrServer.Config do
   defp decode(bin) do
     case Toml.decode(bin) do
       {:ok, t} ->
-        {[keys, ui, theme], diags} = Enum.map_reduce(~w(keys ui theme), [], &table(t, &1, &2))
+        {[keys, ui, theme, worktrees], diags} =
+          Enum.map_reduce(~w(keys ui theme worktrees), [], &table(t, &1, &2))
+
         {onboarding, diags} = onboarding(Map.get(t, "onboarding", true), diags)
 
         %{
           keys: keys,
           ui: ui,
           theme: theme,
+          worktrees: worktrees,
           onboarding: onboarding,
           diagnostics: diags,
           failed: false
@@ -127,6 +133,7 @@ defmodule HerdrServer.Config do
       keys: %{},
       ui: %{},
       theme: %{},
+      worktrees: %{},
       onboarding: onboarding,
       diagnostics: diags,
       failed: true
@@ -141,7 +148,7 @@ defmodule HerdrServer.Config do
 
     {new, ud} =
       Enum.reduce(@fields, {ui, []}, fn {table, keys, kind, at}, {ui, d} ->
-        case field(Map.fetch!(cfg, table), keys) do
+        case field(Map.get(cfg, table, %{}), keys) do
           :error -> {ui, d}
           {:ok, v} -> put(ui, at, cast(kind, v), d, "#{table}.#{Enum.join(keys, ".")}", v)
         end

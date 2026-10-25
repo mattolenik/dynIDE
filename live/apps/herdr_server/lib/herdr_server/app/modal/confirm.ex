@@ -91,7 +91,7 @@ defmodule HerdrServer.App.Modal.Confirm do
   @spec remove_worktree(map) :: {map, [tuple]}
   def remove_worktree(app) do
     w = ws(app)
-    on_confirm = {Worktrees, :remove, [Worktrees.root_pane(w), false]}
+    on_confirm = {Worktrees, :remove, [w.id, false]}
     modal = new("Remove worktree?", "#{w.name} — the branch is kept", :danger, on_confirm)
     {Modal.push(app, modal), []}
   end

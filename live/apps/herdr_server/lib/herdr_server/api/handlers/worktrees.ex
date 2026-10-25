@@ -5,7 +5,9 @@ defmodule HerdrServer.Api.Handlers.Worktrees do
   `App.Store.request/1` on `App.Worktrees`. A source is `workspace_id` (its root pane's
   cwd), `cwd`, or by default the focused workspace. A git failure (no git, not a repo,
   a rejected branch) answers `failed` with git's message; removing a dirty worktree
-  without `force` answers `failed` with `data.reason: "dirty"`.
+  without `force` answers `failed` with `data.reason: "dirty"`, and `create`/`open` from a
+  linked worktree (herdr's `linked_worktree_source`) `failed` with that reason and herdr's
+  message. New checkouts go under `ui.worktrees_dir` (config `[worktrees] directory`).
   """
 
   alias HerdrServer.Api.{Ids, View}
@@ -19,7 +21,7 @@ defmodule HerdrServer.Api.Handlers.Worktrees do
   def handle("worktree.list", p) do
     app = app!()
 
-    with {:ok, repo, entries} <- discover(app, p) do
+    with {:ok, repo, entries} <- discover(app, p, &Worktree.repo/1) do
       ctx = ctx(app, repo, entries)
 
       {:ok,
@@ -40,7 +42,8 @@ defmodule HerdrServer.Api.Handlers.Worktrees do
 
     with {:ok, src} <- source(app, p),
          {:ok, path} <- absolute(p[:path]),
-         {:ok, root} <- git(Worktree.create(src, p.branch, p[:base], path, nil)),
+         {:ok, root} <-
+           git(Worktree.create(src, p.branch, p[:base], path, app.ui.worktrees_dir)),
          {:ok, repo} <- git(Worktree.repo(root)) do
       entry = %{path: root, branch: p.branch, bare?: false, detached?: false, prunable?: false}
       open_new("worktree_created", entry, p, Worktree.main_root(repo))
@@ -51,7 +54,7 @@ defmodule HerdrServer.Api.Handlers.Worktrees do
     app = app!()
 
     with :ok <- one_target(p),
-         {:ok, repo, entries} <- discover(app, p),
+         {:ok, repo, entries} <- discover(app, p, &Worktree.parent_repo/1),
          {:ok, entry} <- find_entry(entries, p) do
       {cwds, paths, main} = ctx(app, repo, entries)
       open_entry(app, Worktrees.owner(cwds, paths, entry.path), entry, p, main)
@@ -73,9 +76,10 @@ defmodule HerdrServer.Api.Handlers.Worktrees do
 
   # --- sources and entries ---
 
-  defp discover(app, p) do
+  # list may start from a linked worktree; create and open (parent_repo) may not, as herdr
+  defp discover(app, p, lookup) do
     with {:ok, src} <- source(app, p),
-         {:ok, repo} <- git(Worktree.repo(src)),
+         {:ok, repo} <- git(lookup.(src)),
          {:ok, entries} <- git(Worktree.list(repo.root)),
          do: {:ok, repo, entries}
   end
@@ -162,16 +166,16 @@ defmodule HerdrServer.Api.Handlers.Worktrees do
   end
 
   defp open_entry(app, id, entry, p, main) do
-    focused =
-      if Map.get(p, :focus, false),
-        do: request({Commands, :focus_workspace, [id]}),
-        else: {:ok, app}
-
-    with {:ok, app} <- focused do
+    # herdr: a label renames the open workspace (a custom name: auto naming stops)
+    with {:ok, app} <- maybe(app, p[:label], {Commands, :rename_workspace, [id, p[:label]]}),
+         {:ok, app} <- maybe(app, p[:focus], {Commands, :focus_workspace, [id]}) do
       extra = %{type: "worktree_opened", worktree: info(entry, main, id), already_open: true}
       {:ok, Map.merge(described(app, View.find_workspace(app, id)), extra)}
     end
   end
+
+  defp maybe(app, falsy, _mfa) when falsy in [nil, false], do: {:ok, app}
+  defp maybe(_app, _, mfa), do: request(mfa)
 
   defp described(app, ws) do
     tab = Enum.find(ws.tabs, &(&1.id == ws.active_tab))
@@ -193,6 +197,10 @@ defmodule HerdrServer.Api.Handlers.Worktrees do
   # --- git results ---
 
   defp git({:error, msg}) when is_binary(msg), do: {:error, :failed, msg}
+
+  defp git({:error, :linked_worktree_source}),
+    do: {:error, :failed, Worktree.linked_source_message(), %{reason: "linked_worktree_source"}}
+
   defp git(ok), do: ok
 
   defp removed({:error, :dirty}),
