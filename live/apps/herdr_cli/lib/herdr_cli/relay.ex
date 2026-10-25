@@ -6,14 +6,13 @@ defmodule HerdrCli.Relay do
 
   Bytes are relayed raw: the framing is the client's and the server's business. Exit 0 when
   the socket closes or stdin reaches eof, 1 when there is no token or no socket. The
-  session argument is ignored here: the client names it in its attach frame (R16).
+  session argument is ignored here: the client names it in its attach frame (R16). When the
+  stdout reader goes away (ssh dropped) the relay exits 0 too.
   """
 
   alias HerdrScene.Wire
 
   @usage "usage: herdr-live attach-relay [<session>]\n"
-  # stdout bytes queued in the fd port before the socket is read again
-  @max_queue 1_048_576
   @drain_ms 5_000
 
   @doc "The usage text."
@@ -27,6 +26,8 @@ defmodule HerdrCli.Relay do
     with {:ok, token} <- token(paths.token),
          {:ok, socket} <- connect(paths.socket),
          :ok <- auth(socket, token) do
+      # the fd port dies with :epipe when the stdout reader goes away: an exit, not a crash
+      Process.flag(:trap_exit, true)
       pump(socket, Port.open({:fd, 0, 1}, [:binary, :stream, :eof]))
     else
       {:error, text} ->
@@ -57,18 +58,22 @@ defmodule HerdrCli.Relay do
   end
 
   @doc """
-  Copies stdin (`port`) to `socket` and socket to the port until either closes. The socket
-  is read again only when the port's output queue is under 1 MiB, so a slow reader
-  backs up into the server's writes. Pending output is flushed before returning.
+  Copies stdin (`port`) to `socket` and socket to the port until either closes. A slow
+  reader backs up into the server's writes: the fd driver marks the port busy past its
+  8 KiB high watermark and `Port.command/2` suspends until it drains, so the socket is
+  not read meanwhile. Pending output is flushed before returning.
   """
   @spec pump(port(), port()) :: 0
   def pump(socket, port) do
     receive do
       {:tcp, ^socket, data} ->
-        Port.command(port, data)
-        wait_queue(port)
-        _ = :inet.setopts(socket, active: :once)
-        pump(socket, port)
+        if out(port, data) do
+          _ = :inet.setopts(socket, active: :once)
+          pump(socket, port)
+        else
+          :gen_tcp.close(socket)
+          0
+        end
 
       {:tcp_closed, ^socket} ->
         drain(port)
@@ -85,18 +90,18 @@ defmodule HerdrCli.Relay do
       {^port, :eof} ->
         :gen_tcp.close(socket)
         0
+
+      {:EXIT, ^port, _} ->
+        :gen_tcp.close(socket)
+        0
     end
   end
 
-  defp wait_queue(port) do
-    case Port.info(port, :queue_size) do
-      {:queue_size, n} when n >= @max_queue ->
-        Process.sleep(5)
-        wait_queue(port)
-
-      _ ->
-        :ok
-    end
+  # false once the port died (stdout reader gone) with its EXIT still queued behind this data
+  defp out(port, data) do
+    Port.command(port, data)
+  rescue
+    ArgumentError -> false
   end
 
   defp drain(port), do: drain(port, System.monotonic_time(:millisecond) + @drain_ms)

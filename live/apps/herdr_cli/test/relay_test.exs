@@ -132,4 +132,32 @@ defmodule HerdrCli.RelayTest do
     :gen_tcp.close(s)
     assert {0, ^big} = collect(port)
   end
+
+  test "exits 0 without an error when its stdout reader goes away", %{dir: dir, env: env} do
+    l = listen(dir, "t")
+    elixir = Path.join(:code.lib_dir(:elixir), "ebin")
+    cli = Path.join(:code.lib_dir(:herdr_cli), "ebin")
+    scene = Path.join(:code.lib_dir(:herdr_scene), "ebin")
+    err = Path.join(dir, "err")
+    st = Path.join(dir, "st")
+
+    relay =
+      "erl -noinput -boot no_dot_erlang -pa #{elixir} -pa #{cli} -pa #{scene} " <>
+        "-run Elixir.HerdrCli main_erl -extra attach-relay"
+
+    # stdin stays open (the port), stdout's reader exits after 10 bytes
+    port =
+      Port.open({:spawn_executable, "/bin/sh"}, [
+        :binary,
+        :exit_status,
+        env: Enum.map(env, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end),
+        args: ["-c", "(#{relay} 2>#{err}; echo $? >#{st}) | head -c 10 >/dev/null"]
+      ])
+
+    {:ok, s} = :gen_tcp.accept(l, 15_000)
+    chunk = :binary.copy("x", 65_536)
+    Stream.repeatedly(fn -> :gen_tcp.send(s, chunk) end) |> Enum.find(&(&1 != :ok))
+    assert_receive {^port, {:exit_status, _}}, 15_000
+    assert {"0\n", ""} == {File.read!(st), File.read!(err)}
+  end
 end
