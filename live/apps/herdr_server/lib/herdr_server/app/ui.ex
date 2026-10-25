@@ -33,7 +33,8 @@ defmodule HerdrServer.App.Ui do
     toast: %{delivery: :herdr, delay_ms: 1000},
     sound: %{enabled: true, command: nil},
     prompt_new_tab_name: true,
-    pane_borders: :auto
+    pane_borders: :auto,
+    window_title: "{hostname}: {workspace}"
   ]
 
   @type t :: %__MODULE__{
@@ -57,6 +58,7 @@ defmodule HerdrServer.App.Ui do
           toast: %{delivery: atom(), delay_ms: non_neg_integer()},
           sound: %{enabled: boolean(), command: binary() | nil},
           prompt_new_tab_name: boolean(),
-          pane_borders: :auto | :always | :off
+          pane_borders: :auto | :always | :off,
+          window_title: binary()
         }
 end

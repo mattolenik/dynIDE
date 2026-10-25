@@ -10,7 +10,7 @@ defmodule HerdrServer.View do
       the pane area. `Pane.rect` is the content rect, the border carries the outer rect. Rows are
       `{:ref, id, layout_gen}` (or `{:inline, []}` for inline clients; the caller fills
       rows). Pane cursors are nil here.
-    * Chrome: `:root` (props `theme`, `indicators`, `mouse: true`, the `sound` prefs
+    * Chrome: `:root` (props `theme`, `indicators`, `mouse: true`, `window_title` (`View.WindowTitle`, omitted when nil), the `sound` prefs
       `%{enabled, command}` and `toast: %{delivery}`, plain data a client acts on) holding the
       `:sidebar` region (`View.Sidebar`, omitted when the frame has none), the `:tabs`
       region (`View.Tabs`, omitted when the frame has no tab bar), one `:divider` node per
@@ -34,7 +34,7 @@ defmodule HerdrServer.View do
   alias HerdrServer.App.Modal
   alias HerdrServer.Client.State
   alias HerdrServer.Layout
-  alias HerdrServer.View.{Frame, Overlays, Sidebar, Status, Tabs, Toast}
+  alias HerdrServer.View.{Frame, Overlays, Sidebar, Status, Tabs, Toast, WindowTitle}
   alias HerdrServer.View.Modal, as: ModalView
 
   @spec compute(map, State.t()) :: Scene.t()
@@ -106,12 +106,29 @@ defmodule HerdrServer.View do
       toast: %{delivery: app.ui.toast.delivery}
     }
 
+    props =
+      case window_title(app, client) do
+        nil -> props
+        title -> Map.put(props, :window_title, title)
+      end
+
     %Node{
       role: :root,
       id: :root,
       props: props,
       children: sidebar ++ tabs ++ dividers ++ [status | toasts]
     }
+  end
+
+  # the override wins over the template; nil (prop omitted) while it is empty
+  defp window_title(_app, %{window_title: o}) when is_binary(o), do: WindowTitle.clean(o)
+
+  # no hostname: not a real session (pure View callers), so no title
+  defp window_title(_app, %{hostname: nil}), do: nil
+
+  defp window_title(app, client) do
+    title = get_in(app.session.panes, [app.focus.pane, :title])
+    WindowTitle.render(app.ui.window_title, app, title, client.hostname)
   end
 
   defp divider_rect(%{direction: :horizontal, pos: pos, area: a}, area),

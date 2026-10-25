@@ -17,6 +17,8 @@ defmodule HerdrServer.Client.State do
   repaints for `{:pane_facts, id}`. `graphics` is `pane_id => [placement]`
   (`Pane.Facts.graphics/1`) the session gathers for the active tab's panes before
   `View.compute`, panes without placements left out.
+  `window_title` is the `title set` override of the window title
+  (nil: the `ui.window_title` template), `hostname` is read once at attach.
   """
 
   defstruct [
@@ -45,7 +47,9 @@ defmodule HerdrServer.Client.State do
     facts: %{},
     copy: nil,
     facts_tick: nil,
-    graphics: %{}
+    graphics: %{},
+    window_title: nil,
+    hostname: nil
   ]
 
   @type t :: %__MODULE__{
@@ -74,6 +78,8 @@ defmodule HerdrServer.Client.State do
           facts: map(),
           copy: HerdrServer.Client.CopyMode.t() | nil,
           facts_tick: HerdrServer.Throttle.t(),
-          graphics: %{optional(pos_integer()) => [HerdrScene.Scene.Graphic.t()]}
+          graphics: %{optional(pos_integer()) => [HerdrScene.Scene.Graphic.t()]},
+          window_title: binary() | nil,
+          hostname: binary() | nil
         }
 end

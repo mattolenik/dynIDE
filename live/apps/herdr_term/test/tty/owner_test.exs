@@ -67,7 +67,7 @@ defmodule HerdrTerm.Tty.OwnerTest do
     :erlang.trace(owner, true, [:call])
     stop_supervised!(Client)
     assert_receive {:trace, ^owner, :call, {Tty, :write, [^tty, off]}}
-    assert off == Owner.modes_off()
+    assert off == Owner.modes_off() <> "\e]0;\a"
     assert_receive {:trace, ^owner, :call, {Tty, :restore, [^tty]}}
   after
     :erlang.trace_pattern({Tty, :_, :_}, false, [:local])

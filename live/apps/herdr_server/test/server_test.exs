@@ -1197,6 +1197,7 @@ defmodule HerdrServer.ServerTest do
       assert st == %HerdrServer.Client.State{
                size: %{cols: 80, rows: 24},
                transport: :inline,
+               hostname: :sys.get_state(s).hostname,
                runtime: :sys.get_state(s).runtime
              }
     after

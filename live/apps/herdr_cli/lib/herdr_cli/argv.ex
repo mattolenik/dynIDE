@@ -48,6 +48,7 @@ defmodule HerdrCli.Argv do
       tab() ++
       pane() ++
       notification() ++
+      title() ++
       agent() ++
       events() ++
       plugin()
@@ -347,6 +348,20 @@ defmodule HerdrCli.Argv do
         :json,
         "notification show <title> [--body <text>] [--pane <pane_id>]"
       )
+    ]
+  end
+
+  defp title do
+    [
+      cmd(
+        ~w(title set),
+        "client.window_title.set",
+        [{:req, "title"}],
+        %{},
+        :json,
+        "title set <title>"
+      ),
+      cmd(~w(title clear), "client.window_title.clear", [], %{}, :json, "title clear")
     ]
   end
 

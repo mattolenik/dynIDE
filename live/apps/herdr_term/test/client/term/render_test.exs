@@ -5,7 +5,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
   alias HerdrScene.Fixture
   alias HerdrTerm.{Cells, Client}
   alias HerdrTerm.Client.Term.Theme
-  alias HerdrTerm.Kernel.Fake.Blit
+  alias HerdrTerm.Kernel.Fake.{Blit, Tty}
   alias HerdrTerm.Test.FakeServer
 
   @s Cells.style([])
@@ -41,6 +41,24 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     send(render, {:scene, Fixture.load("single_pane_80x24")})
     assert_receive {:frame, _, %{repaint: true}}, @wait
     assert top(tty) =~ "hello"
+  end
+
+  test "the root window_title is written as OSC 0 once per change", %{render: render, tty: tty} do
+    titled = fn t ->
+      sc = Fixture.load("single_pane_80x24")
+      %{sc | chrome: %{sc.chrome | props: Map.put(sc.chrome.props, :window_title, t)}}
+    end
+
+    osc = fn ->
+      tty |> Tty.written() |> :binary.matches("\e]0;") |> length()
+    end
+
+    send(render, {:scene, titled.("a")})
+    send(render, {:scene, titled.("a")})
+    send(render, {:scene, titled.("b")})
+    :sys.get_state(render)
+    assert osc.() == 2
+    assert Tty.written(tty) =~ "\e]0;b\a"
   end
 
   test "a failing Compose drops the frame and keeps the render state", %{render: render} do

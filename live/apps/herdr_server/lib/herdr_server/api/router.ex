@@ -49,6 +49,9 @@ defmodule HerdrServer.Api.Router do
 
   def handle("notification.show", params, _ctx), do: Handlers.Notification.show(params)
 
+  def handle("client.window_title." <> _ = method, params, _ctx),
+    do: Handlers.Client.handle(method, params)
+
   def handle("events.subscribe", params, ctx), do: Events.request(params, ctx.conn)
 
   def handle("agent." <> _ = method, params, _ctx), do: Handlers.Agents.handle(method, params)

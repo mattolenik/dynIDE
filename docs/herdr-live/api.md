@@ -670,6 +670,34 @@ Result: `ok` (no fields).
 
 Errors: `invalid_params`
 
+## Methods: client
+
+### `client.window_title.set`
+
+Override the window title on every attached client.
+
+CLI: `herdr-live title set <title>`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `title` | string | yes | Window title; control characters are stripped. |
+
+Result: `ok` (no fields).
+
+Errors: `invalid_params`
+
+### `client.window_title.clear`
+
+Drop the window title override on every attached client.
+
+CLI: `herdr-live title clear`
+
+Params: none.
+
+Result: `ok` (no fields).
+
+Errors: `invalid_params`
+
 ## Methods: events
 
 ### `events.subscribe`

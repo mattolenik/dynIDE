@@ -18,7 +18,8 @@ defmodule HerdrServer.Config do
   Keys: `[keys]` `prefix` and the `Keybinds.Catalog` action names (a spec string or an
   array, `[]` unbinds); `[ui]` `sidebar_width`, `sidebar_min_width`, `sidebar_max_width`,
   `sidebar_start_collapsed`, `confirm_close`, `status_indicators` (`"dots"` |
-  `"symbols"`), `prompt_new_tab_name`; `[ui.sound]` `enabled`, `command` (run by an
+  `"symbols"`), `prompt_new_tab_name`, `window_title` (template of `{hostname}`,
+  `{workspace}`, `{tab}`, `{pane}`, `{terminal_title}`); `[ui.sound]` `enabled`, `command` (run by an
   in-VM terminal client with the sound name as its last argument; never sent to a socket
   client, which runs its own `HERDR_LIVE_SOUND_COMMAND`); `[ui.toast]` `delivery`
   (`off | herdr | terminal | system`), `delay_seconds` (0..3600); `[theme]` `name`,
@@ -46,6 +47,7 @@ defmodule HerdrServer.Config do
     {:ui, ["status_indicators"], {:enum, ~w(dots symbols)}, [:indicators]},
     {:ui, ["prompt_new_tab_name"], :bool, [:prompt_new_tab_name]},
     {:ui, ["pane_borders"], {:enum, ~w(auto always off)}, [:pane_borders]},
+    {:ui, ["window_title"], :string, [:window_title]},
     {:ui, ["sound", "enabled"], :bool, [:sound, :enabled]},
     {:ui, ["sound", "command"], :string, [:sound, :command]},
     {:ui, ["toast", "delivery"], {:enum, ~w(off herdr terminal system)}, [:toast, :delivery]},

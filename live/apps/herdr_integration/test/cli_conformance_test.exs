@@ -58,6 +58,8 @@ defmodule HerdrIntegration.CliConformanceTest do
     "pane wait-output --match done --timeout 1000",
     "pane wait-output p1 --regex x --source visible --lines 5",
     "notification show hi --body there --pane p1",
+    "title set hi",
+    "title clear",
     "agent list",
     "agent get p1",
     "agent read p1 --source recent --lines 5",

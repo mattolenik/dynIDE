@@ -37,6 +37,9 @@ defmodule HerdrServer.Client.Session do
   `Mirror.get(:runtime_status)`) is kept in `state.runtime` for View's status line; a
   changed status repaints (the scene is pushed only if it differs).
 
+  Window title: `{:window_title, title | nil}` (API `client.window_title.set|clear`) sets the
+  client's override; `hostname` is read once in init.
+
   Alerts (M13): `{:alert, a}` from the Store goes through `Client.Toasts` with the app and
   this client's last `{:focus, bool}`: forwarded to the client (or not) and queued as a
   toast that expires after 8 s (attention) or 5 s (`config :herdr_server, :toast_ms`);
@@ -111,7 +114,8 @@ defmodule HerdrServer.Client.Session do
       client: info.client,
       monitor: Process.monitor(info.client),
       store_monitor: Process.monitor(Store),
-      runtime: Mirror.get(:runtime_status)
+      runtime: Mirror.get(:runtime_status),
+      hostname: hostname()
     }
 
     state = struct(state, Map.take(info[:mirrored] || %{}, @presentation))
@@ -204,6 +208,12 @@ defmodule HerdrServer.Client.Session do
     if st == state.runtime,
       do: {:noreply, state},
       else: {:noreply, repaint(%{state | runtime: st})}
+  end
+
+  # `title set|clear` (API `client.window_title.*`): this client's override, nil clears
+  def handle_info({:window_title, title}, state) do
+    state = Map.merge(%State{}, state)
+    {:noreply, repaint(%{state | window_title: title})}
   end
 
   def handle_info({:notice_expired, ref}, %{notice: %{ref: ref}} = state) do
@@ -335,6 +345,11 @@ defmodule HerdrServer.Client.Session do
 
   @impl true
   def code_change(_old, state, _extra), do: {:ok, Map.merge(%State{}, state)}
+
+  defp hostname do
+    {:ok, h} = :inet.gethostname()
+    List.to_string(h)
+  end
 
   # the new Store may die too while we call it
   defp follow do
@@ -851,7 +866,9 @@ defmodule HerdrServer.Client.Session do
       pointer: state.pointer,
       copy: state.copy,
       facts: facts(state, ids),
-      graphics: graphics(ids)
+      graphics: graphics(ids),
+      window_title: state.window_title,
+      hostname: state.hostname
     }
 
     Guard.run_twice(View, :compute, [app, view_state],

@@ -103,6 +103,7 @@ defmodule HerdrServer.Api.Spec do
       tab() ++
       pane() ++
       notification() ++
+      window_title() ++
       event_methods() ++
       agents() ++
       plugins()
@@ -577,6 +578,29 @@ defmodule HerdrServer.Api.Spec do
         "ok",
         [],
         "herdr-live notification show <title> [--body <text>] [--pane <pane_id>]"
+      )
+    ]
+  end
+
+  defp window_title do
+    [
+      method(
+        "client.window_title.set",
+        "client",
+        "Override the window title on every attached client.",
+        [req("title", :string, "Window title; control characters are stripped.")],
+        "ok",
+        [],
+        "herdr-live title set <title>"
+      ),
+      method(
+        "client.window_title.clear",
+        "client",
+        "Drop the window title override on every attached client.",
+        [],
+        "ok",
+        [],
+        "herdr-live title clear"
       )
     ]
   end

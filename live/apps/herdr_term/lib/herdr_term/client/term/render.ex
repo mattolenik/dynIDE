@@ -26,6 +26,8 @@ defmodule HerdrTerm.Client.Term.Render do
   failing compose keeps the last frame and retries a full repaint every 500ms; a failing
   cursor keeps the last frame.
 
+  Window title: the scene root's `:window_title` goes out as OSC 0 only when it changes.
+
   Alerts: `{:alert, a}` runs `Alert.actions/2` over the root props: OSC 9 through the
   tty; a sound runs the sound command with the sound name as its last argument (a port,
   fire and forget; a missing command logs once), else writes BEL. An in-VM (`:ref`) client
@@ -94,6 +96,7 @@ defmodule HerdrTerm.Client.Term.Render do
     :sound_warned,
     :images_mfa,
     :cell_px,
+    :title,
     transport: :ref,
     caps: nil,
     appearance: :dark,
@@ -199,7 +202,7 @@ defmodule HerdrTerm.Client.Term.Render do
     images = prune_images(state.images, scene)
     state = %{state | scene: scene, rows: rows, dirty: dirty, refs: refs, cursors: cursors}
     state = %{state | images: images}
-    {:noreply, state |> refresh_theme() |> chrome() |> schedule()}
+    {:noreply, state |> refresh_theme() |> window_title() |> chrome() |> schedule()}
   end
 
   # the client's host caps (protocol shape): scheme, else background luminance
@@ -326,6 +329,15 @@ defmodule HerdrTerm.Client.Term.Render do
     state = Map.merge(%__MODULE__{}, state)
     Logger.debug("render: ignored #{inspect(msg)}")
     {:noreply, state}
+  end
+
+  # The root's `:window_title` as OSC 0, written once per change (nil clears it).
+  defp window_title(%{scene: scene} = state) do
+    title = scene.chrome && scene.chrome.props[:window_title]
+
+    if title == state.title,
+      do: state,
+      else: tty_write(%{state | title: title}, ["\e]0;", title || "", "\a"])
   end
 
   # alerts

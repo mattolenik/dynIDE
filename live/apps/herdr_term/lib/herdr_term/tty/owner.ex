@@ -158,7 +158,7 @@ defmodule HerdrTerm.Tty.Owner do
   def terminate(_reason, state) do
     state = Map.merge(%__MODULE__{}, state)
     if state.sigwinch, do: :gen_event.delete_handler(:erl_signal_server, state.sigwinch, [])
-    _ = Kernel.tty().write(state.tty, @modes_off)
+    _ = Kernel.tty().write(state.tty, @modes_off <> "\e]0;\a")
     Kernel.tty().restore(state.tty)
   end
 end
