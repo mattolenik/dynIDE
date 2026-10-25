@@ -147,6 +147,15 @@ defmodule HerdrServer.Native do
   @doc false
   @spec pty_cwd(term) :: binary | nil
   def pty_cwd(_pty), do: err()
+  @doc false
+  @spec pty_activity(term) :: non_neg_integer
+  def pty_activity(_pty), do: err()
+  @doc false
+  @spec pty_foreground_pgid(term) :: pos_integer | nil
+  def pty_foreground_pgid(_pty), do: err()
+  @doc false
+  @spec pty_foreground_job(term) :: map | nil
+  def pty_foreground_job(_pty), do: err()
 
   @doc false
   @spec link_connect(term, term) :: {:ok, reference} | {:error, atom}

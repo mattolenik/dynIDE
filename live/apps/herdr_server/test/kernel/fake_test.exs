@@ -172,6 +172,27 @@ defmodule HerdrServer.Kernel.FakeTest do
     assert Vt.encode_focus(vt, false) == "\e[O"
   end
 
+  test "activity counts output, hidden or not", %{pty: pty} do
+    assert Pty.activity(pty) == 0
+    Pty.output(pty, "a")
+    :ok = Pty.set_hidden(pty, true)
+    Pty.output(pty, "b")
+    assert Pty.activity(pty) == 2
+  end
+
+  test "foreground is the shell until set_foreground", %{id: id, pty: pty} do
+    {:ok, %{os_pid: os_pid}} = Keeper.lookup(id)
+    assert Pty.foreground_job(pty) == %{pgid: os_pid, shell: true, processes: []}
+    assert Pty.foreground_pgid(pty) == os_pid
+    job = %{pgid: 7, shell: false, processes: [%{pid: 7, name: "claude", argv: ["claude"]}]}
+    :ok = Pty.set_foreground(pty, job)
+    assert Pty.foreground_job(pty) == job
+    assert Pty.foreground_pgid(pty) == 7
+    :ok = Pty.set_foreground(pty, nil)
+    assert Pty.foreground_job(pty) == nil
+    assert Pty.foreground_pgid(pty) == nil
+  end
+
   test "cwd is the spawn cwd until set_cwd", %{pty: pty} do
     assert Pty.cwd(pty) == "/"
     :ok = Pty.set_cwd(pty, "/tmp")

@@ -163,4 +163,20 @@ defmodule HerdrServer.Native.Pty do
   """
   @spec cwd(pty) :: binary | nil
   def cwd(pty), do: Native.pty_cwd(pty)
+
+  @doc "Output chunks read so far, counted while hidden too. An atomic load."
+  @spec activity(pty) :: non_neg_integer
+  def activity(pty), do: Native.pty_activity(pty)
+
+  @doc "The terminal's foreground process group (one ioctl), or nil once exited."
+  @spec foreground_pgid(pty) :: pos_integer | nil
+  def foreground_pgid(pty), do: Native.pty_foreground_pgid(pty)
+
+  @doc """
+  The foreground group's processes (at most 64; argv at most 64 entries of 4096 bytes),
+  `shell: true` when the group is the child's own (nothing runs in the foreground).
+  Runs on a dirty IO scheduler.
+  """
+  @spec foreground_job(pty) :: HerdrServer.Kernel.Pty.job() | nil
+  def foreground_job(pty), do: Native.pty_foreground_job(pty)
 end

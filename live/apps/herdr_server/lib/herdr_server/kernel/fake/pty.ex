@@ -28,12 +28,16 @@ defmodule HerdrServer.Kernel.Fake.Pty do
             close_after: nil,
             writes: [],
             closed: false,
-            cwd: nil
+            cwd: nil,
+            os_pid: nil,
+            activity: 0,
+            foreground: :default
 
   @impl HerdrServer.Kernel.Pty
   def spawn(vt, id, _cmd, _args, _env, cwd, _cols, _rows) do
-    {:ok, pty} = GenServer.start_link(__MODULE__, {id, vt, cwd})
-    {:ok, pty, System.unique_integer([:positive])}
+    os_pid = System.unique_integer([:positive])
+    {:ok, pty} = GenServer.start_link(__MODULE__, {id, vt, cwd, os_pid})
+    {:ok, pty, os_pid}
   end
 
   @doc "Test/bench hook: feed bytes as program output. Never blocks on the vt."
@@ -95,9 +99,30 @@ defmodule HerdrServer.Kernel.Fake.Pty do
   @impl HerdrServer.Kernel.Pty
   def info(pty), do: GenServer.call(pty, :info)
 
+  @impl HerdrServer.Kernel.Pty
+  def activity(pty), do: GenServer.call(pty, :activity)
+
+  @impl HerdrServer.Kernel.Pty
+  def foreground_pgid(pty) do
+    case foreground_job(pty) do
+      %{pgid: pgid} -> pgid
+      nil -> nil
+    end
+  end
+
+  @impl HerdrServer.Kernel.Pty
+  def foreground_job(pty), do: GenServer.call(pty, :foreground)
+
+  @doc """
+  Test hook: what `foreground_job/1` (and its pgid, `foreground_pgid/1`) report from now
+  on. Until set: `%{pgid: os_pid, shell: true, processes: []}` with the spawn's os pid.
+  """
+  def set_foreground(pty, job) when is_map(job) or is_nil(job),
+    do: GenServer.call(pty, {:set_foreground, job})
+
   @impl GenServer
-  def init({id, vt, cwd}) do
-    {:ok, %__MODULE__{id: id, vt: vt, cwd: cwd, last_sent: now() - 1000}}
+  def init({id, vt, cwd, os_pid}) do
+    {:ok, %__MODULE__{id: id, vt: vt, cwd: cwd, os_pid: os_pid, last_sent: now() - 1000}}
   end
 
   @impl GenServer
@@ -105,7 +130,8 @@ defmodule HerdrServer.Kernel.Fake.Pty do
     state = Map.merge(%__MODULE__{}, state)
     gen = state.gen + 1
     Vt.write(state.vt, bin, gen)
-    {:noreply, damage(%{state | gen: gen})}
+    activity = if bin == "", do: state.activity, else: state.activity + 1
+    {:noreply, damage(%{state | gen: gen, activity: activity})}
   end
 
   def handle_cast({:emit, event}, state) do
@@ -167,6 +193,26 @@ defmodule HerdrServer.Kernel.Fake.Pty do
   def handle_call(:cwd, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:reply, state.cwd, state}
+  end
+
+  def handle_call(:activity, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, state.activity, state}
+  end
+
+  def handle_call(:foreground, _from, %{foreground: :default} = state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, %{pgid: state.os_pid, shell: true, processes: []}, state}
+  end
+
+  def handle_call(:foreground, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, state.foreground, state}
+  end
+
+  def handle_call({:set_foreground, job}, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, :ok, %{state | foreground: job}}
   end
 
   def handle_call({:set_cwd, cwd}, _from, state) do

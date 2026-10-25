@@ -1,0 +1,253 @@
+//! Foreground job of a pane's terminal: the processes of one process group, with names
+//! and argv. Ported from herdr's `src/platform/{macos,linux}.rs`. Bounded: at most
+//! `MAX_PROCS` processes, `MAX_ARGS` argv entries each at most `MAX_ARG` bytes.
+
+use rustler::NifMap;
+
+pub const MAX_PROCS: usize = 64;
+pub const MAX_ARGS: usize = 64;
+pub const MAX_ARG: usize = 4096;
+
+#[derive(Debug, Clone, PartialEq, Eq, NifMap)]
+pub struct Process {
+    pub pid: u32,
+    pub name: String,
+    pub argv: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, NifMap)]
+pub struct Job {
+    pub pgid: u32,
+    /// The group is the pane child's own: nothing runs in the foreground.
+    pub shell: bool,
+    pub processes: Vec<Process>,
+}
+
+/// The processes in group `pgid`, or None when none can be read.
+pub fn foreground_job(pgid: u32, shell_pid: u32) -> Option<Job> {
+    if pgid == 0 {
+        return None;
+    }
+    let processes = group_processes(pgid);
+    (!processes.is_empty()).then_some(Job {
+        pgid,
+        shell: pgid == shell_pid,
+        processes,
+    })
+}
+
+/// Lossy UTF-8, cut to at most `MAX_ARG` bytes on a char boundary.
+fn arg(bytes: &[u8]) -> String {
+    let mut s = String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_ARG + 3)]).into_owned();
+    if s.len() > MAX_ARG {
+        let mut end = MAX_ARG;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s.truncate(end);
+    }
+    s
+}
+
+/// NUL-separated strings, at most `MAX_ARGS`.
+#[cfg(any(target_os = "linux", test))]
+fn split_args(bytes: &[u8]) -> Vec<String> {
+    let bytes = bytes.strip_suffix(&[0]).unwrap_or(bytes);
+    if bytes.is_empty() {
+        return Vec::new();
+    }
+    bytes.split(|&b| b == 0).take(MAX_ARGS).map(arg).collect()
+}
+
+#[cfg(target_os = "macos")]
+const PROC_PGRP_ONLY: u32 = 2;
+
+#[cfg(target_os = "macos")]
+fn group_processes(pgid: u32) -> Vec<Process> {
+    let mut pids = vec![0 as libc::pid_t; MAX_PROCS];
+    let size = std::mem::size_of_val(pids.as_slice()) as libc::c_int;
+    // SAFETY: the buffer holds `size` bytes of pid_t.
+    let got = unsafe { libc::proc_listpids(PROC_PGRP_ONLY, pgid, pids.as_mut_ptr().cast(), size) };
+    let n = (got.max(0) as usize / std::mem::size_of::<libc::pid_t>()).min(MAX_PROCS);
+    let mut pids: Vec<u32> = pids[..n]
+        .iter()
+        .filter(|&&p| p > 0)
+        .map(|&p| p as u32)
+        .collect();
+    pids.sort_unstable();
+    pids.into_iter()
+        .filter_map(|pid| {
+            Some(Process {
+                pid,
+                name: proc_name(pid)?,
+                argv: kern_procargs2(pid)
+                    .map(|b| procargs2_argv(&b))
+                    .unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn proc_name(pid: u32) -> Option<String> {
+    let mut buf = [0u8; 256];
+    // SAFETY: proc_name writes at most `buf.len()` bytes.
+    let n = unsafe {
+        libc::proc_name(
+            pid as libc::c_int,
+            buf.as_mut_ptr().cast(),
+            buf.len() as u32,
+        )
+    };
+    (n > 0).then(|| String::from_utf8_lossy(&buf[..n as usize]).into_owned())
+}
+
+/// Raw `sysctl(KERN_PROCARGS2)`: `[argc: i32][exec_path\0][\0 padding][argv\0...][env...]`.
+#[cfg(target_os = "macos")]
+fn kern_procargs2(pid: u32) -> Option<Vec<u8>> {
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as libc::c_int];
+    let mut size: libc::size_t = 0;
+    // SAFETY: a size query with a null buffer.
+    let r = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if r != 0 || size == 0 {
+        return None;
+    }
+    let mut buf = vec![0u8; size];
+    // SAFETY: `buf` holds `size` bytes; sysctl updates `size` to what it wrote.
+    let r = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            buf.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if r != 0 {
+        return None;
+    }
+    buf.truncate(size);
+    Some(buf)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn procargs2_argv(buf: &[u8]) -> Vec<String> {
+    let Some((argc, rest)) = buf.split_first_chunk::<4>() else {
+        return Vec::new();
+    };
+    let argc = usize::try_from(i32::from_ne_bytes(*argc)).unwrap_or(0);
+    // Skip the exec path, then its NUL padding.
+    let Some(exec_end) = rest.iter().position(|&b| b == 0) else {
+        return Vec::new();
+    };
+    let start = rest[exec_end..]
+        .iter()
+        .position(|&b| b != 0)
+        .map_or(rest.len(), |p| exec_end + p);
+    rest[start..]
+        .split(|&b| b == 0)
+        .take(argc.min(MAX_ARGS))
+        .map(arg)
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn group_processes(pgid: u32) -> Vec<Process> {
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut pids: Vec<u32> = dir
+        .filter_map(|e| e.ok()?.file_name().to_str()?.parse().ok())
+        .collect();
+    pids.sort_unstable();
+    pids.into_iter()
+        .filter_map(|pid| {
+            let stat = std::fs::read(format!("/proc/{pid}/stat")).ok()?;
+            let (pgrp, comm) = parse_stat(&stat)?;
+            (pgrp == pgid).then(|| Process {
+                pid,
+                name: comm,
+                argv: std::fs::read(format!("/proc/{pid}/cmdline"))
+                    .map(|b| split_args(&b))
+                    .unwrap_or_default(),
+            })
+        })
+        .take(MAX_PROCS)
+        .collect()
+}
+
+/// `pid (comm) state ppid pgrp ...`; comm may hold spaces and parens, so split at the
+/// last `)`.
+#[cfg(any(target_os = "linux", test))]
+fn parse_stat(stat: &[u8]) -> Option<(u32, String)> {
+    let open = stat.iter().position(|&b| b == b'(')?;
+    let close = stat.iter().rposition(|&b| b == b')')?;
+    let comm = String::from_utf8_lossy(stat.get(open + 1..close)?).into_owned();
+    let rest = std::str::from_utf8(stat.get(close + 1..)?).ok()?;
+    let pgrp = rest.split_ascii_whitespace().nth(2)?.parse().ok()?;
+    Some((pgrp, comm))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn group_processes(_pgid: u32) -> Vec<Process> {
+    Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn procargs2_skips_exec_path_and_padding() {
+        let mut buf = 2i32.to_ne_bytes().to_vec();
+        buf.extend_from_slice(b"/bin/sleep\0\0\0sleep\x0030\0PATH=/bin\0");
+        assert_eq!(procargs2_argv(&buf), ["sleep", "30"]);
+        assert!(procargs2_argv(b"\x01").is_empty());
+    }
+
+    #[test]
+    fn args_are_bounded() {
+        let long = vec![b'a'; MAX_ARG + 10];
+        let mut many = Vec::new();
+        for _ in 0..MAX_ARGS + 5 {
+            many.extend_from_slice(&long);
+            many.push(0);
+        }
+        let argv = split_args(&many);
+        assert_eq!(argv.len(), MAX_ARGS);
+        assert!(argv.iter().all(|a| a.len() == MAX_ARG));
+        // a multibyte char straddling the cut is dropped, not split
+        let mut s = vec![b'a'; MAX_ARG - 1];
+        s.extend_from_slice("é".as_bytes());
+        assert_eq!(arg(&s).len(), MAX_ARG - 1);
+    }
+
+    #[test]
+    fn stat_with_parens_in_comm() {
+        assert_eq!(
+            parse_stat(b"42 (a) b) S 1 77 77 0"),
+            Some((77, "a) b".to_string()))
+        );
+    }
+
+    #[test]
+    fn own_group_is_found() {
+        // SAFETY: plain syscall.
+        let pgid = unsafe { libc::getpgrp() } as u32;
+        let job = foreground_job(pgid, 0).expect("job");
+        assert!(!job.shell);
+        let me = std::process::id();
+        let p = job.processes.iter().find(|p| p.pid == me).expect("self");
+        assert!(!p.name.is_empty() && !p.argv.is_empty());
+    }
+}

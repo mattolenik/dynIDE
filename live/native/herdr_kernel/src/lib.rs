@@ -8,6 +8,8 @@ pub mod link;
 #[cfg(unix)]
 mod nif;
 #[cfg(unix)]
+pub mod proc;
+#[cfg(unix)]
 pub mod pty;
 pub mod splitter;
 pub mod vt;

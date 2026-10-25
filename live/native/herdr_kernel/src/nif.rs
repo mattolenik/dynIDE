@@ -18,6 +18,7 @@ use rustler::{
 
 use crate::input::{Key, KeyAction, KeyInput, Mods, MouseButton, MouseInput, MouseKind, NamedKey};
 use crate::link::{Frame, Link, LinkSink, SEND_TIMEOUT};
+use crate::proc::Job;
 use crate::pty::{
     AdoptOptions, Event, EventSink, ExitStatus, Pty, SpawnOptions, ThawError, WriteError,
 };
@@ -842,6 +843,24 @@ fn pty_cwd(env: Env, pty: ResourceArc<PtyRes>) -> Term {
         Some(p) => bin(env, p.as_bytes()),
         None => atoms::nil().encode(env),
     }
+}
+
+/// Output chunks read so far, hidden or not. An atomic load.
+#[rustler::nif]
+fn pty_activity(pty: ResourceArc<PtyRes>) -> u64 {
+    pty.pty.activity()
+}
+
+/// The terminal's foreground process group, or nil. One ioctl.
+#[rustler::nif]
+fn pty_foreground_pgid(pty: ResourceArc<PtyRes>) -> Option<u32> {
+    pty.pty.foreground_pgid()
+}
+
+/// `%{pgid, shell, processes: [%{pid, name, argv}]}` or nil; reads per-process OS state.
+#[rustler::nif(schedule = "DirtyIo")]
+fn pty_foreground_job(pty: ResourceArc<PtyRes>) -> Option<Job> {
+    pty.pty.foreground_job()
 }
 
 fn spawn_error<'a>(env: Env<'a>, e: &std::io::Error) -> Term<'a> {

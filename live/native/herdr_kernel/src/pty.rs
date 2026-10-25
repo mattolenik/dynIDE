@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::io;
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -15,6 +15,7 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
 use crate::bulk::{set_thread_bulk, Pacer};
 use crate::exitwatch::{self, Watch};
+use crate::proc::{self, Job};
 use crate::splitter::{Seq, Splitter};
 use crate::vt::{lock, Vt};
 
@@ -257,6 +258,8 @@ struct Inner {
     wake_w: OwnedFd,
     writer: Arc<Writer>,
     hidden: AtomicBool,
+    /// Bumped per chunk of child output, hidden or not.
+    activity: AtomicU64,
     exit_sent: AtomicBool,
     /// Set by `fail`; the reader stops after its next wake.
     stop: AtomicBool,
@@ -392,6 +395,7 @@ impl Inner {
             wake_w,
             writer,
             hidden: AtomicBool::new(false),
+            activity: AtomicU64::new(0),
             exit_sent: AtomicBool::new(false),
             stop: AtomicBool::new(false),
             exit: Mutex::new(None),
@@ -462,6 +466,9 @@ impl Inner {
 
     fn feed(&self, sp: &mut Splitter, seqs: &mut Vec<Seq>, win: &mut Window, chunk: &[u8]) {
         self.check_injected_panic();
+        if !chunk.is_empty() {
+            self.activity.fetch_add(1, Ordering::Relaxed);
+        }
         sp.observe(chunk, seqs);
         // Clipboard and pwd effects are ignored: OSC 52 and OSC 7 arrive via the splitter.
         let fx = self.vt.write(chunk);
@@ -968,6 +975,27 @@ impl Pty {
         self.inner.id
     }
 
+    /// Output chunks read so far, including while hidden.
+    pub fn activity(&self) -> u64 {
+        self.inner.activity.load(Ordering::Relaxed)
+    }
+
+    /// The terminal's foreground process group (one ioctl), None once exited.
+    pub fn foreground_pgid(&self) -> Option<u32> {
+        if self.exit_status().is_some() {
+            return None;
+        }
+        // SAFETY: plain ioctl on our master fd.
+        let pgid = unsafe { libc::tcgetpgrp(self.inner.fd.as_raw_fd()) };
+        u32::try_from(pgid).ok().filter(|&p| p > 0)
+    }
+
+    /// The foreground group's processes; `shell` when it is the child's own group.
+    /// Reads procfs/sysctl per process, so run it off the normal schedulers.
+    pub fn foreground_job(&self) -> Option<Job> {
+        proc::foreground_job(self.foreground_pgid()?, self.os_pid())
+    }
+
     pub fn os_pid(&self) -> u32 {
         self.inner.pid as u32
     }
@@ -1265,6 +1293,63 @@ mod tests {
         assert!(lines(&vt)[0].starts_with("hidden-output"));
         std::thread::sleep(Duration::from_millis(100));
         assert_eq!(rx.try_iter().count(), 0);
+    }
+
+    #[test]
+    fn activity_counts_hidden_output() {
+        let (vt, pty, rx) = sh("sleep 0.3; printf x; sleep 30");
+        pty.set_hidden(true);
+        let before = pty.activity();
+        let end = Instant::now() + T;
+        while pty.activity() == before {
+            assert!(Instant::now() < end, "activity never bumped");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(vt
+            .read_text(TextRange::Viewport)
+            .expect("text")
+            .contains('x'));
+        assert!(rx.try_iter().all(|ev| !matches!(ev, Event::Damage(_))));
+        sigkill(pty.os_pid());
+    }
+
+    #[test]
+    fn foreground_pgid_is_the_shell_at_rest() {
+        let (_vt, pty, _rx) = spawn("/bin/sh", &[]);
+        assert_eq!(pty.foreground_pgid(), Some(pty.os_pid()));
+        let job = pty.foreground_job().expect("job");
+        assert!(job.shell);
+        assert_eq!(job.pgid, pty.os_pid());
+        sigkill(pty.os_pid());
+    }
+
+    #[test]
+    fn foreground_job_lists_a_running_command() {
+        let (_vt, pty, _rx) = spawn("/bin/sh", &["-i"]);
+        // a PATH with GNU coreutils first would run `gsleep`
+        pty.write(b"PATH=/bin:/usr/bin; sleep 30\n").expect("write");
+        let end = Instant::now() + Duration::from_secs(2);
+        let job = loop {
+            if let Some(j) = pty.foreground_job().filter(|j| {
+                j.processes
+                    .iter()
+                    .any(|p| p.name == "sleep" && p.argv == ["sleep", "30"])
+            }) {
+                break j;
+            }
+            assert!(
+                Instant::now() < end,
+                "no sleep job: {:?}",
+                pty.foreground_job()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(!job.shell);
+        assert_ne!(job.pgid, pty.os_pid());
+        eprintln!("observed job: {job:?}");
+        // SAFETY: plain syscall on the job's process group.
+        unsafe { libc::killpg(job.pgid as libc::pid_t, libc::SIGKILL) };
+        sigkill(pty.os_pid());
     }
 
     #[test]

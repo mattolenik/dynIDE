@@ -36,4 +36,17 @@ defmodule HerdrServer.Kernel.Pty do
   @doc "The child's working directory (absolute), or nil when unknown."
   @callback cwd(pty) :: binary | nil
   @callback info(pty) :: %{optional(atom) => term}
+
+  @type job :: %{
+          pgid: pos_integer,
+          shell: boolean,
+          processes: [%{pid: pos_integer, name: binary, argv: [binary]}]
+        }
+
+  @doc "Output chunks read so far, counted while hidden too."
+  @callback activity(pty) :: non_neg_integer
+  @doc "The terminal's foreground process group, or nil when closed or unreadable."
+  @callback foreground_pgid(pty) :: pos_integer | nil
+  @doc "The foreground job; `shell` when it is the child's own process group."
+  @callback foreground_job(pty) :: job | nil
 end
