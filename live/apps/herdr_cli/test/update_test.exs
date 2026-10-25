@@ -40,7 +40,7 @@ defmodule HerdrCli.UpdateTest do
     #!/bin/sh
     d=$(dirname "$0")
     case $1 in
-      status) exit $(cat "$d/status" 2>/dev/null || echo 2) ;;
+      status) cat "$d/status_text" 2>/dev/null; exit $(cat "$d/status" 2>/dev/null || echo 2) ;;
       kernel-restart) shift; echo "$*" >"$d/restart_args"; echo "restarted"; exit $(cat "$d/restart" 2>/dev/null || echo 0) ;;
     esac
     """)
@@ -230,12 +230,153 @@ defmodule HerdrCli.UpdateTest do
 
   test "a held update lock refuses and is left alone", c do
     lock = Path.join(c.lib, ".update.lock")
-    File.write!(lock, "1\n")
+    File.write!(lock, "#{System.pid()}\n")
     url = write_manifest(c.tmp, c.tarball, c.priv)
     {1, _out, err} = update(["--manifest", url, "--yes"], c.ctx)
     assert %{"code" => "locked"} = JSON.decode!(err)
     assert File.exists?(lock)
     assert current(c.lib) == "releases/0.1.0"
+  end
+
+  test "a lock whose pid is gone is taken over", c do
+    {dead, 0} = System.cmd("sh", ["-c", "echo $$"])
+    lock = Path.join(c.lib, ".update.lock")
+    File.write!(lock, dead)
+    url = write_manifest(c.tmp, c.tarball, c.priv)
+    {0, out, err} = update(["--manifest", url, "--yes"], c.ctx)
+    assert err =~ "held by pid #{String.trim(dead)}, which is gone: taking it over"
+    assert out =~ "updated 0.1.0 -> 0.1.1"
+    refute File.exists?(lock)
+  end
+
+  test "prune keeps the release the running broker boots from", c do
+    fake_release(Path.join(c.lib, "releases/0.0.7"), "0.0.7", c.pub)
+    bin = Path.join(c.lib, "releases/0.1.0/bin")
+    File.write!(Path.join(bin, "status"), "0")
+    vm = Path.join(c.lib, "releases/0.0.8/bin/herdr_live")
+    File.write!(Path.join(bin, "status_text"), "phase=idle\nvm_argv=#{vm} start\n")
+    url = write_manifest(c.tmp, c.tarball, c.priv)
+    {0, _out, ""} = update(["--manifest", url, "--yes"], c.ctx)
+    # kept: new, replaced, the broker's 0.0.8, and the newest other (0.0.9); 0.0.7 goes
+    assert c.lib |> Path.join("releases") |> File.ls!() |> Enum.sort() ==
+             ~w(.stage.123 0.0.8 0.0.9 0.1.0 0.1.1)
+  end
+
+  test "running/1 reads the release from vm_argv" do
+    assert Update.running(
+             "a=1\nvm_argv=/p re/lib/herdr-live/releases/0.0.8/bin/herdr_live start\n"
+           ) == ["0.0.8"]
+
+    assert Update.running("vm_argv=/p/lib/herdr-live/current/bin/herdr_live start\n") == []
+    assert Update.running("") == []
+  end
+
+  test "a redirect never leaves https" do
+    assert {:error, :fetch_failed, msg} =
+             Update.redirect_target("https://a/m.json", "http://b/m.json")
+
+    assert msg =~ "refusing a redirect from https"
+
+    assert {:error, :fetch_failed, _} =
+             Update.redirect_target("http://a/m.json", "file:///etc/passwd")
+
+    assert {:ok, "https://a/x.json"} = Update.redirect_target("https://a/m.json", "/x.json")
+
+    assert {:ok, "https://b/m.json"} =
+             Update.redirect_target("http://a/m.json", "https://b/m.json")
+  end
+
+  # a one-connection-at-a-time HTTP/1.1 stub on 127.0.0.1: path => {status, headers, body}
+  defp recv_head(s, acc) do
+    if String.contains?(acc, "\r\n\r\n") do
+      {:ok, acc}
+    else
+      with {:ok, data} <- :gen_tcp.recv(s, 0, 5000), do: recv_head(s, acc <> data)
+    end
+  end
+
+  defp http_manifest(c, base, art_path) do
+    data = File.read!(c.tarball)
+
+    m = %{
+      "schema" => 1,
+      "channel" => "stable",
+      "version" => "0.1.1",
+      "artifacts" => [
+        %{
+          "os" => "macos",
+          "arch" => "aarch64",
+          "url" => base <> art_path,
+          "sha256" => Base.encode16(:crypto.hash(:sha256, data), case: :lower),
+          "size" => byte_size(data)
+        }
+      ]
+    }
+
+    bytes = JSON.encode!(m)
+    sig = Base.encode64(:crypto.sign(:eddsa, :none, bytes, [c.priv, :ed25519]))
+    {bytes, sig, data}
+  end
+
+  test "http: an artifact over the manifest size is cut off (Content-Length and streamed)", c do
+    routes = fn base ->
+      {bytes, sig, data} = http_manifest(c, base, "/cl.tar.gz")
+      {bytes2, sig2, _} = http_manifest(c, base, "/stream.tar.gz")
+      big = data <> String.duplicate("x", 100_000)
+
+      %{
+        "/m.json" => {200, [{"content-length", byte_size(bytes)}], bytes},
+        "/m.json.sig" => {200, [{"content-length", byte_size(sig)}], sig},
+        "/m2.json" => {200, [{"content-length", byte_size(bytes2)}], bytes2},
+        "/m2.json.sig" => {200, [{"content-length", byte_size(sig2)}], sig2},
+        # a lying Content-Length is refused before the body
+        "/cl.tar.gz" => {200, [{"content-length", byte_size(big)}], big},
+        # no Content-Length: the running count stops it
+        "/stream.tar.gz" => {200, [], big}
+      }
+    end
+
+    # the routes need the port, so the stub serves a table filled after listen
+    {:ok, agent} = Agent.start_link(fn -> %{} end)
+    base = http_stub_dynamic(agent)
+    Agent.update(agent, fn _ -> routes.(base) end)
+
+    for m <- ["/m.json", "/m2.json"] do
+      {1, _out, err} = update(["--manifest", base <> m, "--yes"], c.ctx)
+      # the cap, not the after-the-fact size check
+      assert %{"code" => "size_mismatch", "message" => msg} = JSON.decode!(err), m
+      assert msg =~ "over the manifest's", msg
+      assert current(c.lib) == "releases/0.1.0"
+      refute File.exists?(Path.join(c.lib, "releases/0.1.1"))
+    end
+
+    {1, _out, err} = update(["--manifest", base <> "/missing.json", "--check"], c.ctx)
+    assert %{"code" => "fetch_failed", "message" => msg} = JSON.decode!(err)
+    assert msg =~ "HTTP 404"
+  end
+
+  defp http_stub_dynamic(agent) do
+    {:ok, l} = :gen_tcp.listen(0, [:binary, ip: {127, 0, 0, 1}, active: false, reuseaddr: true])
+    {:ok, port} = :inet.port(l)
+    pid = spawn_link(fn -> serve_dynamic(l, agent) end)
+    :ok = :gen_tcp.controlling_process(l, pid)
+    on_exit(fn -> Process.exit(pid, :kill) end)
+    "http://127.0.0.1:#{port}"
+  end
+
+  defp serve_dynamic(l, agent) do
+    serve_once(l, Agent.get(agent, & &1))
+    serve_dynamic(l, agent)
+  end
+
+  defp serve_once(l, routes) do
+    {:ok, s} = :gen_tcp.accept(l)
+    {:ok, req} = recv_head(s, "")
+    [_, path | _] = String.split(req, " ", parts: 3)
+    {status, headers, body} = Map.get(routes, path, {404, [], ""})
+    head = Enum.map(headers, fn {k, v} -> "#{k}: #{v}\r\n" end)
+    _ = :gen_tcp.send(s, ["HTTP/1.1 #{status} X\r\n", head, "connection: close\r\n\r\n", body])
+    :gen_tcp.close(s)
   end
 
   for {name, entry} <- [

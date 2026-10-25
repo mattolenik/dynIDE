@@ -62,7 +62,8 @@ checkout, `herdr-live update --check` trusts only `HERDR_LIVE_UPDATE_PUBKEY`.
 ## What an update does
 
 One update runs per prefix at a time (`<prefix>/lib/herdr-live/.update.lock`, removed
-when the run ends; a killed run leaves it, and the refusal names it).
+when the run ends; it holds the run's OS pid, and a lock whose pid no longer exists is
+taken over with a note on stderr).
 
 1. Fetch and verify the manifest; compare `version` with the running release
    (`Version.compare`; `--check` stops here and prints `update available <v>` or
@@ -84,7 +85,8 @@ when the run ends; a killed run leaves it, and the refusal names it).
    (`broker_unreachable`, `current` unchanged).
 5. If the restart fails, the broker thaws the old VM and keeps its old argv; `current` is
    not touched and `releases/<v>` stays for a retry; exit 1 with `restart_failed`.
-6. After a flip, releases older than the previous two are removed. Dot-names in
+6. After a flip, releases older than the previous two are removed, except the one the
+   running broker boots from (its status `vm_argv=`). Dot-names in
    `releases/` are never touched.
 
 `herdr-live kernel-restart` in a release restarts into `<prefix>/lib/herdr-live/current`

@@ -360,6 +360,16 @@ defmodule HerdrCli.Update do
     do: fetch_error(url, "more than #{@max_hops} redirects")
 
   defp redirect(url, to, max, sink, hops) do
+    with {:ok, next} <- redirect_target(url, to),
+         :ok <- start_http(next),
+         do: http_get(next, max, sink, hops + 1)
+  end
+
+  @doc false
+  # where a redirect from `url` to Location `to` may go: never from https to anything else
+  @spec redirect_target(String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, :fetch_failed, String.t()}
+  def redirect_target(url, to) do
     next = url |> URI.merge(to) |> URI.to_string()
 
     cond do
@@ -370,7 +380,7 @@ defmodule HerdrCli.Update do
         fetch_error(url, "refusing a redirect to #{next}")
 
       true ->
-        with :ok <- start_http(next), do: http_get(next, max, sink, hops + 1)
+        {:ok, next}
     end
   end
 
@@ -409,7 +419,7 @@ defmodule HerdrCli.Update do
 
   # one update per prefix at a time; the lock goes when this run ends (a killed run leaves
   # it: the message names the file)
-  defp locked(lib, fun) do
+  defp locked(lib, fun, retry \\ true) do
     lock = Path.join(lib, ".update.lock")
 
     case File.open(lock, [:write, :exclusive]) do
@@ -424,11 +434,40 @@ defmodule HerdrCli.Update do
         end
 
       {:error, :eexist} ->
-        {:error, :locked, "another update is running (#{lock}; remove it if no update runs)"}
+        holder = lock |> File.read() |> ok_text() |> String.trim()
+
+        if retry and stale?(holder) do
+          # ponytail: two runs taking over the same stale lock at once can both win;
+          # an O_EXCL rename dance would close it if that ever matters
+          :file.write(
+            :standard_error,
+            "herdr-live: update lock #{lock} held by pid #{holder}, which is gone: taking it over\n"
+          )
+
+          File.rm(lock)
+          locked(lib, fun, false)
+        else
+          {:error, :locked,
+           "another update is running (pid #{holder}, #{lock}; remove it if no update runs)"}
+        end
 
       {:error, r} ->
         {:error, :install_failed, "cannot create #{lock}: #{:file.format_error(r)}"}
     end
+  end
+
+  defp ok_text({:ok, text}), do: text
+  defp ok_text(_), do: ""
+
+  # gone: `kill -0` says no such process (EPERM, another user's live pid, is not stale)
+  defp stale?(pid) do
+    kill = System.find_executable("kill")
+
+    pid =~ ~r/\A[0-9]+\z/ and kill != nil and
+      case System.cmd(kill, ["-0", pid], stderr_to_stdout: true) do
+        {_, 0} -> false
+        {text, _} -> text =~ ~r/no such process/i
+      end
   end
 
   # releases/<v>: an existing dir is reused when it is that release (an earlier update
@@ -612,25 +651,35 @@ defmodule HerdrCli.Update do
     broker = Path.join([lib, "releases", prev, "bin/herdr_broker"])
     done = "updated #{prev} -> #{v}\n"
 
-    if opts[:no_restart] do
-      flipped(
-        lib,
-        [prev, v],
-        v,
-        done <> "restart skipped (--no-restart); run herdr-live kernel-restart to boot #{v}\n"
-      )
-    else
-      case System.cmd(broker, ["status"], stderr_to_stdout: true) do
-        {_, 0} ->
-          kernel_restart(broker, lib, prev, v, done)
+    case System.cmd(broker, ["status"], stderr_to_stdout: true) do
+      {text, 0} when opts.no_restart ->
+        flipped(
+          lib,
+          [prev, v | running(text)],
+          v,
+          done <> "restart skipped (--no-restart); run herdr-live kernel-restart to boot #{v}\n"
+        )
 
-        {_, 2} ->
-          flipped(lib, [prev, v], v, done <> "no running instance, restart skipped\n")
+      {text, 0} ->
+        kernel_restart(broker, lib, [prev, v | running(text)], prev, v, done)
 
-        {text, code} ->
-          {:error, :broker_unreachable,
-           "the broker did not answer status (exit #{code}: #{String.trim(text)}); releases/#{v} is installed, current still points at #{prev}; retry herdr-live update"}
-      end
+      {_, 2} ->
+        flipped(lib, [prev, v], v, done <> "no running instance, restart skipped\n")
+
+      {text, code} ->
+        {:error, :broker_unreachable,
+         "the broker did not answer status (exit #{code}: #{String.trim(text)}); releases/#{v} is installed, current still points at #{prev}; retry herdr-live update"}
+    end
+  end
+
+  @doc false
+  # The release a broker's VMs boot from (its status `vm_argv=` line): pruning keeps it.
+  # A `current/bin/herdr_live` argv is `current` (prev at this point): nothing extra.
+  @spec running(String.t()) :: [String.t()]
+  def running(status) do
+    case Regex.run(~r{^vm_argv=.*/releases/([^/\n]+)/bin/herdr_live start$}m, status) do
+      [_, rel] -> [rel]
+      nil -> []
     end
   end
 
@@ -641,12 +690,12 @@ defmodule HerdrCli.Update do
     end
   end
 
-  defp kernel_restart(broker, lib, prev, v, done) do
+  defp kernel_restart(broker, lib, keep, prev, v, done) do
     vm = [Path.join([lib, "releases", v, "bin/herdr_live"]), "start"]
 
     case System.cmd(broker, ["kernel-restart", "--" | vm], stderr_to_stdout: true) do
       {text, 0} ->
-        with {:error, _, msg} <- flipped(lib, [prev, v], v, done <> "kernel-restart: " <> text) do
+        with {:error, _, msg} <- flipped(lib, keep, v, done <> "kernel-restart: " <> text) do
           {:error, :install_failed, "the instance runs #{v}, but #{msg}"}
         end
 
