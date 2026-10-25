@@ -40,7 +40,8 @@ defmodule HerdrServer.Plugins.ManifestTest do
   @tag :tmp_dir
   test "missing file and parse errors", %{tmp_dir: dir} do
     assert {:error, "plugin_manifest_not_found", _} = Manifest.load(Path.join(dir, "nope"))
-    assert {:error, "plugin_manifest_parse_failed", _} = load_text("id = [", dir)
+    assert {:error, "plugin_manifest_parse_failed", msg} = load_text("id = [", dir)
+    assert msg =~ "line" and not String.contains?(msg, ["invalid_toml", "\n"])
   end
 
   @failures [

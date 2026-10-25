@@ -63,9 +63,13 @@ defmodule HerdrServer.Plugins.Manifest do
   defp decode(text) do
     case Toml.decode(text) do
       {:ok, raw} -> {:ok, raw}
-      {:error, e} -> {:error, "plugin_manifest_parse_failed", inspect(e)}
+      # the decoder's first line, as the config does: a one-line toast and log record
+      {:error, {:invalid_toml, why}} -> {:error, "plugin_manifest_parse_failed", first_line(why)}
+      {:error, e} -> {:error, "plugin_manifest_parse_failed", first_line(e)}
     end
   end
+
+  defp first_line(text), do: text |> String.split("\n", trim: true) |> List.first("")
 
   defp build(raw, file) do
     id =
