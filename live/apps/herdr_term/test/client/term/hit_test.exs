@@ -49,9 +49,15 @@ defmodule HerdrTerm.Client.Term.HitTest do
              route(m(:scroll, :wheel_down, 30, 0))
   end
 
-  test "releases, moves and drags without a grab over a hit are swallowed" do
-    for ev <- [m(:release, :left, 12, 0), m(:move, :none, 12, 0), m(:drag, :left, 12, 0)],
+  test "releases and drags without a grab over a hit are swallowed" do
+    for ev <- [m(:release, :left, 12, 0), m(:drag, :left, 12, 0)],
         do: assert({[], nil} = route(ev))
+  end
+
+  test "a move over a hit passes through (the server clears a link hover)" do
+    {:mouse, mm} = m(:move, :none, 12, 0)
+    ev = {:mouse, %{mm | mods: [:ctrl]}}
+    assert {[^ev], nil} = route(ev)
   end
 
   test "press on a drag hit grabs and emits nothing; drag and drop follow the grab" do

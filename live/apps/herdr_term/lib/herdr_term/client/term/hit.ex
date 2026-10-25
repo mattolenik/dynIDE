@@ -20,7 +20,9 @@ defmodule HerdrTerm.Client.Term.Hit do
       release pass through unchanged until that release, even over a hit (a pane
       selection or a program's mouse drag crossing chrome).
     * Right / middle press emit `:right_click` / `:middle_click`; wheel up / down emit
-      `:scroll_up` / `:scroll_down`; other events over a hit are swallowed.
+      `:scroll_up` / `:scroll_down`. A move over a hit passes through unchanged (outside
+      every pane the server only uses it to clear a link hover); other events over a hit
+      are swallowed.
     * Other events over no hit pass through unchanged.
   """
 
@@ -54,6 +56,7 @@ defmodule HerdrTerm.Client.Term.Hit do
     case Enum.find(hits, &inside?(&1.rect, m.x, m.y)) do
       nil when m.kind == :press and m.button == :left -> {[ev], :pass}
       nil -> {[ev], grab}
+      _hit when m.kind == :move -> {[ev], grab}
       hit -> over(hit, m, release(grab), now)
     end
   end
