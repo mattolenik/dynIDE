@@ -286,6 +286,25 @@ Off by default. It adds about a second per save, so it is for risky edits.
 - Cost, measured on `view.ex` (n=5): save to "tests passed" median 861 ms, save to loaded
   median 981 ms (results/m7.md, Task 6 bench `bench/reload/test_gate_bench.exs`), against about 190 ms without the gate (results/m6-gate.md).
 
+## Agent detection manifests
+
+Detection rules are TOML manifests, one per agent label. Bundled ones live in
+`live/apps/herdr_server/priv/detect/manifests/`; a file with the same label in
+`<config dir>/agent-detection/` (next to `config.toml`) overrides it.
+
+1. Copy a bundled manifest to the override dir:
+   `mkdir -p ~/.config/herdr-live/agent-detection && cp live/apps/herdr_server/priv/detect/manifests/claude.toml ~/.config/herdr-live/agent-detection/`.
+2. Edit it and save. The watcher reloads manifests within about a second, no restart.
+3. Check the result: `"$HERDR_LIVE_BIN" agent explain <pane>` shows the state, the matching
+   rule, its region and evidence, and the manifest source. To test against a captured screen:
+   `"$HERDR_LIVE_BIN" agent explain --file screen.txt --agent claude`.
+   `agent read <pane> --lines N` shows what the engine reads.
+
+A broken override is ignored with a warning in `explain` and the bundled manifest keeps
+driving detection. Editing the bundled manifests in a dev checkout hot-reloads the same
+way. `herdr-live server agent-manifests` lists what is loaded and
+`server reload-agent-manifests` forces a reload.
+
 ## Driving herdr-live from a pane
 
 The launcher exports `HERDR_LIVE_BIN` (absolute path of `live/bin/herdr-live`) and
@@ -305,7 +324,7 @@ JSON on stderr with exit 1, usage errors exit 2.
   `title set|clear`, `popup close`, `worktree list|create|open|remove` (remove asks
   nothing over the API; `--force` for a dirty checkout; the branch is never deleted).
   `herdr-live completion bash|zsh|fish` prints a completion script.
-- `agent ...` answers `not_available` until M11 detection.
+- M11: `agent list|get|read|explain|wait|prompt|send-keys` (see "Agent detection manifests").
 
 Every verb, param and error: [api.md](api.md). `herdr-live help` lists the verbs.
 `python3 live/scripts/tty_harness.py agent` (in `just live-check`) runs this loop.

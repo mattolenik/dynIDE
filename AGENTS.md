@@ -83,6 +83,13 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   User config is herdr's TOML format at
   `${XDG_CONFIG_HOME:-~/.config}/herdr-live/config.toml` (`$HERDR_LIVE_CONFIG`
   overrides), reloaded with `prefix R`.
+- Agent detection (M11): `HerdrServer.Detect.*` (Manifests, Regions, Engine,
+  Identify, Tracker, Poller, Watcher). Bundled manifests (herdr's, verbatim) are
+  in `live/apps/herdr_server/priv/detect/manifests`; local overrides in
+  `<config dir>/agent-detection/<label>.toml` win; the watcher reloads on save.
+  CLI: `herdr-live agent list|get|read|explain|wait|prompt|send-keys`,
+  `server agent-manifests|reload-agent-manifests`,
+  `pane report-agent|release-agent`. See `docs/herdr-live/results/m11.md`.
 - Modules live under the app root module: design `Native.Vt` is
   `HerdrServer.Native.Vt`, `Client.Term.Input` is `HerdrTerm.Client.Term.Input`.
 - NIF crates: `live/native/herdr_kernel` (NIF module `HerdrServer.Native`,
@@ -163,9 +170,9 @@ Elixir NIF module, and a facade function in the `Native.*` module it belongs to.
   `src/platform/` is in the `herdr-reference` tag); Elixir core has no OS branches.
 - **Detection is evidence-based.** Match explicit AND/OR gates over the
   bottom-buffer detection source, never whole-pane incidental text or the
-  user-scrollable viewport. The reference manifest hot-reload loop
-  (`herdr agent read`/`explain`, `src/detect/manifests/`) is in the
-  `herdr-reference` tag.
+  user-scrollable viewport. Live loop: `Detect.*` and the manifests above,
+  `herdr-live agent read`/`explain` (docs/herdr-live/editing-live.md "Agent
+  detection manifests"). The reference loop is in the `herdr-reference` tag.
 - **UI patterns are reused.** Mouse-first. New dialogs and flows reuse the
   existing chrome roles and interaction patterns instead of one-off screens.
 - **Multiplicative performance paths.** Work reachable from damage handling,
