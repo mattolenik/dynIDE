@@ -58,7 +58,7 @@ pass.
 
 | # | Step | herdr does | Result |
 |---|---|---|---|
-| C1 | `cat /tmp/m9-seq.txt`, `ctrl-b [` | Copy cursor (accent, bold, inverse cell) at the terminal cursor. | [ ] pass  [ ] fail |
+| C1 | `cat /tmp/m9-seq.txt`, `ctrl-b [` | Copy cursor (accent, bold, inverse cell) at the terminal cursor. The keybinds modal (`ctrl-b ?`) lists `copy mode` / `prefix+[` under panes. | [ ] pass  [ ] fail |
 | C2 | `h j k l`, arrows, `C-u C-d`, `C-b C-f`, PageUp/PageDown, `g`, `G`, `0`, `$`, `^` | Cursor moves as in herdr/vi; the viewport follows to keep it visible; `g` goes to the top of history. | [ ] pass  [ ] fail |
 | C3 | `w b e W B E`, `{ }` on a few lines of prose (`man ls`, then `q`, then scroll) | Word motions over whitespace/separator/word classes; `{ }` to the nearest blank row. | [ ] pass  [ ] fail |
 | C4 | `v`, move, `y` | Character selection shown; `y` copies and exits; scroll returns to where you entered (or to the bottom if you entered there). Paste elsewhere: the text. | [ ] pass  [ ] fail |
@@ -73,7 +73,7 @@ pass.
 
 | # | Step | herdr does | Result |
 |---|---|---|---|
-| D1 | `echo 'see https://example.com/a_(b) and (https://example.com/x).'`; hold Ctrl and move over each URL **[human judges hover feel]** | Underline under the URL while Ctrl is held and the pointer is on it (balanced `)` kept, trailing `).` not); any other mouse event clears it. | [ ] pass  [ ] fail |
+| D1 | `echo 'see https://example.com/a_(b) and (https://example.com/x).'`; hold Ctrl and move over each URL **[human judges hover feel]** | Underline under the URL while Ctrl is held and the pointer is on it (balanced `)` kept, trailing `).` not); any other mouse event clears it, including a Ctrl+move straight from the URL onto the sidebar or tab bar. | [ ] pass  [ ] fail |
 | D2 | Ctrl+click the URL | Opens in the default browser on this machine (`open` / `xdg-open`). The click is not passed to the shell. | [ ] pass  [ ] fail |
 | D3 | OSC 8 link: `printf '\e]8;;https://example.com/osc8\e\\osc8 link\e]8;;\e\\\n'`; Ctrl+hover, Ctrl+click | Hover underlines the run; Ctrl+click opens `https://example.com/osc8`. | [ ] pass  [ ] fail |
 | D4 | Unsafe link: `printf '\e]8;;file:///etc/passwd\e\\file link\e]8;;\e\\\n'`; Ctrl+click | Never opened (only http/https). | [ ] pass  [ ] fail |
