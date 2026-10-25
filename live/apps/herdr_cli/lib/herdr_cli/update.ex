@@ -831,9 +831,9 @@ defmodule HerdrCli.Update do
   end
 
   @doc false
-  # The release dirs some process has in its argv (`.../herdr-live/releases/<n>/`: brokers have its bin/herdr_live, VMs its erts; any
-  # prefix, so a symlinked spelling of this one still counts; another prefix's same version
-  # only keeps one extra dir).
+  # The release dirs some process has in its argv (`.../herdr-live/releases/<n>/`: a broker
+  # has its bin/herdr_live, a VM its erts; any prefix, so a symlinked spelling of this one
+  # still counts; another prefix's same version only keeps one extra dir).
   @spec in_use(String.t(), [String.t()]) :: [String.t()]
   def in_use(ps, names),
     do: Enum.filter(names, &String.contains?(ps, "herdr-live/releases/#{&1}/"))
