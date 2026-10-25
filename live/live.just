@@ -66,6 +66,11 @@ live-bench-fidelity:
     python3 '{{live_dir}}/bench/fidelity/fidelity.py'
     python3 '{{live_dir}}/bench/fidelity/reflow.py'
 
+# M10 exit evidence: kitty placements per pane against herdr in a real pty (PASS/FAIL per step)
+live-bench-graphics:
+    cd '{{live_dir}}' && mix compile
+    python3 '{{live_dir}}/bench/graphics/graphics.py'
+
 # OS-only scheduler-stall floor (M6 gate): BEAM probe next to 15 pty cats, no herdr code
 live-bench-os-floor:
     '{{live_dir}}/bench/gate/os_floor.sh'
