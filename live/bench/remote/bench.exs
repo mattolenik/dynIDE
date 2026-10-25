@@ -61,7 +61,11 @@ defmodule RemoteBench do
   def cli(b, args) do
     {out, st} =
       System.cmd(Path.join(@live, "bin/herdr-live"), args,
-        env: [{"HERDR_LIVE_API", Path.join(b.root, "ctl.sock")}, {"PATH", D.path()}],
+        env: [
+          {"HERDR_LIVE_API", Path.join(b.root, "ctl.sock")},
+          {"HERDR_LIVE_STATE_DIR", Path.join(b.root, "state")},
+          {"PATH", D.path()}
+        ],
         stderr_to_stdout: true
       )
 
@@ -115,6 +119,7 @@ defmodule RemoteBench do
         args: pre ++ opts ++ [host, bin, "attach-relay"],
         env: [
           {~c"HERDR_LIVE_API", String.to_charlist(Path.join(b.root, "ctl.sock"))},
+          {~c"HERDR_LIVE_STATE_DIR", String.to_charlist(Path.join(b.root, "state"))},
           {~c"PATH", String.to_charlist(D.path())}
         ]
       ])
