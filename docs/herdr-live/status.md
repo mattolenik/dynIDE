@@ -173,3 +173,7 @@ what it costs if wrong.
   `mix test` on a scratch branch before they fast-forward into herdr-live,
   and every SPEC_PUBLISHED hand-back must state a full umbrella run on the
   exact commit. Cost if wrong: a few minutes per contract.
+  Amended 2026-10-25: the scratch check also runs `mix format
+  --check-formatted` and `mix credo --strict` (M17's pane-layer commit
+  passed the tests and failed credo on herdr-live; fixed by the coordinator
+  in 0199c209).
