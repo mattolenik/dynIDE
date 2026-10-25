@@ -4,9 +4,11 @@ defmodule HerdrServer.App.Modal.Keybinds do
   herdr-live's editing. State `%{kind: :keybinds, selected, filter: TextField.t(),
   filtering, capture, capturing, after_prefix, error}`.
 
-  The list groups `Keybinds.Catalog` actions under `:text` headings; each action is an
-  `:item {:action, name}` with one `:keycap` per binding (`ui.keybinds`), or a muted
-  `:text` `"unset"`. `/` focuses the filter field (an `:input`; typing narrows by action
+  The list groups `Keybinds.Catalog` actions under `:text` headings, then the
+  `[[keys.command]]` entries (`ui.custom_commands`) under `custom` as
+  `{:action, "keys.command[<i>]"}` labelled by their description (else `custom command`);
+  each action is an `:item {:action, name}` with one `:keycap` per binding (`ui.keybinds`),
+  or a muted `:text` `"unset"`. Custom commands are bound in the config file, not here. `/` focuses the filter field (an `:input`; typing narrows by action
   name, label or shortcut; Enter or Down keeps the filter, Esc clears it). j / k / Up /
   Down move the selection, PgUp / PgDn by 10; the list scrolls to keep it visible.
 
@@ -22,6 +24,7 @@ defmodule HerdrServer.App.Modal.Keybinds do
   @behaviour HerdrServer.App.Modal.Kind
 
   alias HerdrScene.Scene.Node
+  alias HerdrServer.App.CustomCommands
   alias HerdrServer.App.Keybinds, as: KB
   alias HerdrServer.App.Keybinds.Catalog
   alias HerdrServer.App.Modal
@@ -94,7 +97,7 @@ defmodule HerdrServer.App.Modal.Keybinds do
     rect = V.panel(size, 76, 22)
     rows = max(V.inner_rows(rect) - 5, 0)
     entries = entries(m, app)
-    {lines, at} = lines(entries, m.selected, app.ui.keybinds)
+    {lines, at} = lines(entries, m.selected)
 
     filter =
       cond do
@@ -118,6 +121,7 @@ defmodule HerdrServer.App.Modal.Keybinds do
   defp start(m, app) do
     case Enum.at(entries(m, app), m.selected) do
       nil -> m
+      %{custom: true} -> %{m | error: "custom commands are bound in config.toml"}
       e -> %{m | capture: true, capturing: e.action, after_prefix: false, error: nil}
     end
   end
@@ -176,11 +180,33 @@ defmodule HerdrServer.App.Modal.Keybinds do
 
   defp entries(m, app) do
     q = String.downcase(String.trim(m.filter.text))
-    cfg = KB.to_config(app.ui.keybinds)
+    kb = app.ui.keybinds
+    cfg = KB.to_config(kb)
 
-    Enum.filter(Catalog.entries(), fn e ->
+    catalog =
+      for e <- Catalog.entries(),
+          do: %{
+            action: e.action,
+            group: e.group,
+            label: Catalog.label(e.action),
+            specs: cfg[e.action],
+            custom: false
+          }
+
+    custom =
+      for {c, i} <- Enum.with_index(app.ui.custom_commands) do
+        %{
+          action: "keys.command[#{i}]",
+          group: "custom",
+          label: c.description || "custom command",
+          specs: KB.specs(kb, {CustomCommands, :run, [i]}),
+          custom: true
+        }
+      end
+
+    Enum.filter(catalog ++ custom, fn e ->
       q == "" or
-        Enum.any?([e.action, Catalog.label(e.action) | cfg[e.action]], &String.contains?(&1, q))
+        Enum.any?([e.action, String.downcase(e.label) | e.specs], &String.contains?(&1, q))
     end)
   end
 
@@ -190,11 +216,9 @@ defmodule HerdrServer.App.Modal.Keybinds do
   end
 
   # headings and items, plus the line index of the selected item
-  defp lines([], _selected, _kb), do: {[V.text(:empty, "no matching keybinds", :muted)], 0}
+  defp lines([], _selected), do: {[V.text(:empty, "no matching keybinds", :muted)], 0}
 
-  defp lines(entries, selected, kb) do
-    cfg = KB.to_config(kb)
-
+  defp lines(entries, selected) do
     {lines, at, _, _} =
       entries
       |> Enum.with_index()
@@ -205,15 +229,15 @@ defmodule HerdrServer.App.Modal.Keybinds do
             else: {[V.text({:group, e.group}, e.group, :accent) | acc], n + 1}
 
         at = if i == selected, do: n, else: at
-        {[item(e, i == selected, cfg[e.action]) | acc], at, e.group, n + 1}
+        {[item(e, i == selected) | acc], at, e.group, n + 1}
       end)
 
     {Enum.reverse(lines), at}
   end
 
-  defp item(e, selected, specs) do
+  defp item(e, selected) do
     caps =
-      specs
+      e.specs
       |> Enum.with_index()
       |> Enum.map(fn {s, i} ->
         {:ok, parsed} = Keys.parse(s)
@@ -223,7 +247,7 @@ defmodule HerdrServer.App.Modal.Keybinds do
     %Node{
       role: :item,
       id: {:action, e.action},
-      text: Catalog.label(e.action),
+      text: e.label,
       props: %{selected: selected},
       children: if(caps == [], do: [V.text(:unset, "unset", :muted)], else: caps)
     }

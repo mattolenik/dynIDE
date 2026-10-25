@@ -10,7 +10,8 @@ defmodule HerdrServer.App.Actions do
   `{:mouse, id, event}` (coordinates pane-relative), `{:paste, id, binary}`,
   `{:focus_report, id, boolean}`, `{:notice, %{level, text}}`, `{:detach}`,
   `{:reload_config}`, `{:config_diagnostics, [binary]}`, `{:alert, alert}` (`App.Alerts`),
-  `{:worktree, op, args}` (git off the Store, `App.Worktrees`).
+  `{:worktree, op, args}` (git off the Store, `App.Worktrees`), `{:custom_command, cmd, env,
+  cwd}` (a shell command off the Store, `App.CustomCommands`).
 
   Config (`HerdrServer.Config`): `init/2` and the server-internal `{:config_loaded, cfg}`
   put the file over the ui (keybinds are always `Keybinds.default/0` plus the file); a

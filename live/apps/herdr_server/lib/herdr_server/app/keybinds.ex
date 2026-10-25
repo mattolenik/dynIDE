@@ -148,7 +148,7 @@ defmodule HerdrServer.App.Keybinds do
     end
   end
 
-  @doc "`bind/3` for an `{M, F, A}` outside the catalog (a plugin action's keybind)."
+  @doc "`bind/3` for an `{M, F, A}` outside the catalog (a plugin action's keybind, a custom command)."
   @spec bind_mfa(t(), mfa_t(), [binary()]) :: {:ok, t()} | {:error, binary()}
   def bind_mfa(kb, mfa, specs) do
     with {:ok, parsed} <- parse_all(specs),
@@ -180,7 +180,9 @@ defmodule HerdrServer.App.Keybinds do
 
   defp unbind(table, mfa), do: Map.reject(table, fn {_, v} -> v == mfa end)
 
-  defp specs(kb, mfa) do
+  @doc "The specs bound to `mfa`, prefix ones first."
+  @spec specs(t(), mfa_t()) :: [binary()]
+  def specs(kb, mfa) do
     for({k, ^mfa} <- kb.prefix_binds, do: spec(true, k)) ++
       for({k, ^mfa} <- kb.direct, do: spec(false, k))
   end

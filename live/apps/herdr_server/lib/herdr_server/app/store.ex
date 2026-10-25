@@ -619,6 +619,26 @@ defmodule HerdrServer.App.Store do
     end)
   end
 
+  # `[[keys.command]]` type shell (App.CustomCommands); nothing here is editable code
+  # ponytail: a long-running command keeps one Task alive until it exits; no timeout or
+  # kill, add one (Port + os_pid) if commands that never exit show up
+  defp io({:custom_command, cmd, env, cwd}, _origin) do
+    Task.Supervisor.start_child(tasks(), fn ->
+      opts = [env: env, stderr_to_stdout: true]
+      opts = if is_binary(cwd) and File.dir?(cwd), do: [cd: cwd] ++ opts, else: opts
+
+      case System.cmd("/bin/sh", ["-c", cmd], opts) do
+        {_, 0} ->
+          :ok
+
+        {out, code} ->
+          Logger.warning(
+            "custom command exited #{code}: #{inspect(cmd)}: #{binary_part(out, 0, min(byte_size(out), 200))}"
+          )
+      end
+    end)
+  end
+
   defp io(other, _), do: Logger.warning("unknown effect #{inspect(other)}")
 
   defp notice(_origin, nil), do: :ok

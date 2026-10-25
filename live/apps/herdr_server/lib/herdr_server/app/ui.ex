@@ -3,7 +3,8 @@ defmodule HerdrServer.App.Ui do
   UI configuration carried in app state, with herdr's defaults: sidebar geometry
   (`width` clamped to `min..max` while expanded, `split` the spaces/agents ratio, the
   lists' scroll `spaces_offset` / `agents_offset`), tab bar
-  position, theme names, agent state indicators, confirmations, toast and sound delivery, `pane_borders` (`Layout.borders/3`).
+  position, theme names, agent state indicators, confirmations, toast and sound delivery, `pane_borders` (`Layout.borders/3`),
+  `custom_commands` (`[[keys.command]]`, plain maps; `App.CustomCommands`).
   Older apps get the new keys from `App.Upgrade.app/1`.
   """
 
@@ -34,7 +35,8 @@ defmodule HerdrServer.App.Ui do
     sound: %{enabled: true, command: nil},
     prompt_new_tab_name: true,
     pane_borders: :auto,
-    window_title: "{hostname}: {workspace}"
+    window_title: "{hostname}: {workspace}",
+    custom_commands: []
   ]
 
   @type t :: %__MODULE__{
@@ -59,6 +61,7 @@ defmodule HerdrServer.App.Ui do
           sound: %{enabled: boolean(), command: binary() | nil},
           prompt_new_tab_name: boolean(),
           pane_borders: :auto | :always | :off,
-          window_title: binary()
+          window_title: binary(),
+          custom_commands: [HerdrServer.App.CustomCommands.entry()]
         }
 end

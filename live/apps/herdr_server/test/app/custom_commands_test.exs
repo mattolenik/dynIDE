@@ -1,0 +1,195 @@
+defmodule HerdrServer.App.CustomCommandsTest do
+  # the Store test reads :config_path; the app env is global
+  use ExUnit.Case, async: false
+  @moduletag :capture_log
+  @moduletag :tmp_dir
+
+  alias HerdrScene.Scene.Node
+  alias HerdrServer.Api.{Ids, SocketPath}
+  alias HerdrServer.App.{Actions, CustomCommands, Keybinds, Modal, Store, Ui}
+  alias HerdrServer.App.Modal.Keybinds, as: KeybindsModal
+  alias HerdrServer.Config
+  alias HerdrServer.Kernel.Fake.{Keeper, Pty}
+  alias HerdrServer.Pane.Rows
+
+  @size %{cols: 120, rows: 40}
+
+  defp load(dir, toml) do
+    path = Path.join(dir, "config.toml")
+    File.write!(path, toml)
+    Config.load(path)
+  end
+
+  defp apply_cfg(cfg),
+    do: Config.apply(cfg, Keybinds.default(), %Ui{keybinds: Keybinds.default()})
+
+  defp app_with(dir, toml) do
+    {kb, ui, diags} = apply_cfg(load(dir, toml))
+    app = elem(Actions.init(@size), 0)
+    {%{app | ui: %{ui | keybinds: kb}}, diags}
+  end
+
+  test "keys.command parses, binds and reports bad entries", %{tmp_dir: dir} do
+    toml = """
+    [keys]
+    prefix = "ctrl+a"
+
+    [[keys.command]]
+    key = "prefix+g"
+    command = "lazygit"
+    type = "pane"
+    description = "git"
+
+    [[keys.command]]
+    key = "alt+e"
+    command = "echo hi"
+    width = 40
+
+    [[keys.command]]
+    key = "prefix+y"
+    command = "  "
+
+    [[keys.command]]
+    key = "prefix+u"
+    command = "x"
+    type = "nope"
+
+    [[keys.command]]
+    key = "ctrl+a"
+    command = "x"
+
+    [[keys.command]]
+    key = "prefix+ctrl+a"
+    command = "x"
+
+    [[keys.command]]
+    key = "prefix+p"
+    command = "x"
+    type = "popup"
+    width = "50%"
+    """
+
+    {kb, ui, diags} = apply_cfg(load(dir, toml))
+
+    assert [
+             %{key: "prefix+g", command: "lazygit", type: "pane", description: "git"},
+             %{key: "alt+e", type: "shell", description: nil, width: nil},
+             %{key: "prefix+p", type: "popup", width: "50%", height: nil}
+           ] = ui.custom_commands
+
+    assert Keybinds.lookup(kb, :prefix, {"g", []}) == {CustomCommands, :run, [0]}
+    assert Keybinds.lookup(kb, :terminal, {"e", [:alt]}) == {CustomCommands, :run, [1]}
+    assert Keybinds.lookup(kb, :prefix, {"p", []}) == {CustomCommands, :run, [2]}
+
+    assert diags == [
+             "config: keys.command[1]: width and height apply only to popup commands; ignored",
+             "config: keys.command[2]: empty command",
+             "config: keys.command[3]: unknown type \"nope\"",
+             "config: keys.command[4].key: ctrl+a is the prefix",
+             "config: keys.command[5].key: prefix+ctrl+a is the prefix"
+           ]
+
+    # a file without commands clears them
+    {_kb, ui, []} = Config.apply(load(dir, ""), kb, ui)
+    assert ui.custom_commands == []
+  end
+
+  test "the keybinds help lists custom commands under custom", %{tmp_dir: dir} do
+    toml = """
+    [[keys.command]]
+    key = "prefix+g"
+    command = "lazygit"
+    description = "git ui"
+
+    [[keys.command]]
+    key = "prefix+e"
+    command = "echo"
+    """
+
+    {app, []} = app_with(dir, toml)
+    {app, []} = KeybindsModal.open(app)
+    {app, _} = Actions.apply(app, HerdrScene.Event.key("/"))
+
+    app =
+      Enum.reduce(String.graphemes("command["), app, fn c, app ->
+        elem(Actions.apply(app, HerdrScene.Event.key(c)), 0)
+      end)
+
+    list = Node.find(Modal.view(app, app.session.size), [:list]).children
+    assert [%{role: :text, text: "custom"} | items] = list
+    assert [%{text: "git ui", children: [g]}, %{text: "custom command"}] = items
+    assert g.text == "prefix+g"
+  end
+
+  test "shell: the effect carries the command env", %{tmp_dir: dir} do
+    {app, []} = app_with(dir, "[[keys.command]]\nkey = \"prefix+g\"\ncommand = \"echo hi\"\n")
+    assert {^app, [{:custom_command, "echo hi", env, nil}]} = CustomCommands.run(app, 0)
+    env = Map.new(env)
+    assert env["HERDR_ACTIVE_WORKSPACE_ID"] == "w1"
+    assert env["HERDR_ACTIVE_TAB_ID"] == Ids.tab(1, 1)
+    assert env["HERDR_ACTIVE_PANE_ID"] == "p1"
+    assert env["HERDR_LIVE_API"] == SocketPath.path()
+    refute Map.has_key?(env, "HERDR_ACTIVE_PANE_CWD")
+  end
+
+  test "pane, plugin_action and popup", %{tmp_dir: dir} do
+    toml = """
+    [[keys.command]]
+    key = "prefix+g"
+    command = "lazygit"
+    type = "pane"
+
+    [[keys.command]]
+    key = "prefix+y"
+    command = "demo.act"
+    type = "plugin_action"
+
+    [[keys.command]]
+    key = "prefix+u"
+    command = "x"
+    type = "popup"
+    """
+
+    {app, []} = app_with(dir, toml)
+
+    {app2, [{:spawn, 2, _size, opts}]} = CustomCommands.run(app, 0)
+    assert %{cmd: "/bin/sh", args: ["-c", "lazygit"], env: [_ | _]} = opts
+    assert app2.focus.pane == 2
+
+    assert CustomCommands.run(app, 1) ==
+             {app, [{:plugin, {:invoke, "demo.act", %{source: "keybinding"}}}]}
+
+    assert {^app, [{:notice, %{level: :warning}}]} = CustomCommands.run(app, 2)
+    assert {^app, [{:notice, _}]} = CustomCommands.run(app, 9)
+  end
+
+  test "the Store runs a shell command in the focused pane's cwd", %{tmp_dir: dir} do
+    saved = Application.get_env(:herdr_server, :config_path)
+    path = Path.join(dir, "config.toml")
+    Application.put_env(:herdr_server, :config_path, path)
+
+    on_exit(fn ->
+      Application.put_env(:herdr_server, :config_path, saved)
+      Store.reset()
+    end)
+
+    File.write!(path, """
+    onboarding = false
+    [[keys.command]]
+    key = "prefix+g"
+    command = "touch \\"$HERDR_ACTIVE_PANE_CWD/ran\\""
+    """)
+
+    Store.reset()
+    :ok = Store.event({:resize, @size}, @size)
+    pane = Store.snapshot().focus.pane
+    {:ok, %{pty: pty}} = Keeper.lookup(Rows.kernel_id(pane))
+    work = Path.join(dir, "work")
+    File.mkdir_p!(work)
+    :ok = Pty.set_cwd(pty, work)
+
+    :ok = Store.run({CustomCommands, :run, [0]}, @size)
+    ran = Path.join(work, "ran")
+    assert Enum.any?(1..50, fn _ -> File.exists?(ran) or (Process.sleep(20) && false) end)
+  end
+end

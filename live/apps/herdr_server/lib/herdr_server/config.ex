@@ -25,9 +25,17 @@ defmodule HerdrServer.Config do
   `[ui.toast]` `delivery`
   (`off | herdr | terminal | system`), `delay_seconds` (0..3600); `[theme]` `name`,
   `auto_switch`, `light_name`, `dark_name`; top-level `onboarding`.
+
+  `[[keys.command]]` (herdr's custom commands): `key` (a spec), `command`, `type`
+  (`shell`, the default, | `pane` | `popup` | `plugin_action`), optional `description`,
+  and `width` / `height` for popups. Each valid entry lands in `ui.custom_commands` (plain
+  maps, replaced on every apply) and binds its key to `{App.CustomCommands, :run, [index]}`.
+  An empty command, an unknown type, a bad key or the prefix key drops the entry with one
+  diagnostic; width or height on another type is ignored with one.
   """
 
-  alias HerdrServer.App.{Keybinds, Ui}
+  alias HerdrServer.App.{CustomCommands, Keybinds, Ui}
+  alias HerdrServer.Config.Keys, as: Spec
   alias HerdrServer.Plugins.Keybind
 
   @type t :: %{
@@ -127,7 +135,9 @@ defmodule HerdrServer.Config do
   @doc "Puts `cfg` over `kb` and `ui`: `{kb, ui, load diagnostics ++ apply diagnostics}`."
   @spec apply(t, Keybinds.t(), Ui.t(), keyword) :: {Keybinds.t(), Ui.t(), [binary]}
   def apply(cfg, kb, ui, opts \\ []) do
-    {kb, kd} = keys(cfg.keys, kb)
+    {kb, kd} = keys(Map.delete(cfg.keys, "command"), kb)
+    {kb, cmds, cd} = commands(Map.get(cfg.keys, "command", []), kb)
+    kd = kd ++ cd
 
     {new, ud} =
       Enum.reduce(@fields, {ui, []}, fn {table, keys, kind, at}, {ui, d} ->
@@ -151,8 +161,61 @@ defmodule HerdrServer.Config do
           {new, ud}
       end
 
-    {kb, %{new | onboarding: cfg.onboarding}, cfg.diagnostics ++ kd ++ ud}
+    {kb, %{new | onboarding: cfg.onboarding, custom_commands: cmds}, cfg.diagnostics ++ kd ++ ud}
   end
+
+  @types ~w(shell pane popup plugin_action)
+
+  defp commands(list, kb) when is_list(list) do
+    {kb, cmds, d} =
+      list
+      |> Enum.with_index()
+      |> Enum.reduce({kb, [], []}, fn {t, i}, acc -> command(t, "keys.command[#{i}]", acc) end)
+
+    {kb, Enum.reverse(cmds), d}
+  end
+
+  defp commands(_other, kb), do: {kb, [], ["config: keys.command must be an array of tables"]}
+
+  defp command(%{} = t, name, {kb, cmds, d}) do
+    type = Map.get(t, "type", "shell")
+    cmd = t["command"]
+    key = t["key"]
+
+    with {:cmd, true} <- {:cmd, is_binary(cmd) and String.trim(cmd) != ""},
+         {:type, true} <- {:type, type in @types},
+         {:ok, %{key: k, mods: m}} <- Spec.parse(key),
+         {:prefix, false} <- {:prefix, Keybinds.prefix?(kb, {k, m})},
+         {:ok, kb} <- Keybinds.bind_mfa(kb, {CustomCommands, :run, [length(cmds)]}, [key]) do
+      sized = Map.has_key?(t, "width") or Map.has_key?(t, "height")
+      popup = type == "popup"
+      desc = t["description"]
+
+      entry = %{
+        key: key,
+        command: cmd,
+        type: type,
+        description: if(is_binary(desc) and desc != "", do: desc),
+        width: if(popup, do: t["width"]),
+        height: if(popup, do: t["height"])
+      }
+
+      d =
+        if sized and not popup,
+          do: d ++ ["config: #{name}: width and height apply only to popup commands; ignored"],
+          else: d
+
+      {kb, [entry | cmds], d}
+    else
+      {:cmd, _} -> {kb, cmds, d ++ ["config: #{name}: empty command"]}
+      {:type, _} -> {kb, cmds, d ++ ["config: #{name}: unknown type #{inspect(type)}"]}
+      {:prefix, _} -> {kb, cmds, d ++ ["config: #{name}.key: #{key} is the prefix"]}
+      {:error, why} -> {kb, cmds, d ++ ["config: #{name}.key: #{why}"]}
+    end
+  end
+
+  defp command(_other, name, {kb, cmds, d}),
+    do: {kb, cmds, d ++ ["config: #{name}: expected a table"]}
 
   # prefix first: direct binds are checked against it
   defp keys(table, kb) do

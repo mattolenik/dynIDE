@@ -29,6 +29,16 @@ auto_switch = false
 light_name = "catppuccin-latte"
 dark_name = "catppuccin"
 
+# Custom commands go after [keys], one [[keys.command]] table each. type is "shell" (the
+# default, runs in the background), "pane" (runs in a new split) or "plugin_action"; the
+# command sees HERDR_ACTIVE_WORKSPACE_ID, HERDR_ACTIVE_TAB_ID, HERDR_ACTIVE_PANE_ID and
+# HERDR_ACTIVE_PANE_CWD. For example:
+#   [[keys.command]]
+#   key = "prefix+g"
+#   command = "lazygit"
+#   type = "pane"
+#   description = "lazygit"
+
 # Each value is a key string or an array of them; [] unbinds. "prefix+x" means x after the prefix.
 [keys]
 # prefix = ["ctrl+b"]
