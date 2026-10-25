@@ -1133,8 +1133,8 @@ CLI: `herdr-live plugin pane open --plugin ID --entrypoint ID [--placement P] [-
 | `plugin_id` | string | yes | Plugin. |
 | `entrypoint` | string | yes | Pane entrypoint id. |
 | `placement` | `overlay`, `popup`, `split`, `tab` or `zoomed` | no | Where it opens. |
-| `width` | string | no | Width, cells or percent. |
-| `height` | string | no | Height, cells or percent. |
+| `width` | cells (integer) or percent string | no | Popup outer width; default the entry's, else half. |
+| `height` | cells (integer) or percent string | no | Popup outer height; default the entry's, else half. |
 | `workspace_id` | workspace id | no | Workspace; default the focused one. |
 | `target_pane_id` | pane id | no | Pane to split; default the focused pane. |
 | `direction` | `right` or `down` | no | Split direction. |
@@ -1144,9 +1144,9 @@ CLI: `herdr-live plugin pane open --plugin ID --entrypoint ID [--placement P] [-
 
 Result: `pane_info` with `pane` (`pane` object).
 
-Errors: `invalid_params`, `not_found`, `failed`, `not_available`
+Errors: `invalid_params`, `not_found`, `failed`
 
-Runs the entry's command (argv, no shell) as the pane's program, in the plugin root unless `cwd` is given. `split` splits the target pane (`direction` default `right`); `tab`, `overlay` and `zoomed` open a new tab in the workspace (herdr-live has no overlay or zoom). `popup` answers `not_available` until M17. The pane is named after the entry's title. `data.reason` carries herdr's code (`plugin_not_found`, `plugin_pane_not_found`, `plugin_disabled`, `invalid_env`, ...).
+Runs the entry's command (argv, no shell) as the pane's program, in the plugin root unless `cwd` is given. `split` splits the target pane (`direction` default `right`); `tab`, `overlay` and `zoomed` open a new tab in the workspace (herdr-live has no overlay or zoom). `popup` opens the session popup over the active tab (one at a time: another is `failed` with reason `ui_busy`; it closes when its program exits or on `popup.close`), sized by `width` / `height`, else the entry's, else half the pane area; its pane is not in any tab and the result's `tab_id` / `workspace_id` are the active tab's. The pane is named after the entry's title. `data.reason` carries herdr's code (`plugin_not_found`, `plugin_pane_not_found`, `plugin_disabled`, `invalid_env`, `ui_busy`, ...).
 
 ### `plugin.pane.focus`
 

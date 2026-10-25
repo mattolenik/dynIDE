@@ -289,7 +289,7 @@ defmodule HerdrCli.ArgvTest do
                   "entrypoint" => "b",
                   "placement" => "split",
                   "width" => "40%",
-                  "height" => "10",
+                  "height" => 10,
                   "workspace_id" => "w1",
                   "target_pane_id" => "p2",
                   "direction" => "down",

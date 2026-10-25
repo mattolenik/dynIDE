@@ -3,8 +3,11 @@ defmodule HerdrServer.Plugins.PanesTest do
   @moduletag :capture_log
 
   alias HerdrServer.Api.Handlers.Plugins, as: Handler
-  alias HerdrServer.App.{Commands, Store}
+  alias HerdrServer.Api.Handlers.Topology
+  alias HerdrServer.App.{Commands, Modal, Store}
+  alias HerdrServer.App.Modal.Popup
   alias HerdrServer.Kernel.Fake
+  alias HerdrServer.Pane.Rows
   alias HerdrServer.Plugins.{Env, Install}
   alias HerdrServer.Test.PluginDirs
 
@@ -19,6 +22,15 @@ defmodule HerdrServer.Plugins.PanesTest do
   id = "pop"
   title = "Pop"
   placement = "popup"
+  command = ["bash"]
+
+  # herdr-workspace-selector's picker entry
+  [[panes]]
+  id = "picker"
+  title = "\u200B"
+  placement = "popup"
+  width = 64
+  height = "70%"
   command = ["bash"]
 
   [[panes]]
@@ -90,9 +102,59 @@ defmodule HerdrServer.Plugins.PanesTest do
     assert Store.snapshot().focus.pane == 1
   end
 
-  test "popup is not available yet" do
-    assert {:error, :not_available, _, %{requires: "M17 popups"}} =
-             Handler.handle("plugin.pane.open", %{plugin_id: "gh", entrypoint: "pop"})
+  defp pop(extra \\ %{}),
+    do:
+      Handler.handle("plugin.pane.open", Map.merge(%{plugin_id: "gh", entrypoint: "pop"}, extra))
+
+  test "popup opens an M17 popup with no pane identity; its exit pops it" do
+    next = Store.snapshot().session.next_id
+    assert {:ok, %{type: "pane_info", pane: pane}} = pop(%{env: %{"HERDR_PANE_ID" => "p99"}})
+
+    assert %{pane_id: "p#{next}", label: "Pop", focused: true, tab_id: "w1:t1"} ==
+             Map.take(pane, ~w(pane_id label focused tab_id)a)
+
+    assert pane.cols > 0 and pane.rows > 0
+
+    app = Store.snapshot()
+    assert %{kind: :popup, pane: ^next, title: "Pop"} = Modal.top(app)
+    refute Map.has_key?(app.session.panes, next)
+    e = Map.new(Fake.Keeper.last_spec().env)
+    refute Map.has_key?(e, "HERDR_PANE_ID")
+    assert e["HERDR_PLUGIN_ENTRYPOINT_ID"] == "pop"
+    assert {Fake.Keeper.last_spec().cols, Fake.Keeper.last_spec().rows} == {pane.cols, pane.rows}
+
+    # one popup at a time (herdr's ui_busy)
+    assert {:error, :failed, _, %{reason: "ui_busy"}} = pop()
+
+    {:ok, %{pty: pty}} = Fake.Keeper.lookup(Rows.kernel_id(next))
+    Fake.Pty.kill(pty, :term)
+
+    assert Enum.any?(1..100, fn _ ->
+             Store.snapshot().focus.modal == [] or (Process.sleep(10) && false)
+           end)
+  end
+
+  test "popup sizes: the request's, else the entry's (the workspace selector's manifest)" do
+    assert {:ok, %{pane: p}} = pop(%{entrypoint: "picker"})
+    area = Store.snapshot().session.area
+    want = Popup.size(%{width: {:cells, 64}, height: {:percent, 70}}, area).inner
+    assert {p.cols, p.rows} == {want.w, want.h}
+    assert %{title: "\u200B"} = Modal.top(Store.snapshot())
+    {:ok, _} = Topology.handle("popup.close", %{})
+
+    assert {:ok, %{pane: p}} = pop(%{entrypoint: "picker", width: "50%", height: 10})
+    want = Popup.size(%{width: {:percent, 50}, height: {:cells, 10}}, area).inner
+    assert {p.cols, p.rows} == {want.w, want.h}
+  end
+
+  test "popup targets the active pane only and takes herdr's sizes" do
+    for extra <- [%{workspace_id: 1}, %{target_pane_id: 1}, %{direction: "down"}] do
+      assert {:error, :invalid_params, "overlay and popup plugin panes target the active pane", _} =
+               pop(extra)
+    end
+
+    assert {:error, :invalid_params, _, _} = pop(%{width: "120"})
+    assert {:error, :invalid_params, _, _} = open(%{target_pane_id: 1, width: 10})
   end
 
   test "unknown plugin, entrypoint or target pane is not_found" do

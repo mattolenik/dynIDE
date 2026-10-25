@@ -5,12 +5,20 @@ defmodule HerdrServer.Plugins.Panes do
   and builds the launch spec; `open/2` is the `Store.request/1` command that places it.
   `split` splits the target pane; `tab` and `overlay` open a new tab in the target
   workspace, `zoomed` in the target pane's (herdr-live has no overlay or zoom; a tab is the
-  nearest full-area placement). `popup` is not available (M17). The pane's meta carries `:name` (the entry's
+  nearest full-area placement). The pane's meta carries `:name` (the entry's
   title) and `:plugin` (`%{"plugin_id", "entrypoint"}`, plain data); persistence does not
   record `:plugin`, since a restored pane runs `$SHELL`, not the plugin command.
+
+  `popup` (herdr's `open_plugin_popup_pane`) opens `App.Modal.Popup` over the active tab,
+  titled with the entry's title and sized by the request's `width` / `height`, else the
+  entry's (cells or `"N%"`). Like herdr it targets the active pane only (no
+  `workspace_id`, `target_pane_id` or `direction`), refuses while a popup is open
+  (`ui_busy`), runs with no pane identity and closes when its program exits. Its pane
+  is not in `session.panes`, so it is not a `plugin_pane?/2`.
   """
 
   alias HerdrServer.App.Commands
+  alias HerdrServer.App.Modal.Popup
   alias HerdrServer.Plugins.{Command, Context, Env, Manifest, Paths, Registry}
 
   # the Store sets these per pane, last
@@ -25,6 +33,9 @@ defmodule HerdrServer.Plugins.Panes do
          {:ok, entry} <- entry(pl, p.entrypoint),
          placement = p[:placement] || entry["placement"],
          :ok <- placeable(placement, p),
+         :ok <- popup_free(placement, app),
+         {:ok, width} <- popup_size(placement, p[:width] || entry["width"]),
+         {:ok, height} <- popup_size(placement, p[:height] || entry["height"]),
          {:ok, caller} <- caller_env(p[:env] || %{}),
          {:ok, ws, target} <- target(app, placement, p),
          {:ok, [cmd | args]} <- command(entry["command"], pl["plugin_root"]),
@@ -46,6 +57,8 @@ defmodule HerdrServer.Plugins.Panes do
          target_pane: target,
          direction: p[:direction] || "right",
          focus: Map.get(p, :focus, true),
+         width: width,
+         height: height,
          cwd: cwd,
          cmd: cmd,
          args: args,
@@ -62,6 +75,29 @@ defmodule HerdrServer.Plugins.Panes do
 
   @doc "Places the pane `spec` describes; a vanished target changes nothing."
   @spec open(map(), map()) :: {map(), list()}
+  def open(app, %{placement: "popup"} = spec) do
+    id = app.session.next_id
+    app2 = put_in(app.session.next_id, id + 1)
+    size = %{width: spec.width, height: spec.height, title: spec.title}
+
+    case Popup.open(app2, id, size) do
+      {:ok, app2, size} ->
+        opts = %{
+          cwd: spec.cwd,
+          replay: nil,
+          cmd: spec.cmd,
+          args: spec.args,
+          env: spec.env,
+          identity: false
+        }
+
+        {app2, [{:spawn, id, size, opts}]}
+
+      {:error, why} ->
+        {app, [{:notice, %{level: :warning, text: why}}]}
+    end
+  end
+
   def open(app, spec) do
     {app, fx} = place(app, spec)
 
@@ -129,23 +165,26 @@ defmodule HerdrServer.Plugins.Panes do
     end
   end
 
-  defp placeable("popup", _p),
-    do:
-      {:error, :not_available, "popup plugin panes are not served yet", %{requires: "M17 popups"}}
-
-  defp placeable(_placement, p) when is_map_key(p, :width) or is_map_key(p, :height),
-    do:
-      err(
-        :invalid_params,
-        "invalid_params",
-        "width and height are only supported when placement is popup"
-      )
+  defp placeable(placement, p)
+       when placement != "popup" and (is_map_key(p, :width) or is_map_key(p, :height)),
+       do:
+         err(
+           :invalid_params,
+           "invalid_params",
+           "width and height are only supported when placement is popup"
+         )
 
   # herdr's per-placement target params
-  defp placeable("overlay", p)
-       when is_map_key(p, :workspace_id) or is_map_key(p, :target_pane_id) or
-              is_map_key(p, :direction),
-       do: err(:invalid_params, "invalid_params", "overlay plugin panes target the active pane")
+  defp placeable(placement, p)
+       when placement in ["overlay", "popup"] and
+              (is_map_key(p, :workspace_id) or is_map_key(p, :target_pane_id) or
+                 is_map_key(p, :direction)),
+       do:
+         err(
+           :invalid_params,
+           "invalid_params",
+           "overlay and popup plugin panes target the active pane"
+         )
 
   defp placeable(placement, p)
        when placement in ["split", "zoomed"] and is_map_key(p, :workspace_id),
@@ -165,6 +204,24 @@ defmodule HerdrServer.Plugins.Panes do
       )
 
   defp placeable(_placement, _p), do: :ok
+
+  defp popup_free("popup", app) do
+    if Popup.find(app),
+      do: err(:failed, "ui_busy", "a popup pane is already open"),
+      else: :ok
+  end
+
+  defp popup_free(_placement, _app), do: :ok
+
+  # API and manifest sizes are herdr's: integer cells or "N%"
+  defp popup_size("popup", v) do
+    case Popup.parse(v) do
+      {:ok, size} -> {:ok, size}
+      {:error, why} -> err(:invalid_params, "invalid_params", "popup size #{why}")
+    end
+  end
+
+  defp popup_size(_placement, _v), do: {:ok, nil}
 
   defp caller_env(env) do
     bad =

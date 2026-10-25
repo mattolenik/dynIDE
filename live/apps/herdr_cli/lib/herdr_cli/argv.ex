@@ -10,7 +10,7 @@ defmodule HerdrCli.Argv do
   Positional kinds: `{:req, name}`; `{:opt, name}` (a string, may be omitted); `{:pane, name, :required | :optional}` (when
   omitted, `HERDR_PANE_ID` from env, else usage / left out); `{:keys, name}` (one or
   more); `{:rest, name}` (zero or more, left out when none); `{:int, name}`; `{:opt_int, name}`; `{:opt_enum, name, values}`. Option kinds: `:string`,
-  `:int`, `:number`, `:flag`, `{:const, value}` (a flag that sets `value`), `{:enum, values}`,
+  `:int`, `:number`, `:size` (digits as an integer, else the string), `:flag`, `{:const, value}` (a flag that sets `value`), `{:enum, values}`,
   `{:many, values}` (repeatable), `:file` (a path; becomes `{:file, path}` for the caller to read into the param), `{:kv_many}` (repeatable `KEY=VALUE`, collected into a map), `{:clear_many}` (repeatable `KEY`, put in the same map as nil).
   An atom key is consumed by `finish/3` (`:json` is accepted and dropped). A row with
   `alias: true` is another spelling of a command and has no Spec `cli` string of its own.
@@ -579,8 +579,8 @@ defmodule HerdrCli.Argv do
       "plugin" => {"plugin_id", :string},
       "entrypoint" => {"entrypoint", :string},
       "placement" => {"placement", {:enum, ~w(overlay popup split tab zoomed)}},
-      "width" => {"width", :string},
-      "height" => {"height", :string},
+      "width" => {"width", :size},
+      "height" => {"height", :size},
       "workspace" => {"workspace_id", :string},
       "target-pane" => {"target_pane_id", :string},
       "direction" => {"direction", {:enum, ["right", "down"]}},
@@ -903,6 +903,15 @@ defmodule HerdrCli.Argv do
 
   defp convert(_name, {:clear_many}, v), do: {:ok, v}
   defp convert(_name, :string, v), do: {:ok, v}
+
+  # herdr's popup size: digits are cells (a JSON integer), anything else goes as a string
+  defp convert(_name, :size, v) do
+    case Integer.parse(v) do
+      {n, ""} -> {:ok, n}
+      _ -> {:ok, v}
+    end
+  end
+
   defp convert(_name, :file, v), do: {:ok, {:file, v}}
   defp convert(name, :int, v), do: int(v, "--#{name}")
   defp convert(name, {:enum, values}, v), do: enum(v, values, "--#{name}")

@@ -7,7 +7,9 @@ defmodule HerdrServer.Api.Spec do
 
   Param types: `:string | :boolean | {:integer, min, max} | {:number, min, max} |
   {:enum, [String.t()]} | :pane_id | :tab_id | :workspace_id | {:list, type} |
-  {:map, :string | :null_or_string} | :object | {:object, [param]}` (`:object` is any JSON object). A list
+  {:map, :string | :null_or_string} | :object | {:object, [param]} | :popup_size` (`:object` is
+  any JSON object; `:popup_size` is herdr's popup size: an integer cell count 0..65535 or a
+  percentage string `"1%"`..`"100%"`). A list
   param may carry `min_items: n`.
   Result field types add `:integer`, `:object` (opaque JSON object),
   `:null_or_string`, `{:ref, object_name}`.
@@ -1037,8 +1039,8 @@ defmodule HerdrServer.Api.Spec do
           req("plugin_id", :string, "Plugin."),
           req("entrypoint", :string, "Pane entrypoint id."),
           opt("placement", {:enum, ~w(overlay popup split tab zoomed)}, "Where it opens."),
-          opt("width", :string, "Width, cells or percent."),
-          opt("height", :string, "Height, cells or percent."),
+          opt("width", :popup_size, "Popup outer width; default the entry's, else half."),
+          opt("height", :popup_size, "Popup outer height; default the entry's, else half."),
           opt("workspace_id", :workspace_id, "Workspace; default the focused one."),
           opt("target_pane_id", :pane_id, "Pane to split; default the focused pane."),
           opt("direction", {:enum, ["right", "down"]}, "Split direction."),
@@ -1050,16 +1052,20 @@ defmodule HerdrServer.Api.Spec do
         "herdr-live plugin pane open --plugin ID --entrypoint ID [--placement P] [--width S] " <>
           "[--height S] [--workspace ID] [--target-pane PANE] [--direction right|down] " <>
           "[--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus]",
-        [:not_found, :failed, :not_available]
+        [:not_found, :failed]
       )
       |> Map.put(
         :notes,
         "Runs the entry's command (argv, no shell) as the pane's program, in the plugin root " <>
           "unless `cwd` is given. `split` splits the target pane (`direction` default `right`); " <>
           "`tab`, `overlay` and `zoomed` open a new tab in the workspace (herdr-live has no " <>
-          "overlay or zoom). `popup` answers `not_available` until M17. The pane is named " <>
+          "overlay or zoom). `popup` opens the session popup over the active tab (one at a " <>
+          "time: another is `failed` with reason `ui_busy`; it closes when its program " <>
+          "exits or on `popup.close`), sized by `width` / `height`, else the entry's, else " <>
+          "half the pane area; its pane is not in any tab and the result's `tab_id` / " <>
+          "`workspace_id` are the active tab's. The pane is named " <>
           "after the entry's title. `data.reason` carries herdr's code (`plugin_not_found`, " <>
-          "`plugin_pane_not_found`, `plugin_disabled`, `invalid_env`, ...)."
+          "`plugin_pane_not_found`, `plugin_disabled`, `invalid_env`, `ui_busy`, ...)."
       ),
       plugin(
         "pane.focus",
@@ -1462,6 +1468,17 @@ defmodule HerdrServer.Api.Spec do
   defp check(:string, _, full, _), do: bad(full, "a string")
   defp check(:boolean, v, _, _) when is_boolean(v), do: {:ok, v}
   defp check(:boolean, _, full, _), do: bad(full, "a boolean")
+
+  defp check(:popup_size, v, _, _) when is_integer(v) and v in 0..65_535, do: {:ok, v}
+
+  defp check(:popup_size, v, full, _) when is_binary(v) do
+    case Integer.parse(v) do
+      {n, "%"} when n in 1..100 -> {:ok, v}
+      _ -> bad(full, "a number of cells or a percentage like 80%")
+    end
+  end
+
+  defp check(:popup_size, _, full, _), do: bad(full, "a number of cells or a percentage like 80%")
 
   defp check({:integer, min, max}, v, _, _) when is_integer(v) and v >= min and v <= max,
     do: {:ok, v}

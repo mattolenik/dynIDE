@@ -206,6 +206,7 @@ defmodule HerdrServer.Api.Spec.Doc do
   defp type(:pane_id), do: "pane id"
   defp type(:tab_id), do: "tab id"
   defp type(:workspace_id), do: "workspace id"
+  defp type(:popup_size), do: "cells (integer) or percent string"
   defp type({:integer, a, b}), do: "integer #{a}..#{b}"
   defp type({:number, a, b}), do: "number #{a}..#{b}"
   # no "|": the type sits in a markdown table cell

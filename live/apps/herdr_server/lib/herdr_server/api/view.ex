@@ -11,6 +11,7 @@ defmodule HerdrServer.Api.View do
 
   alias HerdrServer.Api.Ids
   alias HerdrServer.App.{Commands, Metadata}
+  alias HerdrServer.App.Modal.Popup
   alias HerdrServer.Layout
 
   @type app :: HerdrServer.App.Actions.app()
@@ -37,6 +38,31 @@ defmodule HerdrServer.Api.View do
       panes: Layout.count(tab.layout),
       focused_pane_id: Ids.pane(tab.layout.focus)
     }
+  end
+
+  @doc """
+  The open popup's pane object (`App.Modal.Popup`), or nil: in no tab, so `tab_id` and
+  `workspace_id` are the active tab's; `label` is the popup's title, `focused` true.
+  """
+  @spec popup(app()) :: map() | nil
+  def popup(app) do
+    with %{pane: id, title: title} <- Popup.find(app),
+         [%{rect: r}] <- Popup.rects(app) do
+      ws = find_workspace(app, app.session.active_workspace)
+
+      %{
+        pane_id: Ids.pane(id),
+        tab_id: Ids.tab(ws.id, ws.active_tab),
+        workspace_id: Ids.workspace(ws.id),
+        title: nil,
+        label: title,
+        focused: true,
+        cols: r.w,
+        rows: r.h
+      }
+    else
+      _ -> nil
+    end
   end
 
   @doc "The pane object, or nil when no tab holds `id`."

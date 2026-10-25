@@ -62,7 +62,10 @@ defmodule HerdrServer.Api.Handlers.Plugins do
       {:ok, before, aft} = Store.request({Panes, :open, [spec]})
       warnings = for {:notice, %{level: :warning, text: t}} <- drain(), do: t
 
-      case {Map.keys(aft.session.panes) -- Map.keys(before.session.panes), warnings} do
+      case {opened(spec, before, aft), warnings} do
+        {{:popup, pane}, []} ->
+          {:ok, %{type: "pane_info", pane: pane}}
+
         {[id | _], []} ->
           {:ok, %{type: "pane_info", pane: View.pane(aft, id)}}
 
@@ -101,6 +104,17 @@ defmodule HerdrServer.Api.Handlers.Plugins do
   end
 
   # the Store's notices to this request's origin (a spawn failure, a pane too small)
+  # the new tiled pane ids, or the popup the request opened
+  defp opened(%{placement: "popup"}, before, aft) do
+    case {View.popup(before), View.popup(aft)} do
+      {old, %{} = new} when old != new -> {:popup, new}
+      _ -> []
+    end
+  end
+
+  defp opened(_spec, before, aft),
+    do: Map.keys(aft.session.panes) -- Map.keys(before.session.panes)
+
   defp drain do
     receive do
       {:notice, _} = n -> [n | drain()]

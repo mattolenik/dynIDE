@@ -24,6 +24,22 @@ defmodule HerdrServer.Api.SpecTest do
                 not_available failed timeout backpressure events_lost internal)a
   end
 
+  test "popup sizes are herdr's: integer cells or a percent string" do
+    base = %{"plugin_id" => "x", "entrypoint" => "p", "placement" => "popup"}
+
+    ok =
+      Spec.validate_params(
+        "plugin.pane.open",
+        Map.merge(base, %{"width" => 64, "height" => "70%"})
+      )
+
+    assert {:ok, %{width: 64, height: "70%"}} = ok
+
+    for bad <- ["120", "0%", "101%", -1, 1.5, true] do
+      assert {:error, _} = Spec.validate_params("plugin.pane.open", Map.put(base, "width", bad))
+    end
+  end
+
   test "validate_params parses ids and rejects unknown keys" do
     assert Spec.validate_params("pane.split", %{"pane_id" => "p2", "direction" => "right"}) ==
              {:ok, %{pane_id: 2, direction: "right"}}
@@ -238,8 +254,8 @@ defmodule HerdrServer.Api.SpecTest do
              "plugin_id" => {:string, true},
              "entrypoint" => {:string, true},
              "placement" => {{:enum, ~w(overlay popup split tab zoomed)}, false},
-             "width" => {:string, false},
-             "height" => {:string, false},
+             "width" => {:popup_size, false},
+             "height" => {:popup_size, false},
              "workspace_id" => {:workspace_id, false},
              "target_pane_id" => {:pane_id, false},
              "direction" => {{:enum, ~w(right down)}, false},
