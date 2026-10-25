@@ -10,9 +10,10 @@ defmodule HerdrServer.Client.Toasts do
     * Otherwise the alert is forwarded whole (the client applies its delivery and sound
       prefs) and, with `ui.toast.delivery` `:herdr`, queued as a toast: newest first,
       at most 8.
-
-  ponytail: no `ui.toast.delay_ms` delay (herdr waits 1 s and re-checks the state);
-  add a timer in the session if flicker from fast transitions shows.
+    * A pane's alert waits `ui.toast.delay_ms` in the session (herdr: 1 s), then
+      `recheck/2` against the current app drops it unless its pane is still in the
+      alert's state (`:done` for a done alert, `:blocked` for an attention one); the
+      check above then runs on the current app too, so toast and sound follow it.
   """
 
   alias HerdrServer.Layout
@@ -41,6 +42,15 @@ defmodule HerdrServer.Client.Toasts do
       true ->
         {nil, toasts}
     end
+  end
+
+  @doc "Whether `alert` still holds in `app`: its pane is still `:done` / `:blocked` (pane-less: true)."
+  @spec recheck(map, map) :: boolean
+  def recheck(%{pane: nil}, _app), do: true
+
+  def recheck(alert, app) do
+    state = (app.session.panes[alert.pane] || %{})[:agent_state]
+    state == if(alert.level == :done, do: :done, else: :blocked)
   end
 
   @doc "A toast's lifetime in ms for `level`: `opts` over 8 s attention / 5 s otherwise."

@@ -1340,6 +1340,29 @@ defmodule HerdrServer.ServerTest do
     assert %{props: %{pane: 1}} = c |> scene_until(&toast/1) |> toast()
   end
 
+  @tag :tmp_dir
+  test "a pane's alert waits ui.toast.delay_ms and drops when its state is gone",
+       %{tmp_dir: dir} do
+    saved = Application.get_env(:herdr_server, :config_path)
+    path = Path.join(dir, "config.toml")
+    File.write!(path, "onboarding = false\n[ui.toast]\ndelay_seconds = 1\n")
+    Application.put_env(:herdr_server, :config_path, path)
+    on_exit(fn -> Application.put_env(:herdr_server, :config_path, saved) end)
+    {c, _s} = client()
+    scene(c)
+    background_pane(c)
+    Store.event_async({:agent_state, 1, :working})
+    Store.event_async({:agent_state, 1, :blocked})
+    refute_receive {^c, {:alert, _}}, 500
+    assert_receive {^c, {:alert, %{level: :attention, pane: 1}}}, 1500
+
+    # blocked, then working again within the delay: no toast, no sound
+    Store.event_async({:agent_state, 1, :working})
+    Store.event_async({:agent_state, 1, :blocked})
+    Store.event_async({:agent_state, 1, :working})
+    refute_receive {^c, {:alert, _}}, 1500
+  end
+
   test "a toast expires" do
     Application.put_env(:herdr_server, :toast_ms, attention: 100, done: 100)
     on_exit(fn -> Application.delete_env(:herdr_server, :toast_ms) end)

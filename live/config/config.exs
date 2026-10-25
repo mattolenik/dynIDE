@@ -103,11 +103,12 @@ config :herdr_term, headless: config_env() == :test, min_frame_interval_ms: 6
 config :herdr_term, colors_window_ms: if(config_env() == :test, do: 1000, else: 5000)
 
 # Config file (M13, HerdrServer.Config): tests read a fresh per-run file with onboarding
-# off (so unrelated tests see no modal); written here because every app's tests start
-# herdr_server, and modal tests may write to it. Tests needing another file set the path.
+# off (so unrelated tests see no modal) and no toast delay; written here because every
+# app's tests start herdr_server, and modal tests may write to it. Tests needing another
+# file set the path.
 if config_env() == :test do
   test_config = Path.join(System.tmp_dir!(), "herdr-live-test-config-#{System.pid()}.toml")
-  File.write!(test_config, "onboarding = false\n")
+  File.write!(test_config, "onboarding = false\n[ui.toast]\ndelay_seconds = 0\n")
   config :herdr_server, :config_path, test_config
 end
 

@@ -46,7 +46,8 @@ defmodule HerdrServer.Client.Session do
   client's override; `hostname` is read once in init.
 
   Alerts (M13): `{:alert, a}` from the Store goes through `Client.Toasts` with the app and
-  this client's last `{:focus, bool}`: forwarded to the client (or not) and queued as a
+  this client's last `{:focus, bool}` (a pane's alert after `ui.toast.delay_ms`, dropped
+  when `Toasts.recheck/2` finds its state gone): forwarded to the client (or not) and queued as a
   toast that expires after 8 s (attention) or 5 s (`config :herdr_server, :toast_ms`);
   a click on `[{:toast, id}]` dismisses it and focuses its pane.
 
@@ -233,6 +234,11 @@ defmodule HerdrServer.Client.Session do
 
   # an agent alert (`App.Alerts`, broadcast by the Store): `Client.Toasts` decides
   def handle_info({:alert, a}, state) do
+    state = Map.merge(%State{}, state)
+    {:noreply, delay(state, a)}
+  end
+
+  def handle_info({:alert_due, a}, state) do
     state = Map.merge(%State{}, state)
     {:noreply, alerted(state, a)}
   end
@@ -578,16 +584,38 @@ defmodule HerdrServer.Client.Session do
     end
   end
 
+  # a pane's alert waits `ui.toast.delay_ms`, then is rechecked against the app of then
+  defp delay(state, %{pane: p} = a) when p != nil do
+    case Store.snapshot().ui.toast.delay_ms do
+      0 ->
+        alerted(state, a)
+
+      ms ->
+        Process.send_after(self(), {:alert_due, a}, ms)
+        state
+    end
+  catch
+    :exit, _ -> state
+  end
+
+  defp delay(state, a), do: alerted(state, a)
+
   defp alerted(state, a) do
     app = Store.snapshot()
     id = System.unique_integer([:positive])
-    args = [state.toasts, a, app, state.focused, id]
+    guard = [scan: false, server: Store.reload_server()]
 
     # a failing policy still lets the client hear the alert
     {fwd, toasts} =
-      case Guard.run_twice(Toasts, :alert, args, scan: false, server: Store.reload_server()) do
-        {:ok, {_, _} = r} -> r
-        _ -> {a, state.toasts}
+      case Guard.run_twice(Toasts, :recheck, [a, app], guard) do
+        {:ok, false} ->
+          {nil, state.toasts}
+
+        _ ->
+          case Guard.run_twice(Toasts, :alert, [state.toasts, a, app, state.focused, id], guard) do
+            {:ok, {_, _} = r} -> r
+            _ -> {a, state.toasts}
+          end
       end
 
     if fwd, do: send(state.client, {:alert, fwd})
