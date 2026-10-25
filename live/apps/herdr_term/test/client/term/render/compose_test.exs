@@ -348,4 +348,23 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
     assert Base.encode16(digest, case: :lower) ==
              "f8ae1a4440151a0d996835a2dedc01f825e92adea18d8a87313185afd905f521"
   end
+
+  defp chrome_roles(nil), do: []
+
+  defp chrome_roles(%Node{role: r, children: ch}),
+    do: [r | Enum.flat_map(ch || [], &chrome_roles/1)]
+
+  test "every role is covered by a fixture" do
+    fixtures = Enum.map(Fixture.names(), &{&1, Fixture.load(&1)})
+
+    roles = fixtures |> Enum.flat_map(fn {_, sc} -> chrome_roles(sc.chrome) end) |> Enum.uniq()
+    assert Enum.sort(roles) == Enum.sort(Scene.roles())
+
+    for {name, sc} <- fixtures do
+      theme = Theme.for_scene(sc.chrome && sc.chrome.props[:theme], :dark)
+      frame = Compose.frame(sc, %{}, theme)
+      assert length(frame) == sc.size.rows, name
+      assert Enum.all?(frame, fn {_, r} -> Cell.cols(r) == sc.size.cols end), name
+    end
+  end
 end
