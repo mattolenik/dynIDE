@@ -55,6 +55,7 @@ defmodule HerdrServer.App.Keybinds do
         {"[", []} => {Keys, :enter_mode, [:copy]},
         {"q", []} => a(:detach),
         {"b", []} => a(:toggle_sidebar),
+        {"z", []} => a(:toggle_zoom),
         {"N", []} => a(:new_workspace),
         {"?", []} => {KeybindsModal, :open, []},
         {"s", []} => {Settings, :open, []},

@@ -133,6 +133,19 @@ defmodule HerdrCli.ArgvTest do
       assert {:usage, _} = p("pane split --direction right --ratio half")
     end
 
+    test "zoom: optional pane (HERDR_PANE_ID), --on / --off, absent toggles" do
+      assert p("pane zoom") == {:call, "pane.zoom", %{}, :json}
+
+      assert p("pane zoom", %{"HERDR_PANE_ID" => "p4"}) ==
+               {:call, "pane.zoom", %{"pane_id" => "p4"}, :json}
+
+      assert p("pane zoom p2 --on") ==
+               {:call, "pane.zoom", %{"pane_id" => "p2", "zoom" => true}, :json}
+
+      assert p("pane zoom --off") == {:call, "pane.zoom", %{"zoom" => false}, :json}
+      assert {:usage, _} = p("pane zoom --on --off")
+    end
+
     test "close, focus, layout, process-info" do
       assert p("pane close p2") == {:call, "pane.close", %{"pane_id" => "p2"}, :json}
       assert p("pane focus p2") == {:call, "pane.focus", %{"pane_id" => "p2"}, :json}

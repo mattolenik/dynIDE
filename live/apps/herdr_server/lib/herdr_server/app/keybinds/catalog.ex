@@ -5,7 +5,7 @@ defmodule HerdrServer.App.Keybinds.Catalog do
   herdr's default specs (`Config.Keys` syntax). Groups in display order: `global`,
   `navigation`, `workspaces / tabs`, `panes`.
 
-  Left out until their targets land: `workspace_picker`, `zoom`, and the indexed
+  Left out until their targets land: `workspace_picker` and the indexed
   `switch_tab` (`prefix+1..9`, kept as defaults but not rebindable here).
   """
 
@@ -53,7 +53,8 @@ defmodule HerdrServer.App.Keybinds.Catalog do
       {"panes", "swap_pane_right", a(:swap_dir, [:right]), "prefix+shift+l"},
       {"panes", "resize_mode", {Keys, :enter_mode, [:resize]}, "prefix+r"},
       {"panes", "copy_mode", {Keys, :enter_mode, [:copy]}, "prefix+["},
-      {"panes", "toggle_sidebar", a(:toggle_sidebar), "prefix+b"}
+      {"panes", "toggle_sidebar", a(:toggle_sidebar), "prefix+b"},
+      {"panes", "zoom", a(:toggle_zoom), "prefix+z"}
     ]
     |> Enum.map(fn {g, action, mfa, spec} ->
       %{action: action, group: g, mfa: mfa, default: [spec]}

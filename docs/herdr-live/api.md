@@ -525,6 +525,21 @@ Result: `pane_info` with `pane` (`pane` object).
 
 Errors: `invalid_params`, `not_found`
 
+### `pane.zoom`
+
+Focus a pane and zoom it to the whole pane area, or unzoom.
+
+CLI: `herdr-live pane zoom [<pane_id>] [--on|--off]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | no | Pane to zoom; default the focused pane. |
+| `zoom` | boolean | no | true zooms, false unzooms; default toggle. |
+
+Result: `pane_info` with `pane` (`pane` object).
+
+Errors: `invalid_params`, `not_found`
+
 ### `pane.layout`
 
 The split tree of the tab holding a pane.

@@ -87,7 +87,8 @@ defmodule HerdrServer.App.Commands do
     tab = Enum.find(find_ws(app, ws_id).tabs, &(&1.id == tab_id))
     l = tab.layout
     l2 = Layout.split(l, pane, dir, id, ratio)
-    opts = Layout.opts(tab, app.ui)
+    # a split clears the tab's zoom, so the size check sees the pane's real tile
+    opts = Layout.opts(Map.delete(tab, :zoom), app.ui)
     new = Layout.size(l2, app.session.area, opts, id)
 
     if big_enough?(new) and big_enough?(Layout.size(l2, app.session.area, opts, pane)) do
@@ -114,6 +115,19 @@ defmodule HerdrServer.App.Commands do
 
   @spec focus_pane(app(), integer()) :: result()
   defdelegate focus_pane(app, pane), to: Workspaces
+
+  @doc "Focuses `pane`, then zooms it (`true`), unzooms (`false`) or toggles (nil)."
+  @spec zoom_pane(app(), integer(), boolean() | nil) :: result()
+  def zoom_pane(app, pane, zoom) do
+    case locate(app, pane) do
+      nil ->
+        {app, []}
+
+      _ ->
+        {app, []} = Workspaces.focus_pane(app, pane)
+        if zoom == nil, do: Actions.toggle_zoom(app), else: Actions.set_zoom(app, zoom)
+    end
+  end
 
   @doc "The `{workspace_id, tab_id}` holding `pane`, or nil."
   @spec locate(app(), integer()) :: {integer(), integer()} | nil
@@ -152,9 +166,11 @@ defmodule HerdrServer.App.Commands do
 
   defp put_tab_layout(app, ws_id, tab_id, l) do
     ws = find_ws(app, ws_id)
-    tabs = Enum.map(ws.tabs, &if(&1.id == tab_id, do: %{&1 | layout: l}, else: &1))
+    tabs = Enum.map(ws.tabs, &if(&1.id == tab_id, do: unzoomed(&1, l), else: &1))
     put_ws(app, %{ws | tabs: tabs})
   end
+
+  defp unzoomed(tab, l), do: Map.delete(%{tab | layout: l}, :zoom)
 
   # focus follows the active tab's layout; other tabs never touch app.focus
   defp sync(%{session: %Session{} = s} = app) do

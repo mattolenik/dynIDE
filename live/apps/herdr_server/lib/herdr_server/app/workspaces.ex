@@ -189,9 +189,11 @@ defmodule HerdrServer.App.Workspaces do
   end
 
   defp put_layout(tabs, t, id),
-    do:
-      Enum.map(
-        tabs,
-        &if(&1.id == t.id, do: %{&1 | layout: Layout.focus(&1.layout, id)}, else: &1)
-      )
+    do: Enum.map(tabs, &if(&1.id == t.id, do: refocus(&1, id), else: &1))
+
+  # focusing a pane the tab's zoom hides clears the zoom
+  defp refocus(t, id) do
+    t = %{t | layout: Layout.focus(t.layout, id)}
+    if Map.get(t, :zoom) in [nil, id], do: t, else: Map.delete(t, :zoom)
+  end
 end

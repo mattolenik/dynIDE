@@ -250,6 +250,14 @@ defmodule HerdrCli.Argv do
       ),
       cmd(~w(pane close), "pane.close", [id], %{}, :json, "pane close <pane_id>"),
       cmd(~w(pane focus), "pane.focus", [id], %{}, :json, "pane focus <pane_id>"),
+      cmd(
+        ~w(pane zoom),
+        "pane.zoom",
+        [opt_id],
+        %{"on" => {"zoom", :flag}, "off" => {"off", :flag}},
+        :json,
+        "pane zoom [<pane_id>] [--on|--off]"
+      ),
       cmd(~w(pane layout), "pane.layout", [opt_id], %{}, :json, "pane layout [<pane_id>]"),
       cmd(
         ~w(pane process-info),
@@ -653,6 +661,12 @@ defmodule HerdrCli.Argv do
   defp finish(%{method: "plugin.install"} = c, %{"source" => s} = params, env),
     do: plain(c, if(local?(s), do: %{params | "source" => abs_path(s, env)}, else: params))
 
+  defp finish(%{method: "pane.zoom"} = c, params, _env) do
+    {off, params} = Map.pop(params, "off")
+    params = Map.delete(params, :json)
+    {:call, c.method, if(off, do: Map.put(params, "zoom", false), else: params), c.out}
+  end
+
   defp finish(c, params, _env), do: plain(c, params)
 
   defp plain(c, params), do: {:call, c.method, Map.delete(params, :json), c.out}
@@ -813,6 +827,9 @@ defmodule HerdrCli.Argv do
 
   defp check("pane.report_agent", params), do: require_opts(params, ~w(source agent state))
   defp check("pane.release_agent", params), do: require_opts(params, ~w(source agent))
+
+  defp check("pane.zoom", %{"zoom" => true, "off" => true}),
+    do: {:error, "give at most one of --on and --off"}
 
   defp check("pane.wait_for_output", params) do
     case {Map.has_key?(params, "match"), Map.has_key?(params, "regex")} do

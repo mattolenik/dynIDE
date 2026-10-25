@@ -15,9 +15,20 @@ defmodule HerdrServer.App.ActionsTest do
 
   defp ids(app), do: Layout.pane_ids(tab_layout(app))
 
-  defp tab_layout(app) do
+  defp tab_layout(app), do: tab(app).layout
+
+  defp tab(app) do
     ws = hd(app.session.workspaces)
-    Enum.find(ws.tabs, &(&1.id == ws.active_tab)).layout
+    Enum.find(ws.tabs, &(&1.id == ws.active_tab))
+  end
+
+  defp zoom(app), do: Map.get(tab(app), :zoom)
+
+  # two side-by-side panes, pane 2 focused and zoomed
+  defp zoomed do
+    {app, _} = pfx(fresh(), "v")
+    {app, []} = pfx(app, "z")
+    app
   end
 
   test "init" do
@@ -54,6 +65,54 @@ defmodule HerdrServer.App.ActionsTest do
     assert app.focus.pane == 2
     {app, eff} = pfx(app, "x")
     assert eff == [{:close, 2}] and app.focus.pane == 1
+  end
+
+  test "prefix z zooms the focused pane to the whole area; toggling twice clears it" do
+    app = zoomed()
+    assert zoom(app) == 2
+    area = app.session.area
+    assert [%{id: 2, rect: ^area, border: nil}] = content_rects(app)
+    {app, []} = pfx(app, "z")
+    refute Map.has_key?(tab(app), :zoom)
+    assert length(content_rects(app)) == 2
+  end
+
+  test "split while zoomed clears the zoom first and splits the pane's own tile" do
+    {app, [{:spawn, 3, size}]} = pfx(zoomed(), "v")
+    assert zoom(app) == nil and length(ids(app)) == 3
+    # pane 2's tile is half of the 74-column area; a zoomed split would see all of it
+    assert size.cols < 20
+  end
+
+  test "closing any pane of the zoomed tab clears the zoom" do
+    {app, [{:close, 2}]} = Actions.close_pane(zoomed(), 2)
+    assert zoom(app) == nil
+
+    {app, _} = pfx(fresh(), "v")
+    {app, _} = pfx(app, "v")
+    {app, []} = Actions.toggle_zoom(app)
+    {app, [{:close, 1}]} = Actions.close_pane(app, 1)
+    assert zoom(app) == nil
+  end
+
+  test "focus moves, swaps, resizes and divider drags clear the zoom" do
+    for f <- [
+          &Actions.focus_dir(&1, :left),
+          &Actions.cycle(&1, :next),
+          &Actions.swap_dir(&1, :left),
+          &Actions.resize_dir(&1, :left, 0.05),
+          &Actions.apply(&1, {:chrome, [{:divider, []}], {:drag, %{x: 40, y: 5}}})
+        ] do
+      {app, []} = f.(zoomed())
+      assert zoom(app) == nil
+    end
+  end
+
+  test "focus_pane clears a zoom that hides the pane, and keeps one on it" do
+    {app, []} = Actions.focus_pane(zoomed(), 2)
+    assert zoom(app) == 2
+    {app, []} = Actions.focus_pane(app, 1)
+    assert zoom(app) == nil and app.focus.pane == 1
   end
 
   test "keys, presses and releases, go to the focused pane" do
@@ -144,7 +203,7 @@ defmodule HerdrServer.App.ActionsTest do
   defp wide(app), do: elem(Actions.apply(app, {:resize, %{cols: 200, rows: 51, cell_px: nil}}), 0)
 
   defp content_rects(app) do
-    Layout.rects(tab_layout(app), app.session.area, Layout.opts(nil, app.ui))
+    Layout.rects(tab_layout(app), app.session.area, Layout.opts(tab(app), app.ui))
   end
 
   defp focus_pane(app, id) do

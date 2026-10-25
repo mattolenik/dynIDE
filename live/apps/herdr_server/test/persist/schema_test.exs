@@ -73,6 +73,15 @@ defmodule HerdrServer.Persist.SchemaTest do
       assert is_float(r) and r != 0.5
       assert s.panes[2].title == "vim"
     end
+
+    test "a tab's zoom is never persisted" do
+      app = fresh() |> step(:split, [:horizontal]) |> step(:toggle_zoom)
+      assert Map.get(hd(hd(app.session.workspaces).tabs), :zoom) == 2
+      s = Schema.capture(app, %{})
+      refute Map.has_key?(hd(hd(s.session.workspaces).tabs), :zoom)
+      assert {:ok, a2, _} = Schema.restore(s)
+      refute Map.has_key?(hd(hd(a2.session.workspaces).tabs), :zoom)
+    end
   end
 
   describe "restore/1" do

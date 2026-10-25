@@ -250,6 +250,28 @@ defmodule HerdrServer.ServerTest do
     assert vt_size(1) == {94, 38}
   end
 
+  test "a zoom resizes the zoomed pane to the whole area and hides the others until cleared" do
+    {c, s} = client()
+    scene(c)
+    input(s, c, 1, Event.key("b", [:ctrl]))
+    input(s, c, 2, Event.key("v"))
+    scene_until(c, &(length(&1.panes) == 2))
+    [{p1, _}] = Registry.lookup(HerdrServer.Pane.Registry, 1)
+    tiled = :sys.get_state(Store).sizes
+    assert tiled[2] == vt_size(2) and vt_size(2) != {54, 22}
+
+    {:ok, _, _} = Store.request({HerdrServer.App.Actions, :toggle_zoom, []})
+    assert :sys.get_state(Store).sizes[2] == {54, 22}
+    assert vt_size(2) == {54, 22}
+    assert :sys.get_state(p1).hidden
+    assert MapSet.member?(:sys.get_state(Store).hidden, 1)
+
+    {:ok, _, _} = Store.request({HerdrServer.App.Actions, :toggle_zoom, []})
+    assert :sys.get_state(Store).sizes == tiled
+    assert vt_size(2) == tiled[2]
+    refute :sys.get_state(p1).hidden
+  end
+
   test "presses take the session fast path, consumed releases are swallowed per client" do
     {c, s} = client()
     scene(c)

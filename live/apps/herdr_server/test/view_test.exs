@@ -70,6 +70,14 @@ defmodule HerdrServer.ViewTest do
     assert [%Node{id: {:divider, []}, rect: %{x: 73, y: 1, w: 1, h: 38}}] = dividers(s)
   end
 
+  test "a zoomed tab: one pane over the whole area, no dividers, the tab marked zoomed" do
+    s = View.compute(pfx(pfx(fresh(120, 40), "v"), "z"), client(120, 40))
+    assert :ok = Scene.validate(s)
+    assert [%{id: 2, rect: %{x: 26, y: 1, w: 94, h: 38}, border: nil}] = s.panes
+    assert dividers(s) == []
+    assert [%{role: :tab, props: %{active: true, zoomed: true}}, _new] = tabs_node(s).children
+  end
+
   test "per-client rects, same pane ids" do
     app = pfx(fresh(120, 40), "v")
     a = View.compute(app, client(80, 24))

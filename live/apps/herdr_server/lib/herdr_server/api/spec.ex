@@ -468,6 +468,18 @@ defmodule HerdrServer.Api.Spec do
         "herdr-live pane focus <pane_id>"
       ),
       method(
+        "pane.zoom",
+        g,
+        "Focus a pane and zoom it to the whole pane area, or unzoom.",
+        [
+          opt_pane("Pane to zoom; default the focused pane."),
+          opt("zoom", :boolean, "true zooms, false unzooms; default toggle.")
+        ],
+        "pane_info",
+        [:not_found],
+        "herdr-live pane zoom [<pane_id>] [--on|--off]"
+      ),
+      method(
         "pane.layout",
         g,
         "The split tree of the tab holding a pane.",

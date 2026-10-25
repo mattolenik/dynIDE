@@ -58,3 +58,4 @@ dark_name = "catppuccin"
 # swap_pane_right = ["prefix+shift+l"]
 # swap_pane_up = ["prefix+shift+k"]
 # toggle_sidebar = ["prefix+b"]
+# zoom = ["prefix+z"]

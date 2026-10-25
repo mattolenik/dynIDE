@@ -33,7 +33,7 @@ defmodule HerdrServer.Client.KeysTest do
   end
 
   test "an unbound key in prefix mode returns to terminal and is consumed" do
-    assert {%{mode: :terminal}, :consumed} = keys(fresh(), [{"b", [:ctrl]}, "z"])
+    assert {%{mode: :terminal}, :consumed} = keys(fresh(), [{"b", [:ctrl]}, "y"])
   end
 
   test "resize mode: enter, bound keys run, unbound stay, escape/enter exit" do

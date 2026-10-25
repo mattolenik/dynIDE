@@ -153,6 +153,25 @@ defmodule HerdrServer.Api.TopologyTest do
     assert name.() == nil
   end
 
+  test "pane.zoom focuses the pane, then sets or toggles the tab's zoom", %{s: s} do
+    ok!(s, "workspace.list")
+    ok!(s, "pane.split", %{"direction" => "right"})
+    zoom = fn -> Map.get(hd(hd(Store.snapshot().session.workspaces).tabs), :zoom) end
+
+    assert ok!(s, "pane.zoom", %{"pane_id" => "p1"})["pane"]["focused"]
+    assert zoom.() == 1
+    ok!(s, "pane.zoom", %{"pane_id" => "p1", "zoom" => true})
+    assert zoom.() == 1
+    ok!(s, "pane.zoom", %{"pane_id" => "p1"})
+    assert zoom.() == nil
+    # focusing the pane the zoom hides clears it before the toggle zooms that pane
+    ok!(s, "pane.zoom", %{"pane_id" => "p1"})
+    ok!(s, "pane.zoom", %{"pane_id" => "p2"})
+    assert zoom.() == 2
+    ok!(s, "pane.zoom", %{"zoom" => false})
+    assert zoom.() == nil
+  end
+
   test "pane.split of a pane closed meanwhile is not_found", %{s: s} do
     ok!(s, "workspace.list")
     ok!(s, "pane.split", %{"direction" => "right"})
@@ -231,6 +250,7 @@ defmodule HerdrServer.Api.TopologyTest do
           {"pane.split", Map.put(p, "direction", "right")},
           {"pane.close", p},
           {"pane.focus", p},
+          {"pane.zoom", p},
           {"pane.layout", p},
           {"pane.process_info", p},
           {"pane.rename", Map.put(p, "label", "x")}

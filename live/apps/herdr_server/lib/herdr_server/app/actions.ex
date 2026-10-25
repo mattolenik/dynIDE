@@ -225,8 +225,11 @@ defmodule HerdrServer.App.Actions do
     end
   end
 
+  @doc "Splits the focused pane; a zoom is cleared first, so the size check sees its tile."
   @spec split(app(), :horizontal | :vertical) :: {app(), [effect()]}
-  def split(app, dir) do
+  def split(app0, dir) do
+    app = unzoom(app0)
+
     with %{} = l <- layout(app), focus when not is_nil(focus) <- l.focus do
       {id, app2} = take_id(app)
       l2 = Layout.split(l, focus, dir, id)
@@ -237,10 +240,10 @@ defmodule HerdrServer.App.Actions do
         app2 = put_in(app2.session.panes[id], %{title: nil, layout_gen: 0})
         {app2, [{:spawn, id, new}]}
       else
-        {app, [{:notice, %{level: :warning, text: "pane too small to split"}}]}
+        {app0, [{:notice, %{level: :warning, text: "pane too small to split"}}]}
       end
     else
-      _ -> {app, []}
+      _ -> {app0, []}
     end
   end
 
@@ -254,6 +257,7 @@ defmodule HerdrServer.App.Actions do
 
   @spec focus_dir(app(), Layout.nav()) :: {app(), [effect()]}
   def focus_dir(app, nav) do
+    app = unzoom(app)
     l = layout(app)
 
     case Layout.find_in_direction(l, app.session.area, l.focus, nav) do
@@ -264,6 +268,7 @@ defmodule HerdrServer.App.Actions do
 
   @spec cycle(app(), :next | :previous) :: {app(), [effect()]}
   def cycle(app, which) do
+    app = unzoom(app)
     l = layout(app)
     ids = Layout.pane_ids(l)
     i = Enum.find_index(ids, &(&1 == l.focus)) || 0
@@ -276,6 +281,7 @@ defmodule HerdrServer.App.Actions do
 
   @spec swap_dir(app(), Layout.nav()) :: {app(), [effect()]}
   def swap_dir(app, nav) do
+    app = unzoom(app)
     l = layout(app)
 
     case Layout.find_in_direction(l, app.session.area, l.focus, nav) do
@@ -285,8 +291,23 @@ defmodule HerdrServer.App.Actions do
   end
 
   @spec resize_dir(app(), Layout.nav(), float()) :: {app(), [effect()]}
-  def resize_dir(app, nav, delta),
-    do: {put_layout(app, Layout.resize(layout(app), app.session.area, nav, delta)), []}
+  def resize_dir(app, nav, delta) do
+    app = unzoom(app)
+    {put_layout(app, Layout.resize(layout(app), app.session.area, nav, delta)), []}
+  end
+
+  @doc """
+  Zooms the focused pane to the whole pane area, or clears the active tab's zoom (herdr
+  `zoom`). Emits nothing: the Store's settle resizes and hides panes. `tab.zoom` is never
+  persisted; split, close, focus and swap moves, resizes and divider drags clear it.
+  """
+  @spec toggle_zoom(app()) :: {app(), [effect()]}
+  def toggle_zoom(app), do: set_zoom(app, Map.get(tab(app), :zoom) == nil)
+
+  @doc "Zooms the focused pane (`true`) or clears the active tab's zoom (`false`)."
+  @spec set_zoom(app(), boolean()) :: {app(), [effect()]}
+  def set_zoom(app, true), do: {put_zoom(app, app.focus.pane), []}
+  def set_zoom(app, false), do: {unzoom(app), []}
 
   @spec detach(app()) :: {app(), [effect()]}
   def detach(app), do: {app, [{:detach}]}
@@ -351,6 +372,15 @@ defmodule HerdrServer.App.Actions do
 
   defp sync(app), do: put_in(app.focus.pane, layout(app).focus)
 
+  defp unzoom(app), do: put_zoom(app, nil)
+
+  # an absent key is no zoom, so clearing one that was never set changes nothing
+  defp put_zoom(app, zoom) do
+    w = ws(app)
+    set = &if(zoom == nil, do: Map.delete(&1, :zoom), else: Map.put(&1, :zoom, zoom))
+    put_ws(app, %{w | tabs: Enum.map(w.tabs, &if(&1.id == w.active_tab, do: set.(&1), else: &1))})
+  end
+
   defp set_focus(app, id), do: app |> put_layout(Layout.focus(layout(app), id)) |> sync()
 
   defp take_id(app), do: {app.session.next_id, update_in(app.session.next_id, &(&1 + 1))}
@@ -384,8 +414,8 @@ defmodule HerdrServer.App.Actions do
   defp size_of(app, tab, l, id),
     do: Layout.size(l, app.session.area, Layout.opts(tab, app.ui), id)
 
-  # Close pane `id` wherever it lives; unknown ids are a no-op (Layout.close/2 returns
-  # :last for them too, so membership is checked first).
+  # Close pane `id` wherever it lives, clearing its tab's zoom; unknown ids are a no-op
+  # (Layout.close/2 returns :last for them too, so membership is checked first).
   defp close_pane_id(app, id) do
     tab = Enum.find(ws(app).tabs, &(id in Layout.pane_ids(&1.layout)))
     close_in(app, tab, id)
@@ -405,7 +435,11 @@ defmodule HerdrServer.App.Actions do
 
     put_ws(app, %{
       w
-      | tabs: Enum.map(w.tabs, &if(&1.id == tab_id, do: %{&1 | layout: l}, else: &1))
+      | tabs:
+          Enum.map(
+            w.tabs,
+            &if(&1.id == tab_id, do: Map.delete(%{&1 | layout: l}, :zoom), else: &1)
+          )
     })
   end
 

@@ -139,10 +139,14 @@ defmodule HerdrServer.Layout do
   """
   @spec rects(t(), rect(), opts()) :: [entry()]
   def rects(l, area, %{zoom: zoom, borders: mode}) do
-    if zoom != nil and zoom in pane_ids(l),
+    if zoomed?(l, zoom),
       do: [%{id: zoom, rect: area, border: nil}],
       else: borders(panes(l, area), area, mode)
   end
+
+  @doc "Whether `zoom` names a pane of the layout (a zoom `rects/3` honours)."
+  @spec zoomed?(t(), id() | nil) :: boolean()
+  def zoomed?(l, zoom), do: zoom != nil and zoom in pane_ids(l)
 
   @doc "`rects/3` opts for `tab` (nil: a tab with no zoom) under the `App.Ui` `ui`."
   @spec opts(map() | nil, map()) :: opts()

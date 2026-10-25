@@ -44,6 +44,19 @@ defmodule HerdrSceneHtmlTest do
     assert out =~ ~s(data-pane="7")
   end
 
+  test "a zoomed tab's label gets a Z in front" do
+    tab = %Node{role: :tab, id: {:tab, 1}, text: "1", props: %{index: 1, zoomed: true}}
+
+    scene = %Scene{
+      size: %{cols: 10, rows: 3},
+      focus: %{pane: nil, chrome: nil},
+      chrome: %Node{role: :root, id: :root, children: [tab]}
+    }
+
+    assert scene |> HerdrSceneHtml.render() |> IO.iodata_to_binary() =~
+             ~r/data-role="tab"[^>]*>Z 1</
+  end
+
   test "a nested rect is placed in scene cells, not offset by its parent's origin" do
     inner = %Node{role: :divider, id: :split, rect: %{x: 12, y: 7, w: 5, h: 1}}
 

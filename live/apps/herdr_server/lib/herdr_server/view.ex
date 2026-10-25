@@ -14,8 +14,8 @@ defmodule HerdrServer.View do
       `%{enabled, command}` and `toast: %{delivery}`, plain data a client acts on) holding the
       `:sidebar` region (`View.Sidebar`, omitted when the frame has none), the `:tabs`
       region (`View.Tabs`, omitted when the frame has no tab bar), one `:divider` node per
-      split in `Layout.splits` preorder, then the `:status` region (`View.Status`), this
-      client's `:toast` regions (`View.Toast`), then
+      split in `Layout.splits` preorder (none while the tab is zoomed), then the `:status`
+      region (`View.Status`), this client's `:toast` regions (`View.Toast`), then
       the top modal's `:modal` / `:menu` region (`App.Modal.view/2`) when the stack is
       non-empty. A prompt on top puts `focus.chrome` on its input and sets the scene
       `cursor` there (`View.Modal.cursor/1`); otherwise both are nil.
@@ -52,7 +52,7 @@ defmodule HerdrServer.View do
 
     modal = Modal.view(app, size)
     {chrome_focus, cursor} = ModalView.cursor(modal) || {nil, nil}
-    chrome = chrome(app, client, ws, layout, regions)
+    chrome = chrome(app, client, ws, tab, regions)
 
     %Scene{
       size: %{cols: cols, rows: rows},
@@ -76,12 +76,17 @@ defmodule HerdrServer.View do
     }
   end
 
-  defp chrome(app, client, ws, layout, %{panes: area} = regions) do
+  defp chrome(app, client, ws, tab, %{panes: area} = regions) do
     sidebar = if regions.sidebar, do: [Sidebar.node(app, regions.sidebar)], else: []
     tabs = if regions.tabs, do: [Tabs.node(ws, regions.tabs)], else: []
 
+    splits =
+      if Layout.zoomed?(tab.layout, Map.get(tab, :zoom)),
+        do: [],
+        else: Layout.splits(tab.layout, area)
+
     dividers =
-      for s <- Layout.splits(layout, area) do
+      for s <- splits do
         %Node{
           role: :divider,
           id: {:divider, s.path},

@@ -121,7 +121,13 @@ defmodule HerdrServer.App.Chrome do
       %{direction: dir, area: a} ->
         ratio = if dir == :horizontal, do: (x - a.x) / max(a.w, 1), else: (y - a.y) / max(a.h, 1)
         l = Layout.set_ratio(tab.layout, path, ratio)
-        tabs = Enum.map(w.tabs, &if(&1.id == tab.id, do: %{&1 | layout: l}, else: &1))
+        # a drag clears the tab's zoom (the scene has no dividers while zoomed)
+        tabs =
+          Enum.map(
+            w.tabs,
+            &if(&1.id == tab.id, do: Map.delete(%{&1 | layout: l}, :zoom), else: &1)
+          )
+
         put_ws(app, %{w | tabs: tabs})
     end
   end

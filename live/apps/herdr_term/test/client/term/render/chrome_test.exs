@@ -67,6 +67,15 @@ defmodule HerdrTerm.Client.Term.Render.ChromeTest do
              Enum.find_index(layout.hits, &(&1.path == [:tabs]))
   end
 
+  test "a zoomed tab's label gets a Z in front" do
+    t = tabs(["1", "2"], 2)
+    [one, two | rest] = t.children
+    t = %{t | children: [one, %{two | props: Map.put(two.props, :zoomed, true)} | rest]}
+    layout = RChrome.layout(root([t]), @size, @theme)
+    [{0, 80, row}] = layout.base[0]
+    assert String.starts_with?(Cells.to_text(row), "   1    " <> " " <> "  Z 2   " <> " + ")
+  end
+
   test "tabs start at the region's x and long labels widen the tab" do
     layout =
       RChrome.layout(root([tabs(["shell", "x"], 1, %{x: 26, y: 0, w: 54, h: 1})]), @size, @theme)

@@ -1,6 +1,7 @@
 defmodule HerdrTerm.Client.Term.Render.Chrome.Tabs do
   @moduledoc """
-  The tab bar region (pure, inventory §3): each `:tab` is its label centred in
+  The tab bar region (pure, inventory §3): each `:tab` is its label (`Z ` in front while
+  `zoomed`; plain ASCII, so no width ambiguity) centred in
   `max(label + 4, 8)` cells, `:selected` when active and `:surface` otherwise, one blank
   between tabs; the `:new_tab` button is `" + "` right after the last tab. A bar that
   does not fit is cut and its last visible cell becomes `…`. Hits: every (visible part
@@ -52,7 +53,7 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Tabs do
 
   defp piece(%Node{role: :tab, text: name, props: props} = n, theme) do
     token = if Map.get(props, :active), do: :selected, else: :surface
-    label = to_string(name || "")
+    label = if(Map.get(props, :zoomed), do: "Z ", else: "") <> to_string(name || "")
     label_cells = Text.text(label, token, theme)
     [{n, Text.center(label_cells, max(Cell.cols(label_cells) + 4, 8), Theme.style(theme, token))}]
   end

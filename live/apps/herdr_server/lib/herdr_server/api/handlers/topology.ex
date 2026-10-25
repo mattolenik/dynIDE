@@ -158,6 +158,14 @@ defmodule HerdrServer.Api.Handlers.Topology do
          do: pane_reply("pane_info", aft, id)
   end
 
+  def handle("pane.zoom", p) do
+    id = p[:pane_id] || app!().focus.pane
+
+    with {:ok, _before, aft, _notes} <-
+           run_on_pane(id, {Commands, :zoom_pane, [id, Map.get(p, :zoom)]}),
+         do: pane_reply("pane_info", aft, id)
+  end
+
   def handle("pane.layout", p) do
     app = app!()
     id = p[:pane_id] || app.focus.pane

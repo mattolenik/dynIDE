@@ -108,6 +108,10 @@ defmodule HerdrSceneHtml do
   defp body(%Node{role: :badge, props: props}, _origin),
     do: [~s(<span class="dot" title="#{esc(inspect(props[:state]))}"></span>)]
 
+  # a zoomed tab's marker, chosen here like every glyph
+  defp body(%Node{role: :tab, props: %{zoomed: true}, text: text}, _origin),
+    do: ["Z ", esc(text || "")]
+
   defp body(%Node{role: :list, children: kids}, origin),
     do: Enum.map(kids, &chrome_node(&1, origin))
 
