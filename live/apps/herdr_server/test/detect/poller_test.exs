@@ -118,6 +118,27 @@ defmodule HerdrServer.Detect.PollerTest do
     assert Facts.agent(1) != nil
   end
 
+  test "a malformed hook neither crashes the poller nor answers ok when it fails" do
+    p = poller([])
+    assert eventually(fn -> Facts.agent(1) != nil end)
+
+    # no source: kept, published with a nil hook_source
+    assert :ok = Poller.report(1, %{agent: "claude", state: :working, seq: 1}, p)
+    assert %{agent: "claude", hook_source: nil, skipped: true} = Facts.agent(1)
+    # no agent: Tracker.report has no clause, the Guard catches it
+    assert {:error, :failed} = Poller.report(1, %{}, p)
+    assert Process.alive?(p)
+  end
+
+  test "an idle telemetry window logs nothing" do
+    p = poller(interval_ms: 3_600_000, window_ms: 0)
+    # the first tick probes the new pane
+    log = ExUnit.CaptureLog.capture_log(fn -> send(p, :tick) && :sys.get_state(p) end)
+    assert log =~ "detect_tick"
+    log = ExUnit.CaptureLog.capture_log(fn -> send(p, :tick) && :sys.get_state(p) end)
+    refute log =~ "detect_tick"
+  end
+
   test "a new poller drops rows a previous one left for closed panes" do
     Facts.put_agent(77, %{
       agent: "claude",
@@ -144,8 +165,9 @@ defmodule HerdrServer.Detect.PollerTest do
       for id <- 1..15, do: Fake.Pty.output(res(id).pty, "line #{round}\r\n")
       for id <- 1..15, do: _ = Fake.Pty.activity(res(id).pty)
       send(p, :tick)
-      assert %{last: %{scans: scans}} = :sys.get_state(p)
-      assert scans <= 4
+      assert %{last: %{scans: 4, probes: probes}} = :sys.get_state(p)
+      # 15 fresh panes all want a probe: 4 per tick, the rest stay due
+      if round == 1, do: assert(probes == 4), else: assert(probes <= 4)
     end
 
     # the round robin reached every pane

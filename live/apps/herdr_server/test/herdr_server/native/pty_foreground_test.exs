@@ -1,15 +1,21 @@
 defmodule HerdrServer.Native.PtyForegroundTest do
   use ExUnit.Case, async: false
 
+  alias HerdrServer.Detect.Poller
   alias HerdrServer.Native.{Pty, Vt}
 
   @env [{"PS1", "$ "}, {"ENV", ""}]
 
   defp spawn_sh(args) do
+    {_vt, pty, os_pid} = spawn_vt(args)
+    {pty, os_pid}
+  end
+
+  defp spawn_vt(args) do
     {:ok, vt} = Vt.new(80, 24, 1000)
     {:ok, pty, os_pid} = Pty.spawn(vt, 1, "/bin/sh", args, @env, nil, 80, 24)
     on_exit(fn -> Pty.kill(pty, :kill) end)
-    {pty, os_pid}
+    {vt, pty, os_pid}
   end
 
   defp wait(f, deadline \\ System.monotonic_time(:millisecond) + 2000) do
@@ -25,6 +31,20 @@ defmodule HerdrServer.Native.PtyForegroundTest do
     :ok = Pty.set_hidden(pty, true)
     assert Pty.activity(pty) == 0
     assert wait(fn -> Pty.activity(pty) > 0 end)
+  end
+
+  test "the detection source is the bottom screen rows, wherever the viewport is" do
+    script = "i=1; while [ $i -le 100 ]; do echo line$i; i=$((i+1)); done; sleep 30"
+    {vt, _pty, _} = spawn_vt(["-c", script])
+
+    assert wait(fn -> (Poller.source(Vt, vt) || "") =~ ~r/^line100$/m end)
+    src = Poller.source(Vt, vt)
+    refute src =~ ~r/^line1$/m
+    assert Vt.scrollbar(vt).total > 100
+
+    :ok = Vt.scroll_to(vt, 0)
+    assert wait(fn -> Vt.read_text(vt, :viewport) =~ ~r/^line1$/m end)
+    assert Poller.source(Vt, vt) == src
   end
 
   test "at rest the foreground group is the shell" do

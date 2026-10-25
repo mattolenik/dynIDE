@@ -240,6 +240,21 @@ defmodule HerdrServer.Detect.Tracker do
 
   def release(t, _source, _agent), do: {t, []}
 
+  @doc """
+  The pane's agent facts (`Pane.Facts.agent/1` without `updated_ms`); `skipped`
+  is herdr's `screen_detection_skipped` (a hook holds the state).
+  """
+  @spec facts(t) :: map
+  def facts(t) do
+    %{
+      agent: t.agent,
+      state: effective(t),
+      visible: t.visible,
+      hook_source: if(is_map(t.hook), do: t.hook[:source]),
+      skipped: t.hook != nil
+    }
+  end
+
   @doc "Published state: the hook's, unless a visible blocker overrides it."
   @spec effective(t) :: state
   def effective(%__MODULE__{hook: %{state: hs}, visible: %{blocker: vb}})

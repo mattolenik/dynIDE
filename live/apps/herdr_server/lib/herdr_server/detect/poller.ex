@@ -7,16 +7,19 @@ defmodule HerdrServer.Detect.Poller do
   Each tick (every 300 ms, sooner when a tracker asks via `Tracker.next_ms/2`)
   drops trackers of panes no longer in the app (and their `Pane.Facts.agent/1`
   row), then walks the panes in id order starting after the last scanned one:
-  foreground pgid -> `Tracker.pgid`; on a probe the foreground job ->
-  `Identify.agent` -> `Tracker.job`; then, when `Tracker.scan?` and fewer than 4
+  foreground pgid -> `Tracker.pgid`; on a probe (at most 4 per tick; one over
+  the budget stays due) the foreground job -> `Identify.agent` -> `Tracker.job`; then, when `Tracker.scan?` and fewer than 4
   panes were scanned this tick, the detection source (the bottom `rows` rows of
   the screen, never the viewport) -> `Engine.detect` -> `Tracker.screen`.
   Effects go to the Store (`{:pane_agent, id, label}`, `{:agent_state, id,
   state}`); the pane's agent facts row is rewritten when it changes. This is the
   only writer of that row.
 
-  One `detect_tick` telemetry line per 10 s window (`scans`, `probes`, `max_us`,
-  `p95_us` of tick work).
+  One `detect_tick` telemetry line per 10 s window with any scan or probe
+  (`scans`, `probes`, `max_us`, `p95_us` of tick work).
+
+  `report/2`, `release/3` and `detect_now/1` answer `{:error, :not_found}` for a
+  pane not in the app and `{:error, :failed}` when a guarded call or the read fails.
   """
   use GenServer
 
@@ -30,6 +33,7 @@ defmodule HerdrServer.Detect.Poller do
 
   @interval_ms 300
   @scan_budget 4
+  @probe_budget 4
   @window_ms 10_000
 
   defstruct trackers: %{},
@@ -54,11 +58,12 @@ defmodule HerdrServer.Detect.Poller do
   end
 
   @doc "Applies a hook report (`%{source, agent, state, seq}`) to pane `id`."
-  @spec report(pos_integer, map, GenServer.server()) :: :ok | {:error, :not_found}
+  @spec report(pos_integer, map, GenServer.server()) :: :ok | {:error, :not_found | :failed}
   def report(id, hook, server \\ __MODULE__), do: GenServer.call(server, {:report, id, hook})
 
   @doc "Drops pane `id`'s hook if it came from `source` for `agent`."
-  @spec release(pos_integer, binary, binary, GenServer.server()) :: :ok | {:error, :not_found}
+  @spec release(pos_integer, binary, binary, GenServer.server()) ::
+          :ok | {:error, :not_found | :failed}
   def release(id, source, agent, server \\ __MODULE__),
     do: GenServer.call(server, {:release, id, source, agent})
 
@@ -68,7 +73,7 @@ defmodule HerdrServer.Detect.Poller do
   """
   @spec detect_now(pos_integer, GenServer.server()) ::
           {:ok, %{entry: Manifests.entry() | nil, input: map, agent: binary | nil}}
-          | {:error, :not_found}
+          | {:error, :not_found | :failed}
   def detect_now(id, server \\ __MODULE__), do: GenServer.call(server, {:detect_now, id})
 
   @doc """
@@ -105,14 +110,15 @@ defmodule HerdrServer.Detect.Poller do
     state = Map.merge(%__MODULE__{}, state)
     t = tracker(state, id)
 
-    with true <- id in pane_ids(),
+    with {:pane, true} <- {:pane, id in pane_ids()},
          {:ok, %{vt: vt}} <- resources(id),
          {:ok, osc} <- pure(Tracker, :osc_input, [t, osc(id)]),
          {:ok, entry} <- entry(t.agent),
          {:ok, input} <- input(vt, osc) do
       {:reply, {:ok, %{entry: entry, input: input, agent: t.agent}}, state}
     else
-      _ -> {:reply, {:error, :not_found}, state}
+      {:pane, false} -> {:reply, {:error, :not_found}, state}
+      _ -> {:reply, {:error, :failed}, state}
     end
   end
 
@@ -173,9 +179,10 @@ defmodule HerdrServer.Detect.Poller do
     t = tracker(state, id)
     pgid = kernel(fn -> Kernel.pty().foreground_pgid(pty) end, nil)
     osc = osc(id)
+    probe = %{id: id, pty: pty, now: now, osc: osc}
 
-    with {:ok, {t, probe?}} <- pure(Tracker, :pgid, [t, pgid, now]),
-         {:ok, t, e1, acc} <- probe(state, id, t, pty, probe?, now, osc, acc),
+    with {:ok, {t1, probe?}} <- pure(Tracker, :pgid, [t, pgid, now]),
+         {:ok, t, e1, acc} <- probe(state, probe, t, t1, probe?, acc),
          activity = kernel(fn -> Kernel.pty().activity(pty) end, nil),
          {:ok, scan?} <- pure(Tracker, :scan?, [t, activity, now]),
          {:ok, t, e2, acc} <-
@@ -184,14 +191,19 @@ defmodule HerdrServer.Detect.Poller do
     end
   end
 
-  defp probe(_state, _id, t, _pty, false, _now, _osc, acc), do: {:ok, t, [], acc}
+  defp probe(_state, _p, _t0, t, false, acc), do: {:ok, t, [], acc}
 
-  defp probe(state, id, t, pty, true, now, osc, acc) do
-    job = kernel(fn -> Kernel.pty().foreground_job(pty) end, nil)
+  # over budget: keep the tracker from before `Tracker.pgid`, so the probe stays due
+  # ponytail: shares the scan cursor; a starved prober would need its own cursor
+  defp probe(_state, _p, t0, _t, true, %{probes: n} = acc) when n >= @probe_budget,
+    do: {:ok, t0, [], acc}
 
-    with {:ok, agent} <- identify(state.forced[id], job),
+  defp probe(state, p, _t0, t, true, acc) do
+    job = kernel(fn -> Kernel.pty().foreground_job(p.pty) end, nil)
+
+    with {:ok, agent} <- identify(state.forced[p.id], job),
          {:ok, {t, effects}} <-
-           pure(Tracker, :job, [t, agent, match?(%{shell: true}, job), now, osc]) do
+           pure(Tracker, :job, [t, agent, match?(%{shell: true}, job), p.now, p.osc]) do
       {:ok, t, effects, %{acc | probes: acc.probes + 1}}
     end
   end
@@ -249,7 +261,7 @@ defmodule HerdrServer.Detect.Poller do
     if id in pane_ids() do
       case pure(Tracker, fun, [tracker(state, id) | args]) do
         {:ok, {t, effects}} -> {:reply, :ok, apply_effects(state, id, t, effects, now())}
-        {:failed, _} -> {:reply, :ok, state}
+        {:failed, _} -> {:reply, {:error, :failed}, state}
       end
     else
       {:reply, {:error, :not_found}, state}
@@ -262,16 +274,7 @@ defmodule HerdrServer.Detect.Poller do
       {:state, s} -> Store.event_async({:agent_state, id, s})
     end)
 
-    with {:ok, eff} <- pure(Tracker, :effective, [t]) do
-      facts = %{
-        agent: t.agent,
-        state: eff,
-        visible: t.visible,
-        hook_source: t.hook && t.hook.source,
-        # herdr's screen_detection_skipped: a hook holds the state authority
-        skipped: t.hook != nil
-      }
-
+    with {:ok, facts} <- pure(Tracker, :facts, [t]) do
       if Map.delete(Facts.agent(id) || %{}, :updated_ms) != facts,
         do: Facts.put_agent(id, Map.put(facts, :updated_ms, now))
     end
@@ -287,37 +290,49 @@ defmodule HerdrServer.Detect.Poller do
     w = state.window || window(now)
     w = %{w | scans: w.scans + last.scans, probes: w.probes + last.probes, us: [last.us | w.us]}
 
-    if now - w.started >= state.window_ms do
-      sorted = Enum.sort(w.us)
-      p95 = Enum.at(sorted, min(length(sorted) - 1, div(length(sorted) * 95, 100)))
-
-      Telemetry.event(:detect_tick,
-        scans: w.scans,
-        probes: w.probes,
-        max_us: List.last(sorted),
-        p95_us: p95
-      )
-
-      %{state | window: window(now)}
-    else
-      %{state | window: w}
+    cond do
+      now - w.started < state.window_ms -> %{state | window: w}
+      # an idle window logs nothing
+      w.scans == 0 and w.probes == 0 -> %{state | window: window(now)}
+      true -> emit(state, w, now)
     end
+  end
+
+  defp emit(state, w, now) do
+    sorted = Enum.sort(w.us)
+    p95 = Enum.at(sorted, min(length(sorted) - 1, div(length(sorted) * 95, 100)))
+
+    Telemetry.event(:detect_tick,
+      scans: w.scans,
+      probes: w.probes,
+      max_us: List.last(sorted),
+      p95_us: p95
+    )
+
+    %{state | window: window(now)}
   end
 
   # -- reads ------------------------------------------------------------------
 
   defp input(vt, {title, progress}) do
-    case kernel(fn -> {Kernel.vt().scrollbar(vt), Kernel.vt().size(vt)} end, nil) do
-      {%{total: total}, {_cols, rows}} when total > 0 ->
-        first = max(total - rows, 0)
-        text = kernel(fn -> Kernel.vt().read_text(vt, {:rows, first..(total - 1)}) end, nil)
+    case source(Kernel.vt(), vt) do
+      nil -> :error
+      text -> {:ok, %{screen: text, osc_title: title, osc_progress: progress}}
+    end
+  end
 
-        if text,
-          do: {:ok, %{screen: text, osc_title: title, osc_progress: progress}},
-          else: :error
+  @doc """
+  The detection source of `vt` (through vt module `mod`): its bottom `rows` screen
+  rows in `scrollbar.total` coordinates, wherever the viewport is; nil when unreadable.
+  """
+  @spec source(module, term) :: binary | nil
+  def source(mod, vt) do
+    case kernel(fn -> {mod.scrollbar(vt), mod.size(vt)} end, nil) do
+      {%{total: total}, {_cols, rows}} when total > 0 ->
+        kernel(fn -> mod.read_text(vt, {:rows, max(total - rows, 0)..(total - 1)}) end, nil)
 
       _ ->
-        :error
+        nil
     end
   end
 
