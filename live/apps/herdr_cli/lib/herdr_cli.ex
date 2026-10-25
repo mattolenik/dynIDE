@@ -58,6 +58,11 @@ defmodule HerdrCli do
 
   @doc "Runs argv against `env`, writing to stdout/stderr; returns the exit code."
   @spec run([String.t()], %{optional(String.t()) => String.t()}) :: 0 | 1 | 2
+  def run(["attach-relay", h], _env) when h in ["--help", "-h"] do
+    out(HerdrCli.Relay.usage())
+    0
+  end
+
   def run(["attach-relay" | rest], env) when length(rest) <= 1, do: HerdrCli.Relay.run(env)
 
   def run(argv, env) do
