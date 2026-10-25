@@ -133,6 +133,23 @@ what it costs if wrong.
 - 2026-10-24 (human): M14 ports only herdr's existing external-process
   plugin model; BEAM plugins are out of scope. Cost if wrong: a later
   milestone adds an in-VM plugin path beside the external one.
+- 2026-10-24: The herdr reference binary is built from the local tag
+  `herdr-reference` (2be39ad9), never from a checkout; the M6 benches take
+  `HERDR_BIN` as the alternative. Cost if wrong: a tag to recreate from
+  history.
+- 2026-10-24: M7's dogfooding "week" is closed by the human's sign-off after
+  the full manual checklist, not by calendar time. Cost if wrong: a defect
+  that only longer use would show surfaces during wave 3 instead.
+- 2026-10-24: Wave 3 runs four owners in parallel with a file-ownership map
+  (status.md log entry of the same date); `herdr_scene` has two owners again
+  (M13 chrome, M9 pane overlays) and M13 arbitrates conflicts. Cost if
+  wrong: rebase conflicts in Render and herdr_scene.
+- 2026-10-24: Two close behaviours stand for now: the API's tab/pane close
+  keeps a workspace alive with a fresh tab (automation must not destroy a
+  workspace by closing panes), while chrome's close of the last tab removes
+  the workspace through its confirm modal (explicit user intent). M17
+  revisits if dogfood finds it confusing. Cost if wrong: one branch to
+  delete in App.Commands or App.Workspaces.
 - 2026-10-24: M14/M17 seam: M14 owns `pane.rename`, `pane split --no-focus`,
   Store spawn opts (cmd/args/env) and `Plugins.Keybind.mfa/1`; M17 owns the
   `[[keys.command]]` parser (which calls that mfa for plugin_action) and
