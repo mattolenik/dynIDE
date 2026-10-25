@@ -136,16 +136,24 @@ defmodule HerdrReload.TestGateTest do
   end
 
   test "the default runner kills a command over the timeout", %{root: root} do
-    pidfile = Path.join(root, "pid")
     exe = Path.join(root, "slow.sh")
-    File.write!(exe, "#!/bin/sh\necho $$ > #{pidfile}\nexec sleep 30\n")
+    File.write!(exe, "#!/bin/sh\nexec sleep 30\n")
     File.chmod!(exe, 0o755)
+    # the OS pid the runner started, from its own port_info call (Port.info compiles to
+    # it): a pid file the script writes can be late under load, or never written if the
+    # kill comes first. A process cannot be its own tracer: a relay forwards the trace.
+    test = self()
+    relay = fn relay -> receive(do: (m -> send(test, m) && relay.(relay))) end
+    :erlang.trace_pattern({:erlang, :port_info, 2}, [{:_, [], [{:return_trace}]}], [:local])
+    on_exit(fn -> :erlang.trace_pattern({:erlang, :port_info, 2}, false, [:local]) end)
+    :erlang.trace(self(), true, [:call, {:tracer, spawn_link(fn -> relay.(relay) end)}])
     t0 = System.monotonic_time(:millisecond)
     t = %{root => ["test/x_test.exs"]}
     assert {:error, _} = TestGate.run(t, exe: exe, timeout_ms: 500)
     assert System.monotonic_time(:millisecond) - t0 < 5_000
-    pid = pidfile |> File.read!() |> String.trim()
-    {_, status} = System.cmd("kill", ["-0", pid], stderr_to_stdout: true)
+    :erlang.trace(self(), false, [:call])
+    assert_receive {:trace, _, :return_from, {:erlang, :port_info, 2}, {:os_pid, pid}}, 5_000
+    {_, status} = System.cmd("kill", ["-0", "#{pid}"], stderr_to_stdout: true)
     assert status != 0
   end
 
