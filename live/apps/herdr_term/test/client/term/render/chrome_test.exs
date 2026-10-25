@@ -246,7 +246,7 @@ defmodule HerdrTerm.Client.Term.Render.ChromeTest do
     end
 
     test "a wide-glyph tab is tinted across its whole rect, no further" do
-      layout = RChrome.layout(root([tabs(["日本語", "b"], 1)]), @size, @theme)
+      layout = RChrome.layout(root([tabs(["日本語", "b"], 2)]), @size, @theme)
       path = [:tabs, {:tab, 1}]
       %{rect: r} = hit(layout, path)
       bg = Theme.style(@theme, :selected).bg
@@ -256,9 +256,13 @@ defmodule HerdrTerm.Client.Term.Render.ChromeTest do
       end
 
       before = cells.(layout)
-      hov = cells.(RChrome.hover(layout, [:tabs, {:tab, 2}], @theme))
-      assert Enum.slice(hov, 0, r.x + r.w) == Enum.slice(before, 0, r.x + r.w)
-      assert Enum.all?(Enum.slice(hov, hit(layout, [:tabs, {:tab, 2}]).rect.x, 8), &(&1.bg == bg))
+      hov = cells.(RChrome.hover(layout, path, @theme))
+      assert Enum.all?(Enum.slice(hov, r.x, r.w), &(&1.bg == bg))
+      refute Enum.slice(before, r.x, r.w) == Enum.slice(hov, r.x, r.w)
+      # the first tab starts at x 0, so only the right neighbour exists
+      assert r.x == 0
+      assert Enum.at(hov, r.x + r.w) == Enum.at(before, r.x + r.w)
+      assert Enum.drop(hov, r.x + r.w) == Enum.drop(before, r.x + r.w)
     end
 
     test "a tab hovered under an open menu leaves the menu cells unchanged" do
