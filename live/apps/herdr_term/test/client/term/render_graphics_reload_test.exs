@@ -140,7 +140,7 @@ defmodule HerdrTerm.Client.Term.RenderGraphicsReloadTest do
     FakeServer.start(self(), ep, {__MODULE__, :rows, []}, %{images: {__MODULE__, :image, []}})
     sup = start_supervised!({Client, endpoint: ep}, id: ep)
     assert_receive {:attached, _, _}, @wait
-    assert %{kitty: %{file?: false}} = :sys.get_state(Client.render(sup))
+    assert %{gfx: %{kitty: %{file?: false}}} = :sys.get_state(Client.render(sup))
   end
 
   test "a good reload replays the same placements; a failing pass clears and re-uploads; no ghost after the pane goes",

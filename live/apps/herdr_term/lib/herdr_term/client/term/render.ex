@@ -83,6 +83,13 @@ defmodule HerdrTerm.Client.Term.Render do
   # compose can hang on a bad edit; its result is a transient frame
   @compose [budget_ms: 50, scan: false]
 
+  # Kitty graphics: `mfa` is the attach reply's images MFA, `cell_px` the host cell px,
+  # `images` the fetched payloads, `cache` the host graphics cache
+  # (`Render.Graphics.cache`), :reset before the next frame clears the host, or
+  # `{:failed, at}` after a failed pass; `kitty` nil when the pass is off, else
+  # `%{file?: boolean}`.
+  @gfx %{mfa: nil, cell_px: nil, images: %{}, cache: :reset, kitty: nil}
+
   defstruct [
     :id,
     :endpoint,
@@ -100,12 +107,10 @@ defmodule HerdrTerm.Client.Term.Render do
     :chrome_key,
     :chrome_retry,
     :sound_warned,
-    :images_mfa,
-    :cell_px,
     :title,
     notify_env: %{},
-    hover: nil,
-    hovered: nil,
+    # the pointer's hovered chrome path and the tinted layout memoised for it
+    hover: %{path: nil, memo: nil},
     transport: :ref,
     caps: nil,
     appearance: :dark,
@@ -116,11 +121,7 @@ defmodule HerdrTerm.Client.Term.Render do
     dirty: MapSet.new(),
     last_at: nil,
     repaint: true,
-    images: %{},
-    # host graphics cache (`Render.Graphics.cache`), :reset before the next frame clears
-    # the host, `{:failed, at}` after a failed pass; `kitty` nil when the pass is off, else `%{file?: boolean}`
-    gfx: :reset,
-    kitty: nil
+    gfx: @gfx
   ]
 
   def start_link(opts),
@@ -140,17 +141,30 @@ defmodule HerdrTerm.Client.Term.Render do
        colorfgbg: colorfgbg,
        appearance: Detect.appearance(nil, colorfgbg),
        transport: Keyword.get(opts, :transport, :ref),
-       kitty: kitty(),
+       gfx: %{@gfx | kitty: kitty()},
        notify_env: Map.take(System.get_env(), ~w(TERM_PROGRAM TERM KITTY_WINDOW_ID TMUX))
      }}
   end
 
-  # a state from before kitty graphics: the switch is computed as `init/1` does
   @impl true
-  def code_change(_old, state, _extra) do
-    fresh? = not Map.has_key?(state, :kitty)
-    state = Map.merge(%__MODULE__{}, state)
-    {:ok, if(fresh?, do: %{state | kitty: kitty()}, else: state)}
+  def code_change(_old, state, _extra), do: {:ok, Map.merge(%__MODULE__{}, fold_gfx(state))}
+
+  # flat graphics and hover fields (before m17's grouping) fold into `gfx` and `hover`;
+  # a state from before kitty graphics computes the switch as `init/1` does
+  defp fold_gfx(%{gfx: %{kitty: _}} = state), do: state
+
+  defp fold_gfx(state) do
+    gfx = %{
+      mfa: Map.get(state, :images_mfa),
+      cell_px: Map.get(state, :cell_px),
+      images: Map.get(state, :images, %{}),
+      cache: Map.get(state, :gfx, :reset),
+      kitty: if(Map.has_key?(state, :kitty), do: state.kitty, else: kitty())
+    }
+
+    state
+    |> Map.drop([:images_mfa, :cell_px, :images, :kitty, :hover, :hovered])
+    |> Map.put(:gfx, gfx)
   end
 
   defp kitty do
@@ -186,7 +200,7 @@ defmodule HerdrTerm.Client.Term.Render do
     send_input(state, {:session, nil})
     # forget the refs: the next scene re-fetches every pane
     state = %{state | session: nil, mon: nil, repaint: true, refs: %{}}
-    {:noreply, attach(%{state | images: %{}, gfx: :reset})}
+    {:noreply, attach(%{state | gfx: %{state.gfx | images: %{}, cache: :reset}})}
   end
 
   def handle_info({:scene, %Scene{} = scene}, state) do
@@ -209,9 +223,9 @@ defmodule HerdrTerm.Client.Term.Render do
       end)
 
     cursors = Map.take(state.cursors, ids)
-    images = prune_images(state.images, scene)
+    images = prune_images(state.gfx.images, scene)
     state = %{state | scene: scene, rows: rows, dirty: dirty, refs: refs, cursors: cursors}
-    state = %{state | images: images}
+    state = put_in(state.gfx.images, images)
     {:noreply, state |> refresh_theme() |> window_title() |> chrome() |> schedule()}
   end
 
@@ -226,13 +240,13 @@ defmodule HerdrTerm.Client.Term.Render do
   # the pointer's hovered chrome path (Input sends it only when it changes)
   def handle_info({:hover, path}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, schedule(%{state | hover: path})}
+    {:noreply, schedule(put_in(state.hover.path, path))}
   end
 
   def handle_info(:repaint, state) do
     state = Map.merge(%__MODULE__{}, state)
     # a suspend can land mid-upload: the host's graphics state is unknown
-    {:noreply, schedule(%{state | repaint: true, gfx: :reset})}
+    {:noreply, schedule(reset_gfx(%{state | repaint: true}))}
   end
 
   def handle_info({:damage, id, _gen}, state) do
@@ -250,8 +264,8 @@ defmodule HerdrTerm.Client.Term.Render do
   def handle_info({:image, pane, {image_id, fp}, payload}, state) do
     state = Map.merge(%__MODULE__{}, state)
 
-    images = Map.put(state.images, {pane, image_id, fp}, valid_image(payload))
-    {:noreply, schedule(%{state | images: images})}
+    images = Map.put(state.gfx.images, {pane, image_id, fp}, valid_image(payload))
+    {:noreply, schedule(put_in(state.gfx.images, images))}
   end
 
   def handle_info({:notice, notice}, state) do
@@ -488,7 +502,7 @@ defmodule HerdrTerm.Client.Term.Render do
          {:ok, session, %{rows: mfa} = info} <- reply do
       send_input(state, {:session, session})
       mon = Process.monitor(session)
-      %{state | session: session, mon: mon, rows_mfa: mfa, images_mfa: info[:images]}
+      %{state | session: session, mon: mon, rows_mfa: mfa, gfx: %{state.gfx | mfa: info[:images]}}
     else
       other ->
         Logger.warning("attach failed: #{inspect(other)}")
@@ -581,7 +595,7 @@ defmodule HerdrTerm.Client.Term.Render do
     state = chrome(state)
     scene = state.scene
     resized? = scene.size != state.last_size
-    state = if resized?, do: %{state | cell_px: cell_px(state)}, else: state
+    state = if resized?, do: put_in(state.gfx.cell_px, cell_px(state)), else: state
     {chrome, state} = hovered(state)
     args = [scene, state.rows, state.cursors, state.theme, chrome]
 
@@ -599,7 +613,7 @@ defmodule HerdrTerm.Client.Term.Render do
             # the host got none of the ops: clear it and start over next frame
             {:error, why} ->
               Logger.warning("frame refused: #{inspect(why)}")
-              %{state | gfx: :reset}
+              reset_gfx(state)
           end
 
         %{state | repaint: false, last_size: scene.size, last_at: now()}
@@ -616,47 +630,49 @@ defmodule HerdrTerm.Client.Term.Render do
   # Graphics.empty/0 inlined: the frame path calls into editable Graphics only via the Guard
   @empty_gfx %{images: %{}, placements: MapSet.new()}
 
-  defp graphics(%{kitty: nil} = state, frame), do: {frame, [], state}
+  defp graphics(%{gfx: %{kitty: nil}} = state, frame), do: {frame, [], state}
 
   # after a failed pass the host is clear: skip until the retry window is over, then
   # retry without another :delete_all
-  defp graphics(%{gfx: {:failed, at}} = state, frame) do
+  defp graphics(%{gfx: %{cache: {:failed, at}}} = state, frame) do
     if now() - at < @retry_frame_ms,
       do: {frame, [], state},
       else: pass(state, frame, [], @empty_gfx, [])
   end
 
-  defp graphics(%{gfx: :reset} = state, frame),
+  defp graphics(%{gfx: %{cache: :reset}} = state, frame),
     do: pass(state, frame, [:delete_all], @empty_gfx, [:delete_all])
 
-  defp graphics(state, frame), do: pass(state, frame, [], state.gfx, [:delete_all])
+  defp graphics(state, frame), do: pass(state, frame, [], state.gfx.cache, [:delete_all])
 
   defp pass(state, frame, reset, cache, fail_ops) do
     if cache == @empty_gfx and Enum.all?(state.scene.panes, &(&1.graphics == [])) do
-      {frame, reset, %{state | gfx: cache}}
+      {frame, reset, put_in(state.gfx.cache, cache)}
     else
       # nothing can show without cell px or under a dimming modal: no fetch either
-      state = if state.cell_px && !state.chrome.dim, do: fetch_images(state), else: state
+      state = if state.gfx.cell_px && !state.chrome.dim, do: fetch_images(state), else: state
 
       ctx = %{
-        cell_px: state.cell_px,
+        cell_px: state.gfx.cell_px,
         cache: cache,
-        images: state.images,
-        file?: state.kitty.file?,
+        images: state.gfx.images,
+        file?: state.gfx.kitty.file?,
         theme: state.theme
       }
 
       case Guard.run_twice(Graphics, :run, [frame, state.scene, state.chrome, ctx], @compose) do
         {:ok, {frame, ops, cache}} ->
-          {frame, reset ++ ops, %{state | gfx: cache}}
+          {frame, reset ++ ops, put_in(state.gfx.cache, cache)}
 
         # the host is cleared and the cache with it; one retry per @retry_frame_ms
         {:failed, _} ->
           gfx_retry()
-          {frame, fail_ops, %{state | gfx: {:failed, now()}}}
+          {frame, fail_ops, put_in(state.gfx.cache, {:failed, now()})}
       end
     end
   end
+
+  defp reset_gfx(state), do: put_in(state.gfx.cache, :reset)
 
   defp gfx_retry, do: Process.send_after(self(), :gfx_retry, @retry_frame_ms)
 
@@ -679,13 +695,13 @@ defmodule HerdrTerm.Client.Term.Render do
 
   # Once per key: a nil (image gone or invalid) is kept. A failed fetch is kept as
   # `{:failed, at}` and retried after @retry_frame_ms (a timer brings the frame).
-  defp fetch_images(%{images_mfa: nil} = state), do: state
+  defp fetch_images(%{gfx: %{mfa: nil}} = state), do: state
 
-  defp fetch_images(%{images_mfa: mfa} = state) do
+  defp fetch_images(%{gfx: %{mfa: mfa}} = state) do
     keys = for p <- state.scene.panes, g <- p.graphics, do: image_key(p, g)
-    {images, failed?} = Enum.reduce(keys, {state.images, false}, &fetch_image(&2, &1, mfa))
+    {images, failed?} = Enum.reduce(keys, {state.gfx.images, false}, &fetch_image(&2, &1, mfa))
     if failed?, do: gfx_retry()
-    %{state | images: images}
+    put_in(state.gfx.images, images)
   end
 
   defp fetch_image({images, failed?} = acc, key, mfa) do
@@ -716,15 +732,15 @@ defmodule HerdrTerm.Client.Term.Render do
   defp valid_image(_), do: nil
 
   # the tinted layout, memoised on {chrome, hover, theme} so pane-damage frames reuse it
-  defp hovered(%{hover: nil} = state), do: {state.chrome, state}
+  defp hovered(%{hover: %{path: nil}} = state), do: {state.chrome, state}
 
-  defp hovered(%{hovered: {key, chrome}} = state)
-       when key == {state.chrome, state.hover, state.theme},
+  defp hovered(%{hover: %{path: path, memo: {key, chrome}}} = state)
+       when key == {state.chrome, path, state.theme},
        do: {chrome, state}
 
-  defp hovered(state) do
-    chrome = Chrome.hover(state.chrome, state.hover, state.theme)
-    {chrome, %{state | hovered: {{state.chrome, state.hover, state.theme}, chrome}}}
+  defp hovered(%{hover: %{path: path}} = state) do
+    chrome = Chrome.hover(state.chrome, path, state.theme)
+    {chrome, put_in(state.hover.memo, {{state.chrome, path, state.theme}, chrome})}
   end
 
   defp fetch(%{rows_mfa: nil} = state, _id), do: state

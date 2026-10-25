@@ -148,7 +148,7 @@ defmodule HerdrTerm.Client.Term.RenderGraphicsTest do
     assert [:delete_all, {:upload, %{id: id}}, {:place, _}] = frame_ops()
     send(render, {:scene, %{scene([]) | panes: []}})
     assert [{:delete_placement, ^id, _}, {:delete_image, ^id}] = frame_ops()
-    assert :sys.get_state(render).images == %{}
+    assert :sys.get_state(render).gfx.images == %{}
   end
 
   test "an inline {:image} is used without a fetch" do
@@ -158,7 +158,7 @@ defmodule HerdrTerm.Client.Term.RenderGraphicsTest do
     send(render, {:scene, scene([graphic()])})
     assert [:delete_all, {:upload, %{data: "inline", format: :rgb}}, {:place, _}] = frame_ops()
     refute_received {:image_fetched, _, _}
-    assert %{@key => ^payload} = :sys.get_state(render).images
+    assert %{@key => ^payload} = :sys.get_state(render).gfx.images
   end
 
   test "a withheld image draws a label, no upload" do
