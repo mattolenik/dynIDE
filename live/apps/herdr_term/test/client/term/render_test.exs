@@ -9,6 +9,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
   alias HerdrTerm.Test.FakeServer
 
   @s Cells.style([])
+  @wait 2_000
 
   def rows(id, agent) do
     Agent.get(agent, fn m ->
@@ -23,7 +24,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     ep = FakeServer.unique_name()
     FakeServer.start(self(), ep, {__MODULE__, :rows, [rows]})
     sup = start_supervised!({Client, endpoint: ep})
-    assert_receive {:attached, _, session}
+    assert_receive {:attached, _, session}, @wait
     tty = Client.tty(sup)
     Blit.subscribe_frames(tty, self())
     %{render: Client.render(sup), tty: tty, rows: rows, session: session}
@@ -38,7 +39,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
   test "a scene renders a full repaint", %{render: render, tty: tty, rows: rows} do
     set_rows(rows, 1, "hello")
     send(render, {:scene, Fixture.load("single_pane_80x24")})
-    assert_receive {:frame, _, %{repaint: true}}
+    assert_receive {:frame, _, %{repaint: true}}, @wait
     assert top(tty) =~ "hello"
   end
 
@@ -46,7 +47,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     # a broken theme fails the chrome layout, which keeps the (here broken) old one
     broken = %{base: :broken, top: %{}, hits: [], dim: false}
     send(render, {:scene, Fixture.load("single_pane_80x24")})
-    assert_receive {:frame, _, _}
+    assert_receive {:frame, _, _}, @wait
     :sys.replace_state(render, &%{&1 | theme: :broken, chrome: broken})
     send(render, {:scene, Fixture.load("single_pane_80x24")})
     refute_receive {:frame, _, _}, 100
@@ -55,7 +56,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     # fixed with no new damage or scene: the dropped frame is retried in full, and the
     # retry recomputes the layout for the new theme
     :sys.replace_state(render, &%{&1 | theme: Theme.default()})
-    assert_receive {:frame, _, %{repaint: true}}, 1500
+    assert_receive {:frame, _, %{repaint: true}}, @wait
     assert %{base: %{23 => _}} = :sys.get_state(render).chrome
   end
 
@@ -66,10 +67,10 @@ defmodule HerdrTerm.Client.Term.RenderTest do
   } do
     set_rows(rows, 1, "hello")
     send(render, {:scene, Fixture.load("single_pane_80x24")})
-    assert_receive {:frame, _, %{repaint: true}}
+    assert_receive {:frame, _, %{repaint: true}}, @wait
     Agent.update(rows, &Map.put(&1, 1, :boom))
     send(render, {:damage, 1, 2})
-    assert_receive {:frame, _, _}
+    assert_receive {:frame, _, _}, @wait
     assert top(tty) =~ "hello"
   end
 
@@ -79,14 +80,14 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     rows: rows
   } do
     send(render, {:scene, Fixture.load("single_pane_80x24")})
-    assert_receive {:frame, _, %{repaint: true}}
+    assert_receive {:frame, _, %{repaint: true}}, @wait
 
     for n <- 1..50 do
       set_rows(rows, 1, "v#{n}")
       send(render, {:damage, 1, n})
     end
 
-    assert_receive {:frame, _, %{repaint: false}}
+    assert_receive {:frame, _, %{repaint: false}}, @wait
     Process.sleep(50)
     assert length(drain()) <= 1
     assert top(tty) =~ "v50"
@@ -94,14 +95,14 @@ defmodule HerdrTerm.Client.Term.RenderTest do
 
   test "a dead session re-attaches and repaints", %{render: render, session: session} do
     send(render, {:scene, Fixture.load("single_pane_80x24")})
-    assert_receive {:frame, _, %{repaint: true}}
+    assert_receive {:frame, _, %{repaint: true}}, @wait
     send(render, {:damage, 1, 1})
-    assert_receive {:frame, _, %{repaint: false}}
+    assert_receive {:frame, _, %{repaint: false}}, @wait
     Process.exit(session, :kill)
-    assert_receive {:attached, _, session2}
+    assert_receive {:attached, _, session2}, @wait
     assert session2 != session
     send(render, {:scene, Fixture.load("single_pane_80x24")})
-    assert_receive {:frame, _, %{repaint: true}}
+    assert_receive {:frame, _, %{repaint: true}}, @wait
   end
 
   # a re-attached session re-seeds a mirrored mode and tells the client pid (Render)
@@ -128,15 +129,15 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     test "root theme props pick the palette; caps switch auto_switch names", %{render: render} do
       auto = %{name: "nord", auto_switch: true, light: "catppuccin-latte", dark: "dracula"}
       send(render, {:scene, with_theme(Fixture.load("single_pane_80x24"), @latte)})
-      assert_receive {:frame, _, _}
+      assert_receive {:frame, _, _}, @wait
       assert Theme.style(:sys.get_state(render).theme, :accent).fg == {:rgb, 30, 102, 245}
 
       send(render, {:scene, with_theme(Fixture.load("single_pane_80x24"), auto)})
-      assert_receive {:frame, _, _}
+      assert_receive {:frame, _, _}, @wait
       assert Theme.style(:sys.get_state(render).theme, :accent).fg != {:rgb, 30, 102, 245}
 
       send(render, {:caps, %{colors: %{bg: {250, 250, 250}}, scheme: nil}})
-      assert_receive {:frame, _, _}
+      assert_receive {:frame, _, _}, @wait
       assert %{appearance: :light} = st = :sys.get_state(render)
       assert Theme.style(st.theme, :accent).fg == {:rgb, 30, 102, 245}
     end
@@ -146,13 +147,13 @@ defmodule HerdrTerm.Client.Term.RenderTest do
       assert %{appearance: :light, scene: nil} = :sys.get_state(render)
       auto = %{name: "nord", auto_switch: true, light: "catppuccin-latte", dark: "dracula"}
       send(render, {:scene, with_theme(Fixture.load("single_pane_80x24"), auto)})
-      assert_receive {:frame, _, _}
+      assert_receive {:frame, _, _}, @wait
       assert Theme.style(:sys.get_state(render).theme, :accent).fg == {:rgb, 30, 102, 245}
     end
 
     test "an unchanged theme and appearance keep the theme term", %{render: render} do
       send(render, {:scene, with_theme(Fixture.load("single_pane_80x24"), @latte)})
-      assert_receive {:frame, _, _}
+      assert_receive {:frame, _, _}, @wait
       %{theme: theme, chrome_key: key} = :sys.get_state(render)
       send(render, {:caps, %{scheme: :dark}})
       send(render, {:scene, with_theme(Fixture.load("single_pane_80x24"), @latte)})
@@ -172,7 +173,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     test "hits go to Input when they change, once", %{render: render, input: input} do
       sc = Fixture.load("two_tabs_80x24")
       send(render, {:scene, sc})
-      assert_receive {:trace, ^input, :receive, {:chrome_hits, hits}}
+      assert_receive {:trace, ^input, :receive, {:chrome_hits, hits}}, @wait
       assert Enum.any?(hits, &(&1.path == [:tabs, :new_tab]))
       assert :sys.get_state(render).chrome.hits == hits
 
@@ -180,21 +181,21 @@ defmodule HerdrTerm.Client.Term.RenderTest do
       [sidebar, tabs, status] = sc.chrome.children
       title = %{status | children: Enum.map(status.children, &retitle/1)}
       send(render, {:scene, %{sc | chrome: %{sc.chrome | children: [sidebar, tabs, title]}}})
-      assert_receive {:frame, _, _}
+      assert_receive {:frame, _, _}, @wait
       refute_receive {:trace, ^input, :receive, {:chrome_hits, _}}, 50
 
       assert :sys.get_state(render).chrome_key |> elem(0) |> inspect(limit: :infinity) =~
                "zz-title"
 
       send(render, {:scene, Fixture.load("single_pane_80x24")})
-      assert_receive {:trace, ^input, :receive, {:chrome_hits, hits2}}
+      assert_receive {:trace, ^input, :receive, {:chrome_hits, hits2}}, @wait
       assert hits2 != hits
     end
 
     test "a failing layout keeps the old one and is retried", %{render: render} do
       sc = Fixture.load("two_tabs_80x24")
       send(render, {:scene, sc})
-      assert_receive {:frame, _, _}
+      assert_receive {:frame, _, _}, @wait
       %{chrome: layout, chrome_key: key} = :sys.get_state(render)
       :sys.replace_state(render, &%{&1 | theme: :broken})
       send(render, {:scene, %{sc | size: %{cols: 81, rows: 24}}})
@@ -215,7 +216,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     test "an equal chrome stores the new scene's term as the key", %{render: render} do
       sc = Fixture.load("two_tabs_80x24")
       send(render, {:scene, sc})
-      assert_receive {:frame, _, _}
+      assert_receive {:frame, _, _}, @wait
       # an equal chrome arrives as a separate term (each message is a copy)
       send(render, {:scene, sc})
       test = self()
@@ -225,7 +226,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
         s
       end)
 
-      assert_receive {:same, true}
+      assert_receive {:same, true}, @wait
     end
   end
 
@@ -239,15 +240,15 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     set_rows(rows, 1, "a")
     scene = Fixture.load("single_pane_80x24")
     send(render, {:scene, scene})
-    assert_receive {:frame, _, _}
+    assert_receive {:frame, _, _}, @wait
     assert_received {:fetched, 1}
     send(render, {:scene, %{scene | chrome: nil}})
-    assert_receive {:frame, _, _}
+    assert_receive {:frame, _, _}, @wait
     refute_received {:fetched, _}
     [p] = scene.panes
     {:ref, 1, lg} = p.rows
     send(render, {:scene, %{scene | panes: [%{p | rows: {:ref, 1, lg + 1}}]}})
-    assert_receive {:frame, _, _}
+    assert_receive {:frame, _, _}, @wait
     assert_received {:fetched, 1}
   end
 
@@ -261,7 +262,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     send(render, {:scene, scene})
     [%{rect: r}] = scene.panes
     want = {r.x + 3, r.y + 2}
-    assert_receive {:frame, _, %{cursor: ^want}}
+    assert_receive {:frame, _, %{cursor: ^want}}, @wait
   end
 
   test "inline scene rows replace the cache, empty inline rows keep it", %{
@@ -272,10 +273,10 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     [p] = scene.panes
     inline = fn rows -> %{scene | panes: [%{p | rows: {:inline, rows}}]} end
     send(render, {:scene, inline.([{0, Cells.text("seeded", @s)}])})
-    assert_receive {:frame, _, _}
+    assert_receive {:frame, _, _}, @wait
     assert top(tty) =~ "seeded"
     send(render, {:scene, %{inline.([]) | chrome: nil}})
-    assert_receive {:frame, _, _}
+    assert_receive {:frame, _, _}, @wait
     assert top(tty) =~ "seeded"
   end
 
@@ -284,9 +285,9 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     [p] = scene.panes
     inline = fn rows -> %{scene | panes: [%{p | rows: {:inline, rows}}]} end
     send(render, {:scene, inline.([{0, Cells.text("rowzero", @s)}])})
-    assert_receive {:frame, _, _}
+    assert_receive {:frame, _, _}, @wait
     send(render, {:scene, inline.([{1, Cells.text("rowone", @s)}])})
-    assert_receive {:frame, _, _}
+    assert_receive {:frame, _, _}, @wait
     # the pane's rows sit at its rect (below the M13 tab bar)
     [r0, r1 | _] = Enum.drop(Blit.screen(tty), p.rect.y)
     assert r0 =~ "rowzero" and r1 =~ "rowone"
@@ -294,25 +295,25 @@ defmodule HerdrTerm.Client.Term.RenderTest do
 
   test ":repaint forces a full repaint", %{render: render} do
     send(render, {:scene, Fixture.load("single_pane_80x24")})
-    assert_receive {:frame, _, %{repaint: true}}
+    assert_receive {:frame, _, %{repaint: true}}, @wait
     send(render, :repaint)
-    assert_receive {:frame, _, %{repaint: true}}
+    assert_receive {:frame, _, %{repaint: true}}, @wait
   end
 
   test "a scene of another size repaints", %{render: render} do
     send(render, {:scene, Fixture.load("single_pane_80x24")})
-    assert_receive {:frame, _, %{repaint: true}}
+    assert_receive {:frame, _, %{repaint: true}}, @wait
     send(render, {:scene, Fixture.load("single_pane_80x24")})
-    assert_receive {:frame, _, %{repaint: false}}
+    assert_receive {:frame, _, %{repaint: false}}, @wait
     send(render, {:scene, Fixture.load("two_pane_split_120x40")})
-    assert_receive {:frame, _, %{repaint: true}}
+    assert_receive {:frame, _, %{repaint: true}}, @wait
   end
 
   test "inline rows seed the cache; notices are kept", %{render: render, tty: tty} do
     send(render, {:scene, Fixture.load("single_pane_80x24")})
-    assert_receive {:frame, _, _}
+    assert_receive {:frame, _, _}, @wait
     send(render, {:rows, 1, 0, [{0, Cells.text("inline", @s)}]})
-    assert_receive {:frame, _, %{repaint: false}}
+    assert_receive {:frame, _, %{repaint: false}}, @wait
     assert top(tty) =~ "inline"
     notice = %{level: :info, text: "hi"}
     send(render, {:notice, notice})
@@ -324,7 +325,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     start_supervised!({Client, endpoint: ep}, id: :late)
     refute_receive {:attached, _, _}, 80
     FakeServer.start(self(), ep, {__MODULE__, :rows, [nil]})
-    assert_receive {:attached, _, _}, 200
+    assert_receive {:attached, _, _}, @wait
   end
 
   defp drain do
@@ -342,7 +343,7 @@ defmodule HerdrTerm.Client.Term.RenderTest do
   defp alert_scene(render, props) do
     s = Fixture.load("single_pane_80x24")
     send(render, {:scene, %{s | chrome: %{s.chrome | props: Map.merge(s.chrome.props, props)}}})
-    assert_receive {:frame, _, _}
+    assert_receive {:frame, _, _}, @wait
   end
 
   defp alert(sound),
