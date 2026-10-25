@@ -29,7 +29,7 @@ defmodule HerdrScene.Scene do
   """
 
   alias HerdrScene.Chrome
-  alias HerdrScene.Scene.{Node, Overlay, Pane}
+  alias HerdrScene.Scene.{Graphic, Node, Overlay, Pane}
 
   @roles [
     :root,
@@ -165,10 +165,7 @@ defmodule HerdrScene.Scene do
       rows_errors("#{path}.rows", p) ++
       pane_cursor_errors("#{path}.cursor", p.cursor) ++
       overlays_errors("#{path}.overlays", p.overlays) ++
-      if(is_list(p.graphics) and Enum.all?(p.graphics, &is_map/1),
-        do: [],
-        else: ["#{path}.graphics: expected list of maps"]
-      )
+      graphics_errors("#{path}.graphics", p.graphics)
   end
 
   defp one_pane_errors(path, _, _, _, _), do: ["#{path}: not a %Pane{}"]
@@ -247,6 +244,19 @@ defmodule HerdrScene.Scene do
   end
 
   defp overlays_errors(path, _), do: ["#{path}: not a list"]
+
+  defp graphics_errors(path, graphics) when is_list(graphics) do
+    graphics
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {g, i} ->
+      case Graphic.validate(g) do
+        :ok -> []
+        {:error, msg} -> ["#{path}[#{i}]: #{msg}"]
+      end
+    end)
+  end
+
+  defp graphics_errors(path, _), do: ["#{path}: not a list"]
 
   defp overlay_ok?(%Overlay{kind: :selection, args: %{from: f, to: t}}),
     do: pos?(f) and pos?(t)

@@ -8,7 +8,9 @@ defmodule HerdrScene.Protocol do
       size: %{cols, rows}, cell_px: {w, h} | nil, caps: map, client: pid}})`,
       reply `{:ok, session_pid, %{rows: {m, f, a}}}`; `apply(m, f, [pane_id | a])` returns
       `{gen, rows_tuple, cursor | nil} | nil` (element n of `rows_tuple` = packed row n,
-      `cursor` pane-relative `%{x, y, shape, visible}`)
+      `cursor` pane-relative `%{x, y, shape, visible}`). The map may carry
+      `images: {m, f, a}`: `apply(m, f, [pane_id, image_id | a])` returns a
+      `HerdrScene.Scene.Graphic` image payload or nil (the image is gone)
     * `{:input, from_pid, seq, event}` (event per `HerdrScene.Event`)
     * `{:detach}`
     * `{:caps, map}`: caps update after attach. Documented keys (the map is open):
@@ -19,6 +21,10 @@ defmodule HerdrScene.Protocol do
 
     * `{:scene, %HerdrScene.Scene{}}`
     * `{:damage, pane_id, gen}` (ref transport) / `{:rows, pane_id, gen, [{n, binary}]}` (inline)
+    * `{:image, pane_id, {image_id, fp}, payload}` (inline transports): the pixels of an
+      image a scene's `graphics` reference, sent before that scene; `payload` per
+      `HerdrScene.Scene.Graphic.validate_image/1` (`data: nil` = withheld, over the
+      server's cap)
     * `{:notice, %{level: :info | :warning | :error, text: binary}}`
     * `{:alert, %{kind: :notification, level: :info | :attention | :done,
       title: binary | nil, body: binary | nil, pane: pos_integer | nil,
@@ -62,6 +68,7 @@ defmodule HerdrScene.Protocol do
   """
 
   alias HerdrScene.{Event, Scene}
+  alias HerdrScene.Scene.Graphic
 
   @attach_keys [:kind, :transport, :size, :cell_px, :caps, :client]
   @alert_keys [:kind, :level, :title, :body, :pane, :sound]
@@ -119,6 +126,11 @@ defmodule HerdrScene.Protocol do
       else: {:error, "rows: expected gen and [{non_neg_integer, binary}]"}
   end
 
+  def validate_server_msg({:image, id, {image_id, fp}, payload})
+      when is_integer(id) and id > 0 and is_integer(image_id) and image_id > 0 and
+             is_integer(fp) and fp >= 0,
+      do: Graphic.validate_image(payload)
+
   def validate_server_msg({:notice, %{level: l, text: t}})
       when l in [:info, :warning, :error] and is_binary(t),
       do: :ok
@@ -152,9 +164,19 @@ defmodule HerdrScene.Protocol do
 
   @doc "Validates the reply to `{:attach, _}`."
   @spec validate_attach_reply(term) :: :ok | {:error, binary}
-  def validate_attach_reply({:ok, pid, %{rows: {m, f, a}}})
-      when is_pid(pid) and is_atom(m) and is_atom(f) and is_list(a),
-      do: :ok
+  def validate_attach_reply({:ok, pid, %{rows: {m, f, a}} = mfas})
+      when is_pid(pid) and is_atom(m) and is_atom(f) and is_list(a) do
+    case mfas do
+      %{images: {m, f, a}} when is_atom(m) and is_atom(f) and is_list(a) ->
+        :ok
+
+      %{images: other} ->
+        {:error, "attach reply images: expected {m, f, a}, got #{inspect(other)}"}
+
+      _ ->
+        :ok
+    end
+  end
 
   def validate_attach_reply({:error, reasons}) when is_list(reasons), do: :ok
   def validate_attach_reply(other), do: {:error, "unknown attach reply #{inspect(other)}"}

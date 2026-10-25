@@ -19,9 +19,12 @@ defmodule HerdrScene.Scene.Pane do
   nil (the client reads it from the row cache with the rows). `shape` is `:block`,
   `:underline`, `:bar` or `:default` (the host terminal's own cursor style); `blinking`
   is optional.
+
+  `graphics` lists the pane's kitty image placements (`HerdrScene.Scene.Graphic`), sorted
+  by z, pane-relative and unclipped: the client clips them to `rect` and its own chrome.
   """
 
-  alias HerdrScene.Scene.Overlay
+  alias HerdrScene.Scene.{Graphic, Overlay}
 
   @type rect :: HerdrScene.Scene.rect()
   @type border :: %{rect: rect, edges: [:top | :bottom | :left | :right], title: binary | nil}
@@ -34,7 +37,7 @@ defmodule HerdrScene.Scene.Pane do
           rows: rows,
           cursor: %{x: non_neg_integer, y: non_neg_integer, shape: atom, visible: boolean} | nil,
           overlays: [Overlay.t()],
-          graphics: [map]
+          graphics: [Graphic.t()]
         }
 
   @enforce_keys [:id, :rect, :rows]
