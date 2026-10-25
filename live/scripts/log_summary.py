@@ -151,7 +151,7 @@ def summarize(events, unparsed=0):
         elif kind == "persist_error":
             c["persist_errors"] += 1
         elif kind == "api_connect":
-            c["api_connects"] += 1
+            c["api_connects"] += to_int(f.get("count"), 1)
             conns_max = max(conns_max, to_int(f.get("conns")))
         elif kind == "api_denied":
             api_denied[f.get("code", "unknown")] += 1

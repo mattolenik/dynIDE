@@ -201,6 +201,14 @@ class LogSummaryTest(unittest.TestCase):
         self.assertIn("api: connects 3, conns_max 2, denied not_available 2, unknown_method 1, "
                       "errors timeout 1", out)
 
+    def test_api_connect_count(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".log") as f:
+            f.write("herdr-event api_connect ts=1 conns=1 count=5\n"
+                    "herdr-event api_connect ts=2 conns=1\n")
+            f.flush()
+            got = json.loads(run(f.name, "--json").stdout)
+        self.assertEqual(got["api"]["connects"], 6)
+
     def test_api_section_empty(self):
         got = json.loads(run(FIXTURE, "--json").stdout)
         self.assertEqual(got["api"], {"connects": 0, "conns_max": 0, "denied": {}, "errors": {}})

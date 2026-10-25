@@ -9,6 +9,10 @@ defmodule HerdrServer.Api.Listener do
   A path that `SocketPath.prepare/1` refuses, or a failed listen, makes this VM run
   without an API socket (logged), never failing app start.
 
+  The `api_connect` telemetry line is coalesced: at most one a minute, with `count` the
+  connects since the last line (the trailing connects inside the last minute are not
+  logged until the next connect).
+
   Moves with the primary across a handoff: `Handoff.Link` terminates this child after the
   freeze on PREPARE and restarts it on THAW.
 
@@ -24,12 +28,15 @@ defmodule HerdrServer.Api.Listener do
   alias HerdrServer.App.Store
 
   @max_line 1_048_576
+  @connect_log_ms 60_000
 
   defstruct path: nil,
             listen: nil,
             acceptor: nil,
             conns: MapSet.new(),
-            ctx: %{}
+            ctx: %{},
+            connects: 0,
+            connect_logged_at: nil
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -96,8 +103,24 @@ defmodule HerdrServer.Api.Listener do
     ctx = state.ctx
     conn = spawn_link(Conn, :serve, [ctx])
     conns = MapSet.put(state.conns, conn)
-    HerdrReload.Telemetry.event(:api_connect, conns: MapSet.size(conns))
-    {:reply, conn, %{state | conns: conns}}
+    state = %{state | conns: conns, connects: state.connects + 1}
+    {:reply, conn, log_connect(state)}
+  end
+
+  defp log_connect(state) do
+    now = System.monotonic_time(:millisecond)
+    last = state.connect_logged_at
+
+    if last == nil or now - last >= @connect_log_ms do
+      HerdrReload.Telemetry.event(:api_connect,
+        conns: MapSet.size(state.conns),
+        count: state.connects
+      )
+
+      %{state | connects: 0, connect_logged_at: now}
+    else
+      state
+    end
   end
 
   def handle_call(:conns, _from, state) do

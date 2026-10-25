@@ -312,6 +312,30 @@ defmodule HerdrServer.Api.ListenerTest do
     Enum.each([c, a, l], &:gen_tcp.close/1)
   end
 
+  test "api_connect is logged once a minute with the connects since the last line" do
+    p = path()
+    pid = start_supervised!({Listener, path: p})
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :info], fn ->
+        for _ <- 1..3, do: :gen_tcp.close(ApiClient.connect(p))
+        wait_until(fn -> :sys.get_state(pid).connects == 2 end)
+      end)
+
+    assert length(String.split(log, "api_connect")) == 2
+    assert log =~ "count=1"
+
+    :sys.replace_state(pid, fn st -> %{st | connect_logged_at: st.connect_logged_at - 61_000} end)
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :info], fn ->
+        :gen_tcp.close(ApiClient.connect(p))
+        wait_until(fn -> :sys.get_state(pid).connects == 0 end)
+      end)
+
+    assert log =~ "count=3"
+  end
+
   defp wait_until(f, n \\ 200) do
     cond do
       f.() -> :ok
