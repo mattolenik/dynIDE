@@ -51,6 +51,17 @@ defmodule HerdrTerm.Client.Term.InputTest do
     refute_receive {:input, _, _, _}, 50
   end
 
+  test "an inline (socket) client never takes the in-VM fast path" do
+    ep = FakeServer.unique_name()
+    FakeServer.start(self(), ep, {__MODULE__, :rows, []})
+    sup = start_supervised!({Client, endpoint: ep, transport: :inline}, id: :inline_client)
+    assert_receive {:attached, %{transport: :inline}, _session}, 2_000
+    fast([])
+    Tty.inject(Client.tty(sup), "z")
+    assert_receive {:input, _, 1, {:key, %{key: "z"}}}, 2_000
+    refute_receive {:fast, _}, 100
+  end
+
   test "an intercepted key goes slow and holds the next one until acked", %{tty: tty} do
     fast([{"b", [:ctrl]}])
     Tty.inject(tty, "\x02v")

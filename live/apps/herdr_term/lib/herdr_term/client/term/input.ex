@@ -9,7 +9,8 @@ defmodule HerdrTerm.Client.Term.Input do
   Each event takes the fast path (contract decision 6: the focused pane's
   write MFA from `:persistent_term`, read per event) or goes to the session
   as `{:input, self(), seq, event}`. After a slow event every later event is
-  held until `{:ack, seq}`. Key releases always go slow. The fast path also needs this
+  held until `{:ack, seq}`. Key releases always go slow, and so does every event of an
+  inline client (`transport: :inline`, a socket client: the fast path is the server VM's). The fast path also needs this
   client's own input mode to be `:terminal`: the session sends `{:input_mode, mode}`
   before the ack of the event that changed it, so the ack-hold orders it before the next
   event; a new session resets it to `:terminal`. Delivery is
@@ -52,7 +53,8 @@ defmodule HerdrTerm.Client.Term.Input do
     replies: %{},
     # chrome hit testing (`Hit.route/4`): Render's hits and the grab / last left press
     hits: [],
-    grab: nil
+    grab: nil,
+    inline: false
   ]
 
   def start_link(opts),
@@ -78,7 +80,14 @@ defmodule HerdrTerm.Client.Term.Input do
 
     # a restarted Input asks Render for the current session
     GenServer.cast(Client.via(opts[:id], :render), {:input_up, self()})
-    {:ok, %__MODULE__{id: opts[:id], tty: tty, parse: parse}}
+
+    {:ok,
+     %__MODULE__{
+       id: opts[:id],
+       tty: tty,
+       parse: parse,
+       inline: Keyword.get(opts, :transport) == :inline
+     }}
   end
 
   @impl true
@@ -206,7 +215,7 @@ defmodule HerdrTerm.Client.Term.Input do
   defp drain(%{session: s, inflight: nil, queue: [ev | rest]} = state) when is_pid(s) do
     state = %{state | queue: rest}
 
-    case fast(ev, state.mode, :persistent_term.get(Protocol.fast_path_key(), nil)) do
+    case fast(ev, state.mode, fast_path(state)) do
       {m, f, a} ->
         # ponytail: a write that writes then raises is re-sent after a rollback
         Guard.run_twice(m, f, [ev | a], scan: false)
@@ -220,6 +229,10 @@ defmodule HerdrTerm.Client.Term.Input do
   end
 
   defp drain(state), do: state
+
+  # an inline client talks to a server over a socket: the in-VM fast path is not its own
+  defp fast_path(%{inline: true}), do: nil
+  defp fast_path(_state), do: :persistent_term.get(Protocol.fast_path_key(), nil)
 
   defp fast({:key, %{event: :release}}, _mode, _fast), do: nil
 

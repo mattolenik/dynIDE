@@ -262,6 +262,48 @@ defmodule HerdrTerm.Remote.ConnTest do
     assert File.read!(args) =~ ~r/BatchMode=yes .*box herdr-live attach-relay/
   end
 
+  test "an ssh relay that exits shows a notice and is respawned with the same client_id",
+       ctx do
+    d = ctx.dir
+    ssh = Path.join(d, "fake-ssh")
+
+    # run 1 reads the attach frame (exactly) and exits 3; run 2 stays and records stdin
+    File.write!(ssh, """
+    #!/bin/sh
+    n=$(( $(cat #{d}/count 2>/dev/null || echo 0) + 1 ))
+    echo $n > #{d}/count
+    if [ $n = 1 ]; then
+      dd bs=1 count=4 of=#{d}/out.1 2>/dev/null
+      len=$(od -An -tu1 #{d}/out.1 | awk '{print $1*16777216 + $2*65536 + $3*256 + $4}')
+      dd bs=1 count=$len 2>/dev/null >> #{d}/out.1
+      exit 3
+    fi
+    exec cat > #{d}/out.$n
+    """)
+
+    File.chmod!(ssh, 0o755)
+    System.put_env("HERDR_LIVE_SSH", ssh)
+    on_exit(fn -> System.delete_env("HERDR_LIVE_SSH") end)
+
+    conn = start(ctx, transport: {:ssh, "box", nil})
+    assert_receive {:scene, sc}, @wait
+    assert notice(sc).text =~ "ssh relay exited (3)"
+
+    attach = fn path ->
+      wait_until(fn ->
+        with {:ok, bin} <- File.read(path),
+             {:ok, [{:attach, a} | _], _} <- Wire.decode(bin, Wire.max_client_frame()),
+             do: a,
+             else: (_ -> nil)
+      end)
+    end
+
+    a1 = attach.(Path.join(d, "out.1"))
+    a2 = attach.(Path.join(d, "out.2"))
+    assert a1.client_id == a2.client_id
+    assert Process.alive?(conn)
+  end
+
   defp wait_until(fun, n \\ 300) do
     cond do
       v = fun.() -> v

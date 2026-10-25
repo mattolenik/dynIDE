@@ -101,15 +101,18 @@ defmodule HerdrTerm.Remote.Conn do
   end
 
   @impl true
-  def handle_info(:connect, %{sock: nil} = state) do
+  def handle_info({:connect, tag}, %{sock: nil, timer: {tag, _}} = state) do
     state = Map.merge(%__MODULE__{}, state)
     {:noreply, connect(%{state | timer: nil})}
   end
 
   def handle_info({:tcp, s, data}, %{sock: s} = state) do
     state = Map.merge(%__MODULE__{}, state)
-    :ok = :inet.setopts(s, active: :once)
-    {:noreply, data(state, data)}
+
+    case :inet.setopts(s, active: :once) do
+      :ok -> {:noreply, data(state, data)}
+      {:error, _} -> {:noreply, lost(state, "disconnected from the server")}
+    end
   end
 
   def handle_info({s, {:data, data}}, %{sock: s} = state) do
@@ -129,7 +132,8 @@ defmodule HerdrTerm.Remote.Conn do
 
   def handle_info({s, {:exit_status, n}}, %{sock: s} = state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, lost(state, "ssh relay exited (#{n})")}
+    # the port is gone already: close/1 must not close it again
+    {:noreply, lost(%{state | sock: nil}, "ssh relay exited (#{n})")}
   end
 
   def handle_info({:input, from, seq, ev}, state) do
@@ -144,7 +148,7 @@ defmodule HerdrTerm.Remote.Conn do
     {:noreply, input(%{state | keys: keys}, action, {from, seq}, ev)}
   end
 
-  # stale socket or port messages, a :connect while connected
+  # stale socket or port messages, a stale {:connect, tag}
   def handle_info(msg, state) do
     state = Map.merge(%__MODULE__{}, state)
     Logger.debug("remote conn: ignored #{inspect(msg)}")
@@ -206,18 +210,26 @@ defmodule HerdrTerm.Remote.Conn do
   defp send_frame(%{sock: nil}, _frame), do: :ok
 
   defp send_frame(%{transport: {:ssh, _, _}, sock: port}, frame),
-    do: Port.command(port, Wire.encode(frame))
+    do: port_op(fn -> Port.command(port, Wire.encode(frame)) end)
 
   defp send_frame(%{sock: s}, frame), do: :gen_tcp.send(s, Wire.encode(frame))
+
+  # the relay can exit before its {:exit_status, _} is handled: the port is then closed
+  # and Port.command/close raise ArgumentError; that exit status still arrives
+  defp port_op(fun) do
+    fun.()
+  rescue
+    ArgumentError -> :ok
+  end
 
   defp close(state) do
     case state.sock do
       nil -> :ok
-      s when elem(state.transport, 0) == :ssh -> Port.close(s)
+      s when elem(state.transport, 0) == :ssh -> port_op(fn -> Port.close(s) end)
       s -> :gen_tcp.close(s)
     end
 
-    if state.timer, do: Process.cancel_timer(state.timer)
+    with {_tag, t} <- state.timer, do: Process.cancel_timer(t)
     %{state | sock: nil, timer: nil, buf: "", attached: false, hold: false}
   end
 
@@ -228,7 +240,8 @@ defmodule HerdrTerm.Remote.Conn do
   defp retry(state, text) do
     {_, max} = state.backoff
     state = show(state, %{level: :warning, text: "#{text}, reconnecting in #{state.delay} ms"})
-    timer = Process.send_after(self(), :connect, state.delay)
+    tag = make_ref()
+    timer = {tag, Process.send_after(self(), {:connect, tag}, state.delay)}
     %{state | timer: timer, delay: min(state.delay * 2, max)}
   end
 
