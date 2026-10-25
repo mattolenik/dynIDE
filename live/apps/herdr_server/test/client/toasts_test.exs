@@ -46,4 +46,12 @@ defmodule HerdrServer.Client.ToastsTest do
     assert length(rest) == 7
     assert {nil, ^rest} = Toasts.drop(rest, 5)
   end
+
+  test "ttl: 8 s attention, 5 s otherwise; options override per level" do
+    assert Toasts.ttl(:attention) == 8000
+    assert Toasts.ttl(:done) == 5000
+    assert Toasts.ttl(:info) == 5000
+    assert Toasts.ttl(:attention, done: 10) == 8000
+    assert Toasts.ttl(:info, done: 10) == 10
+  end
 end

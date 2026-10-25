@@ -378,10 +378,8 @@ defmodule HerdrServer.Client.Session do
       end
 
     if fwd, do: send(state.client, {:alert, fwd})
-    ms = Application.get_env(:herdr_server, :toast_ms, attention: 8000, done: 5000)
-
-    if toasts != state.toasts,
-      do: Process.send_after(self(), {:toast_expired, id}, ms[a.level] || ms[:done])
+    ms = Toasts.ttl(a.level, Application.get_env(:herdr_server, :toast_ms, []))
+    if toasts != state.toasts, do: Process.send_after(self(), {:toast_expired, id}, ms)
 
     push(%{state | toasts: toasts}, app)
   catch

@@ -18,6 +18,7 @@ defmodule HerdrServer.Client.Toasts do
   alias HerdrServer.Layout
 
   @max 8
+  @ttl [attention: 8000, done: 5000]
 
   @type toast :: %{
           id: pos_integer,
@@ -40,6 +41,13 @@ defmodule HerdrServer.Client.Toasts do
       true ->
         {nil, toasts}
     end
+  end
+
+  @doc "A toast's lifetime in ms for `level`: `opts` over 8 s attention / 5 s otherwise."
+  @spec ttl(atom, keyword) :: pos_integer
+  def ttl(level, opts \\ []) do
+    ms = Keyword.merge(@ttl, opts)
+    ms[level] || ms[:done]
   end
 
   @doc "Takes toast `id` out of the queue (nil when it is gone)."
