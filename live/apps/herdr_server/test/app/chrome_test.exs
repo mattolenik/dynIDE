@@ -34,6 +34,16 @@ defmodule HerdrServer.App.ChromeTest do
     assert app2 == app
   end
 
+  test "a double click is a click wherever it has no meaning of its own" do
+    {app, _} = Actions.new_tab(fresh())
+    {app, []} = chrome(app, [:tabs, {:tab, 1}], :double_click)
+    assert ws(app).active_tab == 1
+    assert chrome(app, [:tabs, :new_tab], :double_click) == chrome(app, [:tabs, :new_tab], :click)
+    {menu, []} = chrome(app, [:sidebar, :spaces, :menu], :click)
+    path = [HerdrServer.App.Modal.view(menu, menu.session.size).id, :backdrop]
+    assert chrome(menu, path, :double_click) == chrome(menu, path, :click)
+  end
+
   test "new tab button asks for the name, then opens a tab" do
     {app, []} = chrome(fresh(), [:tabs, :new_tab], :click)
     assert [%{kind: :prompt, title: "new tab"}] = app.focus.modal

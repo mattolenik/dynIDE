@@ -25,6 +25,7 @@ defmodule HerdrServer.App.Chrome do
       while a modal is open every other path is a no-op.
     * Right clicks on a tab, a workspace or an agents item open its context menu at the
       click; the sidebar's `menu` button opens the global menu (`App.Modal.Menu`).
+    * `:double_click` is `:click` on every path but `[:sidebar, :edge]` (modals too).
     * Unknown paths: no-op.
   """
 
@@ -37,6 +38,10 @@ defmodule HerdrServer.App.Chrome do
 
   @spec apply(Actions.app(), [term], {atom, %{x: integer, y: integer}}) ::
           {Actions.app(), [Actions.effect()]}
+  # only the sidebar edge has a double-click meaning; elsewhere it is a click
+  def apply(app, path, {:double_click, at}) when path != [:sidebar, :edge],
+    do: __MODULE__.apply(app, path, {:click, at})
+
   def apply(app, [{tag, _} | _] = path, action) when tag in [:modal, :menu],
     do: Modal.chrome(app, path, action)
 
