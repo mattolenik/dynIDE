@@ -8,7 +8,7 @@
     token: nil,
     props: %{
       mouse: true,
-      sound: %{command: nil, enabled: true},
+      sound: %{enabled: true},
       toast: %{delivery: :herdr},
       indicators: :dots,
       theme: %{
