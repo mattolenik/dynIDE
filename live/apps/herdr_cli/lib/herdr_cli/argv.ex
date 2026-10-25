@@ -255,9 +255,13 @@ defmodule HerdrCli.Argv do
     split = %{
       "direction" => {"direction", {:enum, ["right", "down"]}},
       "ratio" => {"ratio", :number},
+      "cwd" => {"cwd", :string},
+      "env" => {"env", {:kv_many}},
       "focus" => {"focus", :flag},
       "no-focus" => {"focus", {:const, false}}
     }
+
+    nav = %{"direction" => {"direction", {:enum, ~w(left right up down)}}}
 
     link = %{
       "col" => {"col", :int},
@@ -289,7 +293,32 @@ defmodule HerdrCli.Argv do
         [opt_id],
         split,
         :json,
-        "pane split [<pane_id>] --direction right|down [--ratio R] [--focus|--no-focus]"
+        "pane split [<pane_id>] --direction right|down [--ratio R] [--cwd PATH] " <>
+          "[--env KEY=VALUE]... [--focus|--no-focus]"
+      ),
+      cmd(
+        ~w(pane focus-direction),
+        "pane.focus_direction",
+        [opt_id],
+        nav,
+        :json,
+        "pane focus-direction [<pane_id>] --direction left|right|up|down"
+      ),
+      cmd(
+        ~w(pane swap),
+        "pane.swap",
+        [opt_id],
+        nav,
+        :json,
+        "pane swap [<pane_id>] --direction left|right|up|down"
+      ),
+      cmd(
+        ~w(pane resize),
+        "pane.resize",
+        [opt_id],
+        Map.put(nav, "amount", {"amount", :int}),
+        :json,
+        "pane resize [<pane_id>] --direction left|right|up|down [--amount N]"
       ),
       cmd(
         ~w(pane rename),
@@ -741,6 +770,9 @@ defmodule HerdrCli.Argv do
   end
 
   # the server takes absolute paths: relative ones are the caller's
+  defp finish(%{method: "pane.split"} = c, params, env),
+    do: plain(c, Map.replace_lazy(params, "cwd", &abs_path(&1, env)))
+
   defp finish(%{method: "worktree." <> _} = c, params, env) do
     plain(
       c,

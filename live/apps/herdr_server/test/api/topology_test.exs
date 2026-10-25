@@ -16,7 +16,7 @@ defmodule HerdrServer.Api.TopologyTest do
     on_exit(fn -> File.rm_rf!(dir) end)
     path = Path.join(dir, "a.sock")
     start_supervised!({Listener, [path: path, reload_server: :no_reload_server]})
-    %{s: ApiClient.connect(path)}
+    %{s: ApiClient.connect(path), dir: dir}
   end
 
   defp ok!(s, method, params \\ nil) do
@@ -170,6 +170,57 @@ defmodule HerdrServer.Api.TopologyTest do
     assert zoom.() == 2
     ok!(s, "pane.zoom", %{"zoom" => false})
     assert zoom.() == nil
+  end
+
+  test "pane.split with cwd and env spawns there; HERDR_* stay authoritative", %{s: s, dir: dir} do
+    ok!(s, "workspace.list")
+
+    ok!(s, "pane.split", %{
+      "direction" => "right",
+      "cwd" => dir,
+      "env" => %{"X" => "1", "HERDR_PANE_ID" => "p9"}
+    })
+
+    spec = Fake.Keeper.last_spec()
+    assert spec.cwd == dir
+    assert {"X", "1"} in spec.env
+    assert {"HERDR_PANE_ID", "p2"} in spec.env
+    refute {"HERDR_PANE_ID", "p9"} in spec.env
+  end
+
+  test "pane.split with a missing cwd is invalid_params and spawns nothing", %{s: s, dir: dir} do
+    ok!(s, "workspace.list")
+    missing = Path.join(dir, "nope")
+
+    assert {"invalid_params", _} =
+             err(s, "pane.split", %{"direction" => "right", "cwd" => missing})
+
+    assert length(ok!(s, "pane.list")["panes"]) == 1
+  end
+
+  test "pane.focus_direction, swap and resize by id, each clearing zoom", %{s: s} do
+    ok!(s, "workspace.list")
+    ok!(s, "pane.split", %{"direction" => "right"})
+    zoom = fn -> Map.get(hd(hd(Store.snapshot().session.workspaces).tabs), :zoom) end
+
+    ok!(s, "pane.zoom", %{"pane_id" => "p1"})
+    r = ok!(s, "pane.focus_direction", %{"pane_id" => "p1", "direction" => "right"})
+    assert %{"changed" => true, "source_pane_id" => "p1", "focused_pane_id" => "p2"} = r
+    assert zoom.() == nil
+    r = ok!(s, "pane.focus_direction", %{"pane_id" => "p2", "direction" => "right"})
+    assert %{"changed" => false, "focused_pane_id" => "p2"} = r
+
+    ok!(s, "pane.zoom", %{"pane_id" => "p1"})
+    r = ok!(s, "pane.swap", %{"pane_id" => "p1", "direction" => "right"})
+    assert %{"changed" => true, "source_pane_id" => "p1", "focused_pane_id" => "p1"} = r
+    assert zoom.() == nil
+    assert %{"changed" => false} = ok!(s, "pane.swap", %{"direction" => "right"})
+
+    ok!(s, "pane.zoom", %{"pane_id" => "p1"})
+    r = ok!(s, "pane.resize", %{"pane_id" => "p1", "direction" => "left", "amount" => 10})
+    assert %{"changed" => true, "pane_id" => "p1"} = r
+    assert zoom.() == nil
+    assert {"not_found", _} = err(s, "pane.swap", %{"pane_id" => "p9", "direction" => "left"})
   end
 
   test "pane.split of a pane closed meanwhile is not_found", %{s: s} do

@@ -98,15 +98,20 @@ defmodule HerdrServer.App.Commands do
     end)
   end
 
-  @spec split_pane(app(), integer(), :horizontal | :vertical, float(), boolean()) :: result()
-  def split_pane(app, pane, dir, ratio, focus?) do
+  @doc """
+  Splits `pane`. `spawn` is the new pane's `cwd` and `env` (a name => value map; the Store
+  keeps herdr's own variables authoritative); both optional.
+  """
+  @spec split_pane(app(), integer(), :horizontal | :vertical, float(), boolean(), map()) ::
+          result()
+  def split_pane(app, pane, dir, ratio, focus?, spawn \\ %{}) do
     case locate(app, pane) do
       nil -> {app, []}
-      {ws_id, tab_id} -> split_in(app, ws_id, tab_id, {pane, dir, ratio, focus?})
+      {ws_id, tab_id} -> split_in(app, ws_id, tab_id, {pane, dir, ratio, focus?, spawn})
     end
   end
 
-  defp split_in(app, ws_id, tab_id, {pane, dir, ratio, focus?}) do
+  defp split_in(app, ws_id, tab_id, {pane, dir, ratio, focus?, spawn}) do
     {id, app2} = take_id(app)
     tab = Enum.find(find_ws(app, ws_id).tabs, &(&1.id == tab_id))
     l = tab.layout
@@ -118,9 +123,39 @@ defmodule HerdrServer.App.Commands do
     if big_enough?(new) and big_enough?(Layout.size(l2, app.session.area, opts, pane)) do
       l2 = if focus?, do: l2, else: restore_focus(l2, l)
       app2 = app2 |> put_tab_layout(ws_id, tab_id, l2) |> sync()
-      {put_in(app2.session.panes[id], new_meta()), [{:spawn, id, new}]}
+      {put_in(app2.session.panes[id], new_meta()), [spawn_effect(id, new, spawn)]}
     else
       {app, [{:notice, %{level: :warning, text: "pane too small to split"}}]}
+    end
+  end
+
+  defp spawn_effect(id, size, spawn) when map_size(spawn) == 0, do: {:spawn, id, size}
+
+  defp spawn_effect(id, size, spawn),
+    do: {:spawn, id, size, %{cwd: spawn[:cwd], replay: nil, env: Map.to_list(spawn[:env] || %{})}}
+
+  @doc "Focuses `pane`, then moves focus to its neighbour in `nav`."
+  @spec focus_pane_dir(app(), integer(), Layout.nav()) :: result()
+  def focus_pane_dir(app, pane, nav), do: on_focused(app, pane, &Actions.focus_dir(&1, nav))
+
+  @doc "Focuses `pane`, then swaps it with its neighbour in `nav`."
+  @spec swap_pane_dir(app(), integer(), Layout.nav()) :: result()
+  def swap_pane_dir(app, pane, nav), do: on_focused(app, pane, &Actions.swap_dir(&1, nav))
+
+  @doc "Focuses `pane`, then resizes its edge in `nav` by `delta` of the tab."
+  @spec resize_pane_dir(app(), integer(), Layout.nav(), float()) :: result()
+  def resize_pane_dir(app, pane, nav, delta),
+    do: on_focused(app, pane, &Actions.resize_dir(&1, nav, delta))
+
+  defp on_focused(app, pane, fun) do
+    case locate(app, pane) do
+      nil ->
+        {app, []}
+
+      _ ->
+        {app, fx} = Workspaces.focus_pane(app, pane)
+        {app, fx2} = fun.(app)
+        {app, fx ++ fx2}
     end
   end
 

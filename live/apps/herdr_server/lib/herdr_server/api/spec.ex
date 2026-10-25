@@ -58,6 +58,7 @@ defmodule HerdrServer.Api.Spec do
   defp opt(name, type, doc), do: %{name: name, type: type, required: false, doc: doc}
 
   defp opt_pane(doc), do: opt("pane_id", :pane_id, doc)
+  defp dir, do: req("direction", {:enum, ~w(left right up down)}, "Which way.")
   defp tab_id, do: req("tab_id", :tab_id, "Target tab.")
   defp ws_id, do: req("workspace_id", :workspace_id, "Target workspace.")
   defp label, do: req("label", :string, "New label.")
@@ -486,11 +487,45 @@ defmodule HerdrServer.Api.Spec do
           opt_pane("Pane to split; default the focused pane."),
           req("direction", {:enum, ["right", "down"]}, "Where the new pane goes."),
           opt("ratio", {:number, 0.1, 0.9}, "Share of the space kept by the first pane."),
+          opt("cwd", :string, "Absolute working directory of the new pane; must exist."),
+          opt("env", {:map, :string}, "Extra environment; herdr's own variables win."),
           focus("Focus the new pane.")
         ],
         "pane_split",
         [:not_found, :failed],
-        "herdr-live pane split [<pane_id>] --direction right|down [--ratio R] [--focus|--no-focus]"
+        "herdr-live pane split [<pane_id>] --direction right|down [--ratio R] [--cwd PATH] " <>
+          "[--env KEY=VALUE]... [--focus|--no-focus]"
+      ),
+      method(
+        "pane.focus_direction",
+        g,
+        "Focus the neighbour of a pane in a direction; clears the tab's zoom.",
+        [opt_pane("Pane to start from; default the focused pane."), dir()],
+        "pane_focus_direction",
+        [:not_found],
+        "herdr-live pane focus-direction [<pane_id>] --direction left|right|up|down"
+      ),
+      method(
+        "pane.swap",
+        g,
+        "Swap a pane with its neighbour in a direction; clears the tab's zoom.",
+        [opt_pane("Pane to swap; default the focused pane."), dir()],
+        "pane_swap",
+        [:not_found],
+        "herdr-live pane swap [<pane_id>] --direction left|right|up|down"
+      ),
+      method(
+        "pane.resize",
+        g,
+        "Move the pane's edge in a direction by a percentage of the tab; clears the tab's zoom.",
+        [
+          opt_pane("Pane to resize; default the focused pane."),
+          dir(),
+          opt("amount", {:integer, 1, 50}, "Percent of the tab; default 5.")
+        ],
+        "pane_resize",
+        [:not_found],
+        "herdr-live pane resize [<pane_id>] --direction left|right|up|down [--amount N]"
       ),
       method(
         "pane.report_agent",
@@ -1183,6 +1218,24 @@ defmodule HerdrServer.Api.Spec do
       "pane_info" => [f("pane", pane)],
       "pane_split" => [f("pane", pane)],
       "pane_closed" => [f("pane_id", :pane_id)],
+      "pane_focus_direction" => [
+        f("changed", :boolean),
+        f("source_pane_id", :pane_id),
+        f("focused_pane_id", :pane_id),
+        f("layout", {:ref, "layout"})
+      ],
+      "pane_swap" => [
+        f("changed", :boolean),
+        f("source_pane_id", :pane_id),
+        f("focused_pane_id", :pane_id),
+        f("layout", {:ref, "layout"})
+      ],
+      "pane_resize" => [
+        f("changed", :boolean),
+        f("pane_id", :pane_id),
+        f("focused_pane_id", :pane_id),
+        f("layout", {:ref, "layout"})
+      ],
       "pane_layout" => [f("layout", {:ref, "layout"})],
       "process_info" => [
         f("pane_id", :pane_id),

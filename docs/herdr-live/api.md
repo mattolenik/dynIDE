@@ -443,18 +443,66 @@ Errors: `invalid_params`, `not_found`
 
 Split a pane; the new pane is created beside it.
 
-CLI: `herdr-live pane split [<pane_id>] --direction right|down [--ratio R] [--focus|--no-focus]`
+CLI: `herdr-live pane split [<pane_id>] --direction right|down [--ratio R] [--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
 | `pane_id` | pane id | no | Pane to split; default the focused pane. |
 | `direction` | `right` or `down` | yes | Where the new pane goes. |
 | `ratio` | number 0.1..0.9 | no | Share of the space kept by the first pane. |
+| `cwd` | string | no | Absolute working directory of the new pane; must exist. |
+| `env` | object of strings | no | Extra environment; herdr's own variables win. |
 | `focus` | boolean | no | Focus the new pane. |
 
 Result: `pane_split` with `pane` (`pane` object).
 
 Errors: `invalid_params`, `not_found`, `failed`
+
+### `pane.focus_direction`
+
+Focus the neighbour of a pane in a direction; clears the tab's zoom.
+
+CLI: `herdr-live pane focus-direction [<pane_id>] --direction left|right|up|down`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | no | Pane to start from; default the focused pane. |
+| `direction` | `left`, `right`, `up` or `down` | yes | Which way. |
+
+Result: `pane_focus_direction` with `changed` (boolean), `source_pane_id` (pane id), `focused_pane_id` (pane id), `layout` (`layout` object).
+
+Errors: `invalid_params`, `not_found`
+
+### `pane.swap`
+
+Swap a pane with its neighbour in a direction; clears the tab's zoom.
+
+CLI: `herdr-live pane swap [<pane_id>] --direction left|right|up|down`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | no | Pane to swap; default the focused pane. |
+| `direction` | `left`, `right`, `up` or `down` | yes | Which way. |
+
+Result: `pane_swap` with `changed` (boolean), `source_pane_id` (pane id), `focused_pane_id` (pane id), `layout` (`layout` object).
+
+Errors: `invalid_params`, `not_found`
+
+### `pane.resize`
+
+Move the pane's edge in a direction by a percentage of the tab; clears the tab's zoom.
+
+CLI: `herdr-live pane resize [<pane_id>] --direction left|right|up|down [--amount N]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | no | Pane to resize; default the focused pane. |
+| `direction` | `left`, `right`, `up` or `down` | yes | Which way. |
+| `amount` | integer 1..50 | no | Percent of the tab; default 5. |
+
+Result: `pane_resize` with `changed` (boolean), `pane_id` (pane id), `focused_pane_id` (pane id), `layout` (`layout` object).
+
+Errors: `invalid_params`, `not_found`
 
 ### `pane.report_agent`
 

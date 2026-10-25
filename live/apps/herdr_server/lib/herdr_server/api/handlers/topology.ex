@@ -156,14 +156,26 @@ defmodule HerdrServer.Api.Handlers.Topology do
     dir = if p.direction == "right", do: :horizontal, else: :vertical
     ratio = (p[:ratio] || 0.5) * 1.0
 
-    with {:ok, before, aft, notes} <-
-           run_on_pane(id, {Commands, :split_pane, [id, dir, ratio, Map.get(p, :focus, false)]}) do
+    with {:ok, spawn} <- spawn_opts(p),
+         {:ok, before, aft, notes} <-
+           run_on_pane(
+             id,
+             {Commands, :split_pane, [id, dir, ratio, Map.get(p, :focus, false), spawn]}
+           ) do
       case Map.keys(aft.session.panes) -- Map.keys(before.session.panes) do
         [new | _] -> pane_reply("pane_split", aft, new)
         [] -> unchanged(notes)
       end
     end
   end
+
+  def handle("pane.focus_direction", p),
+    do: by_pane(p, "pane_focus_direction", :focus_pane_dir, [])
+
+  def handle("pane.swap", p), do: by_pane(p, "pane_swap", :swap_pane_dir, [])
+
+  def handle("pane.resize", p),
+    do: by_pane(p, "pane_resize", :resize_pane_dir, [(p[:amount] || 5) / 100])
 
   def handle("pane.close", %{pane_id: id}) do
     with {:ok, _before, aft, notes} <- run_on_pane(id, {Commands, :close_pane, [id]}) do
@@ -331,6 +343,42 @@ defmodule HerdrServer.Api.Handlers.Topology do
       nil -> not_found(Ids.pane(id))
       _ -> pane_reply("pane_info", app, id)
     end
+  end
+
+  # focus the pane, then the keybind action; `changed` is whether the layout moved
+  defp by_pane(p, type, fun, extra) do
+    id = p[:pane_id] || app!().focus.pane
+    nav = String.to_existing_atom(p.direction)
+    args = [id, nav | extra]
+
+    with {:ok, before, aft, _notes} <- run_on_pane(id, {Commands, fun, args}) do
+      {ws, tab} = tab_of(aft, id)
+      {_, tab0} = tab_of(before, id)
+      key = if type == "pane_resize", do: :pane_id, else: :source_pane_id
+
+      {:ok,
+       %{
+         :type => type,
+         :changed => tab0.layout != tab.layout,
+         key => Ids.pane(id),
+         :focused_pane_id => Ids.pane(tab.layout.focus),
+         :layout => View.layout(aft, ws, tab)
+       }}
+    end
+  end
+
+  defp tab_of(app, id) do
+    {w, t} = Commands.locate(app, id)
+    View.find_tab(app, w, t)
+  end
+
+  # cwd must be an existing directory; env is name => value
+  defp spawn_opts(p) do
+    cwd = p[:cwd]
+
+    if cwd && !File.dir?(cwd),
+      do: {:error, :invalid_params, "cwd is not an existing directory: #{cwd}"},
+      else: {:ok, Map.take(p, [:cwd, :env])}
   end
 
   defp pane_reply(type, app, id) do
