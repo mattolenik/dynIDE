@@ -38,6 +38,7 @@ defmodule HerdrCli.Output do
   def render(_out, reply), do: unexpected(reply)
 
   defp body(:quiet, _r), do: {:ok, ""}
+  defp body(:manifests, %{"manifests" => ms}) when is_list(ms), do: {:ok, manifests(ms)}
   defp body(:explain_json, %{"agent" => a}) when is_map(a), do: {:ok, [encode(a), ?\n]}
   defp body(:text, %{"text" => t}) when is_binary(t), do: {:ok, [t, ?\n]}
   defp body(:explain, %{"explanation" => t}) when is_binary(t), do: {:ok, t}
@@ -55,6 +56,36 @@ defmodule HerdrCli.Output do
   end
 
   defp body(_out, _r), do: :error
+
+  # herdr's print_agent_manifest_status (src/cli/server.rs): herdr-live has no remote
+  # manifest channel, so the check fields print herdr's defaults ("never", "not checked",
+  # remote "-"); a manifest that failed to load is herdr's "x" row with its error below
+  defp manifests(ms) do
+    rows =
+      for m <- ms do
+        marker = if m["error"], do: "x", else: " "
+
+        row = [
+          marker,
+          " ",
+          pad(m["agent"], 9),
+          " ",
+          pad(m["source"], 14),
+          " active ",
+          pad(m["version"], 14),
+          " remote ",
+          pad(nil, 14),
+          " not checked\n"
+        ]
+
+        note = m["error"] || m["warning"]
+        [row | if(note, do: ["  ", note, ?\n], else: [])]
+      end
+
+    ["last check: never\nresult: not checked\n\n" | rows]
+  end
+
+  defp pad(v, n), do: String.pad_trailing(v || "-", n)
 
   defp scalar(nil), do: ""
   defp scalar(v) when is_binary(v), do: v

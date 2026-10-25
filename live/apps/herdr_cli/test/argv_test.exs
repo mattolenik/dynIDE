@@ -319,6 +319,7 @@ defmodule HerdrCli.ArgvTest do
                 :json}
 
       assert p("plugin update") == {:call, "plugin.update", %{}, :json}
+      assert {:usage, _} = p("plugin update --ref v2")
 
       assert p("plugin update t.u --ref v2 --yes") ==
                {:call, "plugin.update", %{"target" => "t.u", "ref" => "v2", "yes" => true}, :json}
@@ -373,7 +374,10 @@ defmodule HerdrCli.ArgvTest do
       assert {:usage, _} = p("agent explain --file f")
       assert {:usage, _} = p("agent explain p1 --file f --agent claude")
 
-      assert p("server agent-manifests") == {:call, "server.agent_manifests", %{}, :json}
+      assert p("server agent-manifests") == {:call, "server.agent_manifests", %{}, :manifests}
+
+      assert p("server agent-manifests --json") ==
+               {:call, "server.agent_manifests", %{}, :json}
 
       assert p("server reload-agent-manifests") ==
                {:call, "server.reload_agent_manifests", %{}, :json}

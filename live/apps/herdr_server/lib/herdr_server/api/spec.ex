@@ -233,7 +233,7 @@ defmodule HerdrServer.Api.Spec do
         [],
         "agent_manifests",
         [],
-        "herdr-live server agent-manifests"
+        "herdr-live server agent-manifests [--json]"
       ),
       method(
         "server.reload_agent_manifests",
@@ -981,7 +981,11 @@ defmodule HerdrServer.Api.Spec do
           "leaves the old checkout registered. Without `yes`, when anything changed, the answer " <>
           "is `failed` with `data.reason` `confirmation_required` and `data.preview` a list of " <>
           "install previews. A linked or locally copied plugin is `failed` with `data.reason` " <>
-          "`not_applicable`; others carry herdr's code in `data.reason`."
+          "`not_applicable`; others carry herdr's code in `data.reason`. Updating all, every " <>
+          "plugin is tried (herdr): when any failed the answer is `failed` with `data.reason` " <>
+          "`plugin_update_failed`, `data.updated`, `data.up_to_date`, `data.preview` and " <>
+          "`data.failed` (`plugin_id`, `reason`, `message` each). `ref` needs `target` " <>
+          "(`invalid_params`)."
       ),
       plugin(
         "link",

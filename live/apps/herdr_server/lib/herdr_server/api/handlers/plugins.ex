@@ -28,9 +28,21 @@ defmodule HerdrServer.Api.Handlers.Plugins do
 
   # ponytail: same as install (git and builds in the connection process)
   def handle("plugin.update", p) do
-    with {:ok, r} <- Install.update(p[:target], p[:ref], p[:yes] == true) |> err() do
-      {:ok,
-       %{type: "plugin_update", updated: Enum.map(r.updated, &public/1), up_to_date: r.up_to_date}}
+    case Install.update(p[:target], p[:ref], p[:yes] == true) do
+      # updating all, some failed: herdr tries every plugin; the rest's outcome is in data
+      {:error, "plugin_update_failed" = reason, msg, %{} = d} ->
+        {:error, :failed, msg,
+         %{d | updated: Enum.map(d.updated, &public/1)} |> Map.put(:reason, reason)}
+
+      r ->
+        with {:ok, r} <- err(r) do
+          {:ok,
+           %{
+             type: "plugin_update",
+             updated: Enum.map(r.updated, &public/1),
+             up_to_date: r.up_to_date
+           }}
+        end
     end
   end
 

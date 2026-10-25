@@ -61,7 +61,8 @@ answered before a method is known.
   `pane report-metadata`, `workspace report-metadata`.
 - Text: `pane read` and `agent read` print the text; `agent explain` prints the
   explanation, `--json` the bare explain object (`result.agent`); `plugin config-dir`
-  prints the path.
+  prints the path; `server agent-manifests` prints herdr's manifest status table,
+  `--json` the whole response.
 - herdr-live's own verbs: `rollback` prints `ok <batch>...`, `test-on-save` prints
   `ok <mode>`, `server status --kv` prints `key=value` lines, `events subscribe` prints
   one event per line, and `update` and `--version` print their own text.
@@ -108,7 +109,7 @@ Errors: `invalid_params`
 
 The loaded agent detection manifests.
 
-CLI: `herdr-live server agent-manifests`
+CLI: `herdr-live server agent-manifests [--json]`
 
 Params: none.
 
@@ -1041,7 +1042,7 @@ Result: `plugin_update` with `updated` (list of `plugin` object), `up_to_date` (
 
 Errors: `invalid_params`, `not_found`, `failed`
 
-Re-clones each plugin at its ref, checks the plugin id is unchanged, then installs it in a fresh dir like `plugin.install` (build, register, enabled state kept); a failure leaves the old checkout registered. Without `yes`, when anything changed, the answer is `failed` with `data.reason` `confirmation_required` and `data.preview` a list of install previews. A linked or locally copied plugin is `failed` with `data.reason` `not_applicable`; others carry herdr's code in `data.reason`.
+Re-clones each plugin at its ref, checks the plugin id is unchanged, then installs it in a fresh dir like `plugin.install` (build, register, enabled state kept); a failure leaves the old checkout registered. Without `yes`, when anything changed, the answer is `failed` with `data.reason` `confirmation_required` and `data.preview` a list of install previews. A linked or locally copied plugin is `failed` with `data.reason` `not_applicable`; others carry herdr's code in `data.reason`. Updating all, every plugin is tried (herdr): when any failed the answer is `failed` with `data.reason` `plugin_update_failed`, `data.updated`, `data.up_to_date`, `data.preview` and `data.failed` (`plugin_id`, `reason`, `message` each). `ref` needs `target` (`invalid_params`).
 
 ### `plugin.link`
 

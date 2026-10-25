@@ -92,7 +92,8 @@ defmodule HerdrServer.Api.Spec.Doc do
       `pane report-metadata`, `workspace report-metadata`.
     - Text: `pane read` and `agent read` print the text; `agent explain` prints the
       explanation, `--json` the bare explain object (`result.agent`); `plugin config-dir`
-      prints the path.
+      prints the path; `server agent-manifests` prints herdr's manifest status table,
+      `--json` the whole response.
     - herdr-live's own verbs: `rollback` prints `ok <batch>...`, `test-on-save` prints
       `ok <mode>`, `server status --kv` prints `key=value` lines, `events subscribe` prints
       one event per line, and `update` and `--version` print their own text.

@@ -2,6 +2,7 @@ defmodule HerdrServer.Plugins.InstallTest do
   use ExUnit.Case, async: false
   @moduletag :capture_log
 
+  alias HerdrServer.Api.Handlers.Plugins, as: PluginsHandler
   alias HerdrServer.Plugins.{Command, Install, Paths, Registry}
   alias HerdrServer.Test.PluginDirs
 
@@ -122,7 +123,7 @@ defmodule HerdrServer.Plugins.InstallTest do
   end
 
   # a bare repo at <base>/git/owner/repo.git holding `src`'s files
-  defp bare_repo(base, src) do
+  defp bare_repo(base, src, repo \\ "repo") do
     work = base <> "/work"
     File.mkdir_p!(work)
     for f <- File.ls!(src), do: File.cp_r!(Path.join(src, f), Path.join(work, f))
@@ -130,7 +131,7 @@ defmodule HerdrServer.Plugins.InstallTest do
     git!(["add", "."], work)
     git!(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"], work)
     File.mkdir_p!(base <> "/git/owner")
-    git!(["clone", "-q", "--bare", work, base <> "/git/owner/repo.git"], base)
+    git!(["clone", "-q", "--bare", work, base <> "/git/owner/#{repo}.git"], base)
     File.rm_rf!(work)
   end
 
@@ -268,9 +269,9 @@ defmodule HerdrServer.Plugins.InstallTest do
   end
 
   # a second commit on the bare repo at <base>/git/owner/repo.git: `change` edits a clone
-  defp push(base, change) do
+  defp push(base, change, repo \\ "repo") do
     work = base <> "/push"
-    git!(["clone", "-q", base <> "/git/owner/repo.git", work], base)
+    git!(["clone", "-q", base <> "/git/owner/#{repo}.git", work], base)
     change.(work)
     git!(["add", "-A"], work)
     git!(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "next"], work)
@@ -340,6 +341,43 @@ defmodule HerdrServer.Plugins.InstallTest do
       assert {:ok, %{updated: [p]}} = Install.update("t.u", "v2", true)
       assert p["source"]["requested_ref"] == "v2"
       assert p["source"]["resolved_commit"] == c2
+    end
+
+    test "updating all tries every plugin: one failing build does not hide the others",
+         %{base: base, p1: p1} do
+      bare_repo(base, PluginDirs.plugin(base <> "/src2", "t.a"), "repo2")
+      {:ok, a1} = Install.install("owner/repo2", nil, true)
+      # t.a (first by id) fails to build, t.u (second) updates
+      push(
+        base,
+        fn w -> PluginDirs.plugin(w, "t.a", ~s([[build]]\ncommand = ["false"])) end,
+        "repo2"
+      )
+
+      c2 = push(base, fn w -> File.write!(w <> "/extra", "x") end)
+
+      assert {:error, "plugin_update_failed", msg, d} = Install.update(nil, nil, true)
+      assert msg =~ "t.a"
+      assert [%{plugin_id: "t.a", reason: "plugin_build_failed"}] = d.failed
+      assert [%{"plugin_id" => "t.u", "source" => %{"resolved_commit" => ^c2}}] = d.updated
+      assert d.up_to_date == []
+      assert {:ok, %{"source" => %{"resolved_commit" => ^c2}}} = Registry.find("t.u")
+      assert {:ok, %{"plugin_root" => root}} = Registry.find("t.a")
+      assert root == a1["plugin_root"]
+      refute root == p1["plugin_root"]
+
+      # over the API: failed, data.reason plugin_update_failed with every outcome
+      assert {:error, :failed, _,
+              %{reason: "plugin_update_failed", updated: [], up_to_date: ["t.u"], failed: [_]}} =
+               PluginsHandler.handle("plugin.update", %{yes: true})
+
+      # named, the one failure is that plugin's own error
+      assert {:error, "plugin_build_failed", _} = Install.update("t.a", nil, true)
+    end
+
+    test "--ref needs a target" do
+      assert {:error, "invalid_plugin_source", msg} = Install.update(nil, "v2", true)
+      assert msg =~ "--ref"
     end
 
     test "linked or locally installed plugins are not applicable; all skips them", %{base: base} do

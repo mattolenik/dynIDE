@@ -18,7 +18,16 @@ defmodule HerdrCli.Argv do
   """
 
   @type out ::
-          :json | :quiet | :text | :path | :lines | :rollback | :gate | :explain | :explain_json
+          :json
+          | :quiet
+          | :text
+          | :path
+          | :lines
+          | :rollback
+          | :gate
+          | :explain
+          | :explain_json
+          | :manifests
   @type result ::
           {:call, String.t(), map(), out()}
           | {:subscribe, map()}
@@ -140,9 +149,9 @@ defmodule HerdrCli.Argv do
         ["server", "agent-manifests"],
         "server.agent_manifests",
         [],
-        %{},
-        :json,
-        "server agent-manifests"
+        %{"json" => {:json, :flag}},
+        :manifests,
+        "server agent-manifests [--json]"
       ),
       cmd(
         ["server", "reload-agent-manifests"],
@@ -816,6 +825,12 @@ defmodule HerdrCli.Argv do
     {:subscribe, %{"subscriptions" => Enum.map(types, &Map.put(filters, "type", &1))}}
   end
 
+  # herdr prints the manifest status text; `--json` prints the reply
+  defp finish(%{method: "server.agent_manifests"} = c, params, _env) do
+    {json, params} = Map.pop(params, :json)
+    {:call, c.method, params, if(json, do: :json, else: :manifests)}
+  end
+
   defp finish(%{method: "server.status"} = c, params, _env) do
     {kv, params} = Map.pop(params, :kv)
     {:call, c.method, params, if(kv, do: :lines, else: :json)}
@@ -1016,6 +1031,9 @@ defmodule HerdrCli.Argv do
   end
 
   # --- cross-field checks ----------------------------------------------------
+
+  defp check("plugin.update", %{"ref" => _} = p) when not is_map_key(p, "target"),
+    do: {:error, "--ref needs a plugin to update"}
 
   defp check("pane.split", %{"direction" => _}), do: :ok
   defp check("pane.split", _), do: {:error, "--direction is required"}

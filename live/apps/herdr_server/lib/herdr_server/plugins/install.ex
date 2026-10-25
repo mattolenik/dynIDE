@@ -48,15 +48,30 @@ defmodule HerdrServer.Plugins.Install do
 
   @type update_result :: %{updated: [Registry.plugin()], up_to_date: [String.t()]}
 
-  @doc "herdr's `plugin update`: one plugin (id or `owner/repo[/subdir]`) or, for nil, every GitHub install."
+  @doc """
+  herdr's `plugin update`: one plugin (id or `owner/repo[/subdir]`) or, for nil, every
+  GitHub install. As herdr (`src/cli/plugin.rs` plugin_update), every plugin is tried: one
+  that fails does not stop the rest, and when any failed (updating all) the answer is
+  `plugin_update_failed` carrying what was updated, what was current and each failure.
+  """
   @spec update(String.t() | nil, String.t() | nil, boolean()) ::
-          {:ok, update_result()} | error() | {:error, String.t(), String.t(), [map()]}
+          {:ok, update_result()}
+          | error()
+          | {:error, String.t(), String.t(), [map()]}
+          | {:error, String.t(), String.t(), map()}
   def update(target, ref, yes?) do
     with :ok <- valid_ref(ref),
+         :ok <- ref_needs_target(target, ref),
          {:ok, plugins} <- update_targets(target) do
-      update_each(plugins, ref, yes?, %{updated: [], up_to_date: [], previews: []})
+      acc = %{updated: [], up_to_date: [], previews: [], failed: []}
+      plugins |> Enum.reduce(acc, &update_step(&1, ref, yes?, &2)) |> update_answer(target)
     end
   end
+
+  defp ref_needs_target(nil, ref) when is_binary(ref),
+    do: {:error, "invalid_plugin_source", "--ref needs a plugin to update"}
+
+  defp ref_needs_target(_target, _ref), do: :ok
 
   defp update_targets(nil),
     do: {:ok, Enum.filter(Registry.plugins(), &(&1["source"]["kind"] == "github"))}
@@ -74,30 +89,41 @@ defmodule HerdrServer.Plugins.Install do
     end
   end
 
-  defp update_each([], _ref, _yes?, %{previews: []} = acc),
-    do: {:ok, %{updated: Enum.reverse(acc.updated), up_to_date: Enum.reverse(acc.up_to_date)}}
+  defp update_step(p, ref, yes?, acc) do
+    case update_one(p, ref, yes?) do
+      {:ok, new} -> %{acc | updated: [new | acc.updated]}
+      :up_to_date -> %{acc | up_to_date: [p["plugin_id"] | acc.up_to_date]}
+      {:preview, pr} -> %{acc | previews: [pr | acc.previews]}
+      {:error, _, _} = e -> %{acc | failed: [{p["plugin_id"], e} | acc.failed]}
+    end
+  end
 
-  defp update_each([], _ref, _yes?, acc),
+  # one named plugin that failed answers its own error, as an install would
+  defp update_answer(%{failed: [{_id, e}]}, target) when target != nil, do: e
+
+  defp update_answer(%{failed: [_ | _]} = acc, _target) do
+    failed =
+      for {id, {:error, reason, msg}} <- Enum.reverse(acc.failed),
+          do: %{plugin_id: id, reason: reason, message: msg}
+
+    {:error, "plugin_update_failed",
+     "error updating #{Enum.map_join(failed, ", ", & &1.plugin_id)}: see data.failed",
+     %{
+       updated: Enum.reverse(acc.updated),
+       up_to_date: Enum.reverse(acc.up_to_date),
+       failed: failed,
+       preview: Enum.reverse(acc.previews)
+     }}
+  end
+
+  defp update_answer(%{previews: [_ | _]} = acc, _target),
     do:
       {:error, "confirmation_required",
        "plugin update needs confirmation: review data.preview, then re-run with --yes",
        Enum.reverse(acc.previews)}
 
-  defp update_each([p | rest], ref, yes?, acc) do
-    case update_one(p, ref, yes?) do
-      {:ok, new} ->
-        update_each(rest, ref, yes?, %{acc | updated: [new | acc.updated]})
-
-      :up_to_date ->
-        update_each(rest, ref, yes?, %{acc | up_to_date: [p["plugin_id"] | acc.up_to_date]})
-
-      {:preview, pr} ->
-        update_each(rest, ref, yes?, %{acc | previews: [pr | acc.previews]})
-
-      e ->
-        e
-    end
-  end
+  defp update_answer(acc, _target),
+    do: {:ok, %{updated: Enum.reverse(acc.updated), up_to_date: Enum.reverse(acc.up_to_date)}}
 
   defp update_one(%{"plugin_id" => id, "source" => old} = p, ref, yes?) do
     src = {:github, old["owner"], old["repo"], old["subdir"]}
@@ -397,10 +423,11 @@ defmodule HerdrServer.Plugins.Install do
   # --- sources ---
 
   defp parse(source, ref) do
-    cond do
-      valid_ref(ref) != :ok ->
-        valid_ref(ref)
+    with :ok <- valid_ref(ref), do: parse_source(source, ref)
+  end
 
+  defp parse_source(source, ref) do
+    cond do
       String.starts_with?(source, ["/", "./", "../", "~"]) ->
         cond do
           ref ->

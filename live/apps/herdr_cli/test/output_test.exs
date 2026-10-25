@@ -23,6 +23,20 @@ defmodule HerdrCli.OutputTest do
     assert %{"result" => %{"pane" => %{"pane_id" => "p2"}}} = JSON.decode!(line)
   end
 
+  test "manifests prints herdr's agent manifest status text" do
+    ms = [
+      %{"agent" => "claude", "source" => "bundled", "version" => "3", "error" => nil},
+      %{"agent" => "pi", "source" => "local", "version" => nil, "error" => "bad regex"}
+    ]
+
+    assert Output.render(:manifests, ok(%{"type" => "agent_manifests", "manifests" => ms})) ==
+             {0,
+              "last check: never\nresult: not checked\n\n" <>
+                "  claude    bundled        active 3              remote -              not checked\n" <>
+                "x pi        local          active -              remote -              not checked\n" <>
+                "  bad regex\n"}
+  end
+
   test "quiet prints nothing on success (herdr's Output::Quiet)" do
     assert Output.render(:quiet, ok(%{"type" => "ok"})) == {0, ""}
   end

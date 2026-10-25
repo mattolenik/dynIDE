@@ -1134,7 +1134,7 @@ def agent():
         ok("agent-marker" in read, "agent: pane read of the new pane contains agent-marker")
         shell(f"{bin_} pane list > {t('list.json')}; {bin_} agent list > {t('agents.json')}"
               f"; {bin_} agent explain \"$HERDR_PANE_ID\" 2> {t('explain.err')}"
-              f"; {bin_} server agent-manifests > {t('manifests.json')}", "s3",
+              f"; {bin_} server agent-manifests --json > {t('manifests.json')}", "s3",
               "pane list, agent list, agent explain and server agent-manifests")
         me = open(t("me.txt")).read().strip()
         try:

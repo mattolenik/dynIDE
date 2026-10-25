@@ -69,6 +69,7 @@ defmodule HerdrIntegration.CliConformanceTest do
     "agent explain p1",
     "agent explain p1 --json --verbose",
     "server agent-manifests",
+    "server agent-manifests --json",
     "server reload-agent-manifests",
     "pane report-agent p1 --source s --agent claude --state idle --message hi --seq 1",
     "pane release-agent p1 --source s --agent claude --seq 2",
@@ -120,7 +121,7 @@ defmodule HerdrIntegration.CliConformanceTest do
   # and `quiet: true` of workspace_bindings.rs print nothing on success (`send_ok_request`);
   # `Output::Read` prints the text (`print_read_response`); every other API verb prints
   # the whole reply (`print_response`). The rest are herdr-live's own verbs, or herdr's
-  # CLI-local text (agent explain, plugin config-dir).
+  # CLI-local text (agent explain, plugin config-dir, server agent-manifests).
   @quiet ~w(pane.send_text pane.send_keys pane.run pane.report_agent pane.report_agent_session
             pane.release_agent pane.report_metadata workspace.report_metadata)
   @text ~w(pane.read agent.read)
@@ -132,7 +133,8 @@ defmodule HerdrIntegration.CliConformanceTest do
     "test-on-save on" => :gate,
     "agent explain p1" => :explain,
     "agent explain p1 --json --verbose" => :explain_json,
-    "plugin config-dir a" => :path
+    "plugin config-dir a" => :path,
+    "server agent-manifests" => :manifests
   }
 
   test "every fixture prints herdr's shape for its verb" do
