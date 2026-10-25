@@ -101,7 +101,13 @@ Build per row (the "build" column):
 - Ruling: the in-VM microbenches run `MIX_ENV=test mix herdr.bench` from the umbrella root
   rather than inside the release. Why: the task and its fakes exist only in `:test`, and the
   release's compile-time difference (protocol consolidation) is already active there, checked
-  as listed above. Reload is off in both. Cost if wrong: an unseen prod-only compile effect on
+  as listed above. Reload is off in both. Evidence (macOS, M18): from `live/`, in `MIX_ENV=test`,
+  `Protocol.consolidated?/1` is true for `Enumerable` and `String.Chars`. No protocol on the
+  code path is left unconsolidated, and `Enumerable` loads from
+  `live/_build/test/consolidated/`, which holds the `Collectable`, `Enumerable`, `IEx.Info`,
+  `Inspect`, `Jason.Encoder`, `JSON.Encoder`, `List.Chars` and `String.Chars` beams. Run from
+  `live/apps/herdr_term`, the same check gives false. So the benches must run from the
+  umbrella root, which `gate_round.sh` does (`cd live`). Cost if wrong: an unseen prod-only compile effect on
   Compose/Render, which would have to come from `Mix.env()`-conditional code on the render path.
   None exists today.
 - Ruling: Linux herdr is built in the container from the `herdr-reference` tag's `git archive`
