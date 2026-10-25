@@ -877,7 +877,7 @@ CLI: `herdr-live plugin action list [--plugin ID]`
 
 Result: `plugin_action_list` with `actions` (list of object).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`
 
 ### `plugin.action.invoke`
 
@@ -893,7 +893,9 @@ CLI: `herdr-live plugin action invoke <action_id> [--plugin ID]`
 
 Result: `plugin_action_invoked` with `action` (object), `context` (object), `log` (object).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`, `failed`, `not_available`
+
+Starts the action's command and answers at once with the `running` log record; `plugin.log.list` shows how it ended. `data.reason` carries herdr's code (`plugin_action_not_found`, `ambiguous_plugin_action`, `plugin_disabled`, `plugin_command_limit_reached`, ...); `not_available` when the plugin runtime is not running.
 
 ### `plugin.log.list`
 

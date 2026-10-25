@@ -5,6 +5,7 @@ defmodule HerdrServer.ConfigTest do
   alias HerdrServer.App.{Actions, Keybinds, Ui}
   alias HerdrServer.App.Modal.Prompt
   alias HerdrServer.Config
+  alias HerdrServer.Plugins.Keybind
 
   @moduletag :tmp_dir
 
@@ -80,6 +81,33 @@ defmodule HerdrServer.ConfigTest do
     assert Keybinds.lookup(kb, :terminal, {"n", [:alt]}) == {Actions, :next_tab, []}
     assert Keybinds.lookup(kb, :prefix, {"q", []}) == nil
     assert Keybinds.to_config(kb)["prefix"] == ["ctrl+a"]
+  end
+
+  # M14 stopgap: M17's [[keys.command]] parser replaces this test with its own
+  test "[[keys.command]] plugin_action binds Plugins.Keybind; other types are diagnosed",
+       %{tmp_dir: dir} do
+    toml = """
+    [[keys.command]]
+    key = "prefix+g"
+    type = "plugin_action"
+    command = "demo.hello"
+
+    [[keys.command]]
+    key = "alt+g"
+    type = "plugin_action"
+    command = "demo.other"
+
+    [[keys.command]]
+    key = "prefix+t"
+    type = "popup"
+    command = "lazygit"
+    """
+
+    {kb, _ui, diags} = apply_cfg(load(dir, toml))
+    assert Keybinds.lookup(kb, :prefix, {"g", []}) == Keybind.mfa("demo.hello")
+    assert Keybinds.lookup(kb, :terminal, {"g", [:alt]}) == Keybind.mfa("demo.other")
+    assert Keybinds.lookup(kb, :prefix, {"t", []}) == Keybinds.default().prefix_binds[{"t", []}]
+    assert diags == ["config: keys.command type popup is not supported yet"]
   end
 
   test "bad TOML is the defaults and one diagnostic", %{tmp_dir: dir} do

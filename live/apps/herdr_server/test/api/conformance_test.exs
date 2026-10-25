@@ -11,7 +11,7 @@ defmodule HerdrServer.Api.ConformanceTest do
   alias HerdrServer.App.Store
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Pane.Rows
-  alias HerdrServer.Plugins.{Install, Paths}
+  alias HerdrServer.Plugins.{Install, Menu, Paths, Runtime}
   alias HerdrServer.Test.{ApiClient, PluginDirs}
 
   setup do
@@ -47,6 +47,12 @@ defmodule HerdrServer.Api.ConformanceTest do
     old = Application.get_env(:herdr_reload, HerdrReload, [])
     Application.put_env(:herdr_reload, HerdrReload, Keyword.put(old, :enabled, true))
     on_exit(fn -> Application.put_env(:herdr_reload, HerdrReload, old) end)
+  end
+
+  defp plugin_runtime do
+    start_supervised!({Task.Supervisor, name: HerdrServer.Plugins.Tasks})
+    start_supervised!(Runtime)
+    on_exit(fn -> Menu.put([]) end)
   end
 
   defp pty do
@@ -129,7 +135,21 @@ defmodule HerdrServer.Api.ConformanceTest do
     call(listen(ctx), "plugin.config_dir")
   end
 
-  # published ahead of their M14 tasks
+  defp produce("plugin.action.invoke", :not_found, ctx) do
+    PluginDirs.use_tmp()
+    plugin_runtime()
+    call(listen(ctx), "plugin.action.invoke", %{"action_id" => "none"})
+  end
+
+  defp produce("plugin.action.invoke", :failed, ctx) do
+    base = PluginDirs.use_tmp()
+    toml = "[[actions]]\nid = \"go\"\ntitle = \"Go\"\ncommand = [\"true\"]\n"
+    {:ok, _} = Install.link(PluginDirs.plugin(base <> "/p", "x", toml), false)
+    plugin_runtime()
+    call(listen(ctx), "plugin.action.invoke", %{"action_id" => "go"})
+  end
+
+  # without a plugin runtime; the plugin pane methods are published ahead of their task
   defp produce("plugin." <> _ = method, :not_available, ctx), do: call(listen(ctx), method)
 
   defp produce("pane.link.activate", :not_available, ctx),

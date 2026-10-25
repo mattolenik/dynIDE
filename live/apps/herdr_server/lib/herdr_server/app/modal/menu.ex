@@ -23,12 +23,13 @@ defmodule HerdrServer.App.Modal.Menu do
   alias HerdrServer.App.Modal.{Confirm, Prompt, Settings}
   alias HerdrServer.App.Modal.Keybinds, as: KeybindsModal
   alias HerdrServer.Layout
+  alias HerdrServer.Plugins.Menu, as: PluginMenu
   alias HerdrServer.View.Modal, as: V
 
   @spec open(map, :tab | :workspace | :pane | :global, term, %{x: integer, y: integer}) ::
           {map, [tuple]}
   def open(app, menu, target, at) do
-    case items(app, menu, target) do
+    case with_plugins(items(app, menu, target), app, menu, target) do
       [] ->
         {app, []}
 
@@ -37,6 +38,10 @@ defmodule HerdrServer.App.Modal.Menu do
         {Modal.push(app, modal), []}
     end
   end
+
+  # M14: plugin actions follow a menu's own items (none for a target that is gone)
+  defp with_plugins([], _app, _menu, _target), do: []
+  defp with_plugins(items, app, menu, target), do: items ++ PluginMenu.items(app, menu, target)
 
   defp items(app, :tab, id) do
     if Enum.any?(ws(app).tabs, &(&1.id == id)),

@@ -140,8 +140,16 @@ defmodule HerdrServer.App.Keybinds do
   end
 
   def bind(kb, action, specs) do
-    with %{mfa: mfa} <- Catalog.find(action) || {:error, "unknown action #{inspect(action)}"},
-         {:ok, parsed} <- parse_all(specs),
+    case Catalog.find(action) do
+      %{mfa: mfa} -> bind_mfa(kb, mfa, specs)
+      nil -> {:error, "unknown action #{inspect(action)}"}
+    end
+  end
+
+  @doc "`bind/3` for an `{M, F, A}` outside the catalog (a plugin action's keybind)."
+  @spec bind_mfa(t(), mfa_t(), [binary()]) :: {:ok, t()} | {:error, binary()}
+  def bind_mfa(kb, mfa, specs) do
+    with {:ok, parsed} <- parse_all(specs),
          :ok <- Enum.find_value(Enum.zip(parsed, specs), :ok, &direct_ok(kb, &1)) do
       kb = %{kb | prefix_binds: unbind(kb.prefix_binds, mfa), direct: unbind(kb.direct, mfa)}
 

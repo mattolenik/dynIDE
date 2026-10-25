@@ -106,3 +106,6 @@ if config_env() == :test do
   File.write!(test_config, "onboarding = false\n")
   config :herdr_server, :config_path, test_config
 end
+
+# Plugins (M14): the runtime for actions and hooks. Off in test: tests start their own.
+config :herdr_server, :plugins, enabled: config_env() != :test

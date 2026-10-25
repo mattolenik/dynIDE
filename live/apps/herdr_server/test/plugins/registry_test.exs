@@ -3,7 +3,7 @@ defmodule HerdrServer.Plugins.RegistryTest do
 
   import ExUnit.CaptureLog
 
-  alias HerdrServer.App.Store
+  alias HerdrServer.App.{Commands, Store}
   alias HerdrServer.Plugins.{Install, Paths, Registry}
   alias HerdrServer.Test.PluginDirs
 
@@ -11,7 +11,20 @@ defmodule HerdrServer.Plugins.RegistryTest do
     base = PluginDirs.use_tmp()
     Store.reset()
     on_exit(&Store.reset/0)
+    # alerts toast only once there is a session
+    {:ok, _, _} = Store.request({Commands, :noop, []})
     %{base: base}
+  end
+
+  test "before the first session an alert only logs and initialises nothing" do
+    Store.reset()
+    File.mkdir_p!(Paths.config_dir())
+    File.write!(Paths.registry(), "{not json")
+    Store.subscribe(self())
+
+    assert capture_log(fn -> assert Registry.plugins() == [] end) =~ "plugins.json"
+    refute_receive {:alert, _}, 100
+    assert Store.snapshot() == nil
   end
 
   test "round trip: update writes sorted entries 0600 under a 0700 dir; entries reads them" do

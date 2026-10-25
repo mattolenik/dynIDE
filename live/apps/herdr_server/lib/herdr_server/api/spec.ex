@@ -716,7 +716,8 @@ defmodule HerdrServer.Api.Spec do
         "List plugin actions.",
         [filter],
         "plugin_action_list",
-        "herdr-live plugin action list [--plugin ID]"
+        "herdr-live plugin action list [--plugin ID]",
+        []
       ),
       plugin(
         "action.invoke",
@@ -727,14 +728,23 @@ defmodule HerdrServer.Api.Spec do
           opt("context", :object, "Extra context passed to the command.")
         ],
         "plugin_action_invoked",
-        "herdr-live plugin action invoke <action_id> [--plugin ID]"
+        "herdr-live plugin action invoke <action_id> [--plugin ID]",
+        [:not_found, :failed, :not_available]
+      )
+      |> Map.put(
+        :notes,
+        "Starts the action's command and answers at once with the `running` log record; " <>
+          "`plugin.log.list` shows how it ended. `data.reason` carries herdr's code " <>
+          "(`plugin_action_not_found`, `ambiguous_plugin_action`, `plugin_disabled`, " <>
+          "`plugin_command_limit_reached`, ...); `not_available` when the plugin runtime is not running."
       ),
       plugin(
         "log.list",
         "Recent plugin command records.",
         [filter, opt("limit", {:integer, 1, 200}, "Maximum number of records.")],
         "plugin_log_list",
-        "herdr-live plugin log list [--plugin ID] [--limit N]"
+        "herdr-live plugin log list [--plugin ID] [--limit N]",
+        [:not_available]
       ),
       plugin(
         "pane.open",

@@ -43,6 +43,7 @@ defmodule HerdrServer.Application do
         ] ++
         client_socket() ++
         api() ++
+        plugins() ++
         [
           # last: it stops first, writing a final snapshot while Store and Keeper still run;
           # ignores itself unless persistence is enabled
@@ -104,6 +105,16 @@ defmodule HerdrServer.Application do
   defp client_socket do
     if Application.get_env(:herdr_server, :client_socket, [])[:enabled],
       do: [{HerdrServer.Client.Socket, []}],
+      else: []
+  end
+
+  # off in test: tests start their own runtime with tmp plugin dirs
+  defp plugins do
+    if Application.get_env(:herdr_server, :plugins, [])[:enabled],
+      do: [
+        {Task.Supervisor, name: HerdrServer.Plugins.Tasks},
+        HerdrServer.Plugins.Runtime
+      ],
       else: []
   end
 

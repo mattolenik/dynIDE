@@ -7,7 +7,7 @@ defmodule HerdrServer.Plugins.Registry do
   broken manifest are logged and toasted once (until they change).
   """
 
-  alias HerdrServer.Plugins.{Alert, Manifest, Paths}
+  alias HerdrServer.Plugins.{Alert, Manifest, Paths, Runtime}
 
   @entry_keys ~w(plugin_id plugin_root manifest_path enabled source)
   @empty %{
@@ -78,8 +78,10 @@ defmodule HerdrServer.Plugins.Registry do
              |> fun.()
              |> Enum.map(&Map.take(&1, @entry_keys))
              |> Enum.sort_by(& &1["plugin_id"]),
-           :ok <- write(new),
-           do: {:ok, new}
+           :ok <- write(new) do
+        Runtime.refresh()
+        {:ok, new}
+      end
     end)
   end
 

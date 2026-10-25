@@ -26,6 +26,7 @@ defmodule HerdrServer.Config do
   """
 
   alias HerdrServer.App.{Keybinds, Ui}
+  alias HerdrServer.Plugins.Keybind
 
   @type t :: %{
           keys: map,
@@ -151,15 +152,43 @@ defmodule HerdrServer.Config do
   defp keys(table, kb) do
     table
     |> Enum.sort_by(fn {k, _} -> {k != "prefix", k} end)
-    |> Enum.reduce({kb, []}, fn {action, v}, {kb, d} ->
-      with {:ok, specs} <- specs(v),
-           {:ok, kb} <- Keybinds.bind(kb, action, specs) do
-        {kb, d}
-      else
-        {:error, why} -> {kb, d ++ ["config: keys.#{action}: #{why}"]}
-      end
+    |> Enum.reduce({kb, []}, fn
+      # M14 stopgap: M17's [[keys.command]] parser replaces this clause
+      {"command", v}, {kb, d} ->
+        commands(v, kb, d)
+
+      {action, v}, {kb, d} ->
+        with {:ok, specs} <- specs(v),
+             {:ok, kb} <- Keybinds.bind(kb, action, specs) do
+          {kb, d}
+        else
+          {:error, why} -> {kb, d ++ ["config: keys.#{action}: #{why}"]}
+        end
     end)
   end
+
+  # M14 stopgap: M17's [[keys.command]] parser replaces this clause. Only
+  # `type = "plugin_action"` binds (to `Plugins.Keybind.mfa(command)`); other types get
+  # one diagnostic each.
+  defp commands(entries, kb, d) when is_list(entries) do
+    Enum.reduce(entries, {kb, d}, fn
+      %{"type" => "plugin_action", "key" => key, "command" => cmd}, {kb, d}
+      when is_binary(key) and is_binary(cmd) ->
+        case Keybinds.bind_mfa(kb, Keybind.mfa(cmd), [key]) do
+          {:ok, kb} -> {kb, d}
+          {:error, why} -> {kb, d ++ ["config: keys.command #{cmd}: #{why}"]}
+        end
+
+      %{"type" => t}, {kb, d} when is_binary(t) and t != "plugin_action" ->
+        {kb, d ++ ["config: keys.command type #{t} is not supported yet"]}
+
+      e, {kb, d} ->
+        {kb, d ++ ["config: keys.command: invalid entry #{inspect(e)}"]}
+    end)
+  end
+
+  defp commands(v, kb, d),
+    do: {kb, d ++ ["config: keys.command: expected an array of tables, got #{inspect(v)}"]}
 
   defp specs(v) when is_binary(v), do: {:ok, [v]}
 
