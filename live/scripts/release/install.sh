@@ -33,6 +33,8 @@ fi
 top=$(tar -tzf "$tarball" | head -n 1 | cut -d/ -f1)
 case $top in herdr-live-?*) ;; *) die "unexpected tarball top dir '$top'" ;; esac
 v=${top#herdr-live-}
+# v names releases/<v>: no path separators, no . or .. (and the version chars build.sh allows)
+case $v in . | .. | *[!0-9A-Za-z._+-]*) die "bad version '$v' in tarball top dir '$top'" ;; esac
 
 lib="$prefix/lib/herdr-live"
 rel="$lib/releases/$v"

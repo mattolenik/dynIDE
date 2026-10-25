@@ -45,6 +45,19 @@ fi
 top=$(tar -tzf "$tarball" | head -n 1 | cut -d/ -f1)
 v=${top#herdr-live-}
 
+# install.sh refuses a tarball whose top dir names a bad version (.., ., a space)
+for bad in .. . 'a b'; do
+  mkdir -p "$tmp/bad/herdr-live-$bad/bin" || fail mkdir
+  cp /bin/sh "$tmp/bad/herdr-live-$bad/bin/herdr-live" || fail cp
+  tar -C "$tmp/bad" -czf "$tmp/bad.tar.gz" "herdr-live-$bad" || fail "bad tarball $bad"
+  sh "$here/install.sh" --prefix "$tmp/badprefix" "$tmp/bad.tar.gz" >"$tmp/bad.out" 2>&1 &&
+    fail "install.sh accepted top dir herdr-live-$bad"
+  grep -q "bad version" "$tmp/bad.out" || fail "install.sh herdr-live-$bad: $(cat "$tmp/bad.out")"
+  [ ! -e "$tmp/badprefix/lib/herdr-live/current" ] || fail "install.sh herdr-live-$bad left a current link"
+  rm -rf "$tmp/bad" "$tmp/bad.tar.gz"
+done
+echo "PASS: install.sh refuses tarball top dirs herdr-live-.., herdr-live-. and herdr-live-a b"
+
 prefix="$tmp/pre fix"
 mkdir -p "$tmp/home" "$tmp/t" || fail mkdir
 sh "$here/install.sh" --prefix "$prefix" "$tarball" >"$tmp/install.out" 2>&1 || fail "install.sh: $(cat "$tmp/install.out")"
