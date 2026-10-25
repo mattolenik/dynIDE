@@ -63,12 +63,20 @@ defmodule HerdrServer.App.Store.Mirror do
 
   # A ref client re-fetches a pane only when its layout_gen changes: a restored older gen
   # (or an adopted pane's 0) would repeat one it has seen, with another size. Pane ids
-  # spawned (and maybe closed) since the load must not be handed out again either.
-  @doc "Keeps `next_id` and each pane's `layout_gen` at least their values in `app`."
+  # spawned (and maybe closed) since the load must not be handed out again either, nor
+  # workspace and tab ids (API ids stay stable).
+  @doc """
+  Keeps `next_id`, `next_workspace_id`, `next_tab_id` and each pane's `layout_gen` at least
+  their values in `app`.
+  """
   @spec keep_monotonic(map, map) :: map
   def keep_monotonic(restored, app) do
     gens = for {id, %{layout_gen: g}} <- app.session.panes, into: %{}, do: {id, g}
-    restored = update_in(restored.session.next_id, &max(&1, app.session.next_id))
+
+    restored =
+      Enum.reduce([:next_id, :next_workspace_id, :next_tab_id], restored, fn k, r ->
+        update_in(r, [:session, Access.key(k, 1)], &max(&1, Map.get(app.session, k, 1)))
+      end)
 
     update_in(restored.session.panes, fn panes ->
       Map.new(panes, fn {id, m} -> {id, %{m | layout_gen: max(m.layout_gen, gens[id] || 0)}} end)
