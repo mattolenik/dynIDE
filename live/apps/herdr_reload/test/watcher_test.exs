@@ -50,6 +50,15 @@ defmodule HerdrReload.WatcherTest do
     refute_receive {:batch, _}, 500
   end
 
+  test "exts option replaces the default list", %{dir: dir} do
+    start(dir, exts: [".toml"])
+    File.write!(Path.join(dir, "a.ex"), "1")
+    refute_receive {:batch, _}, 300
+    File.write!(Path.join(dir, "a.toml"), "1")
+    assert_receive {:batch, paths}, 2000
+    assert names(paths) == ["a.toml"]
+  end
+
   test "a stale fire message does not call on_batch", %{dir: dir} do
     pid = start(dir)
     # pre-fix and current fire shapes, neither from the live timer

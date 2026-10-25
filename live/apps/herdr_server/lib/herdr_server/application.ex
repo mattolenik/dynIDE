@@ -41,7 +41,10 @@ defmodule HerdrServer.Application do
           HerdrServer.App.Store,
           HerdrServer.WorkspaceFacts,
           # reads the app from the Mirror; harmless while it has none
-          HerdrServer.Detect.Poller,
+          HerdrServer.Detect.Poller
+        ] ++
+        detect_watcher() ++
+        [
           HerdrServer.Client.Supervisor,
           HerdrServer.Client.Endpoint,
           HerdrServer.ReloadNotices,
@@ -117,6 +120,13 @@ defmodule HerdrServer.Application do
   defp client_socket do
     if Application.get_env(:herdr_server, :client_socket, [])[:enabled],
       do: [{HerdrServer.Client.Socket, []}],
+      else: []
+  end
+
+  # off in test: tests start their own with a tmp override dir
+  defp detect_watcher do
+    if Application.get_env(:herdr_server, :detect_watcher, [])[:enabled],
+      do: [HerdrServer.Detect.Watcher],
       else: []
   end
 

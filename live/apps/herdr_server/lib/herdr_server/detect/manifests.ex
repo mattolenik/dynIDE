@@ -52,6 +52,21 @@ defmodule HerdrServer.Detect.Manifests do
     summaries(entries)
   end
 
+  @doc "Reloads after a watcher batch and logs one `agent_manifests_reloaded` event."
+  @spec reload_batch([binary]) :: :ok
+  def reload_batch(_paths) do
+    summaries = reload()
+    errors = for %{"agent" => a, "error" => e} when is_binary(e) <- summaries, do: "#{a}: #{e}"
+
+    warnings =
+      for %{"agent" => a, "warning" => w} when is_binary(w) <- summaries, do: "#{a}: #{w}"
+
+    HerdrReload.Telemetry.event(:agent_manifests_reloaded,
+      count: length(summaries),
+      errors: errors ++ warnings
+    )
+  end
+
   @spec get(binary) :: entry | nil
   def get(label), do: Map.get(entries(), label)
 

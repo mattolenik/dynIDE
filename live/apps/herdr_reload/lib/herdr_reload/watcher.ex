@@ -2,7 +2,7 @@ defmodule HerdrReload.Watcher do
   @moduledoc """
   Watches source dirs and hands debounced batches of changed files to `on_batch`.
 
-  Options: `dirs`, `debounce_ms` (50), `on_batch` (default `TestGate.reload/1`, run in
+  Options: `dirs`, `exts` (source extensions), `debounce_ms` (50), `on_batch` (default `TestGate.reload/1`, run in
   a spawned process so events keep flowing), `backend_opts` for `FileSystem`.
   Returns `:ignore` (after a warning) when no file watcher backend can start.
   """
@@ -29,6 +29,7 @@ defmodule HerdrReload.Watcher do
 
         {:ok,
          %{
+           exts: Keyword.get(opts, :exts, @exts),
            debounce: Keyword.get(opts, :debounce_ms, 50),
            on_batch: Keyword.get(opts, :on_batch, &TestGate.reload/1),
            paths: MapSet.new(),
@@ -46,7 +47,7 @@ defmodule HerdrReload.Watcher do
 
   @impl true
   def handle_info({:file_event, _, {path, _events}}, s) do
-    if Path.extname(path) in @exts do
+    if Path.extname(path) in s.exts do
       if s.timer, do: Process.cancel_timer(s.timer)
       # the message carries the timer ref: a fire sent before cancel_timer took effect is stale
       timer = :erlang.start_timer(s.debounce, self(), :fire)

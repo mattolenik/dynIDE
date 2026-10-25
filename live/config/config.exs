@@ -113,3 +113,6 @@ end
 
 # Plugins (M14): the runtime for actions and hooks. Off in test: tests start their own.
 config :herdr_server, :plugins, enabled: config_env() != :test
+
+# Agent manifest hot reload watcher. Off in test: tests start their own with a tmp dir.
+config :herdr_server, :detect_watcher, enabled: config_env() != :test
