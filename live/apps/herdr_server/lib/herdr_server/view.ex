@@ -22,7 +22,7 @@ defmodule HerdrServer.View do
     * Divider rect choice: with borders on, a split's boundary is `pos`, the first cell of
       the second child. The divider is the 1-cell line at `pos` (second child's leading
       border column or row), spanning the split's area. A client resolves
-      `{:chrome, [{:divider, path}], :drag}` against it.
+      `{:chrome, [{:divider, path}], {:drag, %{x, y}}}` against it.
     * A divider's `direction` names the split: `:horizontal` means panes side by side, so
       the divider line itself is vertical (and `:vertical` gives a horizontal line).
     * Divider rects are clamped into the pane area; pane rects are inside it by
