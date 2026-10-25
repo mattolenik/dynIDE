@@ -213,6 +213,21 @@ pub struct Placement {
     pub bytes: usize,
 }
 
+/// Ghostty reports an implicit placement (no `p=`) by its internal id (a per-screen counter
+/// from 0), so only the first is 0; the contract wants a positive id, so the nth 0-id
+/// placement of an image (list order) gets `u32::MAX - n`.
+// ponytail: internal and external ids share one namespace in ghostty's C API, so an
+// implicit placement with internal id k collides with an explicit `p=k` of the same image;
+// expose ghostty's placement tag in crates/ghostty-vt if that shows up.
+fn number_implicit(ps: &mut [Placement]) {
+    let mut seen: HashMap<u32, u32> = HashMap::new();
+    for p in ps.iter_mut().filter(|p| p.placement_id == 0) {
+        let n = seen.entry(p.image_id).or_insert(0);
+        p.placement_id = u32::MAX - *n;
+        *n += 1;
+    }
+}
+
 /// One stored image's pixels as the child sent them (decoded unless PNG-forwarded).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Image {
@@ -230,13 +245,7 @@ fn placement(p: &KittyImagePlacement) -> Option<Placement> {
     Some(Placement {
         image_id: p.image_id,
         fingerprint: p.data_fingerprint,
-        // ponytail: ghostty reports implicit placements (no `p=`) as 0 and the contract
-        // wants a positive id, so they all share u32::MAX (several implicit placements of
-        // one image collide on the host, as in herdr); expose ghostty's internal id if needed.
-        placement_id: match p.placement_id {
-            0 => u32::MAX,
-            id => id,
-        },
+        placement_id: p.placement_id,
         z: p.z,
         x: r.viewport_col,
         y: r.viewport_row,
@@ -468,7 +477,8 @@ impl VtCore {
             // Keep the last good list rather than flashing images off on a ghostty error.
             return Arc::clone(&prev.graphics);
         };
-        let ps: Vec<Placement> = ps.iter().filter_map(placement).collect();
+        let mut ps: Vec<Placement> = ps.iter().filter_map(placement).collect();
+        number_implicit(&mut ps);
         match *prev.graphics == *ps {
             true => Arc::clone(&prev.graphics),
             false => ps.into(),
@@ -813,6 +823,9 @@ impl Vt {
     }
 
     /// Copies image `id`'s pixels; None when it is gone, unplaced, or has no data.
+    /// Ghostty-vt lists no placement for an image still stored compressed, so that is None.
+    // ponytail: holds the core lock (stalling the reader) while the pixels are copied; copy
+    // from a refcounted image handle outside the lock if large images stall output.
     pub fn graphics_image(&self, id: u32) -> Option<Image> {
         let core = lock(&self.core);
         let ps = core
@@ -1242,13 +1255,45 @@ mod tests {
     fn placement_scrolls_and_returns() {
         let vt = image_vt();
         vt.write(RGB_APC);
+        // The cursor ends on the image's last row (1); 9 newlines scroll it up by 1.
+        vt.write(&b"\n".repeat(9));
+        vt.refresh();
+        let ps = vt.graphics_placements();
+        assert_eq!(ps.len(), 1);
+        assert_eq!((ps[0].y, ps[0].rows), (-1, 2));
         vt.write(&b"\n".repeat(15));
         vt.refresh();
-        assert!(vt.graphics_placements().iter().all(|p| p.y < 0));
+        assert!(vt.graphics_placements().is_empty());
         vt.scroll_to(0).expect("scroll");
         let ps = vt.graphics_placements();
         assert_eq!(ps.len(), 1);
         assert_eq!(ps[0].y, 0);
+    }
+
+    #[test]
+    fn implicit_placements_get_distinct_ids() {
+        let vt = image_vt();
+        vt.write(b"\x1b_Ga=t,f=24,s=2,v=2,i=7;AQIDBAUGBwgJCgsM\x1b\\");
+        vt.write(b"\x1b_Ga=p,i=7,c=2,r=1\x1b\\\x1b[5;10H\x1b_Ga=p,i=7,c=2,r=1\x1b\\");
+        vt.refresh();
+        let ps = vt.graphics_placements();
+        assert_eq!(ps.len(), 2);
+        // ghostty hands implicit placements its internal ids (0, 1, ...); 0 is remapped.
+        assert!(ps.iter().all(|p| p.placement_id > 0));
+        assert_ne!(ps[0].placement_id, ps[1].placement_id);
+        assert!(ps.iter().any(|p| p.placement_id == u32::MAX));
+    }
+
+    #[test]
+    fn zlib_upload_serves_decompressed_pixels() {
+        // ghostty inflates `o=z` on load, so storage never holds compressed data here; a
+        // still-compressed image would get no placement from ghostty-vt and so no data.
+        let vt = image_vt();
+        vt.write(b"\x1b_Ga=T,f=24,o=z,s=2,v=2,i=7,c=4,r=2;eJxjZGJmYWVj5+Dk4uYBAAF4AE8=\x1b\\");
+        vt.refresh();
+        assert_eq!(vt.graphics_placements()[0].bytes, 12);
+        let img = vt.graphics_image(7).expect("image");
+        assert_eq!(img.data, (1..=12).collect::<Vec<u8>>());
     }
 
     #[test]
@@ -1278,6 +1323,7 @@ mod tests {
             (ps[0].image_id, ps[0].x, ps[0].y, ps[0].cols),
             (1193046, 2, 1, 2)
         );
+        assert!(ps[0].placement_id > 0);
         let cells = row(&vt, 1);
         assert_eq!(cells[2].glyph, " ");
         assert_eq!(cells[3].glyph, " ");

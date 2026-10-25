@@ -2,6 +2,7 @@ defmodule HerdrServer.Kernel.FakeTest do
   use ExUnit.Case, async: false
 
   alias HerdrScene.{Cell, Event}
+  alias HerdrScene.Scene.Graphic
   alias HerdrServer.Kernel
   alias HerdrServer.Kernel.Fake.{Keeper, Pty, Vt}
 
@@ -30,7 +31,25 @@ defmodule HerdrServer.Kernel.FakeTest do
   test "set_graphics feeds graphics_placements and graphics_image", %{vt: vt} do
     assert Vt.graphics_placements(vt) == []
     assert Vt.graphics_image(vt, 7) == nil
-    p = %{image: {7, 1}, placement: 1, x: 0, y: 0, cols: 2, rows: 1, z: 0}
+
+    p = %{
+      image: {7, 1},
+      placement: 1,
+      x: 0,
+      y: 0,
+      cols: 2,
+      rows: 1,
+      x_off: 0,
+      y_off: 0,
+      src: {0, 0, 0, 0},
+      px: {0, 0},
+      z: 0,
+      size: {1, 1},
+      format: :rgb,
+      bytes: 3
+    }
+
+    assert Graphic.validate(p) == :ok
     img = %{format: :rgb, width: 1, height: 1, bytes: 3, data: <<1, 2, 3>>}
     :ok = Vt.set_graphics(vt, [p], %{7 => img})
     assert Vt.graphics_placements(vt) == [p]
