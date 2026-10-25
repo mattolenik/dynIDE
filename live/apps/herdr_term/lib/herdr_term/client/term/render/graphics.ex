@@ -6,11 +6,14 @@ defmodule HerdrTerm.Client.Term.Render.Graphics do
     * `place/3` - each placement clipped to its pane's content rect (herdr's
       `clipped_placement`: left/top clip in cells, the crop is clip cells * cell px
       scaled by source px over rendered px, offsets kept only on unclipped edges), then
-      cut around occluders (herdr's `Occlusion`): top-layer chrome (`chrome.top`) and the
-      pane overlays selection, link hover, search match, copy cursor and scrollbar.
+      cut around occluders (herdr's `Occlusion`): top-layer chrome (`chrome.top`), the
+      pane's own overlays selection, link hover, search match, copy cursor and scrollbar,
+      and the outer rects (border rect, else rect) of the `:popup` panes drawn over it:
+      every popup over a `:base` pane, later popups in `scene.panes` over a popup.
       Pieces use absolute source boundaries, so neighbours share exact source edges. At
       most 32 extra pieces per frame; past that an occluded placement hides whole.
-      A dimming modal (`chrome.dim`) or an unknown cell size hides everything.
+      A dimming modal (`chrome.dim`) hides every `:base` placement (popups draw over the
+      dim, so theirs stay); an unknown cell size hides everything.
     * `diff/4` - ops against the host cache: stale placements and unused images deleted,
       missing images uploaded, then every piece placed (replayed each frame: the host
       drops placements when the cells under them are rewritten).
@@ -69,14 +72,49 @@ defmodule HerdrTerm.Client.Term.Render.Graphics do
   @doc "Visible pieces of every placement in screen cells (see the moduledoc)."
   @spec place(Scene.t(), map, {pos_integer, pos_integer} | nil) :: [piece]
   def place(_scene, _chrome, nil), do: []
-  def place(_scene, %{dim: true}, _cell), do: []
 
   def place(%Scene{panes: panes}, chrome, cell) do
-    case for(p <- panes, g <- p.graphics, c = clip(p, g, cell), do: c) do
-      [] -> []
-      clipped -> clipped |> occlude(occluders(panes, chrome.top)) |> pieces(cell)
+    dim? = Map.get(chrome, :dim, false)
+
+    clipped =
+      for {p, over} <- Enum.zip(panes, popups_over(panes)),
+          not dim? or p.layer == :popup,
+          g <- p.graphics,
+          c = clip(p, g, cell),
+          do: {c, p, over}
+
+    case clipped do
+      [] ->
+        []
+
+      clipped ->
+        top = top_rects(chrome.top)
+
+        clipped
+        |> Enum.map(fn {c, p, over} -> {c, top ++ overlay_rects(p) ++ over} end)
+        |> occlude()
+        |> pieces(cell)
     end
   end
+
+  # per pane, the outer rects of the popups drawn over it
+  defp popups_over(panes) do
+    case for(%{layer: :popup} = p <- panes, do: outer(p)) do
+      [] ->
+        Stream.cycle([[]])
+
+      popups ->
+        panes
+        |> Enum.map_reduce(popups, fn
+          %{layer: :popup}, [_ | later] -> {later, later}
+          _base, left -> {popups, left}
+        end)
+        |> elem(0)
+    end
+  end
+
+  defp outer(%{border: %{rect: r}}), do: {r.x, r.y, r.w, r.h}
+  defp outer(%{rect: r}), do: {r.x, r.y, r.w, r.h}
 
   defp clip(%{id: id, rect: r}, g, cell) do
     lclip = max(-g.x, 0)
@@ -128,9 +166,7 @@ defmodule HerdrTerm.Client.Term.Render.Graphics do
 
   # occluders: screen rects `{x, y, w, h}`
 
-  defp occluders(panes, top) do
-    top_rects(top) ++ for p <- panes, o <- p.overlays, rect <- overlay_rects(o, p.rect), do: rect
-  end
+  defp overlay_rects(p), do: for(o <- p.overlays, rect <- overlay_rects(o, p.rect), do: rect)
 
   # one rect per row segment, merged down while the next row has the same span
   defp top_rects(top) when map_size(top) == 0, do: []
@@ -175,12 +211,11 @@ defmodule HerdrTerm.Client.Term.Render.Graphics do
     end
   end
 
-  # `[{clipped, [grid piece]}]`; grid pieces `{col, row, cols, rows}` relative to it
-  defp occlude(clipped, []), do: Enum.map(clipped, &{&1, [whole(&1)]})
-
-  defp occlude(clipped, rects) do
+  # `[{clipped, rects}]` to `[{clipped, [grid piece]}]`; grid pieces
+  # `{col, row, cols, rows}` relative to it
+  defp occlude(clipped) do
     result =
-      Enum.reduce_while(clipped, {[], @max_extra_pieces}, fn c, {acc, budget} ->
+      Enum.reduce_while(clipped, {[], @max_extra_pieces}, fn {c, rects}, {acc, budget} ->
         case visible(c, rects, budget + 1) do
           :over -> {:halt, :over}
           found -> {:cont, {[{c, found} | acc], budget - max(length(found) - 1, 0)}}
@@ -192,7 +227,7 @@ defmodule HerdrTerm.Client.Term.Render.Graphics do
         Enum.reverse(acc)
 
       :over ->
-        for c <- clipped,
+        for {c, rects} <- clipped,
             do: {c, if(visible(c, rects, 1) == [whole(c)], do: [whole(c)], else: [])}
     end
   end

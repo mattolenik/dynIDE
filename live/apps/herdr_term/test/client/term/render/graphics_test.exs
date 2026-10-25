@@ -116,6 +116,62 @@ defmodule HerdrTerm.Client.Term.Render.GraphicsTest do
       assert [%{x: 37, cols: 4}] = place([g(x: 35)], @chrome, overlays: [bar])
     end
 
+    test "a base placement under a popup is split around the popup's border rect" do
+      # base placement covers screen x 5..14, y 3..7; the popup's border rect x 7..12, y 3..6
+      popup =
+        pane([],
+          id: 2,
+          layer: :popup,
+          rect: %{x: 8, y: 4, w: 4, h: 2},
+          border: %{rect: %{x: 7, y: 3, w: 6, h: 4}, edges: [], title: nil}
+        )
+
+      pieces = Graphics.place(scene([pane([g(size: {97, 61})]), popup]), @chrome, @cell)
+
+      cells =
+        for p <- pieces, x <- p.x..(p.x + p.cols - 1), y <- p.y..(p.y + p.rows - 1), do: {x, y}
+
+      want = for x <- 5..14, y <- 3..7, x not in 7..12 or y == 7, do: {x, y}
+      assert Enum.sort(cells) == Enum.sort(want)
+      assert_tiles(pieces, {97, 61})
+    end
+
+    test "a popup's placement is not cropped by the base pane under it" do
+      popup =
+        pane([g(x: 0, y: 0, cols: 4, rows: 2)],
+          id: 2,
+          layer: :popup,
+          rect: %{x: 8, y: 4, w: 4, h: 2}
+        )
+
+      base = pane([g(placement: 9, x: 30)])
+
+      assert [%{key: {2, 7, 42}, x: 8, y: 4, cols: 4, rows: 2, src: {0, 0, 100, 100}}] =
+               Graphics.place(scene([base, popup]), @chrome, @cell)
+               |> Enum.filter(&(elem(&1.key, 0) == 2))
+    end
+
+    test "overlapping popups: the earlier one's placement is cropped by the later" do
+      img = g(x: 0, y: 0, cols: 10, rows: 6)
+      a = pane([img], id: 2, layer: :popup, rect: %{x: 20, y: 5, w: 10, h: 6})
+      b = pane([img], id: 3, layer: :popup, rect: %{x: 25, y: 5, w: 10, h: 6})
+
+      assert [%{key: {2, _, _}, x: 20, cols: 5, rows: 6}, %{key: {3, _, _}, x: 25, cols: 10}] =
+               Graphics.place(scene([pane([]), a, b]), @chrome, @cell)
+    end
+
+    test "under a dimming modal base placements hide, popup placements stay" do
+      popup =
+        pane([g(x: 0, y: 0, cols: 4, rows: 2)],
+          id: 2,
+          layer: :popup,
+          rect: %{x: 50, y: 4, w: 4, h: 2}
+        )
+
+      assert [%{key: {2, _, _}}] =
+               Graphics.place(scene([pane([g()]), popup]), %{@chrome | dim: true}, @cell)
+    end
+
     test "past the crop budget, occluded placements hide whole, others stay" do
       # holes on alternating columns of two rows: far more pieces than the budget
       top = %{2 => for(x <- 2..41//2, do: {x, 1, nil}), 3 => for(x <- 3..41//2, do: {x, 1, nil})}
