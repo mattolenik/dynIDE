@@ -173,7 +173,7 @@ if Mix.env() == :test do
 
     defp scenario("render", client, cfg) do
       # the tab label line of the tab bar rasterizer; the marker lands in every tab
-      old = ~S[label = to_string(name || "")]
+      old = ~S[<> to_string(name || "")]
 
       edit_loop(
         client,
