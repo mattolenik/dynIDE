@@ -182,6 +182,27 @@ defmodule HerdrServer.Client.SessionCopyTest do
     refute_received {^a, {:notice, %{text: "no match" <> _}}}
   end
 
+  test "a copy mode from before a hot reload (no pending, task) still searches" do
+    {a, sa} = client()
+    scene_until(a, &(&1.panes != []))
+    output(1, "hello")
+    keys(sa, a, [{"b", [:ctrl]}, "["])
+
+    # the pre-M18 %CopyMode{} shape: the struct without the search task fields
+    :sys.replace_state(sa, fn st -> %{st | copy: Map.drop(st.copy, [:pending, :task])} end)
+    keys(sa, a, ["?", "h", "e", "l", :enter])
+    assert eventually(fn -> match?(%{copy: %CopyMode{match: {_, _}}}, :sys.get_state(sa)) end)
+    assert %{mode: :copy, copy: %CopyMode{pending: nil, task: nil}} = :sys.get_state(sa)
+
+    # a result for a copy that has pending but not task (no KeyError in the session)
+    :sys.replace_state(sa, fn st ->
+      %{st | copy: st.copy |> Map.drop([:task]) |> Map.put(:pending, 7)}
+    end)
+
+    send(sa, {:copy_search, 7, {:ok, nil}})
+    assert %{mode: :copy, copy: %CopyMode{pending: nil, task: nil}} = :sys.get_state(sa)
+  end
+
   test "focus moving off the copy pane ends copy mode" do
     {a, sa} = client()
     {b, sb} = client()

@@ -365,7 +365,8 @@ defmodule HerdrServer.Client.Session do
   def handle_info({:copy_search, id, result}, state) do
     state = Map.merge(%State{}, state)
 
-    case state.copy do
+    # a copy started before a hot reload lacks the newer fields (pending, task)
+    case state.copy && Map.merge(%CopyMode{}, state.copy) do
       %CopyMode{pending: ^id} = c ->
         new = copy_found(%{state | copy: %{c | task: nil}}, id, result)
 
@@ -761,6 +762,7 @@ defmodule HerdrServer.Client.Session do
 
   defp copy_search(state, {:search, id, req}) do
     state = copy_cancel(state)
+    state = %{state | copy: state.copy && Map.merge(%CopyMode{}, state.copy)}
     args = [self(), id, req]
 
     # a VM hot-reloaded onto this code without a restart has no Client.Tasks
