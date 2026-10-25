@@ -7,6 +7,7 @@ defmodule HerdrIntegration.ArchitectureTest do
   use ExUnit.Case, async: true
 
   alias HerdrScene.{Cell, Event}
+  alias HerdrScene.Scene.Pane, as: ScenePane
   alias HerdrServer.App.{Actions, Modal}
   alias HerdrServer.Client.{Keys, PaneScene, State}
   alias HerdrServer.{RuntimeStatus, View}
@@ -216,7 +217,7 @@ defmodule HerdrIntegration.ArchitectureTest do
     base = View.compute(app, state.(:terminal, []))
 
     layers =
-      for l <- HerdrScene.Scene.Pane.layers() do
+      for l <- ScenePane.layers() do
         {"pane layer #{l}", {:scene, %{base | panes: Enum.map(base.panes, &%{&1 | layer: l})}}}
       end
 
