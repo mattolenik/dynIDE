@@ -92,6 +92,15 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   `live/scripts/launcher_smoke.sh`, `attached_smoke.sh`,
   `live/bench/handoff/smoke.exs`. A VM learns its role over the link when
   `HERDR_BROKER_SOCK` is set; without it (tests, iex) it starts standalone.
+- Remote attach (M16): the server listens on `client.sock` (0600, in the
+  0700 dir of the API socket; `$HERDR_LIVE_CLIENT_SOCK` overrides) with a
+  token in `client.token` beside it (0600). `herdr-live attach [<host>]
+  [<session>]` starts the terminal client in its own VM (stdio to
+  `$HERDR_LIVE_CLIENT_LOG`, default `client.log` beside the server log); with
+  a host it runs `ssh -T -o BatchMode=yes <host> herdr-live attach-relay`,
+  and the relay on the server host reads the token, so it never travels
+  (`$HERDR_LIVE_SSH`, `$HERDR_LIVE_REMOTE_BIN`). Contract: `HerdrScene.Wire`.
+  Results: `docs/herdr-live/results/m16.md`.
 - Persistence (M8, ADR 0002): under the broker the session saves to
   `<state dir>/session.<name>.etf` (schema v2, atomic, 0600) and scrollback
   (last 1000 rows as VT) to `session.<name>.scrollback/<pane id>.etf`. State dir:
@@ -180,6 +189,9 @@ Full guide: `docs/herdr-live/editing-live.md`. Human checks: `docs/herdr-live/re
   `Persist.Schema` field and a migration (`@migrations`, bump `version/0`);
   `App.Ui` fields persist generically (plain data only). No `fn` in state (rejected at the guard). Guarded call sites
   stay thin; blanket `rescue` stays in `HerdrReload.Guard`.
+- A second terminal onto the running instance: `"$HERDR_LIVE_BIN" attach`
+  (no host, local socket). It resumes after a drop within 60 s and stays
+  attached through `kernel-restart`; `prefix q` detaches only that client.
 - Read the status line (`r<N> <k>m`, `r! compile`, `rolled back`, `synced ..., no
   rollback`, `tests ...`, `handoff ...`); every text is in the guide.
 - A rolled-back source reloads only when its content changes: edit or revert

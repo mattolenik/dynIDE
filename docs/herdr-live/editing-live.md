@@ -273,6 +273,28 @@ JSON on stderr with exit 1, usage errors exit 2.
 Every verb, param and error: [api.md](api.md). `herdr-live help` lists the verbs.
 `python3 live/scripts/tty_harness.py agent` (in `just live-check`) runs this loop.
 
+## Attaching a second terminal (M16)
+
+`"$HERDR_LIVE_BIN" attach` opens another terminal client on the running instance
+over `client.sock` (`attach <host> [session]` does the same over ssh). It is a
+separate VM with its own size, so it is not reloaded by your edits: client-side
+changes (`herdr_term`, `herdr_scene`) need a re-attach, server-side ones show up
+at once. Behaviour to expect:
+
+- A dropped connection (killed relay, network) shows `reconnecting` in the status
+  line and retries with backoff (100 ms to 5 s); within 60 s the session resumes
+  with a full scene. After that the session is gone and a new one starts, and
+  input typed while away is discarded with a notice.
+- `kernel-restart` and a crash handoff keep the socket attached (log:
+  `client_held carried=true`, no `client_reconnect`). After a kill -9 the client
+  reconnects once instead.
+- A refusal or boot failure prints `herdr-live: client exited (N): <reason>; see
+  <client log>`. The client log is `$HERDR_LIVE_CLIENT_LOG`, default `client.log`
+  beside the server log. `attach` over ssh needs key or agent auth (BatchMode).
+- `client_attach|detach|reconnect|held|refused` lines appear in the server log and in
+  `just live-log-summary` ("clients"). Contract and threat model:
+  [results/m16.md](results/m16.md).
+
 ## Telemetry
 
 Every reload event is a one-line `herdr-event <kind> ts=<unix ms> k=v ...` in the log
