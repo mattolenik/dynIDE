@@ -16,7 +16,7 @@ defmodule HerdrServer.App.Keybinds do
 
   alias HerdrServer.App.Actions
   alias HerdrServer.App.Keybinds.Catalog
-  alias HerdrServer.App.Modal.{Confirm, Prompt, Settings}
+  alias HerdrServer.App.Modal.{Confirm, Goto, Prompt, Settings}
   alias HerdrServer.App.Modal.Keybinds, as: KeybindsModal
   alias HerdrServer.Client.Keys
   alias HerdrServer.Config.Keys, as: Spec
@@ -53,6 +53,8 @@ defmodule HerdrServer.App.Keybinds do
         {"x", []} => {Confirm, :close_pane, []},
         {"r", []} => {Keys, :enter_mode, [:resize]},
         {"[", []} => {Keys, :enter_mode, [:copy]},
+        {"w", []} => {Keys, :enter_mode, [:navigate]},
+        {"g", []} => {Goto, :open, []},
         {"q", []} => a(:detach),
         {"b", []} => a(:toggle_sidebar),
         {"z", []} => a(:toggle_zoom),

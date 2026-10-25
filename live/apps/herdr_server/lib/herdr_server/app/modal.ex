@@ -37,7 +37,7 @@ defmodule HerdrServer.App.Modal do
   The modal stack (`App.Focus.modal`, top first) and the routing into its top modal
   (pure). A modal is a plain map `%{kind: atom, id: pos_integer, ...kind fields}`; the
   kind names its module (`:confirm`, `:prompt`, `:menu`, `:settings`, `:onboarding`,
-  `:keybinds`, or a module implementing
+  `:keybinds`, `:goto`, or a module implementing
   `App.Modal.Kind` itself). Callbacks inside modals are `{M, F, A}`, never funs.
 
     * `key/2`: releases are dropped; Esc closes the top modal (unless its kind
@@ -56,7 +56,8 @@ defmodule HerdrServer.App.Modal do
   """
 
   alias HerdrScene.Scene.Node
-  alias HerdrServer.App.Modal.{Confirm, Keybinds, Menu, Onboarding, Prompt, Settings, TextField}
+  alias HerdrServer.App.Modal.{Confirm, Goto, Keybinds, Menu, Onboarding, Prompt, Settings}
+  alias HerdrServer.App.Modal.TextField
 
   @kinds %{
     confirm: Confirm,
@@ -64,7 +65,8 @@ defmodule HerdrServer.App.Modal do
     menu: Menu,
     settings: Settings,
     onboarding: Onboarding,
-    keybinds: Keybinds
+    keybinds: Keybinds,
+    goto: Goto
   }
 
   @type modal :: HerdrServer.App.Modal.Kind.modal()

@@ -11,7 +11,7 @@ defmodule HerdrServer.App.Keybinds.Catalog do
   """
 
   alias HerdrServer.App.Actions
-  alias HerdrServer.App.Modal.{Confirm, Menu, Prompt, Settings}
+  alias HerdrServer.App.Modal.{Confirm, Goto, Menu, Prompt, Settings}
   alias HerdrServer.App.Modal.Keybinds, as: KeybindsModal
   alias HerdrServer.Client.Keys
 
@@ -35,6 +35,8 @@ defmodule HerdrServer.App.Keybinds.Catalog do
       {"navigation", "focus_pane_right", a(:focus_dir, [:right]), "prefix+l"},
       {"navigation", "cycle_pane_next", a(:cycle, [:next]), "prefix+tab"},
       {"navigation", "cycle_pane_previous", a(:cycle, [:previous]), "prefix+shift+tab"},
+      {"navigation", "goto", {Goto, :open, []}, "prefix+g"},
+      {"navigation", "navigate_workspaces", {Keys, :enter_mode, [:navigate]}, "prefix+w"},
       {"workspaces / tabs", "new_workspace", a(:new_workspace), "prefix+shift+n"},
       {"workspaces / tabs", "rename_workspace", {Prompt, :rename_workspace, []},
        "prefix+shift+w"},

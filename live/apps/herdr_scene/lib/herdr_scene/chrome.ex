@@ -51,7 +51,7 @@ defmodule HerdrScene.Chrome do
   # them as opaque (echoed back in `{:chrome, path, action}`); naming them here makes
   # them exist in every client VM, so a remote client's `[:safe]` decode accepts them
   # (M16 R7, checked by herdr_integration's architecture test).
-  @ids [:agent, :fill, :gap2, :global_menu, :heading, :help_text, :hint_text] ++
+  @ids [:agent, :fill, :gap2, :global_menu, :goto, :heading, :help_text, :hint_text] ++
          [:horizontal, :keybinds, :new_workspace, :onboarding, :reload_config, :save] ++
          [:settings, :sidebar_split, :sidebar_width, :split_down, :split_right, :subtitle] ++
          [:toasts, :toggle_sidebar, :workspace, :zoomed]

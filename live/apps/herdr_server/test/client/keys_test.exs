@@ -82,4 +82,31 @@ defmodule HerdrServer.Client.KeysTest do
     st = Keys.enter_mode(st, :terminal)
     assert {%{mode: :terminal}, :consumed} = key(st, "q", event: :release)
   end
+
+  describe "navigate mode" do
+    defp nav(at),
+      do: %{mode: :navigate, swallow: MapSet.new(), navigate: %{ids: [1, 2, 3], at: at}}
+
+    test "prefix w enters it" do
+      assert {%{mode: :navigate}, :consumed} = keys(fresh(), [{"b", [:ctrl]}, "w"])
+    end
+
+    test "Up / Down / j / k move the index, wrapping" do
+      assert {%{navigate: %{at: 1}}, :consumed} = key(nav(0), :down)
+      assert {%{navigate: %{at: 0}}, :consumed} = key(nav(2), "j")
+      assert {%{navigate: %{at: 2}}, :consumed} = key(nav(0), :up)
+      assert {%{mode: :navigate, navigate: %{at: 1}}, :consumed} = key(nav(2), "k")
+    end
+
+    test "Enter switches to the previewed workspace and leaves" do
+      assert {%{mode: :terminal}, {:run, {HerdrServer.App.Workspaces, :switch_workspace_id, [2]}}} =
+               key(nav(1), :enter)
+    end
+
+    test "Esc or the prefix leave without running anything; other keys are consumed" do
+      assert {%{mode: :terminal}, :consumed} = key(nav(1), :escape)
+      assert {%{mode: :terminal}, :consumed} = key(nav(1), {"b", [:ctrl]})
+      assert {%{mode: :navigate, navigate: %{at: 1}}, :consumed} = key(nav(1), "x")
+    end
+  end
 end

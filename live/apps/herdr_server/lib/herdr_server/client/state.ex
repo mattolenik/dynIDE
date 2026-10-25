@@ -22,6 +22,10 @@ defmodule HerdrServer.Client.State do
   `drag` is this client's tab or workspace drag, `%{from: path, over: path}` (the
   dragged chrome path and the one under the pointer, same kind) or nil: `View` puts the
   `drop_marker` prop on `over` for this client only. Not mirrored (a re-attach ends it).
+  `navigate` is this client's workspace navigate preview while its mode is `:navigate`,
+  `%{ids, at}` (workspace ids in sidebar order, the previewed index; `Client.Keys` moves
+  it, the session refreshes `ids` from each app): `View.Sidebar` marks that item
+  `selected`. Not mirrored.
   """
 
   defstruct [
@@ -53,7 +57,8 @@ defmodule HerdrServer.Client.State do
     graphics: %{},
     window_title: nil,
     hostname: nil,
-    drag: nil
+    drag: nil,
+    navigate: nil
   ]
 
   @type t :: %__MODULE__{
@@ -65,7 +70,7 @@ defmodule HerdrServer.Client.State do
           client: pid() | nil,
           viewports: map(),
           hover: term(),
-          mode: :terminal | :prefix | :resize | :copy,
+          mode: :terminal | :prefix | :resize | :copy | :navigate,
           swallow: MapSet.t(),
           keybinds: HerdrServer.App.Keybinds.t() | nil,
           capture: boolean(),
@@ -85,6 +90,7 @@ defmodule HerdrServer.Client.State do
           graphics: %{optional(pos_integer()) => [HerdrScene.Scene.Graphic.t()]},
           window_title: binary() | nil,
           hostname: binary() | nil,
-          drag: %{from: [term()], over: [term()]} | nil
+          drag: %{from: [term()], over: [term()]} | nil,
+          navigate: %{ids: [term()], at: non_neg_integer()} | nil
         }
 end

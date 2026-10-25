@@ -143,4 +143,19 @@ defmodule HerdrServer.View.SidebarTest do
     refute Map.has_key?(w2.props, :detail)
     assert :ok = Scene.validate(View.compute(app, client(120, 40)))
   end
+
+  test "a navigate preview marks one workspace selected, for that client only" do
+    app = add_workspace(fresh(120, 40), "two")
+    nav = %{ids: [1, 2], at: 0}
+    assert [%{props: p1}, %{props: p2}] = items(Sidebar.node(app, @rect, nil, nav), :spaces)
+    assert {p1.selected, p1.active, p2.selected, p2.active} == {true, false, false, true}
+
+    refute Enum.any?(items(Sidebar.node(app, @rect), :spaces), &Map.has_key?(&1.props, :selected))
+
+    s = View.compute(app, %{client(120, 40) | mode: :navigate, navigate: nav})
+    assert :ok = Scene.validate(s)
+
+    assert %{props: %{selected: true}} =
+             find(s.chrome, [:sidebar, :spaces, :list, {:workspace, 1}])
+  end
 end

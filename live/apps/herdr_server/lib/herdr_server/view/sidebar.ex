@@ -11,7 +11,8 @@ defmodule HerdrServer.View.Sidebar do
   workspace has more than one tab. A workspace whose `git` fact (`WorkspaceFacts`) has a
   branch carries it as the item's `:detail`, `"main ↑1 ↓2"`. Collapsed: sections carry no text.
   The workspace item under the client's workspace drag (`drag`, `View.DropMarker`)
-  carries `drop_marker`.
+  carries `drop_marker`. With the client's navigate preview (`navigate`, `%{ids, at}`,
+  `Client.State`) every workspace item carries `selected`, true only on `ids[at]`.
   """
 
   alias HerdrScene.Scene.Node
@@ -20,8 +21,8 @@ defmodule HerdrServer.View.Sidebar do
 
   @prio %{unknown: 0, idle: 1, working: 2, done: 3, blocked: 4}
 
-  @spec node(map, HerdrScene.Scene.rect(), map | nil) :: Node.t()
-  def node(app, rect, drag \\ nil) do
+  @spec node(map, HerdrScene.Scene.rect(), map | nil, map | nil) :: Node.t()
+  def node(app, rect, drag \\ nil, navigate \\ nil) do
     collapsed = app.ui.sidebar.collapsed
     label = &if(collapsed, do: nil, else: &1)
     w = rect.w - 1
@@ -35,7 +36,7 @@ defmodule HerdrServer.View.Sidebar do
           role: :list,
           id: :list,
           props: %{offset: offset(app, :spaces_offset)},
-          children: workspaces(app, drag)
+          children: workspaces(app, drag, navigate)
         },
         %Node{role: :button, id: :new, text: "new", props: %{action: :new_workspace}},
         %Node{
@@ -100,9 +101,10 @@ defmodule HerdrServer.View.Sidebar do
     ]
   end
 
-  defp workspaces(app, drag) do
+  defp workspaces(app, drag, navigate) do
     path = &[:sidebar, :spaces, :list, {:workspace, &1}]
     paths = Enum.map(app.session.workspaces, &path.(&1.id))
+    preview = navigate && Enum.at(navigate.ids, navigate.at)
 
     app.session.workspaces
     |> Enum.with_index(1)
@@ -119,6 +121,7 @@ defmodule HerdrServer.View.Sidebar do
         props:
           %{active: ws.id == app.session.active_workspace, index: i}
           |> detail(ws)
+          |> then(&if(navigate, do: Map.put(&1, :selected, ws.id == preview), else: &1))
           |> DropMarker.put(DropMarker.side(drag, path.(ws.id), paths)),
         children: [line(0, [badge(state), text(:workspace, ws.name)])]
       }

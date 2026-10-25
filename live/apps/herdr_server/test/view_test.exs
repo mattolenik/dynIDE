@@ -109,7 +109,7 @@ defmodule HerdrServer.ViewTest do
 
     assert texts.(40) == ["esc", "cancel"]
     assert Status.width(kids.(40)) - 1 <= 40
-    assert length(texts.(200)) == 6
+    assert length(texts.(200)) == 8
   end
 
   test "prefix and resize modes show mode-bar hints after the mode" do
@@ -128,11 +128,27 @@ defmodule HerdrServer.ViewTest do
              {:text, "cancel"},
              {:keycap, "ctrl+b"},
              {:text, "send prefix"},
+             {:keycap, "w"},
+             {:text, "workspace nav"},
              {:keycap, "?"},
              {:text, "keybinds"}
            ]
 
     assert [{:keycap, "h"}, {:keycap, "l"}, {:text, "width"} | _] = hints.(:resize)
+
+    assert hints.(:navigate) == [
+             {:keycap, "esc"},
+             {:text, "back"},
+             {:keycap, "up"},
+             {:keycap, "down"},
+             {:text, "workspace"},
+             {:keycap, "enter"},
+             {:text, "switch"}
+           ]
+
+    assert %{text: "NAVIGATE", token: :accent, props: %{mode: :navigate}} =
+             child(View.compute(app, client(80, 24, :ref, :navigate)), :mode)
+
     assert hints.(:terminal) == []
 
     s = View.compute(app, client(80, 24, :ref, :prefix))

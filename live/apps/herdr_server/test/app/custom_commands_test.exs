@@ -35,7 +35,7 @@ defmodule HerdrServer.App.CustomCommandsTest do
     prefix = "ctrl+a"
 
     [[keys.command]]
-    key = "prefix+g"
+    key = "prefix+o"
     command = "lazygit"
     type = "pane"
     description = "git"
@@ -69,19 +69,19 @@ defmodule HerdrServer.App.CustomCommandsTest do
     width = "50%"
 
     [[keys.command]]
-    key = "prefix+g"
+    key = "prefix+o"
     command = "again"
     """
 
     {kb, ui, diags} = apply_cfg(load(dir, toml))
 
     assert [
-             %{key: "prefix+g", command: "lazygit", type: "pane", description: "git"},
+             %{key: "prefix+o", command: "lazygit", type: "pane", description: "git"},
              %{key: "alt+e", type: "shell", description: nil, width: nil},
              %{key: "prefix+q", type: "popup", width: "50%", height: nil}
            ] = ui.custom_commands
 
-    assert Keybinds.lookup(kb, :prefix, {"g", []}) == {CustomCommands, :run, [0]}
+    assert Keybinds.lookup(kb, :prefix, {"o", []}) == {CustomCommands, :run, [0]}
     assert Keybinds.lookup(kb, :terminal, {"e", [:alt]}) == {CustomCommands, :run, [1]}
     assert Keybinds.lookup(kb, :prefix, {"q", []}) == {CustomCommands, :run, [2]}
 
@@ -92,7 +92,7 @@ defmodule HerdrServer.App.CustomCommandsTest do
              "config: keys.command[4].key: ctrl+a is the prefix",
              "config: keys.command[5].key: prefix+ctrl+a is the prefix",
              "config: keys.command[6].key: prefix+q replaces keys.detach",
-             "config: keys.command[7].key: prefix+g is another command's key"
+             "config: keys.command[7].key: prefix+o is another command's key"
            ]
 
     # a file without commands clears them
@@ -103,7 +103,7 @@ defmodule HerdrServer.App.CustomCommandsTest do
   test "the keybinds help lists custom commands under custom", %{tmp_dir: dir} do
     toml = """
     [[keys.command]]
-    key = "prefix+g"
+    key = "prefix+o"
     command = "lazygit"
     description = "git ui"
 
@@ -124,11 +124,11 @@ defmodule HerdrServer.App.CustomCommandsTest do
     list = Node.find(Modal.view(app, app.session.size), [:list]).children
     assert [%{role: :text, text: "custom"} | items] = list
     assert [%{text: "git ui", children: [g]}, %{text: "custom command"}] = items
-    assert g.text == "prefix+g"
+    assert g.text == "prefix+o"
   end
 
   test "shell: the effect carries the command env", %{tmp_dir: dir} do
-    {app, []} = app_with(dir, "[[keys.command]]\nkey = \"prefix+g\"\ncommand = \"echo hi\"\n")
+    {app, []} = app_with(dir, "[[keys.command]]\nkey = \"prefix+o\"\ncommand = \"echo hi\"\n")
     assert {^app, [{:custom_command, "echo hi", env, 1}]} = CustomCommands.run(app, 0)
     env = Map.new(env)
     assert env["HERDR_ACTIVE_WORKSPACE_ID"] == "w1"
@@ -141,7 +141,7 @@ defmodule HerdrServer.App.CustomCommandsTest do
   test "pane, plugin_action and popup", %{tmp_dir: dir} do
     toml = """
     [[keys.command]]
-    key = "prefix+g"
+    key = "prefix+o"
     command = "lazygit"
     type = "pane"
 
@@ -182,7 +182,7 @@ defmodule HerdrServer.App.CustomCommandsTest do
     File.write!(path, """
     onboarding = false
     [[keys.command]]
-    key = "prefix+g"
+    key = "prefix+o"
     command = "touch \\"$HERDR_ACTIVE_PANE_CWD/ran\\""
     """)
 

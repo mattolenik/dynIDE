@@ -2,7 +2,7 @@ defmodule HerdrServer.View.Status do
   @moduledoc """
   The status row region (pure): `:mode` (the client's own input mode, `props: %{mode}`,
   or an open copy-mode search prompt),
-  herdr's mode-bar hints in prefix and resize modes (`:keycap` `{:key, n}` with
+  herdr's mode-bar hints in prefix, navigate and resize modes (`:keycap` `{:key, n}` with
   `props: %{key, mods}` and its label as text, then a `:muted` `:text` `{:hint_text, n}`),
   the runtime status `:reload`, `:tests`, `:handoff` from `client.runtime`
   (`RuntimeStatus.nodes/2`, those that fit), `:notice` when the client has one, `:title`
@@ -42,6 +42,7 @@ defmodule HerdrServer.View.Status do
         :prefix -> {"PREFIX", :accent}
         :resize -> {"RESIZE", :warning}
         :copy -> {"COPY", :accent}
+        :navigate -> {"NAVIGATE", :accent}
       end
 
     %{text(:mode, label, token) | props: %{mode: m}}
@@ -49,11 +50,19 @@ defmodule HerdrServer.View.Status do
 
   defp hints(:prefix, ui) do
     prefix = List.first(ui.keybinds.prefix)
+    to = {HerdrServer.Client.Keys, :enter_mode, [:navigate]}
+    nav = Enum.find_value(ui.keybinds.prefix_binds, fn {k, mfa} -> mfa == to && k end)
 
     pairs(
       [{{:escape, []}, "cancel"}] ++
-        if(prefix, do: [{prefix, "send prefix"}], else: []) ++ [{{"?", []}, "keybinds"}]
+        if(prefix, do: [{prefix, "send prefix"}], else: []) ++
+        if(nav, do: [{nav, "workspace nav"}], else: []) ++ [{{"?", []}, "keybinds"}]
     )
+  end
+
+  defp hints(:navigate, _ui) do
+    keys = [{:escape, "back"}, {:up, nil}, {:down, "workspace"}, {:enter, "switch"}]
+    pairs(for {k, label} <- keys, do: {{k, []}, label})
   end
 
   defp hints(:resize, _ui) do

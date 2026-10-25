@@ -173,7 +173,7 @@ defmodule HerdrIntegration.ArchitectureTest do
     notice = %{level: :warning, text: "n", ref: nil}
 
     scenes =
-      for mode <- [:terminal, :prefix, :resize],
+      for mode <- [:terminal, :prefix, :resize, :navigate],
           {label, a} <- [single: app, split: split],
           {extra_label, extra} <- [plain: [], full: [runtime: rt, notice: notice]] do
         {"scene #{label}/#{mode}/#{extra_label}", {:scene, View.compute(a, state.(mode, extra))}}
@@ -191,7 +191,11 @@ defmodule HerdrIntegration.ArchitectureTest do
             workspace: %{from: w.(1), over: w.(2)}
           ] do
         {"scene drag #{n}", {:scene, View.compute(dapp, state.(:terminal, drag: d))}}
-      end
+      end ++
+        [
+          {"scene navigate preview",
+           {:scene, View.compute(dapp, state.(:navigate, navigate: %{ids: [1, 2], at: 1}))}}
+        ]
 
     # one status state per reload/handoff outcome
     statuses =
@@ -299,7 +303,8 @@ defmodule HerdrIntegration.ArchitectureTest do
       menu_tab: &elem(Modal.Menu.open(&1, :tab, 1, at), 0),
       menu_workspace: &elem(Modal.Menu.open(&1, :workspace, ws, at), 0),
       menu_pane: &elem(Modal.Menu.open(&1, :pane, &1.focus.pane, at), 0),
-      menu_global: &elem(Modal.Menu.open(&1, :global, nil, at), 0)
+      menu_global: &elem(Modal.Menu.open(&1, :global, nil, at), 0),
+      goto: &elem(Modal.Goto.open(&1), 0)
     ]
 
     for {n, open} <- opens, do: {"scene modal #{n}", {:scene, View.compute(open.(app), st)}}
@@ -338,7 +343,10 @@ defmodule HerdrIntegration.ArchitectureTest do
         s <- [:selection, :pane],
         do: {"clipboard #{s}", {:clipboard, %{text: "t", source: s}}}
       ) ++
-      for(m <- [:terminal, :prefix, :resize, :copy], do: {"input_mode #{m}", {:input_mode, m}}) ++
+      for(
+        m <- [:terminal, :prefix, :resize, :copy, :navigate],
+        do: {"input_mode #{m}", {:input_mode, m}}
+      ) ++
       for(
         r <- HerdrScene.Protocol.detach_reasons(),
         do: {"detached #{r}", {:detached, r}}

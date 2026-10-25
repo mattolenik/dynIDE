@@ -14,7 +14,8 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Sidebar do
   Item lines: line 0 indented 1, later lines 3, then an item's `:detail` (`:muted`,
   indented 3) when it has one and its rows fit; tokens joined by `" · "` (`:muted`), a
   single space after a badge; empty values drop; a line that does not fit ends in `…`.
-  The active workspace row has the `:selected` background. Badges are `state_dots` or
+  The active workspace row has the `:selected` background (the `selected` one while the
+  client navigates). Badges are `state_dots` or
   `state_symbols` (root `indicators`) in their state's colour.
 
   Workspace items are `drag: true` hits (reorder). A `drop_marker` draws the accent `▔`
@@ -174,7 +175,8 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Sidebar do
   end
 
   defp item_rows(%Node{children: groups, props: props}, %{cw: cw, theme: theme, base: base} = ctx) do
-    selected = Map.get(props, :active) == true and Map.has_key?(props, :index)
+    # a navigate preview (`selected` on every workspace item) wins over `active`
+    selected = highlit?(props) and Map.has_key?(props, :index)
 
     detail =
       case Map.get(props, :detail) do
@@ -193,6 +195,8 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Sidebar do
       if selected, do: select(row, cw, theme), else: row
     end)
   end
+
+  defp highlit?(props), do: Map.get(props, :selected, Map.get(props, :active)) == true
 
   defp select(row, w, theme),
     do: Cells.restyle(row, 0, w, bg: Theme.style(theme, :selected).bg)
@@ -242,7 +246,7 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Sidebar do
         index = item.props |> Map.get(:index, "") |> to_string() |> String.pad_leading(2)
         row = Cells.concat([Text.text(index, :default, theme), item_badge(item, ctx)])
         row = Text.clip(row, cw, base)
-        [if(Map.get(item.props, :active) == true, do: select(row, cw, theme), else: row)]
+        [if(highlit?(item.props), do: select(row, cw, theme), else: row)]
       end)
 
     rule =

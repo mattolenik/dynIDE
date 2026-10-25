@@ -8,18 +8,26 @@ defmodule HerdrServer.Client.Keys do
     * `{:forward, key_event}`: the key goes to the focused pane (through `App.Store`);
     * `{:run, {m, f, a}}`: an app action, applied by the Store as `apply(m, f, [app | a])`.
 
-  Modes are `:terminal`, `:prefix`, `:resize` and `:copy` (every key consumed here; the
-  session hands presses to `Client.CopyMode`). A binding whose module is this module
+  Modes are `:terminal`, `:prefix`, `:resize`, `:copy` (every key consumed here; the
+  session hands presses to `Client.CopyMode`) and `:navigate` (workspace navigate: the
+  input's `navigate`, `%{ids, at}` set by the session from the sidebar's workspace order,
+  is moved by Up / Down / j / k, wrapping; Enter switches to `ids[at]` through
+  `{App.Workspaces, :switch_workspace_id, [id]}`; Esc or the prefix key leave unchanged;
+  every key is consumed). A binding whose module is this module
   (`enter_mode/2`) is a per-client effect: it is applied here, to the input state, and
   never reaches the app. Presses that are not forwarded are remembered in `swallow`
   (keyed by the key alone, case-insensitive) so their later release is consumed too;
   a forwarded press clears a stale entry. Releases in non-terminal modes are dropped.
   """
 
-  alias HerdrServer.App.Keybinds
+  alias HerdrServer.App.{Keybinds, Workspaces}
 
-  @type mode :: :terminal | :prefix | :resize | :copy
-  @type input :: %{mode: mode(), swallow: MapSet.t()}
+  @type mode :: :terminal | :prefix | :resize | :copy | :navigate
+  @type input :: %{
+          required(:mode) => mode(),
+          required(:swallow) => MapSet.t(),
+          optional(:navigate) => %{ids: [term()], at: non_neg_integer()} | nil
+        }
   @type result :: :consumed | {:forward, tuple()} | {:run, Keybinds.mfa_t()}
 
   @spec resolve(input(), Keybinds.t(), tuple()) :: {input(), result()}
@@ -57,6 +65,7 @@ defmodule HerdrServer.Client.Keys do
   defp swallow_key({k, _mods}), do: k
 
   defp dispatch(%{mode: :copy} = st, _kb, _event, _key), do: {st, :consumed}
+  defp dispatch(%{mode: :navigate} = st, kb, _event, key), do: navigate(st, kb, key)
 
   defp dispatch(st, kb, event, key) do
     key_in(st.mode, st, event, Keybinds.lookup(kb, st.mode, key), Keybinds.prefix?(kb, key))
@@ -78,6 +87,26 @@ defmodule HerdrServer.Client.Keys do
   defp key_in(:prefix, st, _, _, _), do: {enter_mode(st, :terminal), :consumed}
   defp key_in(:resize, st, _, bound, _) when bound != nil, do: call(st, bound)
   defp key_in(:resize, st, _, _, _), do: {st, :consumed}
+
+  defp navigate(st, kb, {k, mods} = key) do
+    nav = Map.get(st, :navigate) || %{ids: [], at: 0}
+
+    if k == :escape or Keybinds.prefix?(kb, key),
+      do: {enter_mode(st, :terminal), :consumed},
+      else: nav_key(st, nav, if(mods == [] and nav.ids != [], do: k))
+  end
+
+  defp nav_key(st, nav, k) when k in [:up, "k", :down, "j"] do
+    d = if k in [:up, "k"], do: -1, else: 1
+    {Map.put(st, :navigate, %{nav | at: Integer.mod(nav.at + d, length(nav.ids))}), :consumed}
+  end
+
+  defp nav_key(st, nav, :enter),
+    do:
+      {enter_mode(st, :terminal),
+       {:run, {Workspaces, :switch_workspace_id, [Enum.at(nav.ids, nav.at)]}}}
+
+  defp nav_key(st, _nav, _k), do: {st, :consumed}
 
   defp call(st, {__MODULE__, f, a}), do: {Kernel.apply(__MODULE__, f, [st | a]), :consumed}
   defp call(st, mfa), do: {st, {:run, mfa}}

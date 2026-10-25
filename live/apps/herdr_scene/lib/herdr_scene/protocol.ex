@@ -40,7 +40,7 @@ defmodule HerdrScene.Protocol do
     * `{:detached, reason :: atom}`: the server ended this client's session (`:requested`:
       the client's own detach binding or `{:detach}`); the session is gone after it;
       the server sends one of `detach_reasons/0`
-    * `{:input_mode, :terminal | :prefix | :resize | :copy}`: this client's own input mode
+    * `{:input_mode, :terminal | :prefix | :resize | :copy | :navigate}`: this client's own input mode
       changed (input modes are per client). Sent to the `from_pid` of the `{:input, ...}`
       that caused it, before that input's `{:ack, seq}`; a session starts in `:terminal`,
       except a re-attach that restores a mirrored mode, which sends it to the attach's
@@ -148,8 +148,9 @@ defmodule HerdrScene.Protocol do
   def validate_server_msg({:handoff, %{}}), do: :ok
   def validate_server_msg({:detached, reason}) when is_atom(reason), do: :ok
 
-  def validate_server_msg({:input_mode, m}) when m in [:terminal, :prefix, :resize, :copy],
-    do: :ok
+  def validate_server_msg({:input_mode, m})
+      when m in [:terminal, :prefix, :resize, :copy, :navigate],
+      do: :ok
 
   def validate_server_msg({:clipboard, %{text: t, source: s}})
       when is_binary(t) and s in [:selection, :pane],

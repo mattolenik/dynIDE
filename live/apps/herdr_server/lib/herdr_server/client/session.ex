@@ -80,6 +80,11 @@ defmodule HerdrServer.Client.Session do
   every key and the session hands presses to `CopyMode.key/3` (guarded, context from
   `PointerIo.copy_context/2`), executing its actions with `PointerIo.run/3`. Its exit,
   a failure, or the copy pane losing the app focus sets the mode back to `:terminal`.
+
+  Navigate mode (M17): while the mode is `:navigate`, each pushed app refreshes
+  `state.navigate` (`%{ids, at}`, the workspaces in sidebar order; on entry `at` is the
+  active workspace, later it follows the previewed id); `Client.Keys` moves it and a
+  move repaints. Leaving the mode clears it; a re-attach starts outside it.
   """
   use GenServer, restart: :temporary
 
@@ -124,8 +129,8 @@ defmodule HerdrServer.Client.Session do
     }
 
     state = struct(state, Map.take(info[:mirrored] || %{}, @presentation))
-    # copy mode's state is not mirrored: a re-attach starts outside it
-    state = if state.mode == :copy, do: %{state | mode: :terminal}, else: state
+    # copy and navigate state are not mirrored: a re-attach starts outside them
+    state = if state.mode in [:copy, :navigate], do: %{state | mode: :terminal}, else: state
 
     {:ok, state, {:continue, :attach}}
   end
@@ -460,13 +465,19 @@ defmodule HerdrServer.Client.Session do
   end
 
   defp apply_input(%{keybinds: %{}} = state, {:key, _} = ev, from) do
-    case Guard.run_twice(Keys, :resolve, [Map.take(state, [:mode, :swallow]), state.keybinds, ev],
+    input = Map.take(state, [:mode, :swallow, :navigate])
+
+    case Guard.run_twice(Keys, :resolve, [input, state.keybinds, ev],
            server: Store.reload_server()
          ) do
-      {:ok, {%{mode: mode, swallow: swallow}, result}} ->
-        new = copy_mode(%{state | mode: mode, swallow: swallow}, state.mode, ev)
+      {:ok, {%{mode: mode, swallow: swallow} = st, result}} ->
+        nav = Map.get(st, :navigate, state.navigate)
+        new = copy_mode(%{state | mode: mode, swallow: swallow, navigate: nav}, state.mode, ev)
         new = keyed(new, state.mode, result, from)
-        if new.mode == state.mode and new.copy != state.copy, do: repaint(new), else: new
+
+        if new.mode == state.mode and {new.copy, new.navigate} != {state.copy, state.navigate},
+          do: repaint(new),
+          else: new
 
       # a broken resolver (failure or bad shape) still lets the client type
       other ->
@@ -544,6 +555,18 @@ defmodule HerdrServer.Client.Session do
     Store.event(ev, driving_size(state))
     if state.drag, do: repaint(%{state | drag: nil}), else: state
   end
+
+  # navigate preview over the app's workspaces: on entry the active one, then the same id
+  defp navigate_follow(%{mode: :navigate} = state, %{session: %{workspaces: wss} = s}) do
+    ids = Enum.map(wss, & &1.id)
+    keep = state.navigate && Enum.at(state.navigate.ids, state.navigate.at)
+    at = Enum.find_index(ids, &(&1 == (keep || s.active_workspace)))
+    at = at || min((state.navigate && state.navigate.at) || 0, max(length(ids) - 1, 0))
+    %{state | navigate: %{ids: ids, at: at}}
+  end
+
+  defp navigate_follow(%{mode: :navigate} = state, _app), do: state
+  defp navigate_follow(state, _app), do: %{state | navigate: nil}
 
   # a drag whose dragged node is gone (closed mid-drag) ends
   defp drag_live(%{drag: nil} = state, _app), do: state
@@ -860,7 +883,8 @@ defmodule HerdrServer.Client.Session do
 
   defp push(state, app) do
     # every app the session sees, before View reads the pointer
-    state = state |> focus_moved(app) |> copy_follow(app) |> drag_live(app)
+    state =
+      state |> focus_moved(app) |> copy_follow(app) |> drag_live(app) |> navigate_follow(app)
 
     # outside the guard: an app without keybinds (a broken Store) must not crash us
     state =
@@ -912,7 +936,8 @@ defmodule HerdrServer.Client.Session do
       graphics: graphics(ids),
       window_title: state.window_title,
       hostname: state.hostname,
-      drag: state.drag
+      drag: state.drag,
+      navigate: state.navigate
     }
 
     Guard.run_twice(View, :compute, [app, view_state],

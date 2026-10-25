@@ -75,6 +75,24 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.SidebarTest do
     assert Enum.at(cells, 1).attrs == Theme.style(@theme, :muted).attrs
   end
 
+  test "a navigate preview (selected) is highlighted instead of the active row" do
+    scene = Fixture.load("two_workspaces_120x40")
+    w = &[:spaces, :list, {:workspace, &1}]
+    sel = Theme.style(@theme, :selected).bg
+
+    bg = fn l, id ->
+      Enum.at(Cell.decode_row(row(l, hit(l, [:sidebar | w.(id)]).rect.y)), 5).bg
+    end
+
+    l = layout(scene)
+    assert {bg.(l, 1) != sel, bg.(l, 2)} == {true, sel}
+
+    chrome = put_props(scene.chrome, [:sidebar | w.(1)], selected: true)
+    chrome = put_props(chrome, [:sidebar | w.(2)], selected: false)
+    l = layout(%{scene | chrome: chrome})
+    assert {bg.(l, 1), bg.(l, 2) != sel} == {sel, true}
+  end
+
   test "badges follow indicators and state colours" do
     scene = Fixture.load("two_workspaces_120x40")
     sb = sidebar(scene)

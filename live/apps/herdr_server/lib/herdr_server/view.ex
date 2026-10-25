@@ -78,7 +78,9 @@ defmodule HerdrServer.View do
 
   defp chrome(app, client, ws, tab, %{panes: area} = regions) do
     sidebar =
-      if regions.sidebar, do: [Sidebar.node(app, regions.sidebar, client.drag)], else: []
+      if regions.sidebar,
+        do: [Sidebar.node(app, regions.sidebar, client.drag, client.navigate)],
+        else: []
 
     tabs = if regions.tabs, do: [Tabs.node(ws, regions.tabs, client.drag)], else: []
 
