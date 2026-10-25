@@ -171,13 +171,13 @@ defmodule HerdrScene.Scene do
       layer_errors("#{path}.layer", p.layer)
   end
 
+  defp one_pane_errors(path, _, _, _, _), do: ["#{path}: not a %Pane{}"]
+
   defp layer_errors(path, layer) do
     if layer in Pane.layers(),
       do: [],
       else: ["#{path}: expected one of #{inspect(Pane.layers())}"]
   end
-
-  defp one_pane_errors(path, _, _, _, _), do: ["#{path}: not a %Pane{}"]
 
   defp rect_errors(path, %{x: x, y: y, w: w, h: h}, %{cols: cols, rows: rows}) do
     cond do
