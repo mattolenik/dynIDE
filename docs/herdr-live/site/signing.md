@@ -39,7 +39,8 @@ Run from `live/`. `V` is the version, `ID` the identity string, `TEAMID` as abov
 
 ```sh
 # 1. build with the real public key as the trusted update key
-HERDR_LIVE_UPDATE_PUBKEY=~/secure/herdr-live-update/dev-update.pub T=$(scripts/release/build.sh | tail -n 1)
+export HERDR_LIVE_UPDATE_PUBKEY=~/secure/herdr-live-update/dev-update.pub
+T=$(scripts/release/build.sh | tail -n 1)
 V=$(basename $T | sed 's/^herdr-live-\(.*\)-macos-aarch64\.tar\.gz$/\1/')
 
 # 2. unpack, sign every Mach-O (dry run first: add --dry-run)
