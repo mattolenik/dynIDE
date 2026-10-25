@@ -284,6 +284,68 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
              "│" <> String.duplicate("x", 18) <> "│"
   end
 
+  # a 12x5 popup (inner 9x3: one blank column before the right border) over both panes
+  defp popup do
+    %Pane{
+      id: 9,
+      layer: :popup,
+      rect: %{x: 15, y: 2, w: 9, h: 3},
+      border: %{
+        rect: %{x: 14, y: 1, w: 12, h: 5},
+        edges: [:top, :bottom, :left, :right],
+        title: "popup"
+      },
+      rows: {:ref, 9, 0}
+    }
+  end
+
+  test "a popup pane draws over the panes under it, after the dim and before top chrome" do
+    full = %{
+      1 => Tuple.duplicate(Cells.text(String.duplicate("x", 18), @s), 7),
+      2 => Tuple.duplicate(Cells.text(String.duplicate("y", 18), @s), 7),
+      9 => {Cells.text("hi", @s)}
+    }
+
+    sc = %{scene() | panes: scene().panes ++ [popup()], focus: %{pane: 9, chrome: nil}}
+    t = texts(Compose.frame(sc, full, @theme))
+    assert String.slice(Enum.at(t, 1), 14, 12) == "┌popup─────┐"
+    assert String.slice(Enum.at(t, 2), 13, 14) == "x│hi        │y"
+    assert String.slice(Enum.at(t, 3), 13, 14) == "x│          │y"
+    assert String.slice(Enum.at(t, 5), 14, 12) == "└──────────┘"
+    # below the popup the panes show again
+    assert String.slice(Enum.at(t, 6), 13, 14) == "xxxxxx││yyyyyy"
+    # the cursor is the popup's
+    c = %{x: 1, y: 0, shape: :block, visible: true}
+    assert Compose.cursor(sc, %{9 => c}) == {{16, 2}, :block}
+
+    # a dimming modal under it fades the panes, not the popup
+    sc_dim = with_modal(sc, %{kind: :confirm, dim: true})
+    frame = Compose.frame(sc_dim, full, @theme)
+    row = cells(frame, 6)
+    assert :faint in Enum.at(row, 0).attrs
+    refute :faint in Enum.at(cells(frame, 1), 14).attrs
+    # top chrome (the modal box at x 5..14, rows 2..4) still wins over the popup
+    assert String.at(Enum.at(texts(frame), 2), 14) == " "
+  end
+
+  test "the chrome layout puts a popup's box between the top and base hits" do
+    sc = with_modal(%{scene() | panes: scene().panes ++ [popup()]}, %{kind: :confirm})
+    hits = Chrome.layout(sc.chrome, sc.size, @theme, Chrome.popups(sc.panes)).hits
+    i = Enum.find_index(hits, &(&1.role == :pane))
+    assert %{path: [{:pane, 9}], rect: %{x: 14, y: 1, w: 12, h: 5}} = Enum.at(hits, i)
+    assert Enum.all?(Enum.take(hits, i), &(&1.layer == :top))
+    assert Enum.all?(Enum.drop(hits, i + 1), &(&1.layer == :base))
+  end
+
+  test "the popup golden fixture draws its box over the split" do
+    sc = Fixture.load("popup_120x40")
+    t = texts(Compose.frame(sc, %{}, @theme))
+    assert String.slice(Enum.at(t, 10), 45, 9) == "┌lazygit─"
+    assert String.slice(Enum.at(t, 28), 45, 56) == "└" <> String.duplicate("─", 54) <> "┘"
+    # the column between the popup's content and its right border is blank
+    assert String.slice(Enum.at(t, 11), 45, 56) == "│" <> String.duplicate(" ", 54) <> "│"
+  end
+
   test "a dimming modal fades every cell outside the top layer" do
     sc = with_modal(scene(), %{kind: :confirm, dim: true})
     frame = Compose.frame(sc, rows(), @theme)

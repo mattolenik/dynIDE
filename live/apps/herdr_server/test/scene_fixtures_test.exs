@@ -3,7 +3,7 @@ defmodule HerdrServer.SceneFixturesTest do
 
   alias HerdrScene.{Event, Fixture, Scene}
   alias HerdrServer.App.Actions
-  alias HerdrServer.App.Modal.{Confirm, Onboarding, Prompt, Settings}
+  alias HerdrServer.App.Modal.{Confirm, Onboarding, Popup, Prompt, Settings}
   alias HerdrServer.App.Modal.Keybinds, as: KeybindsModal
   alias HerdrServer.Client.State
   alias HerdrServer.View
@@ -29,7 +29,8 @@ defmodule HerdrServer.SceneFixturesTest do
     {"modal_keybinds_120x40", {120, 40}, [{:open, KeybindsModal}, {:key, "j"}]},
     {"modal_keybind_capture_120x40", {120, 40},
      [{:open, KeybindsModal}, {:click, [{:modal, 1}, :list, {:action, "rename_tab"}], 0, 0}]},
-    {"toast_120x40", {120, 40}, [:c, :toast]}
+    {"toast_120x40", {120, 40}, [:c, :toast]},
+    {"popup_120x40", {120, 40}, [:v, :popup]}
   ]
 
   for {name, size, steps} <- @fixtures do
@@ -98,4 +99,10 @@ defmodule HerdrServer.SceneFixturesTest do
   defp step(:prefix, app), do: app
   defp step(:toast, app), do: app
   defp step({:many, n}, app), do: HerdrServer.ViewHelpers.many(app, n)
+
+  defp step(:popup, app) do
+    spec = %{width: {:percent, 60}, height: {:percent, 50}, title: "lazygit"}
+    {:ok, app, _size} = Popup.open(app, app.session.next_id, spec)
+    app
+  end
 end

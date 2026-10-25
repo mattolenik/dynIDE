@@ -28,6 +28,14 @@ defmodule HerdrSceneHtmlTest do
     assert Scene.roles() -- MapSet.to_list(seen) == []
   end
 
+  test "the popup golden fixture puts its pane after the chrome, labelled by its title" do
+    out = html("popup_120x40")
+    [_, after_chrome] = String.split(out, ~s(data-role="root"), parts: 2)
+    assert after_chrome =~ ~s(<div class="pane focused popup" data-pane="3")
+    assert after_chrome =~ "<b>lazygit</b>"
+    assert out =~ "left:45ch;top:15.0em;width:56ch"
+  end
+
   test "text is escaped and panes are labelled" do
     scene = %Scene{
       size: %{cols: 10, rows: 3},
