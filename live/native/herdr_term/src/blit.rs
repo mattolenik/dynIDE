@@ -8,11 +8,15 @@
 //! output still place their candidate window correctly. Host autowrap is off
 //! (`ESC[?7l` at open), so ASCII cells advance inline without spilling.
 //! No OSC 8 is emitted (ruling 11): cells carry only link ids.
+//! Kitty graphics ops go last inside the sync block, wrapped in `ESC7..ESC8`
+//! so their cursor moves leave the final cursor state intact.
 
 use crate::cell::{self, Cell};
+use crate::graphics::{self, Files, Transport};
 use crate::output::{Encoder, FrameJob};
 use std::cmp;
 use std::io::Write;
+use std::time::Instant;
 
 /// The rows do not form a frame, or a row does not decode.
 #[derive(Debug, PartialEq, Eq)]
@@ -50,6 +54,9 @@ pub struct BlitEncoder {
     last: Option<Frame>,
     last_visible_cursor: Option<(u16, u16)>,
     last_cursor_shape: u8,
+    /// Survives `reset`: files the host may still read, and the transport state.
+    files: Files,
+    pub graphics_bytes: u64,
 }
 
 impl Encoder for BlitEncoder {
@@ -59,6 +66,10 @@ impl Encoder for BlitEncoder {
 
     fn reset(&mut self) {
         BlitEncoder::reset(self);
+    }
+
+    fn graphics_stats(&self) -> (u64, Transport) {
+        (self.graphics_bytes, self.files.state())
     }
 }
 
@@ -115,6 +126,13 @@ impl BlitEncoder {
 
         let cursor = self.resolve_host_cursor_state(job, width, height);
         write_host_cursor_state(&mut out, cursor, &mut self.last_cursor_shape);
+        if !job.graphics.is_empty() {
+            let start = out.len();
+            out.extend_from_slice(b"\x1b7");
+            graphics::encode(&mut out, &job.graphics, &mut self.files, Instant::now());
+            out.extend_from_slice(b"\x1b8");
+            self.graphics_bytes += (out.len() - start) as u64;
+        }
         let _ = out.write_all(b"\x1b[?2026l");
         write_ime_anchor_cursor_state(&mut out, cursor);
 
@@ -125,7 +143,9 @@ impl BlitEncoder {
     /// Forgets the retained frame and cursor memory: the next frame clears
     /// and redraws everything (the host was reset to `ESC[0 q`).
     pub fn reset(&mut self) {
-        *self = Self::default();
+        self.last = None;
+        self.last_visible_cursor = None;
+        self.last_cursor_shape = 0;
     }
 
     fn commit(
@@ -744,5 +764,24 @@ mod tests {
     #[test]
     fn build_sgr_resets_previous_modifiers_when_cell_is_plain() {
         assert_eq!(build_sgr(&Cell::default()), "\x1b[0;39;49m");
+    }
+
+    #[test]
+    fn graphics_ops_go_inside_sync_after_cells_wrapped_in_decsc() {
+        use crate::graphics::Op;
+        let mut enc = BlitEncoder::default();
+        let mut j = job(vec![ascii_row("ab")]);
+        j.graphics = vec![Op::DeleteImage(3)];
+        let out = encode(&mut enc, &j);
+        let ops = "\x1b7\x1b_Ga=d,d=I,i=3,q=2;\x1b\\\x1b8";
+        let at = out.find(ops).expect("ops wrapped in ESC7..ESC8");
+        assert!(out.rfind('b').unwrap() < at, "{out:?}");
+        assert_eq!(&out[at + ops.len()..at + ops.len() + 8], "\x1b[?2026l");
+        // No cell changed: the ops are still emitted.
+        let out = encode(&mut enc, &j);
+        assert!(!out.contains('b') && out.contains(ops), "{out:?}");
+        // No ops: no DECSC.
+        assert!(!encode(&mut enc, &job(vec![ascii_row("ab")])).contains("\x1b7"));
+        assert_eq!(enc.graphics_bytes, 2 * ops.len() as u64);
     }
 }

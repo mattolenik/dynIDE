@@ -7,6 +7,13 @@ defmodule HerdrTerm.Native.Blit do
   previous one is still pending replaces it (counted in
   `HerdrTerm.Native.Tty.stats/1` as dropped, its `repaint` carried over).
   A frame whose rows fail to decode is dropped the same way.
+
+  `opts.graphics` are kitty graphics ops (`t:HerdrTerm.Kernel.Blit.graphics_op/0`),
+  encoded as given and written after the cells inside the frame's
+  synchronized output, between `ESC 7` and `ESC 8`. A replaced frame's ops
+  go first in the replacing frame. The one mechanism choice made here: a
+  `:file` upload is sent direct until the temp-file transport is known to
+  work (see `HerdrTerm.Native.Tty.stats/1`).
   """
 
   @behaviour HerdrTerm.Kernel.Blit
@@ -23,6 +30,7 @@ defmodule HerdrTerm.Native.Blit do
   redraws every cell instead of diffing.
   """
   @type opts :: %{
+          optional(:graphics) => [HerdrTerm.Kernel.Blit.graphics_op()],
           cursor: {non_neg_integer(), non_neg_integer()} | nil,
           shape: shape(),
           repaint: boolean()
@@ -41,15 +49,18 @@ defmodule HerdrTerm.Native.Blit do
   @doc """
   Submits a frame without waiting for the host. `rows` must be
   `{0, row}..{h - 1, row}` in order, `h >= 1`, all with the same non-zero
-  column count; otherwise (or for an unknown shape) returns
-  `{:error, :bad_frame}`.
+  column count; otherwise (or for an unknown shape or a malformed graphics
+  op) returns `{:error, :bad_frame}`.
   """
   @spec frame(Tty.t(), [{non_neg_integer(), binary()}], opts()) ::
           :ok | {:error, :bad_frame}
-  def frame(tty, rows, %{cursor: cursor, shape: shape, repaint: repaint}) do
+  def frame(tty, rows, %{cursor: cursor, shape: shape, repaint: repaint} = opts) do
     case Map.fetch(@shapes, shape) do
-      {:ok, code} -> Native.blit_frame(tty, rows, cursor, code, repaint)
-      :error -> {:error, :bad_frame}
+      {:ok, code} ->
+        Native.blit_frame(tty, rows, cursor, code, repaint, Map.get(opts, :graphics, []))
+
+      :error ->
+        {:error, :bad_frame}
     end
   end
 end

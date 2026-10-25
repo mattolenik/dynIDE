@@ -2,6 +2,7 @@
 //! `tty::Inner` runs the single output thread that drains it, so the
 //! encoder's retained frame always matches what reached the host.
 
+use crate::graphics::{Op, Transport};
 use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::Duration;
@@ -16,6 +17,8 @@ pub struct FrameJob {
     pub cursor: Option<(u16, u16)>,
     pub shape: u8,
     pub repaint: bool,
+    /// Kitty graphics ops, written inside the frame's sync block.
+    pub graphics: Vec<Op>,
 }
 
 /// Turns a frame into host bytes; owns the retained frame.
@@ -24,6 +27,10 @@ pub trait Encoder {
     fn encode(&mut self, job: &FrameJob) -> Option<Vec<u8>>;
     /// Forgets the retained frame so the next one is a full repaint.
     fn reset(&mut self);
+    /// Cumulative graphics bytes encoded and the file transport state.
+    fn graphics_stats(&self) -> (u64, Transport) {
+        (0, Transport::Unknown)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, rustler::NifMap)]
@@ -31,6 +38,8 @@ pub struct OutputStats {
     pub frames_written: u64,
     pub frames_dropped: u64,
     pub queued_bytes: usize,
+    pub graphics_bytes: u64,
+    pub file_transport: Transport,
 }
 
 /// The write queue is full; nothing was enqueued.
@@ -52,6 +61,8 @@ struct Queue {
     closed: bool,
     frames_written: u64,
     frames_dropped: u64,
+    graphics_bytes: u64,
+    file_transport: Transport,
 }
 
 /// Outcome of flushing one item to the host.
@@ -94,7 +105,8 @@ impl Output {
     }
 
     /// Queues a frame behind everything already queued. A frame still
-    /// pending is replaced (counted dropped) and its `repaint` carried over.
+    /// pending is replaced (counted dropped); its `repaint` is carried over
+    /// and its graphics ops go first (uploads and deletes are not idempotent).
     pub fn submit_frame(&self, mut job: FrameJob) {
         let mut q = lock(&self.queue);
         if q.closed {
@@ -102,8 +114,10 @@ impl Output {
             return;
         }
         if let Some(index) = q.pending_frame.take() {
-            if let Some(Item::Frame(old)) = q.items.remove(index) {
+            if let Some(Item::Frame(mut old)) = q.items.remove(index) {
                 job.repaint |= old.repaint;
+                old.graphics.append(&mut job.graphics);
+                job.graphics = old.graphics;
             }
             q.frames_dropped += 1;
         }
@@ -124,6 +138,8 @@ impl Output {
             frames_written: q.frames_written,
             frames_dropped: q.frames_dropped,
             queued_bytes: q.queued_bytes,
+            graphics_bytes: q.graphics_bytes,
+            file_transport: q.file_transport,
         }
     }
 
@@ -169,6 +185,7 @@ impl Output {
                 },
             };
             let mut q = lock(&self.queue);
+            (q.graphics_bytes, q.file_transport) = encoder.graphics_stats();
             if written {
                 q.frames_written += 1;
             } else {
@@ -203,6 +220,7 @@ impl Output {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graphics::Op;
     use std::sync::Arc;
 
     /// Records encode/reset calls; `None` for an empty frame.
@@ -255,5 +273,43 @@ mod tests {
         }
         out.close();
         assert_eq!(thread.join().unwrap(), ["encode", "reset"]);
+    }
+
+    /// Records each encoded frame's graphics ops.
+    struct Graphics(Vec<Vec<Op>>);
+
+    impl Encoder for Graphics {
+        fn encode(&mut self, job: &FrameJob) -> Option<Vec<u8>> {
+            self.0.push(job.graphics.clone());
+            Some(Vec::new())
+        }
+        fn reset(&mut self) {}
+    }
+
+    #[test]
+    fn superseded_frame_graphics_go_first_in_the_replacement() {
+        let out = Arc::new(Output::new());
+        let with = |ops| FrameJob {
+            graphics: ops,
+            ..FrameJob::default()
+        };
+        out.submit_frame(with(vec![Op::DeleteImage(1)]));
+        out.submit_frame(with(vec![Op::DeleteImage(2)]));
+        out.submit_frame(with(vec![Op::DeleteAll]));
+        let runner = Arc::clone(&out);
+        let thread = std::thread::spawn(move || {
+            let mut rec = Graphics(Vec::new());
+            runner.run(&mut rec, Duration::from_millis(10), |_| Flushed::Done);
+            rec.0
+        });
+        while out.stats().frames_written == 0 {
+            std::thread::yield_now();
+        }
+        out.close();
+        assert_eq!(
+            thread.join().unwrap(),
+            [vec![Op::DeleteImage(1), Op::DeleteImage(2), Op::DeleteAll]]
+        );
+        assert_eq!(out.stats().frames_dropped, 2);
     }
 }

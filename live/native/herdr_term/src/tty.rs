@@ -29,6 +29,8 @@ const READ_CHUNK: usize = 4096;
 const ENTER: &[u8] = b"\x1b[?1049h\x1b[?7l\x1b[?25l";
 const PROBE_QUERY: &[u8] = b"\x1b[?u\x1b[c";
 const KITTY_POP: &[u8] = b"\x1b[<u";
+/// Deletes every kitty image we uploaded; written before leaving the alt screen.
+const GRAPHICS_DELETE_ALL: &[u8] = b"\x1b_Ga=d,d=A,q=2\x1b\\";
 const RESTORE: &[u8] = b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1016l\x1b[?2004l\x1b[?1004l\x1b[?2031l\x1b]8;;\x1b\\\x1b[0m\x1b[0 q\x1b[?25h\x1b[?7h\x1b[?1049l";
 
 /// Events delivered to the subscriber.
@@ -226,7 +228,7 @@ impl Inner {
             Ok(found) => found,
             Err(err) => {
                 // Leaves the alternate screen too; nothing was pushed yet.
-                let _ = reset(&file, &saved, false, true);
+                let _ = reset(&file, &saved, false, false, true);
                 return Err(err);
             }
         };
@@ -442,7 +444,13 @@ impl Inner {
         }
         self.stop();
         let _guard = lock(&self.write_lock);
-        reset(&self.file, &self.saved, self.kitty_push.is_some(), true)
+        reset(
+            &self.file,
+            &self.saved,
+            self.kitty_push.is_some(),
+            true,
+            true,
+        )
     }
 
     /// Restores the terminal, stops the whole process group with SIGSTOP and,
@@ -483,7 +491,14 @@ impl Inner {
                     inner.run_guarded(|i| lock(&i.sub).deliver(Event::Resumed));
                 }
             })?;
-        reset(&self.file, &self.saved, self.kitty_push.is_some(), true)?;
+        // Images stay: the alt screen we come back to still shows them.
+        reset(
+            &self.file,
+            &self.saved,
+            self.kitty_push.is_some(),
+            false,
+            true,
+        )?;
         stop();
         // `kill %1` continues a stopped job in the background. A tcsetattr there
         // raises SIGTTOU against the group, and the kernel checks and signals
@@ -512,7 +527,13 @@ impl Inner {
         if !self.restored.swap(true, Ordering::AcqRel) {
             // Waits for at most one non-blocking write syscall.
             let _guard = lock(&self.write_lock);
-            let _ = reset(&self.file, &self.saved, self.kitty_push.is_some(), false);
+            let _ = reset(
+                &self.file,
+                &self.saved,
+                self.kitty_push.is_some(),
+                true,
+                false,
+            );
         }
     }
 }
@@ -583,11 +604,21 @@ fn set_raw(fd: RawFd, saved: &libc::termios) -> io::Result<()> {
 
 /// Writes the restore sequence and resets termios to `saved`. With `wait`,
 /// the write may poll for up to `WRITE_BUDGET`; without, it is a single
-/// non-blocking attempt and a partial write is accepted.
-fn reset(file: &File, saved: &libc::termios, kitty_pushed: bool, wait: bool) -> io::Result<()> {
-    let mut out = Vec::with_capacity(KITTY_POP.len() + RESTORE.len());
+/// non-blocking attempt and a partial write is accepted. `delete_graphics`
+/// (the final restore) deletes our kitty images first.
+fn reset(
+    file: &File,
+    saved: &libc::termios,
+    kitty_pushed: bool,
+    delete_graphics: bool,
+    wait: bool,
+) -> io::Result<()> {
+    let mut out = Vec::with_capacity(KITTY_POP.len() + GRAPHICS_DELETE_ALL.len() + RESTORE.len());
     if kitty_pushed {
         out.extend_from_slice(KITTY_POP);
+    }
+    if delete_graphics {
+        out.extend_from_slice(GRAPHICS_DELETE_ALL);
     }
     out.extend_from_slice(RESTORE);
     // Best effort: a host that stopped reading must not keep us in raw mode.
@@ -855,8 +886,15 @@ mod tests {
         tty.inner.restore().unwrap();
         assert!(same_termios(&termios(&p.slave), &before));
         let out = read_until(&p.master, b"\x1b[?1049l", Duration::from_secs(1));
-        assert!(out.starts_with(b"\x1b[?1000l"), "no kitty pop: {out:?}");
+        assert!(
+            out.starts_with(GRAPHICS_DELETE_ALL),
+            "no kitty pop: {out:?}"
+        );
         assert!(out.ends_with(b"\x1b[?1049l"), "{out:?}");
+        assert!(
+            contains(&out, b"\x1b_Ga=d,d=A,q=2\x1b\\"),
+            "images deleted: {out:?}"
+        );
         tty.inner.restore().unwrap();
         drop(tty);
         let again = read_until(&p.master, b"", Duration::from_millis(200));
@@ -1093,6 +1131,10 @@ mod tests {
         assert!(
             pop < leave && leave < enter && enter < push && push < w && pop.is_some(),
             "{out:?}"
+        );
+        assert!(
+            !contains(&out, b"a=d,d=A"),
+            "suspend keeps host images: {out:?}"
         );
         assert_eq!(
             rx.recv_timeout(Duration::from_secs(1)).ok(),

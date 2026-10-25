@@ -48,7 +48,13 @@ defmodule HerdrTerm.Kernel.Fake.Tty do
 
   @impl true
   def stats(tty),
-    do: %{frames_written: Agent.get(tty, & &1.frames_written), frames_dropped: 0, queued_bytes: 0}
+    do: %{
+      frames_written: Agent.get(tty, & &1.frames_written),
+      frames_dropped: 0,
+      queued_bytes: 0,
+      graphics_bytes: 0,
+      file_transport: :unknown
+    }
 
   @impl true
   def kitty_keyboard(tty), do: Agent.get(tty, & &1.kitty)

@@ -103,11 +103,17 @@ defmodule HerdrTerm.Native.Tty do
   @spec write(t(), iodata()) :: :ok | {:error, :backpressure}
   def write(tty, iodata), do: Native.tty_write(tty, IO.iodata_to_binary(iodata))
 
-  @doc "Output counters: frames written and dropped, raw bytes still queued."
+  @doc """
+  Output counters: frames written and dropped, raw bytes still queued,
+  cumulative kitty graphics bytes, and the temp-file transport state
+  (`:unknown` until the first `:file` upload, `:probing`, `:ok`, `:disabled`).
+  """
   @spec stats(t()) :: %{
           frames_written: non_neg_integer(),
           frames_dropped: non_neg_integer(),
-          queued_bytes: non_neg_integer()
+          queued_bytes: non_neg_integer(),
+          graphics_bytes: non_neg_integer(),
+          file_transport: :unknown | :probing | :ok | :disabled
         }
   def stats(tty), do: Native.tty_stats(tty)
 

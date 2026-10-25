@@ -44,7 +44,9 @@ defmodule HerdrTerm.Native do
   @spec tty_stats(tty()) :: %{
           frames_written: non_neg_integer(),
           frames_dropped: non_neg_integer(),
-          queued_bytes: non_neg_integer()
+          queued_bytes: non_neg_integer(),
+          graphics_bytes: non_neg_integer(),
+          file_transport: :unknown | :probing | :ok | :disabled
         }
   def tty_stats(_tty), do: :erlang.nif_error(:nif_not_loaded)
 
@@ -58,9 +60,11 @@ defmodule HerdrTerm.Native do
           [{non_neg_integer(), binary()}],
           {non_neg_integer(), non_neg_integer()} | nil,
           0..6,
-          boolean()
+          boolean(),
+          [HerdrTerm.Kernel.Blit.graphics_op()]
         ) :: :ok | {:error, :bad_frame}
-  def blit_frame(_tty, _rows, _cursor, _shape, _repaint), do: :erlang.nif_error(:nif_not_loaded)
+  def blit_frame(_tty, _rows, _cursor, _shape, _repaint, _graphics),
+    do: :erlang.nif_error(:nif_not_loaded)
 
   @doc false
   @spec desktop_clipboard_write(binary()) :: :ok | {:error, :unavailable}

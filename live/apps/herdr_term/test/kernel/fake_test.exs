@@ -65,6 +65,17 @@ defmodule HerdrTerm.Kernel.FakeTest do
     assert Blit.frames(tty) == []
   end
 
+  test "graphics ops are recorded as given; a malformed op is refused" do
+    {:ok, tty} = Tty.open()
+    rows = [{0, Cells.text("ab", @s)}]
+    ops = [{:delete_image, 7}, :delete_all]
+    :ok = Blit.frame(tty, rows, Map.put(@opts, :graphics, ops))
+    :ok = Blit.frame(tty, rows, @opts)
+    assert [%{graphics: ^ops}, %{graphics: []}] = Blit.frames(tty)
+    assert Blit.frame(tty, rows, Map.put(@opts, :graphics, [{:nope}])) == {:error, :bad_frame}
+    assert %{graphics_bytes: 0, file_transport: :unknown} = Tty.stats(tty)
+  end
+
   test "frame log is bounded" do
     {:ok, tty} = Tty.open()
     row = [{0, Cells.text("x", @s)}]

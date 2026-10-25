@@ -18,7 +18,9 @@ defmodule HerdrTerm.Kernel.Tty do
   @callback stats(tty) :: %{
               frames_written: non_neg_integer,
               frames_dropped: non_neg_integer,
-              queued_bytes: non_neg_integer
+              queued_bytes: non_neg_integer,
+              graphics_bytes: non_neg_integer,
+              file_transport: :unknown | :probing | :ok | :disabled
             }
   @callback kitty_keyboard(tty) :: non_neg_integer | nil
   @callback suspend(tty) :: :ok | {:error, :restored | atom | term}

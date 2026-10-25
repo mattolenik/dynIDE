@@ -8,6 +8,8 @@ mod cell;
 #[cfg(unix)]
 mod desktop;
 #[cfg(unix)]
+mod graphics;
+#[cfg(unix)]
 mod output;
 #[cfg(unix)]
 mod probe;
@@ -17,10 +19,11 @@ mod tty;
 #[cfg(unix)]
 mod nif {
     use crate::blit::validate_rows;
+    use crate::graphics::{Medium, Op};
     use crate::output::{FrameJob, OutputStats, WRITE_QUEUE_BYTES};
     use crate::tty::{Event, Inner, Sink, TtyResource};
     use rustler::types::binary::{Binary, OwnedBinary};
-    use rustler::{Atom, Encoder, Env, LocalPid, OwnedEnv, ResourceArc, Term};
+    use rustler::{Atom, Decoder, Encoder, Env, LocalPid, NifResult, OwnedEnv, ResourceArc, Term};
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
     mod atoms {
@@ -28,6 +31,8 @@ mod nif {
             ok, error, tty_input, exit, tty, hangup, panic, backpressure, bad_frame, tty_resumed,
             restored, os_error, eperm, enoent, eintr, eio, enxio, ebadf, eagain, enomem, eacces,
             ebusy, enodev, enotdir, eisdir, einval, enfile, emfile, enotty, unavailable, bad_url,
+            upload, place, delete_placement, delete_image, delete_all, id, format, width, height,
+            data, medium, rgb, rgba, png, direct, file, placement, x, y, cols, rows, src, off, z,
         }
     }
 
@@ -199,6 +204,83 @@ mod nif {
         tty.inner.output.stats()
     }
 
+    fn bad<T>() -> NifResult<T> {
+        Err(rustler::Error::BadArg)
+    }
+
+    fn pos(n: u32) -> NifResult<u32> {
+        if n > 0 {
+            Ok(n)
+        } else {
+            bad()
+        }
+    }
+
+    fn field<'a, T: Decoder<'a>>(map: Term<'a>, key: Atom) -> NifResult<T> {
+        map.map_get(key)?.decode()
+    }
+
+    /// One `Native.Blit` graphics op (see its typedoc); anything else is `BadArg`.
+    fn decode_op(term: Term) -> NifResult<Op> {
+        if let Ok(atom) = term.decode::<Atom>() {
+            return if atom == atoms::delete_all() {
+                Ok(Op::DeleteAll)
+            } else {
+                bad()
+            };
+        }
+        let items = rustler::types::tuple::get_tuple(term)?;
+        let Some((tag, args)) = items.split_first() else {
+            return bad();
+        };
+        let tag: Atom = tag.decode()?;
+        match args {
+            [m] if tag == atoms::upload() => {
+                let format = match field::<Atom>(*m, atoms::format())? {
+                    f if f == atoms::rgb() => 24,
+                    f if f == atoms::rgba() => 32,
+                    f if f == atoms::png() => 100,
+                    _ => return bad(),
+                };
+                let medium = match field::<Atom>(*m, atoms::medium())? {
+                    f if f == atoms::direct() => Medium::Direct,
+                    f if f == atoms::file() => Medium::File,
+                    _ => return bad(),
+                };
+                let data: Binary = field(*m, atoms::data())?;
+                if data.is_empty() {
+                    return bad();
+                }
+                Ok(Op::Upload {
+                    id: pos(field(*m, atoms::id())?)?,
+                    format,
+                    width: pos(field(*m, atoms::width())?)?,
+                    height: pos(field(*m, atoms::height())?)?,
+                    // ponytail: copies image data on a normal scheduler (~1 ms per 8 MiB);
+                    // keep the env binary alive instead if uploads show up in latency.
+                    data: data.as_slice().to_vec(),
+                    medium,
+                })
+            }
+            [m] if tag == atoms::place() => Ok(Op::Place {
+                id: pos(field(*m, atoms::id())?)?,
+                placement: pos(field(*m, atoms::placement())?)?,
+                x: field(*m, atoms::x())?,
+                y: field(*m, atoms::y())?,
+                cols: pos(field(*m, atoms::cols())?)?,
+                rows: pos(field(*m, atoms::rows())?)?,
+                src: field(*m, atoms::src())?,
+                off: field(*m, atoms::off())?,
+                z: field(*m, atoms::z())?,
+            }),
+            [i, p] if tag == atoms::delete_placement() => {
+                Ok(Op::DeletePlacement(pos(i.decode()?)?, pos(p.decode()?)?))
+            }
+            [i] if tag == atoms::delete_image() => Ok(Op::DeleteImage(pos(i.decode()?)?)),
+            _ => bad(),
+        }
+    }
+
     /// Validates the frame's shape, copies the rows and hands them to the
     /// output thread (latest wins). Rows that pass the shape check but do not
     /// decode are dropped there and counted in `frames_dropped`.
@@ -210,11 +292,17 @@ mod nif {
         cursor: Option<(u16, u16)>,
         shape: u8,
         repaint: bool,
+        graphics: Term<'a>,
     ) -> Term<'a> {
         let slices: Vec<(u16, &[u8])> = rows.iter().map(|(i, r)| (*i, r.as_slice())).collect();
-        if shape > 6 || validate_rows(&slices).is_err() {
+        let graphics = graphics.decode::<Vec<Term>>().and_then(|ops| {
+            ops.into_iter()
+                .map(decode_op)
+                .collect::<NifResult<Vec<_>>>()
+        });
+        let (true, Ok(graphics), Ok(_)) = (shape <= 6, graphics, validate_rows(&slices)) else {
             return (atoms::error(), atoms::bad_frame()).encode(env);
-        }
+        };
         // ponytail: memcpy per frame; hold owned env binaries if profiling says so.
         let rows = slices.iter().map(|(i, r)| (*i, r.to_vec())).collect();
         tty.inner.output.submit_frame(FrameJob {
@@ -222,6 +310,7 @@ mod nif {
             cursor,
             shape,
             repaint,
+            graphics,
         });
         atoms::ok().encode(env)
     }
