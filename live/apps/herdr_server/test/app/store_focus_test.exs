@@ -4,7 +4,7 @@ defmodule HerdrServer.App.StoreFocusTest do
   @moduletag :capture_log
 
   alias HerdrScene.Protocol
-  alias HerdrServer.App.{Actions, Store}
+  alias HerdrServer.App.{Actions, Commands, Store}
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Pane.{Facts, Rows}
 
@@ -87,5 +87,16 @@ defmodule HerdrServer.App.StoreFocusTest do
     for id <- [1, 2], do: :ok = Fake.Vt.set_mode(res(id).vt, :focus_events, true)
     :ok = Store.event({:resize, %{cols: 100, rows: 30, cell_px: nil}}, %{cols: 100, rows: 30})
     assert {written(start), written(other)} == {b1, b2}
+  end
+
+  test "showing a tab marks its finished agents seen" do
+    {:ok, _, _} = Store.request({Commands, :create_tab, [1, nil, false]})
+
+    for ev <- [{:pane_agent, 3, "claude"}, {:agent_state, 3, :working}, {:agent_state, 3, :idle}],
+        do: Store.event_async(ev)
+
+    assert Store.snapshot().session.panes[3].agent_state == :done
+    {:ok, _, app} = Store.request({Commands, :focus_tab, [1, 2]})
+    assert app.session.panes[3].agent_state == :idle
   end
 end

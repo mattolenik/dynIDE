@@ -166,7 +166,9 @@ defmodule HerdrServer.Api.EventDiffTest do
     {k, _} =
       Metadata.report(j, {:workspace, 1}, %{"ci" => "ok"}, "s", nil, nil, 0)
 
-    steps = [a, b, c, d, e, f, g, h, h2, h3, i, j, k]
+    l = put_in(k.session.panes[1][:agent], "claude")
+    m = put_in(l.session.panes[1][:agent_state], :working)
+    steps = [a, b, c, d, e, f, g, h, h2, h3, i, j, k, l, m]
 
     seen =
       steps
@@ -174,10 +176,31 @@ defmodule HerdrServer.Api.EventDiffTest do
       |> Enum.flat_map(fn {x, y} -> types(diff(x, y)) end)
       |> Kernel.++(types([moved(tm, h2), moved(wm, h3)]))
 
-    # notification.shown comes from the Store's alerts (Api.Events), not from a diff;
-    # the agent events come from detection (M11), published ahead of their task
-    not_diffed = ["notification.shown", "pane.agent_detected", "pane.agent_status_changed"]
-    assert Enum.sort(Enum.uniq(seen)) == Enum.sort(Spec.event_types() -- not_diffed)
+    # notification.shown comes from the Store's alerts (Api.Events), not from a diff
+    assert Enum.sort(Enum.uniq(seen)) == Enum.sort(Spec.event_types() -- ["notification.shown"])
+  end
+
+  test "agent label and status changes give the agent events, unknown for none" do
+    a = app()
+    b = put_in(a.session.panes[1][:agent], "claude")
+    c = put_in(b.session.panes[1][:agent_state], :done)
+
+    assert [%{"event" => "pane.agent_detected", "pane_id" => "p1", "agent" => "claude"}] =
+             diff(a, b)
+
+    assert [%{"agent" => "claude", "agent_status" => "done"} = ev] = diff(b, c)
+    assert ev["event"] == "pane.agent_status_changed"
+
+    {d, []} = Actions.apply(c, {:pane_agent, 1, nil})
+
+    assert [
+             %{"event" => "pane.agent_detected", "agent" => nil},
+             %{
+               "event" => "pane.agent_status_changed",
+               "agent" => nil,
+               "agent_status" => "unknown"
+             }
+           ] = diff(c, d)
   end
 
   test "moves are no diff events; EventDiff.moved/2 builds them from the move effect" do

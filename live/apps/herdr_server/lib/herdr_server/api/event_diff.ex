@@ -8,9 +8,12 @@ defmodule HerdrServer.Api.EventDiff do
   `layout.updated` carries `"layout"` for each surviving tab whose split tree changed.
   Focus follows `Api.View`'s chain: an event fires when the focused workspace, tab or
   pane id changes. `pane.updated` fires when a surviving pane's object changes other than
-  `focused` (title, size, tokens). Order: workspace, tab, pane, layout events; within each,
-  closed, created, focused, then updated or renamed (workspaces: then
-  `workspace.metadata_updated`, herdr's, when a surviving workspace's tokens change). `diff(nil, app)` is `[]`.
+  `focused` (title, size, tokens). `pane.agent_detected` (`"agent"`) and
+  `pane.agent_status_changed` (`"agent"`, `"agent_status"`, `"unknown"` for none) fire
+  when a surviving pane's session meta `agent` or `agent_state` changed. Order: workspace,
+  tab, pane, layout events; within each, closed, created, focused, then updated or renamed
+  (workspaces: then `workspace.metadata_updated`, herdr's, when a surviving workspace's
+  tokens change), then the agent events. `diff(nil, app)` is `[]`.
   `tab.moved` / `workspace.moved` are not diffs: the move reports them (`moved/2`).
   """
 
@@ -161,7 +164,23 @@ defmodule HerdrServer.Api.EventDiff do
           changed?(old, new, id, o, n),
           do: pane_ev("updated", new, id, wt)
 
-    closed ++ created ++ focused ++ updated
+    closed ++ created ++ focused ++ updated ++ agents(old, new, o, n)
+  end
+
+  # surviving panes whose session meta `agent` or `agent_state` changed (nil is unknown)
+  defp agents(old, new, o, n) do
+    for {id, {ws, tab}} <- n.panes_l,
+        Map.has_key?(o.panes, id),
+        was = old.session.panes[id] || %{},
+        now = new.session.panes[id] || %{},
+        {type, key} <- [agent_detected: :agent, agent_status_changed: :agent_state],
+        Map.get(was, key) != Map.get(now, key) do
+      ev = ids(id, ws, tab) |> Map.put("event", "pane.#{type}") |> Map.put("agent", now[:agent])
+
+      if key == :agent_state,
+        do: Map.put(ev, "agent_status", Atom.to_string(now[:agent_state] || :unknown)),
+        else: ev
+    end
   end
 
   # cheap check first: same place, title, tab layout and area means the same object

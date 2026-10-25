@@ -15,7 +15,8 @@ defmodule HerdrServer.App.Store do
       workspace move) goes to `Api.Events` only, also ahead of it.
     * Subscribers get `{:app_changed, app}` after each event that changed the app. The
       Store only ever `send`s to sessions, so there is no call cycle.
-    * After each event: panes of inactive tabs are hidden, active-tab panes are resized to
+    * After each event: `App.Agents.seen/1` (done agents in the active tab become idle),
+      panes of inactive tabs are hidden, active-tab panes are resized to
       their content rects (bumping `layout_gen`), an open popup's pane to its rect, and the
       fast-path term is republished if its value changed. A step that removed an open
       popup's owner tab also closes the popup (`App.Modal.Popup.orphaned/1`). The fast
@@ -66,6 +67,7 @@ defmodule HerdrServer.App.Store do
 
   alias HerdrServer.App.{
     Actions,
+    Agents,
     Commands,
     CustomCommands,
     Keybinds,
@@ -373,7 +375,7 @@ defmodule HerdrServer.App.Store do
         do: state,
         else: commit(state, batch(state, ev, size), origin, &drive(&1, size, origin))
 
-    state = state |> settle() |> publish_fast()
+    state = state |> agents_seen() |> settle() |> publish_fast()
 
     if state.app != old do
       focus_reports(old, state.app)
@@ -735,6 +737,16 @@ defmodule HerdrServer.App.Store do
 
   # --- handoff ---
   # --- after every event ---
+
+  # a finished agent in the tab now on screen has been seen (`App.Agents`)
+  defp agents_seen(%{app: nil} = state), do: state
+
+  defp agents_seen(state) do
+    case Guard.run_twice(Agents, :seen, [state.app], scan: false, server: reload_server()) do
+      {:ok, app} -> %{state | app: app}
+      {:failed, _} -> state
+    end
+  end
 
   defp settle(%{app: nil} = state), do: state
 

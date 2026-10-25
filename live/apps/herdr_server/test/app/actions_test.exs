@@ -280,4 +280,38 @@ defmodule HerdrServer.App.ActionsTest do
     assert length(rects) == 15
     assert Enum.all?(rects, &(&1.rect.w > 0 and &1.rect.h > 0))
   end
+
+  describe "agent meta" do
+    # pane 2 lives in a background tab
+    defp with_bg_agent do
+      {app, _} = Commands.create_tab(fresh(), 1, nil, false)
+      {app, []} = Actions.apply(app, {:pane_agent, 2, "claude"})
+      {app, _} = Actions.apply(app, {:agent_state, 2, :working})
+      app
+    end
+
+    test "a background tab's agent that goes idle is done and alerts finished" do
+      {app, [{:alert, alert}]} = Actions.apply(with_bg_agent(), {:agent_state, 2, :idle})
+      assert app.session.panes[2].agent_state == :done
+      assert alert.title == "claude finished"
+    end
+
+    test "an active tab's agent that goes idle is idle" do
+      {app, []} = Actions.apply(fresh(), {:pane_agent, 1, "claude"})
+      {app, _} = Actions.apply(app, {:agent_state, 1, :working})
+      {app, _} = Actions.apply(app, {:agent_state, 1, :idle})
+      assert app.session.panes[1].agent_state == :idle
+    end
+
+    test "a nil agent clears the label and the state" do
+      {app, []} = Actions.apply(with_bg_agent(), {:pane_agent, 2, nil})
+      assert app.session.panes[2].agent == nil
+      assert app.session.panes[2].agent_state == nil
+    end
+
+    test "unknown panes are ignored" do
+      app = fresh()
+      assert Actions.apply(app, {:pane_agent, 99, "claude"}) == {app, []}
+    end
+  end
 end

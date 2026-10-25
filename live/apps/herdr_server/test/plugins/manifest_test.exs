@@ -31,7 +31,7 @@ defmodule HerdrServer.Plugins.ManifestTest do
     assert g["plugin_root"] == Path.join(@examples, "github-link-preview")
 
     {:ok, t} = Manifest.load(Path.join(@examples, "agent-telegram-notify"))
-    assert "event pane.agent_status_changed is not emitted by herdr-live yet" in t["warnings"]
+    refute Enum.any?(t["warnings"], &(&1 =~ "pane.agent_status_changed"))
 
     {:ok, r} = Manifest.load(Path.join(@examples, "rust-release-check"))
     assert [%{"command" => ["cargo", "build", "--release"]}] = r["build"]

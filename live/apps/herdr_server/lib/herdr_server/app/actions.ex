@@ -2,7 +2,7 @@ defmodule HerdrServer.App.Actions do
   @moduledoc """
   Pure input handling: `apply/2` turns a neutral `HerdrScene.Event` (plus the
   server-internal `{:pane_exited, id}`, `{:pane_title, id, title}`, `{:config_loaded, cfg}`,
-  `{:agent_state, id, state}`, `{:workspace_cwd, ws_id, cwd, label}`,
+  `{:pane_agent, id, label}`, `{:agent_state, id, state}`, `{:workspace_cwd, ws_id, cwd, label}`,
   `{:workspace_git, ws_id, info}`, `{:metadata_expire, now_ms}` (`App.Metadata.expire/2`) and `{:worktree_done, result}` (`App.Worktrees.done/2`), which are never accepted from clients) into new app
   state and a list of effects. Effects are the only side-effect channel; this module does no I/O and sends no messages.
 
@@ -13,7 +13,7 @@ defmodule HerdrServer.App.Actions do
   `{:worktree, op, args}` (git off the Store, `App.Worktrees`), `{:custom_command, cmd, env,
   cwd}` (a shell command off the Store, `App.CustomCommands`).
 
-  Config (`HerdrServer.Config`): `init/2` and the server-internal `{:config_loaded, cfg}`
+  Config (`HerdrServer.Config`): `init/2` and the server-internal `{:config_loaded, cfg}`,
   put the file over the ui (keybinds are always `Keybinds.default/0` plus the file); a
   loaded config with `onboarding` opens onboarding when no modal is open.
 
@@ -28,6 +28,7 @@ defmodule HerdrServer.App.Actions do
   """
 
   alias HerdrServer.App.{
+    Agents,
     Alerts,
     Chrome,
     Commands,
@@ -145,11 +146,27 @@ defmodule HerdrServer.App.Actions do
   # server-internal (the Store's metadata timer)
   def apply(app, {:metadata_expire, now}), do: Metadata.expire(app, now)
 
-  # server-internal (M11 detection): stores the state, alerts on herdr's transitions
-  def apply(app, {:agent_state, id, state}) do
+  # server-internal (M11 detection): the label; nil (no agent) also clears the state
+  def apply(app, {:pane_agent, id, label}) do
     case app.session.panes do
       %{^id => meta} ->
-        alerts = Alerts.from_agent(app, id, Map.get(meta, :agent_state), state)
+        meta = Map.put(meta, :agent, label)
+        meta = if label == nil, do: Map.put(meta, :agent_state, nil), else: meta
+        {put_in(app.session.panes[id], meta), []}
+
+      _ ->
+        {app, []}
+    end
+  end
+
+  # server-internal (M11 detection): stores the published status (`App.Agents`), alerts
+  # on herdr's transitions
+  def apply(app, {:agent_state, id, detected}) do
+    case app.session.panes do
+      %{^id => meta} ->
+        old = Map.get(meta, :agent_state)
+        state = Agents.status(app, id, old, detected)
+        alerts = Alerts.from_agent(app, id, old, state)
 
         {put_in(app.session.panes[id], Map.put(meta, :agent_state, state)),
          Enum.map(alerts, &{:alert, &1})}

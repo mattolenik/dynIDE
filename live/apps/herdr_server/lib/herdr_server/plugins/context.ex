@@ -1,7 +1,8 @@
 defmodule HerdrServer.Plugins.Context do
   @moduledoc """
   herdr's `PluginInvocationContext` (string keys, nil fields omitted) for a command: the
-  workspace, tab and pane a plugin runs against. Pure; the pane cwd comes from
+  workspace, tab and pane a plugin runs against. The pane's agent and its status come
+  from its session meta (the published status, `done` included). Pure; the pane cwd comes from
   `extra[:cwd_of]` (default: the pane's pty, as `Persist.Facts` reads it). Other string
   keys of `extra` that name a context field win over the built ones (herdr's merge).
   """
@@ -12,7 +13,7 @@ defmodule HerdrServer.Plugins.Context do
   alias HerdrServer.Pane.Rows
 
   @fields ~w(workspace_id workspace_label workspace_cwd tab_id tab_label focused_pane_id
-             focused_pane_cwd invocation_source correlation_id clicked_url link_handler_id
+             focused_pane_cwd focused_pane_agent focused_pane_agent_status invocation_source correlation_id clicked_url link_handler_id
              click_modifiers)
 
   @type t :: %{String.t() => term()}
@@ -24,7 +25,7 @@ defmodule HerdrServer.Plugins.Context do
 
     app
     |> located(pane || focused(app))
-    |> pane_fields(Map.get(extra, :cwd_of, &pane_cwd/1))
+    |> pane_fields(app, Map.get(extra, :cwd_of, &pane_cwd/1))
     |> Map.merge(base)
     |> Map.merge(Map.take(extra, @fields))
     |> drop_nils()
@@ -126,10 +127,12 @@ defmodule HerdrServer.Plugins.Context do
     end
   end
 
-  defp pane_fields(nil, _cwd_of), do: %{}
+  defp pane_fields(nil, _app, _cwd_of), do: %{}
 
-  defp pane_fields({ws, tab, pane}, cwd_of) do
+  defp pane_fields({ws, tab, pane}, app, cwd_of) do
     cwd = cwd_of.(pane)
+    meta = app.session.panes[pane] || %{}
+    status = Map.get(meta, :agent_state)
 
     %{
       "workspace_id" => Ids.workspace(ws.id),
@@ -138,7 +141,9 @@ defmodule HerdrServer.Plugins.Context do
       "tab_id" => Ids.tab(ws.id, tab.id),
       "tab_label" => tab.name,
       "focused_pane_id" => Ids.pane(pane),
-      "focused_pane_cwd" => cwd
+      "focused_pane_cwd" => cwd,
+      "focused_pane_agent" => Map.get(meta, :agent),
+      "focused_pane_agent_status" => status && Atom.to_string(status)
     }
   end
 

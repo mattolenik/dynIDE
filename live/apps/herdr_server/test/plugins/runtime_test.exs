@@ -232,6 +232,31 @@ defmodule HerdrServer.Plugins.RuntimeTest do
     assert ev["event"] == "tab.created"
   end
 
+  test "an event hook on pane.agent_status_changed runs with the agent in its context",
+       %{base: base} do
+    link(base, "t.p", """
+    [[events]]
+    on = "pane.agent_status_changed"
+    command = ["sh", "-c", "printf '%s\\n%s' \\"$HERDR_PLUGIN_EVENT_JSON\\" \\"$HERDR_PLUGIN_CONTEXT_JSON\\" > \\"$HERDR_PLUGIN_STATE_DIR/event\\""]
+    """)
+
+    {:ok, _, _} = Store.request({Commands, :noop, []})
+    start_supervised!(Events)
+    start_runtime()
+    _ = :sys.get_state(Runtime)
+    # the detection poller's events
+    Store.event_async({:pane_agent, 1, "claude"})
+    Store.event_async({:agent_state, 1, :working})
+
+    [ev, ctx] = String.split(wait_file(Path.join(Paths.plugin_state_dir("t.p"), "event")), "\n")
+
+    assert %{"event" => "pane.agent_status_changed", "agent_status" => "working"} =
+             JSON.decode!(ev)
+
+    assert %{"focused_pane_agent" => "claude", "focused_pane_agent_status" => "working"} =
+             JSON.decode!(ctx)
+  end
+
   test "the manifest is re-read on each invoke", %{base: base} do
     dir = link(base, "t.p", action(~s(["printf", "one"])))
     start_runtime()

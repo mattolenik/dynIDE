@@ -47,6 +47,18 @@ defmodule HerdrServer.Plugins.ContextTest do
     refute Map.has_key?(ctx, "bogus")
   end
 
+  test "the pane's agent and published status, omitted when none" do
+    app = two_panes()
+    no_cwd = %{cwd_of: fn _ -> nil end}
+    refute Map.has_key?(Context.build(app, 2, "api", no_cwd), "focused_pane_agent")
+    refute Map.has_key?(Context.build(app, 2, "api", no_cwd), "focused_pane_agent_status")
+
+    app = update_in(app.session.panes[2], &Map.merge(&1, %{agent: "claude", agent_state: :done}))
+
+    assert %{"focused_pane_agent" => "claude", "focused_pane_agent_status" => "done"} =
+             Context.build(app, 2, "api", no_cwd)
+  end
+
   test "no app yet: only the invocation fields" do
     assert Context.build(nil, nil, "startup", %{"correlation_id" => "plugin.startup"}) ==
              %{"invocation_source" => "startup", "correlation_id" => "plugin.startup"}

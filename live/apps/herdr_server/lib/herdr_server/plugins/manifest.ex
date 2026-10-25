@@ -15,8 +15,7 @@ defmodule HerdrServer.Plugins.Manifest do
                   tab.focused pane.created pane.closed pane.focused pane.moved pane.exited
                   pane.agent_detected pane.agent_status_changed)
   @not_emitted ~w(worktree.created worktree.opened worktree.removed pane.moved pane.exited
-                  pane.agent_detected pane.agent_status_changed workspace.updated
-                  workspace.moved workspace.reordered tab.moved)
+                  workspace.updated workspace.moved workspace.reordered tab.moved)
 
   @type manifest :: %{optional(String.t()) => term()}
 
