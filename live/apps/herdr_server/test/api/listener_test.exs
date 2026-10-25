@@ -335,6 +335,15 @@ defmodule HerdrServer.Api.ListenerTest do
       end)
 
     assert log =~ "count=3"
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :info], fn ->
+        :gen_tcp.close(ApiClient.connect(p))
+        wait_until(fn -> :sys.get_state(pid).connects == 1 end)
+        stop_supervised!(Listener)
+      end)
+
+    assert log =~ "count=1"
   end
 
   defp wait_until(f, n \\ 200) do

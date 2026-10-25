@@ -10,8 +10,8 @@ defmodule HerdrServer.Api.Listener do
   without an API socket (logged), never failing app start.
 
   The `api_connect` telemetry line is coalesced: at most one a minute, with `count` the
-  connects since the last line (the trailing connects inside the last minute are not
-  logged until the next connect).
+  connects since the last line; the connects since the last line are logged when the
+  listener stops (quit, handoff).
 
   Moves with the primary across a handoff: `Handoff.Link` terminates this child after the
   freeze on PREPARE and restarts it on THAW.
@@ -125,6 +125,7 @@ defmodule HerdrServer.Api.Listener do
   def terminate(_reason, state) do
     state = Map.merge(%__MODULE__{}, state)
     Enum.each(state.conns, &Process.exit(&1, :kill))
+    if state.connects > 0, do: log_connect(%{state | connect_logged_at: nil})
     :gen_tcp.close(state.listen)
     File.rm(state.path)
   end
