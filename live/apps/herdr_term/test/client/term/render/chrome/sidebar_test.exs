@@ -165,6 +165,32 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.SidebarTest do
     end)
   end
 
+  test "expanded: an item's detail is a muted line under it" do
+    scene = Fixture.load("sidebar_expanded_120x40")
+    before = texts(layout(scene), sidebar(scene).rect.h)
+
+    scene = %{
+      scene
+      | chrome:
+          put_props(scene.chrome, [:sidebar, :spaces, :list, {:workspace, 1}], detail: "main ↑1")
+    }
+
+    l = layout(scene)
+    rows = texts(l, sidebar(scene).rect.h)
+    assert String.starts_with?(Enum.at(rows, 2), " · 1")
+    assert String.starts_with?(Enum.at(rows, 3), "   main ↑1 ")
+    assert Enum.at(rows, 4) == Enum.at(before, 3)
+    cell = Enum.at(Cell.decode_row(row(l, 3)), 3)
+    assert cell.fg == Theme.style(@theme, :muted).fg
+    assert hit(l, [:sidebar, :spaces, :list, {:workspace, 1}]).rect.h == 2
+  end
+
+  defp put_props(%Node{} = n, [], kv), do: %{n | props: Map.merge(n.props, Map.new(kv))}
+
+  defp put_props(%Node{} = n, [id | rest], kv) do
+    %{n | children: Enum.map(n.children, &if(&1.id == id, do: put_props(&1, rest, kv), else: &1))}
+  end
+
   defp put_text(%Node{} = n, [], t), do: %{n | text: t}
 
   defp put_text(%Node{} = n, [id | rest], t) do

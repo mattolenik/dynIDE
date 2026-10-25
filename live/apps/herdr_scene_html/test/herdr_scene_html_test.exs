@@ -57,6 +57,19 @@ defmodule HerdrSceneHtmlTest do
              ~r/data-role="tab"[^>]*>Z 1</
   end
 
+  test "an item's detail is a muted line after its children" do
+    item = %Node{role: :item, id: {:workspace, 1}, props: %{detail: "main ↑1"}}
+
+    scene = %Scene{
+      size: %{cols: 10, rows: 3},
+      focus: %{pane: nil, chrome: nil},
+      chrome: %Node{role: :root, id: :root, children: [item]}
+    }
+
+    assert scene |> HerdrSceneHtml.render() |> IO.iodata_to_binary() =~
+             ~s(<span class="tok-muted">main ↑1</span></li>)
+  end
+
   test "a nested rect is placed in scene cells, not offset by its parent's origin" do
     inner = %Node{role: :divider, id: :split, rect: %{x: 12, y: 7, w: 5, h: 1}}
 

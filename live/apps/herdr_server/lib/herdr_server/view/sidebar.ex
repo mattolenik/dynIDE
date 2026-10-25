@@ -8,7 +8,8 @@ defmodule HerdrServer.View.Sidebar do
   A workspace badge is the highest-priority `agent_state` of its panes (blocked > done >
   working > idle > unknown; panes without one are `:unknown`). An agent line names the
   pane's `agent`, else its title, else `"terminal"`; its `:tab` text shows only when the
-  workspace has more than one tab. Collapsed: sections carry no text.
+  workspace has more than one tab. A workspace whose `git` fact (`WorkspaceFacts`) has a
+  branch carries it as the item's `:detail`, `"main ↑1 ↓2"`. Collapsed: sections carry no text.
   """
 
   alias HerdrScene.Scene.Node
@@ -109,7 +110,7 @@ defmodule HerdrServer.View.Sidebar do
       %Node{
         role: :item,
         id: {:workspace, ws.id},
-        props: %{active: ws.id == app.session.active_workspace, index: i},
+        props: detail(%{active: ws.id == app.session.active_workspace, index: i}, ws),
         children: [line(0, [badge(state), text(:workspace, ws.name)])]
       }
     end)
@@ -132,6 +133,18 @@ defmodule HerdrServer.View.Sidebar do
       }
     end
   end
+
+  # `"main ↑1 ↓2"` from the workspace's git facts (arrows only when non-zero)
+  defp detail(props, %{git: %{branch: b} = g}) when is_binary(b) do
+    text =
+      [b, g.ahead > 0 && "↑#{g.ahead}", g.behind > 0 && "↓#{g.behind}"]
+      |> Enum.filter(& &1)
+      |> Enum.join(" ")
+
+    Map.put(props, :detail, text)
+  end
+
+  defp detail(props, _ws), do: props
 
   # the client skips `offset` items (one owner of the skip: the rasterizer)
   defp offset(app, key), do: Map.get(app.ui.sidebar, key, 0)

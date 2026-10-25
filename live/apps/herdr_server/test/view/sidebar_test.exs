@@ -121,4 +121,26 @@ defmodule HerdrServer.View.SidebarTest do
 
     assert find(Sidebar.node(fresh(120, 40), %{@rect | h: 5}), [:split]) == nil
   end
+
+  test "a workspace's git branch is its item's detail; arrows only when non-zero" do
+    app = add_workspace(fresh(120, 40), "two")
+
+    put = fn app, id, git ->
+      update_in(app.session.workspaces, fn l ->
+        Enum.map(l, &if(&1.id == id, do: Map.put(&1, :git, git), else: &1))
+      end)
+    end
+
+    app = put.(app, 1, %{branch: "main", ahead: 1, behind: 2})
+    assert [w1, w2] = items(Sidebar.node(app, @rect), :spaces)
+    assert w1.props.detail == "main ↑1 ↓2"
+    refute Map.has_key?(w2.props, :detail)
+
+    app = put.(app, 2, %{branch: "dev", ahead: 0, behind: 3})
+    assert [_, %{props: %{detail: "dev ↓3"}}] = items(Sidebar.node(app, @rect), :spaces)
+    app = put.(app, 2, %{branch: nil, ahead: 0, behind: 0})
+    assert [_, w2] = items(Sidebar.node(app, @rect), :spaces)
+    refute Map.has_key?(w2.props, :detail)
+    assert :ok = Scene.validate(View.compute(app, client(120, 40)))
+  end
 end

@@ -158,4 +158,14 @@ defmodule HerdrServer.App.WorkspacesTest do
     {app, []} = Actions.apply(app, {:workspace_cwd, 1, @cwd, "proj"})
     assert names(app) == ["mine"]
   end
+
+  test "workspace_git stores the info, nil clears it, unknown is a no-op" do
+    info = %{branch: "main", ahead: 1, behind: 0}
+    {app, []} = Actions.apply(fresh(), {:workspace_git, 1, info})
+    assert hd(app.session.workspaces).git == info
+    assert {^app, []} = Actions.apply(app, {:workspace_git, 1, info})
+    assert {^app, []} = Actions.apply(app, {:workspace_git, 99, nil})
+    {app, []} = Actions.apply(app, {:workspace_git, 1, nil})
+    assert hd(app.session.workspaces).git == nil
+  end
 end

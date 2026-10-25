@@ -164,6 +164,14 @@ defmodule HerdrServer.App.Workspaces do
   def workspace_cwd(app, ws_id, cwd, label),
     do: {update_ws(app, ws_id, &auto_name(Map.put(&1, :cwd, cwd), label)), []}
 
+  @doc """
+  Server-internal: stores workspace `ws_id`'s git facts (`GitStatus.info` or nil; not
+  persisted) from `WorkspaceFacts`.
+  """
+  @spec workspace_git(app(), term(), map() | nil) :: {app(), [effect()]}
+  def workspace_git(app, ws_id, info),
+    do: {update_ws(app, ws_id, &Map.put(&1, :git, info)), []}
+
   defp auto_name(%{auto_name: true} = ws, label) when is_binary(label), do: %{ws | name: label}
   defp auto_name(ws, _label), do: ws
 

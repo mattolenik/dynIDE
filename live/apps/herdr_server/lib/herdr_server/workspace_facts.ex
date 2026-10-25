@@ -7,12 +7,17 @@ defmodule HerdrServer.WorkspaceFacts do
   sent; an unknown (nil) cwd is not sent. The label's `File.stat` walk-up runs here, never
   in the Store, so a hung mount stalls this poller only.
 
+  On its own `git_ms` (5 s) timer it runs `git` (`GitStatus.status/1`) once per distinct
+  `workspace.cwd`, all in parallel, each in a `Task` given 2 s: a call that does not
+  answer by then is shut down and counts as nil (as does no git, or no repo). `{:workspace_git, ws_id, info | nil}` is sent only when a workspace's info
+  changed. Exits are trapped so a crashing call is a nil, not a restart.
+
   The app is read from the mirror (`Mirror.app/0`); the scan runs through
   `HerdrReload.Guard.run_twice/4`, so a bad edit is logged and skips a tick. It runs whether or not persistence is
   on; `enabled: false` in the `HerdrServer.WorkspaceFacts` app env (test) makes
   `start_link/1` return `:ignore`. Start opts (over the env), for tests: `cwd`, `app` and
-  `notify` as `{m, f}` (defaults `{Persist.Facts, :cwd}`, `{Mirror, :app}`,
-  `{App.Store, :event_async}`), `poll_ms`, `name`.
+  `notify` and `git` as `{m, f}` (defaults `{Persist.Facts, :cwd}`, `{Mirror, :app}`,
+  `{App.Store, :event_async}`, `{GitStatus, :status}`), `poll_ms`, `git_ms`, `name`.
   """
 
   use GenServer
@@ -20,14 +25,19 @@ defmodule HerdrServer.WorkspaceFacts do
   alias HerdrReload.Guard
   alias HerdrServer.App.Store
   alias HerdrServer.App.Workspaces.Label
-  alias HerdrServer.{Layout, Mirror}
+  alias HerdrServer.{GitStatus, Layout, Mirror}
   alias HerdrServer.Persist.Facts
 
   defstruct cwd: {Facts, :cwd},
             app: {Mirror, :app},
             notify: {Store, :event_async},
+            git: {GitStatus, :status},
             poll_ms: 2000,
-            sent: %{}
+            git_ms: 5000,
+            sent: %{},
+            git_sent: %{}
+
+  @git_timeout_ms 2000
 
   @spec start_link(keyword) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -40,8 +50,10 @@ defmodule HerdrServer.WorkspaceFacts do
 
   @impl true
   def init(opts) do
-    state = struct(__MODULE__, Keyword.take(opts, [:cwd, :app, :notify, :poll_ms]))
+    Process.flag(:trap_exit, true)
+    state = struct(__MODULE__, Keyword.take(opts, [:cwd, :app, :notify, :git, :poll_ms, :git_ms]))
     Process.send_after(self(), :poll, state.poll_ms)
+    Process.send_after(self(), :git_poll, state.git_ms)
     {:ok, state}
   end
 
@@ -55,6 +67,23 @@ defmodule HerdrServer.WorkspaceFacts do
          ) do
       {:ok, changed} -> {:noreply, %{state | sent: send_changed(changed, state)}}
       {:failed, _} -> {:noreply, state}
+    end
+  end
+
+  def handle_info(:git_poll, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    Process.send_after(self(), :git_poll, state.git_ms)
+
+    case Guard.run_twice(__MODULE__, :git_scan, [state.app, state.git, state.git_sent],
+           server: Store.reload_server()
+         ) do
+      {:ok, {infos, events}} ->
+        {m, f} = state.notify
+        Enum.each(events, &apply(m, f, [&1]))
+        {:noreply, %{state | git_sent: infos}}
+
+      {:failed, _} ->
+        {:noreply, state}
     end
   end
 
@@ -85,6 +114,40 @@ defmodule HerdrServer.WorkspaceFacts do
           do: {:workspace_cwd, ws_id, cwd, Label.auto(cwd)}
 
     {cwds, events}
+  end
+
+  @doc false
+  # `{infos, events}`: `infos` is %{ws_id => info or nil} for every workspace (nil without a
+  # cwd); `events` the `{:workspace_git, ws_id, info}` of each that differs from `sent`'s
+  @spec git_scan({module, atom}, {module, atom}, map) :: {map, [tuple]}
+  def git_scan({am, af}, runner, sent) do
+    wss =
+      case apply(am, af, []) do
+        nil -> []
+        app -> for ws <- app.session.workspaces, do: {ws.id, Map.get(ws, :cwd)}
+      end
+
+    by_cwd = wss |> Enum.map(&elem(&1, 1)) |> Enum.reject(&is_nil/1) |> Enum.uniq() |> git(runner)
+    infos = Map.new(wss, fn {id, cwd} -> {id, Map.get(by_cwd, cwd)} end)
+    events = for {id, info} <- infos, Map.get(sent, id) != info, do: {:workspace_git, id, info}
+    {infos, events}
+  end
+
+  # %{cwd => info or nil}: one Task per cwd, nil past the timeout or on a crash
+  defp git(cwds, {m, f}) do
+    tasks = Enum.map(cwds, fn cwd -> Task.async(fn -> apply(m, f, [cwd]) end) end)
+
+    tasks
+    |> Task.yield_many(@git_timeout_ms)
+    |> Enum.zip(cwds)
+    |> Map.new(fn
+      {{_task, {:ok, info}}, cwd} ->
+        {cwd, info}
+
+      {{task, _timeout_or_exit}, cwd} ->
+        Task.shutdown(task, :brutal_kill)
+        {cwd, nil}
+    end)
   end
 
   defp send_changed({cwds, events}, %{notify: {m, f}, sent: sent}) do

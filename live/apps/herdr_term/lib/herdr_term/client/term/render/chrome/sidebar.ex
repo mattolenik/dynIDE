@@ -11,7 +11,8 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Sidebar do
   Collapsed: one row per workspace (index padded to 2, then its badge), a `─` rule, one
   badge row per agent when the sidebar has at least 7 rows, `»` bottom-centre.
 
-  Item lines: line 0 indented 1, later lines 3; tokens joined by `" · "` (`:muted`), a
+  Item lines: line 0 indented 1, later lines 3, then an item's `:detail` (`:muted`,
+  indented 3) when it has one and its rows fit; tokens joined by `" · "` (`:muted`), a
   single space after a badge; empty values drop; a line that does not fit ends in `…`.
   The active workspace row has the `:selected` background. Badges are `state_dots` or
   `state_symbols` (root `indicators`) in their state's colour.
@@ -172,11 +173,19 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.Sidebar do
   defp item_rows(%Node{children: groups, props: props}, %{cw: cw, theme: theme, base: base} = ctx) do
     selected = Map.get(props, :active) == true and Map.has_key?(props, :index)
 
+    detail =
+      case Map.get(props, :detail) do
+        d when is_binary(d) and d != "" -> [Text.text(d, :muted, theme)]
+        _ -> []
+      end
+
     groups
     |> Enum.with_index()
-    |> Enum.map(fn {group, i} ->
+    |> Enum.map(fn {group, i} -> {i, tokens(group.children, ctx)} end)
+    |> Enum.concat(Enum.map(detail, &{:detail, &1}))
+    |> Enum.map(fn {i, cells} ->
       indent = Cells.blank(if(i == 0, do: 1, else: 3), base)
-      row = [indent, tokens(group.children, ctx)] |> Cells.concat() |> Text.ellipsize(cw, theme)
+      row = [indent, cells] |> Cells.concat() |> Text.ellipsize(cw, theme)
       row = Text.clip(row, cw, base)
       if selected, do: select(row, cw, theme), else: row
     end)

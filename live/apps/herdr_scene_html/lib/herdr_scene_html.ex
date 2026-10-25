@@ -112,6 +112,15 @@ defmodule HerdrSceneHtml do
   defp body(%Node{role: :tab, props: %{zoomed: true}, text: text}, _origin),
     do: ["Z ", esc(text || "")]
 
+  # an item's detail (git branch) on its own muted line under its children
+  defp body(%Node{role: :item, props: %{detail: d}} = n, origin),
+    do: [
+      body(%{n | props: Map.delete(n.props, :detail)}, origin),
+      ~s(<span class="tok-muted">),
+      esc(d),
+      "</span>"
+    ]
+
   defp body(%Node{role: :list, children: kids}, origin),
     do: Enum.map(kids, &chrome_node(&1, origin))
 
