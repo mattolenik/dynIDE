@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -22,6 +22,12 @@ const MAX_PENDING_BYTES: usize = 64 << 20;
 /// herdr's per-image cap for `t=t`; larger images go direct.
 const MAX_IMAGE_BYTES: usize = 16 << 20;
 const FILE_PREFIX: &str = "tty-graphics-protocol-";
+/// Per-process subdir of the per-user dir: `herdr-live-gfx-<pid>`.
+const DIR_PREFIX: &str = "herdr-live-gfx-";
+/// The writer unlinks its files older than this, consumed or not.
+const MAX_FILE_AGE: Duration = Duration::from_secs(60);
+/// Ghostty accepts `t=t` only under /tmp, whatever TMPDIR says.
+pub const ROOT: &str = "/tmp";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Medium {
@@ -234,8 +240,7 @@ pub struct Files {
 
 impl Default for Files {
     fn default() -> Self {
-        // Ghostty accepts `t=t` only under /tmp, whatever TMPDIR says.
-        Self::at("/tmp")
+        Self::at(ROOT)
     }
 }
 
@@ -309,30 +314,22 @@ impl Files {
         {
             self.state = Transport::Disabled;
         }
+        // After the timeout check, so an old file still disables the transport first.
+        self.pending.retain(|(path, _, at)| {
+            let old = now.saturating_duration_since(*at) >= MAX_FILE_AGE;
+            if old {
+                let _ = fs::remove_file(path);
+            }
+            !old
+        });
     }
 
-    /// Creates (or checks) `<root>/herdr-live-kitty-<euid>/` and removes
-    /// files left there by processes that are gone.
+    /// Creates (or checks) `<root>/herdr-live-kitty-<euid>/herdr-live-gfx-<pid>/`.
     fn init(&mut self) -> io::Result<()> {
-        // SAFETY: geteuid has no preconditions.
-        let euid = unsafe { libc::geteuid() };
-        let dir = self.root.join(format!("herdr-live-kitty-{euid}"));
-        match DirBuilder::new().mode(0o700).create(&dir) {
-            Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
-            _ => {}
-        }
-        let meta = fs::symlink_metadata(&dir)?;
-        if !meta.is_dir() || meta.uid() != euid || meta.mode() & 0o777 != 0o700 {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "untrusted image directory",
-            ));
-        }
-        for entry in fs::read_dir(&dir)?.flatten() {
-            if leftover(&entry.file_name().to_string_lossy()) {
-                let _ = fs::remove_file(entry.path());
-            }
-        }
+        let user = user_dir(&self.root);
+        trusted(&user, true)?;
+        let dir = process_dir(&self.root);
+        trusted(&dir, true)?;
         self.dir = Some(dir);
         Ok(())
     }
@@ -368,16 +365,78 @@ impl Drop for Files {
         for (path, _, _) in self.pending.drain(..) {
             let _ = fs::remove_file(path);
         }
+        // Only when empty: another ledger of this process may share the dir.
+        if let Some(dir) = &self.dir {
+            let _ = fs::remove_dir(dir);
+        }
     }
 }
 
-/// `tty-graphics-protocol-<pid>-<n>` of a process that no longer exists.
+fn user_dir(root: &Path) -> PathBuf {
+    // SAFETY: geteuid has no preconditions.
+    let euid = unsafe { libc::geteuid() };
+    root.join(format!("herdr-live-kitty-{euid}"))
+}
+
+fn process_dir(root: &Path) -> PathBuf {
+    user_dir(root).join(format!("{DIR_PREFIX}{}", std::process::id()))
+}
+
+/// `dir` is a real directory, ours, mode 0700 (created so when `create`).
+fn trusted(dir: &Path, create: bool) -> io::Result<()> {
+    if create {
+        match DirBuilder::new().mode(0o700).create(dir) {
+            Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
+            _ => {}
+        }
+    }
+    // SAFETY: geteuid has no preconditions.
+    let euid = unsafe { libc::geteuid() };
+    let meta = fs::symlink_metadata(dir)?;
+    if !meta.is_dir() || meta.uid() != euid || meta.mode() & 0o777 != 0o700 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "untrusted image directory",
+        ));
+    }
+    Ok(())
+}
+
+/// Client start: removes what processes that are gone left in the per-user dir
+/// under `root` (their `herdr-live-gfx-<pid>` dirs, and loose files of older clients).
+pub fn sweep(root: &Path) {
+    let user = user_dir(root);
+    let Ok(entries) = trusted(&user, false).and_then(|()| fs::read_dir(&user)) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !leftover(&entry.file_name().to_string_lossy()) {
+            continue;
+        }
+        // file_type does not follow symlinks; remove_dir_all does not either
+        let _ = match entry.file_type() {
+            Ok(t) if t.is_dir() => fs::remove_dir_all(entry.path()),
+            _ => fs::remove_file(entry.path()),
+        };
+    }
+}
+
+/// Client exit: removes this process's dir under `root` with whatever is left in it.
+pub fn remove_process_dir(root: &Path) {
+    let _ = fs::remove_dir_all(process_dir(root));
+}
+
+/// `herdr-live-gfx-<pid>` or `tty-graphics-protocol-<pid>-<n>` of a process that no
+/// longer exists.
 fn leftover(name: &str) -> bool {
-    let Some(pid) = name
-        .strip_prefix(FILE_PREFIX)
-        .and_then(|rest| rest.split_once('-'))
-        .and_then(|(pid, _)| pid.parse::<libc::pid_t>().ok())
-    else {
+    let pid = match name.strip_prefix(DIR_PREFIX) {
+        Some(pid) => Some(pid),
+        None => name
+            .strip_prefix(FILE_PREFIX)
+            .and_then(|rest| rest.split_once('-'))
+            .map(|(pid, _)| pid),
+    };
+    let Some(pid) = pid.and_then(|pid| pid.parse::<libc::pid_t>().ok()) else {
         return false;
     };
     // SAFETY: signal 0 only checks that the pid exists.
@@ -576,11 +635,48 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), data);
         let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&path), 0o600);
+        assert_eq!(path.parent().unwrap(), process_dir(&root));
         assert_eq!(mode(path.parent().unwrap()), 0o700);
+        assert_eq!(mode(&user_dir(&root)), 0o700);
 
-        // Drop removes what the host never consumed.
+        // Drop removes what the host never consumed, then the empty dir.
         drop(files);
         assert!(!path.exists());
+        assert!(!process_dir(&root).exists() && user_dir(&root).exists());
+    }
+
+    #[test]
+    fn files_older_than_a_minute_are_unlinked_on_the_next_write() {
+        let root = root("age");
+        let mut files = Files::at(&root);
+        let now = Instant::now();
+        let op = [upload(vec![1; 10], Medium::File)];
+        let mut out = Vec::new();
+        encode(&mut out, &op, &mut files, now);
+        let probe = PathBuf::from(String::from_utf8(unb64(&payloads(&s(&out))[0].1)).unwrap());
+        assert!(probe.exists());
+        // the host never reads it: disabled at 10 s, unlinked at 60 s
+        encode(&mut Vec::new(), &op, &mut files, now + CONSUMPTION_TIMEOUT);
+        assert_eq!(files.state(), Transport::Disabled);
+        assert!(probe.exists());
+        encode(&mut Vec::new(), &op, &mut files, now + MAX_FILE_AGE);
+        assert!(!probe.exists());
+    }
+
+    #[test]
+    fn exit_removes_the_process_dir() {
+        let root = root("exit");
+        let mut files = Files::at(&root);
+        let mut out = Vec::new();
+        encode(
+            &mut out,
+            &[upload(vec![1], Medium::File)],
+            &mut files,
+            Instant::now(),
+        );
+        assert!(fs::read_dir(process_dir(&root)).unwrap().count() == 1);
+        remove_process_dir(&root);
+        assert!(!process_dir(&root).exists() && user_dir(&root).exists());
     }
 
     #[test]
@@ -632,10 +728,9 @@ mod tests {
     }
 
     #[test]
-    fn init_removes_leftovers_of_dead_processes_only() {
+    fn sweep_removes_leftovers_of_dead_processes_only() {
         let root = root("leftover");
-        let euid = unsafe { libc::geteuid() };
-        let dir = root.join(format!("herdr-live-kitty-{euid}"));
+        let dir = user_dir(&root);
         fs::create_dir(&dir).unwrap();
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
         // pid_t max is far below this on Linux and macOS: never alive.
@@ -645,14 +740,29 @@ mod tests {
         for p in [&dead, &live, &other] {
             fs::write(p, b"x").unwrap();
         }
-        let mut files = Files::at(&root);
-        encode(
-            &mut Vec::new(),
-            &[upload(vec![1], Medium::File)],
-            &mut files,
-            Instant::now(),
-        );
+        let dead_dir = dir.join(format!("{DIR_PREFIX}999999999"));
+        let live_dir = process_dir(&root);
+        for d in [&dead_dir, &live_dir] {
+            fs::create_dir(d).unwrap();
+            fs::write(d.join(format!("{FILE_PREFIX}1-0")), b"x").unwrap();
+        }
+        // a dead-pid name that is a symlink: the link goes, its target stays
+        let target = root.join("target-dir");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("keep"), b"x").unwrap();
+        let link = dir.join(format!("{DIR_PREFIX}999999998"));
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        sweep(&root);
         assert!(!dead.exists() && live.exists() && other.exists());
+        assert!(!dead_dir.exists() && live_dir.exists());
+        assert!(fs::symlink_metadata(&link).is_err() && target.join("keep").exists());
+
+        // an untrusted user dir is left alone
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::create_dir(&dead_dir).unwrap();
+        sweep(&root);
+        assert!(dead_dir.exists());
     }
 
     #[test]

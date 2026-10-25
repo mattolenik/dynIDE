@@ -6,6 +6,7 @@
 //! detached thread re-checks it at least every `POLL_MS` and drops its `Arc`.
 
 use crate::blit::BlitEncoder;
+use crate::graphics;
 use crate::output::{Flushed, Output};
 use crate::probe::{self, ProbeState};
 use std::fs::{File, OpenOptions};
@@ -13,6 +14,7 @@ use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -247,6 +249,8 @@ impl Inner {
         if !leftover.is_empty() {
             subscription.deliver(Event::Input(leftover));
         }
+        // t=t files of clients that died without restoring (m18 cleanup policy)
+        graphics::sweep(Path::new(graphics::ROOT));
         let inner = Arc::new(Inner {
             file,
             saved,
@@ -443,6 +447,7 @@ impl Inner {
             return Ok(());
         }
         self.stop();
+        graphics::remove_process_dir(Path::new(graphics::ROOT));
         let _guard = lock(&self.write_lock);
         reset(
             &self.file,
@@ -525,6 +530,7 @@ impl Inner {
     fn shutdown(&self) {
         self.stop();
         if !self.restored.swap(true, Ordering::AcqRel) {
+            graphics::remove_process_dir(Path::new(graphics::ROOT));
             // Waits for at most one non-blocking write syscall.
             let _guard = lock(&self.write_lock);
             let _ = reset(
