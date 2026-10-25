@@ -3,6 +3,11 @@ defmodule HerdrCli.Output do
   Pure rendering of API replies for the terminal: `{exit_code, stdout}` or
   `{exit_code, {:stderr, text}}`. JSON is one line with object keys sorted, so the
   same reply always prints the same bytes.
+
+  herdr's shape (ruling R6, `src/cli.rs` `print_response`): a JSON verb prints the whole
+  reply `{"id","result"}` on stdout; an error prints the whole reply `{"error","id"}` on
+  stderr, exit 1. `:quiet` verbs (herdr's `Output::Quiet`) print nothing on success;
+  `pane read` prints the text; `agent explain --json` prints the bare explain object.
   """
 
   @type rendered :: {0, binary()} | {1, {:stderr, binary()}}
@@ -17,8 +22,11 @@ defmodule HerdrCli.Output do
 
   @doc "Renders a reply for output mode `out`."
   @spec render(atom(), map()) :: rendered()
-  def render(_out, %{"error" => error}) when is_map(error),
-    do: {1, {:stderr, encode(error) <> "\n"}}
+  def render(_out, %{"error" => error} = reply) when is_map(error),
+    do: {1, {:stderr, encode(reply) <> "\n"}}
+
+  def render(:json, %{"result" => result} = reply) when is_map(result),
+    do: {0, encode(reply) <> "\n"}
 
   def render(out, %{"result" => result}) when is_map(result) do
     case body(out, result) do
@@ -29,7 +37,8 @@ defmodule HerdrCli.Output do
 
   def render(_out, reply), do: unexpected(reply)
 
-  defp body(:json, r), do: {:ok, [encode(r), ?\n]}
+  defp body(:quiet, _r), do: {:ok, ""}
+  defp body(:explain_json, %{"agent" => a}) when is_map(a), do: {:ok, [encode(a), ?\n]}
   defp body(:text, %{"text" => t}) when is_binary(t), do: {:ok, [t, ?\n]}
   defp body(:explain, %{"explanation" => t}) when is_binary(t), do: {:ok, t}
   defp body(:path, %{"path" => p}) when is_binary(p), do: {:ok, [p, ?\n]}

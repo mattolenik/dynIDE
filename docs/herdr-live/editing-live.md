@@ -310,11 +310,14 @@ way. `herdr-live server agent-manifests` lists what is loaded and
 The launcher exports `HERDR_LIVE_BIN` (absolute path of `live/bin/herdr-live`) and
 `HERDR_LIVE_API` (the resolved API socket) before starting the broker, and the server
 gives each pane shell `HERDR_PANE_ID` (`p<N>`). An agent in a pane drives this instance
-with `"$HERDR_LIVE_BIN" <verb>`; output is JSON on stdout (`pane read`: text), errors are
-JSON on stderr with exit 1, usage errors exit 2.
+with `"$HERDR_LIVE_BIN" <verb>`. Output is herdr's: the whole response
+`{"id","result"}` as JSON on stdout (`pane read`: text), the whole `{"error","id"}`
+response on stderr with exit 1, usage errors exit 2 (details: "CLI output" in
+[api.md](api.md)).
 
-- `pane split [<pane_id>] --direction right|down`: prints `pane.pane_id` of the new pane.
-- `pane run <pane_id> <command>`, `pane send-text`, `pane send-keys`.
+- `pane split [<pane_id>] --direction right|down`: prints the new pane; its id is
+  `.result.pane.pane_id` (`"$HERDR_LIVE_BIN" pane split --direction right | jq -r .result.pane.pane_id`).
+- `pane run <pane_id> <command>`, `pane send-text`, `pane send-keys` (print nothing on success).
 - `pane wait-output [<pane_id>] --match S [--timeout MS]`, `pane read [<pane_id>]`
   (omitted id: `$HERDR_PANE_ID`).
 - `pane list`, `pane current`, `workspace ...`, `tab ...`, `events subscribe ...`.

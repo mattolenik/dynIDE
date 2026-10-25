@@ -4,8 +4,8 @@ defmodule HerdrCli do
   socket (`HerdrCli.Client`), print the reply (`HerdrCli.Output`).
 
   Exit codes: 0 success (and `help`, `--help`: usage on stdout), 1 an API error (the
-  `error` object as JSON on stderr), `herdr-live is not running`, or an event stream the
-  server closed, 2 a usage error.
+  whole `{"error","id"}` reply as JSON on stderr, herdr's shape), `herdr-live is not
+  running`, or an event stream the server closed, 2 a usage error.
 
   `bin/herdr-live` starts this as `erl -noinput -run Elixir.HerdrCli main_erl -extra
   <args>` (no Elixir boot, no stdin reads, so it is safe in `while read` loops).

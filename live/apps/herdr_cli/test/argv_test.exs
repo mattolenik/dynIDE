@@ -176,17 +176,17 @@ defmodule HerdrCli.ArgvTest do
 
     test "send-text, send-keys, run" do
       assert p("pane send-text p2 'echo hi'") ==
-               {:call, "pane.send_text", %{"pane_id" => "p2", "text" => "echo hi"}, :json}
+               {:call, "pane.send_text", %{"pane_id" => "p2", "text" => "echo hi"}, :quiet}
 
       # `--` ends options, so text may start with dashes
       assert p("pane send-text p2 -- --help") ==
-               {:call, "pane.send_text", %{"pane_id" => "p2", "text" => "--help"}, :json}
+               {:call, "pane.send_text", %{"pane_id" => "p2", "text" => "--help"}, :quiet}
 
       assert p("pane send-keys p2 C-c Enter") ==
-               {:call, "pane.send_keys", %{"pane_id" => "p2", "keys" => ["C-c", "Enter"]}, :json}
+               {:call, "pane.send_keys", %{"pane_id" => "p2", "keys" => ["C-c", "Enter"]}, :quiet}
 
       assert p("pane run p2 'make test'") ==
-               {:call, "pane.run", %{"pane_id" => "p2", "command" => "make test"}, :json}
+               {:call, "pane.run", %{"pane_id" => "p2", "command" => "make test"}, :quiet}
 
       assert {:usage, _} = p("pane send-keys p2")
       assert {:usage, _} = p("pane send-text p2")
@@ -359,7 +359,7 @@ defmodule HerdrCli.ArgvTest do
       assert p("agent explain p1") == {:call, "agent.explain", %{"target" => "p1"}, :explain}
 
       assert p("agent explain p1 --json --verbose") ==
-               {:call, "agent.explain", %{"target" => "p1", "verbose" => true}, :json}
+               {:call, "agent.explain", %{"target" => "p1", "verbose" => true}, :explain_json}
 
       assert p("agent explain --file f --agent claude") ==
                {:call, "agent.explain", %{"agent" => "claude", "text" => {:file, "f"}}, :explain}
@@ -382,11 +382,11 @@ defmodule HerdrCli.ArgvTest do
                   "state" => "idle",
                   "message" => "hi",
                   "seq" => 3
-                }, :json}
+                }, :quiet}
 
       assert p("pane release-agent p1 --source s --agent a") ==
                {:call, "pane.release_agent",
-                %{"pane_id" => "p1", "source" => "s", "agent" => "a"}, :json}
+                %{"pane_id" => "p1", "source" => "s", "agent" => "a"}, :quiet}
 
       assert {:usage, _} = p("pane report-agent p1 --source s --agent a --state done")
       assert {:usage, _} = p("pane release-agent p1 --source s")
@@ -401,11 +401,11 @@ defmodule HerdrCli.ArgvTest do
                   "agent" => "a",
                   "agent_session_id" => "x",
                   "resume_argv" => ["a", "--go", "b c"]
-                }, :json}
+                }, :quiet}
 
       assert p("pane report-agent-session p1 --source s --agent a") ==
                {:call, "pane.report_agent_session",
-                %{"pane_id" => "p1", "source" => "s", "agent" => "a"}, :json}
+                %{"pane_id" => "p1", "source" => "s", "agent" => "a"}, :quiet}
 
       assert {:usage, _} = p("pane report-agent-session p1 --agent a")
 
@@ -416,7 +416,7 @@ defmodule HerdrCli.ArgvTest do
                   "pane_id" => "p1",
                   "source" => "s",
                   "tokens" => %{"a" => "x=y", "e" => "", "b" => nil}
-                }, :json}
+                }, :quiet}
 
       assert p("workspace report-metadata w1 --source s --token k=v --seq 2 --ttl-ms 9") ==
                {:call, "workspace.report_metadata",
@@ -426,7 +426,7 @@ defmodule HerdrCli.ArgvTest do
                   "tokens" => %{"k" => "v"},
                   "seq" => 2,
                   "ttl_ms" => 9
-                }, :json}
+                }, :quiet}
 
       assert {:usage, _} = p("pane report-metadata p1 --source s")
       assert {:usage, _} = p("pane report-metadata p1 --token k=v")

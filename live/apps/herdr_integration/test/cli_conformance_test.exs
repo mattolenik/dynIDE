@@ -114,6 +114,38 @@ defmodule HerdrIntegration.CliConformanceTest do
     "worktree remove w2 --force"
   ]
 
+  # herdr's output per verb (ruling R6). `Output::Quiet` leaves of src/cli/pane/bindings.rs
+  # and `quiet: true` of workspace_bindings.rs print nothing on success (`send_ok_request`);
+  # `Output::Read` prints the text (`print_read_response`); every other API verb prints
+  # the whole reply (`print_response`). The rest are herdr-live's own verbs, or herdr's
+  # CLI-local text (agent explain, plugin config-dir).
+  @quiet ~w(pane.send_text pane.send_keys pane.run pane.report_agent pane.report_agent_session
+            pane.release_agent pane.report_metadata workspace.report_metadata)
+  @text ~w(pane.read agent.read)
+  @own %{
+    "server status --kv" => :lines,
+    "rollback" => :rollback,
+    "rollback 2" => :rollback,
+    "test-on-save" => :gate,
+    "test-on-save on" => :gate,
+    "agent explain p1" => :explain,
+    "agent explain p1 --json --verbose" => :explain_json,
+    "plugin config-dir a" => :path
+  }
+
+  test "every fixture prints herdr's shape for its verb" do
+    for line <- @fixtures, {:call, m, _, out} <- [Argv.parse(OptionParser.split(line), @env)] do
+      want =
+        cond do
+          m in @quiet -> :quiet
+          m in @text -> :text
+          true -> Map.get(@own, line, :json)
+        end
+
+      assert out == want, "#{line}: #{inspect(out)}, herdr prints #{inspect(want)}"
+    end
+  end
+
   defp parsed do
     for line <- @fixtures do
       case Argv.parse(OptionParser.split(line), @env) do

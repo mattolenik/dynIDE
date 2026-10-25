@@ -104,7 +104,7 @@ defmodule HerdrCli.ClientTest do
 
     {:ok, s} = Client.connect(path, 1000)
     assert {:ok, %{"result" => %{"type" => "pong", "gen" => 1}}} = Client.call(s, "ping", %{})
-    assert_receive {:req, %{"id" => "cli", "method" => "ping", "params" => %{}}}
+    assert_receive {:req, %{"id" => "cli:ping", "method" => "ping", "params" => %{}}}
   end
 
   test "lines longer than the socket buffer arrive whole" do

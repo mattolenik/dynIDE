@@ -3,16 +3,35 @@ defmodule HerdrCli.OutputTest do
 
   alias HerdrCli.Output
 
-  defp ok(result), do: %{"id" => "cli", "result" => result}
+  defp ok(result), do: %{"id" => "cli:x", "result" => result}
 
-  test "json prints the result as one line with sorted keys" do
+  # herdr's print_response (src/cli.rs): the whole reply, one line
+  test "json prints the whole reply {id, result} as one line with sorted keys" do
     reply = ok(%{"type" => "pong", "version" => "0.1.0", "gen" => 2})
-    assert Output.render(:json, reply) == {0, ~s({"gen":2,"type":"pong","version":"0.1.0"}\n)}
+
+    assert Output.render(:json, reply) ==
+             {0, ~s({"id":"cli:x","result":{"gen":2,"type":"pong","version":"0.1.0"}}\n)}
 
     nested = ok(%{"type" => "x", "b" => [%{"z" => 1, "a" => nil}], "a" => "é"})
 
     assert Output.render(:json, nested) ==
-             {0, ~s({"a":"é","b":[{"a":null,"z":1}],"type":"x"}\n)}
+             {0, ~s({"id":"cli:x","result":{"a":"é","b":[{"a":null,"z":1}],"type":"x"}}\n)}
+  end
+
+  test "a herdr plugin's .result.pane.pane_id reads the split pane's id" do
+    {0, line} = Output.render(:json, ok(%{"type" => "pane_info", "pane" => %{"pane_id" => "p2"}}))
+    assert %{"result" => %{"pane" => %{"pane_id" => "p2"}}} = JSON.decode!(line)
+  end
+
+  test "quiet prints nothing on success (herdr's Output::Quiet)" do
+    assert Output.render(:quiet, ok(%{"type" => "ok"})) == {0, ""}
+  end
+
+  test "explain_json prints the bare explain object (herdr's agent explain --json)" do
+    reply =
+      ok(%{"type" => "agent_explain", "agent" => %{"state" => "idle"}, "explanation" => "x"})
+
+    assert Output.render(:explain_json, reply) == {0, ~s({"state":"idle"}\n)}
   end
 
   test "explain prints the explanation text as is" do
@@ -48,12 +67,11 @@ defmodule HerdrCli.OutputTest do
     assert Output.render(:lines, reply) == {0, "gen=2\nhandoff=\ntest_on_save=off\n"}
   end
 
-  test "an error reply goes to stderr as the error object, exit 1" do
-    reply = %{"id" => "cli", "error" => %{"code" => "not_found", "message" => "no pane p9"}}
-
-    assert Output.render(:json, reply) ==
-             {1, {:stderr, ~s({"code":"not_found","message":"no pane p9"}\n)}}
-
+  test "an error reply goes to stderr as the whole reply {error, id}, exit 1" do
+    reply = %{"id" => "cli:x", "error" => %{"code" => "not_found", "message" => "no pane p9"}}
+    line = ~s({"error":{"code":"not_found","message":"no pane p9"},"id":"cli:x"}\n)
+    assert Output.render(:json, reply) == {1, {:stderr, line}}
+    assert Output.render(:quiet, reply) == {1, {:stderr, line}}
     assert {1, {:stderr, _}} = Output.render(:rollback, reply)
   end
 

@@ -61,16 +61,18 @@ def cli(h, *args, timeout=150):
 
 
 def js(h, *args, timeout=150):
+    """The parsed `result` of herdr's {"id","result"} reply (or the bare JSON, for
+    `agent explain --json`)."""
     rc, out = cli(h, *args, timeout=timeout)
     try:
-        return rc, json.loads(out)
+        got = json.loads(out)
     except ValueError:
         return rc, {"raw": out}
+    return rc, got.get("result", got) if isinstance(got, dict) else got
 
 
 def explain(h, pane):
     rc, ex = js(h, "agent", "explain", pane, "--json")
-    ex = ex.get("agent", ex) if isinstance(ex, dict) else ex
     m = (ex or {}).get("matched_rule") or {}
     ev = next((r["evidence"] for r in ex.get("evaluated_rules", []) if r.get("id") == m.get("id")), {})
     return {"rc": rc, "state": ex.get("state"), "rule": m.get("id"), "region": m.get("region"),

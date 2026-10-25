@@ -116,9 +116,9 @@ left in the results files. Each entry names its source.
 
 ### API, CLI and plugins
 
-- The CLI prints the result object, not herdr's `{"id","result"}` envelope; a plugin
-  using `jq '.result...'` breaks. Deferred to M18 task 10: see "pending in this release".
-  ([m14](../results/m14.md), [m17-inventory](../results/m17-inventory.md))
+- The CLI prints herdr's `{"id","result"}` envelope, but `plugin list`, `plugin install`
+  and `plugin uninstall` print it where herdr prints human text (herdr's `--json` form),
+  and request ids are `cli:<method>`, not herdr's per-verb ids. ([m18](../results/m18.md))
 - `plugin update` is not ported; also not ported: per-plugin checkout locks across VMs,
   `pane.link.resolve`, stale-target checks on `pane.link.activate`, cleanup of old
   managed installs. ([m14](../results/m14.md))

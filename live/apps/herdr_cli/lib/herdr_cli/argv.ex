@@ -17,7 +17,8 @@ defmodule HerdrCli.Argv do
   `--opt value` and `--opt=value` are both accepted; `--` ends options.
   """
 
-  @type out :: :json | :text | :path | :lines | :rollback | :gate | :explain
+  @type out ::
+          :json | :quiet | :text | :path | :lines | :rollback | :gate | :explain | :explain_json
   @type result ::
           {:call, String.t(), map(), out()}
           | {:subscribe, map()}
@@ -219,7 +220,7 @@ defmodule HerdrCli.Argv do
         "workspace.report_metadata",
         [id],
         @metadata_opts,
-        :json,
+        :quiet,
         "workspace report-metadata <workspace_id> --source S --token K=V... " <>
           "[--clear-token K]... [--seq N] [--ttl-ms N]"
       ),
@@ -388,7 +389,7 @@ defmodule HerdrCli.Argv do
         "pane.send_text",
         [id, {:req, "text"}],
         %{},
-        :json,
+        :quiet,
         "pane send-text <pane_id> <text>"
       ),
       cmd(
@@ -396,7 +397,7 @@ defmodule HerdrCli.Argv do
         "pane.send_keys",
         [id, {:keys, "keys"}],
         %{},
-        :json,
+        :quiet,
         "pane send-keys <pane_id> <key>..."
       ),
       cmd(
@@ -404,7 +405,7 @@ defmodule HerdrCli.Argv do
         "pane.run",
         [id, {:req, "command"}],
         %{},
-        :json,
+        :quiet,
         "pane run <pane_id> <command>"
       ),
       cmd(
@@ -418,7 +419,7 @@ defmodule HerdrCli.Argv do
           "message" => {"message", :string},
           "seq" => {"seq", :int}
         },
-        :json,
+        :quiet,
         "pane report-agent <pane_id> --source S --agent A --state S [--message T] [--seq N]"
       ),
       cmd(
@@ -433,7 +434,7 @@ defmodule HerdrCli.Argv do
           "agent-session-path" => {"agent_session_path", :string},
           "session-start-source" => {"session_start_source", :string}
         },
-        :json,
+        :quiet,
         "pane report-agent-session <pane_id> --source S --agent A [--seq N] " <>
           "[--agent-session-id ID] [--agent-session-path PATH] [--session-start-source S] " <>
           "[-- <resume_arg>...]"
@@ -443,7 +444,7 @@ defmodule HerdrCli.Argv do
         "pane.report_metadata",
         [env_id],
         @metadata_opts,
-        :json,
+        :quiet,
         "pane report-metadata <pane_id> --source S --token K=V... " <>
           "[--clear-token K]... [--seq N] [--ttl-ms N]"
       ),
@@ -456,7 +457,7 @@ defmodule HerdrCli.Argv do
           "agent" => {"agent", :string},
           "seq" => {"seq", :int}
         },
-        :json,
+        :quiet,
         "pane release-agent <pane_id> --source S --agent A [--seq N]"
       ),
       cmd(
@@ -812,10 +813,10 @@ defmodule HerdrCli.Argv do
     {:call, c.method, params, if(kv, do: :lines, else: :json)}
   end
 
-  # herdr prints the explanation text; `--json` prints the reply
+  # herdr prints the explanation text; `--json` prints the bare explain object
   defp finish(%{method: "agent.explain"} = c, params, _env) do
     {json, params} = Map.pop(params, :json)
-    {:call, c.method, params, if(json, do: :json, else: :explain)}
+    {:call, c.method, params, if(json, do: :explain_json, else: :explain)}
   end
 
   # herdr's normalize_plugin_path_arg: local paths go absolute against the caller's cwd

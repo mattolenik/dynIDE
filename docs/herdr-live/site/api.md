@@ -7,5 +7,9 @@ thin client of it; every verb maps to a method. Panes started by herdr-live get
 
 The full method list, ids, error codes and events are in [api.md](../api.md); the same
 data is available as `herdr-live api schema`. The CLI follows herdr's verbs and
-shapes; see the 0.1.0 [known limitations](release-notes.md#known-limitations) for
+output: a verb prints the whole response `{"id","result"}` on stdout (so
+`jq -r .result.pane.pane_id` after `pane split` works as in herdr), an error prints the
+whole `{"error","id"}` response on stderr with exit 1, and herdr's quiet verbs
+(`pane send-text`, `pane run`, the `report-*` verbs) print nothing ("CLI output" in
+[api.md](../api.md)); see the 0.1.0 [known limitations](release-notes.md#known-limitations) for
 the remaining differences.

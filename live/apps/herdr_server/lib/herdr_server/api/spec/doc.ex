@@ -76,6 +76,25 @@ defmodule HerdrServer.Api.Spec.Doc do
     Each method lists the codes it answers. `internal` is implicit: any method answers it
     when its handler crashes. `parse_error`, `invalid_request` and `unknown_method` are
     answered before a method is known.
+
+    ## CLI output
+
+    `herdr-live <verb>` prints herdr's shapes (`src/cli.rs` in herdr):
+
+    - Success: the whole response on stdout, one line,
+      `{"id": "cli:<method>", "result": {...}}`, exit 0. A herdr plugin's
+      `jq -r .result.pane.pane_id` after `pane split` reads the new pane's id.
+    - Error: the whole response on stderr, `{"error": {...}, "id": "cli:<method>"}`, exit 1.
+    - Usage error: a usage line on stderr, exit 2.
+    - Quiet on success (herdr's `Output::Quiet`): `pane send-text`, `pane send-keys`,
+      `pane run`, `pane report-agent`, `pane report-agent-session`, `pane release-agent`,
+      `pane report-metadata`, `workspace report-metadata`.
+    - Text: `pane read` and `agent read` print the text; `agent explain` prints the
+      explanation, `--json` the bare explain object (`result.agent`); `plugin config-dir`
+      prints the path.
+    - herdr-live's own verbs: `rollback` prints `ok <batch>...`, `test-on-save` prints
+      `ok <mode>`, `server status --kv` prints `key=value` lines, `events subscribe` prints
+      one event per line, and `update` and `--version` print their own text.
     """
   end
 

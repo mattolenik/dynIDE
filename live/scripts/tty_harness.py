@@ -57,7 +57,8 @@ replay), the focused pane's `pwd` is dir-b; 3 s, prefix q, dump B. PASS when A =
 agent: an agent in a pane drives herdr-live through the CLI. The same launch
 (120x40); the first pane's shell runs "$HERDR_LIVE_BIN" (exported by the
 launcher, as is HERDR_LIVE_API) with output into the run's temp dir: pane split
---direction right (split.json has pane.pane_id, two prompts), pane run <id>
+--direction right (split.json is herdr's {"id","result"} reply with result.pane.pane_id,
+two prompts), pane run <id>
 'echo agent-""marker', pane wait-output <id> --match agent-marker, pane read
 <id> (contains agent-marker), pane list (2 panes, the caller's HERDR_PANE_ID
 among them), agent list (no agents), agent explain of the caller's plain
@@ -81,7 +82,9 @@ press with the ctrl bit) opens a pane labelled `GitHub preview` showing `github 
 and the stub gh output; pane link activate --modifier ctrl over the API does the same;
 plugin link of a manifest without version fails with invalid_plugin_version; a linked
 plugin whose manifest is then corrupted lists with its error, cannot run, the examples
-still list clean and run, and the log has its `plugin:` warning line; plugin disable makes
+still list clean and run, and the log has its `plugin:` warning line; a linked plugin
+whose action pipes `"$HERDR_BIN_PATH" pane split` into `jq -r .result.pane.pane_id` (python3
+when there is no jq), as a herdr plugin does, gets the new pane's id; plugin disable makes
 invoke fail with plugin_disabled, enable, uninstall drops it from plugin list; prefix q
 exits 0 and log_summary.py reports session_losses 0.
 
@@ -1120,10 +1123,10 @@ def agent():
         h.until(lambda: h.prompts() >= 2, "two prompts after pane split", timeout=30)
         try:
             split = json.load(open(t("split.json")))
-            new = split["pane"]["pane_id"]
+            new = split["result"]["pane"]["pane_id"]
         except (OSError, ValueError, KeyError, TypeError) as e:
-            fail(f"agent: split.json has no pane.pane_id ({e}: {open(t('split.json')).read()!r})")
-        ok(isinstance(new, str) and new.startswith("p"), f"agent: pane split printed pane.pane_id {new}")
+            fail(f"agent: split.json has no result.pane.pane_id ({e}: {open(t('split.json')).read()!r})")
+        ok(isinstance(new, str) and new.startswith("p"), f"agent: pane split printed result.pane.pane_id {new}")
         shell(f"{bin_} pane run {new} 'echo agent-\"\"marker' > {t('run.json')}"
               f" && {bin_} pane wait-output {new} --match agent-marker --timeout 10000 > {t('wait.json')}"
               f"; {bin_} pane read {new} > {t('read.txt')}", "s2", "pane run, wait-output and read")
@@ -1135,14 +1138,14 @@ def agent():
               "pane list, agent list, agent explain and server agent-manifests")
         me = open(t("me.txt")).read().strip()
         try:
-            ids = [p["pane_id"] for p in json.load(open(t("list.json")))["panes"]]
+            ids = [p["pane_id"] for p in json.load(open(t("list.json")))["result"]["panes"]]
         except (OSError, ValueError, KeyError, TypeError) as e:
             fail(f"agent: pane list output unreadable ({e})")
         ok(len(ids) == 2 and me in ids and new in ids,
            f"agent: pane list has 2 panes with the caller's HERDR_PANE_ID {me} ({ids})")
         agents = open(t("agents.json")).read()
         try:
-            ok(json.loads(agents)["agents"] == [], f"agent: agent list answers no agents ({agents.strip()})")
+            ok(json.loads(agents)["result"]["agents"] == [], f"agent: agent list answers no agents ({agents.strip()})")
         except (ValueError, KeyError, TypeError) as e:
             fail(f"agent: agent list output unreadable ({e}: {agents!r})")
         err = open(t("explain.err")).read()
@@ -1150,7 +1153,7 @@ def agent():
            f"agent: agent explain of a plain shell answers failed ({err.strip()})")
         manifests = open(t("manifests.json")).read()
         try:
-            n = len(json.loads(manifests)["manifests"])
+            n = len(json.loads(manifests)["result"]["manifests"])
         except (ValueError, KeyError, TypeError) as e:
             fail(f"agent: server agent-manifests output unreadable ({e}: {manifests!r})")
         ok(n >= 20, f"agent: server agent-manifests lists {n} manifests (>= 20)")
@@ -1306,7 +1309,7 @@ def plugins():
             code, out = h.cli(*args)
             if code != 0:
                 fail(f"plugins: herdr-live {' '.join(args)} exits {code} ({out.strip()[-300:]})")
-            return json.loads(out)
+            return json.loads(out)["result"]
 
         def listed():
             return {p["plugin_id"]: p for p in cli_json("plugin", "list", "--json")["plugins"]}
@@ -1336,9 +1339,9 @@ def plugins():
         shell(f"echo \"$HERDR_PANE_ID\" > {t('me.txt')}; {bin_} plugin action invoke {layout}.setup"
               f" > {t('inv.json')} 2>&1", "s2", "plugin action invoke setup")
         try:
-            setup = json.loads(read_text(t("inv.json")))["log"]["log_id"]
+            setup = json.loads(read_text(t("inv.json")))["result"]["log"]["log_id"]
         except (OSError, ValueError, KeyError, TypeError) as e:
-            fail(f"plugins: invoke answer has no log.log_id ({e}: {read_text(t('inv.json'))!r})")
+            fail(f"plugins: invoke answer has no result.log.log_id ({e}: {read_text(t('inv.json'))!r})")
         run = h.until(lambda: ended(layout, setup), "the setup run to end", timeout=60)
         ok(run.get("status") == "succeeded", f"plugins: plugin log has the setup run succeeded"
            f" (exit {run.get('exit_code')}, stdout {run.get('stdout', '')[:40]!r})")
@@ -1408,11 +1411,32 @@ def plugins():
             else:
                 if code != 0:
                     fail(f"plugins: {plugin}.{action} invoke failed ({out.strip()})")
-                opened = json.loads(out)["log"]["log_id"]
+                opened = json.loads(out)["result"]["log"]["log_id"]
                 rec = h.until(lambda: ended(preview, opened), f"{preview}.open to end", timeout=30)
                 ok(rec["status"] == "succeeded", f"plugins: {preview}.open still runs (succeeded)")
         h.until(lambda: "plugin: smoke.good:" in read_text(h.log), "the plugin warning line", timeout=30)
         ok(True, "plugins: the log has a plugin warning line for smoke.good")
+
+        # herdr's envelope: a plugin reads .result.pane.pane_id after pane split (M14's ask)
+        os.makedirs(t("envelope"))
+        got_id = t("envelope", "id.txt")
+        pick = ("jq -r .result.pane.pane_id" if shutil.which("jq", path=path) else
+                "python3 -c 'import json,sys; print(json.load(sys.stdin)[\"result\"][\"pane\"][\"pane_id\"])'")
+        script = f'"$HERDR_BIN_PATH" pane split --direction right --no-focus | {pick} > {got_id}'
+        with open(t("envelope", "herdr-plugin.toml"), "w") as f:
+            f.write('id = "smoke.envelope"\nname = "Envelope"\nversion = "0.1.0"\nmin_herdr_version = "0.7.0"\n'
+                    f'[[actions]]\nid = "split"\ntitle = "Split"\ncommand = ["sh", "-c", {json.dumps(script)}]\n')
+        cli_json("plugin", "link", t("envelope"))
+        before = {p["pane_id"] for p in panes()}
+        split_log = cli_json("plugin", "action", "invoke", "smoke.envelope.split")["log"]["log_id"]
+        rec = h.until(lambda: ended("smoke.envelope", split_log), "smoke.envelope.split to end", timeout=30)
+        new_id = read_text(got_id).strip() if os.path.exists(got_id) else ""
+        added = {p["pane_id"] for p in panes()} - before
+        ok(rec["status"] == "succeeded" and added == {new_id},
+           f"plugins: a plugin's `{pick.split()[0]} .result.pane.pane_id` after pane split gets the new pane"
+           f" ({new_id!r}, new panes {sorted(added)}, {rec.get('status')} {rec.get('stderr', '')[:200]!r})")
+        cli_json("pane", "close", new_id)
+        cli_json("plugin", "uninstall", "smoke.envelope")
 
         # 5. disable, enable, uninstall
         cli_json("plugin", "disable", preview)

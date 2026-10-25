@@ -56,7 +56,8 @@ defmodule HerdrCli.Client do
   @doc "Sends one request and returns the decoded reply line."
   @spec call(:gen_tcp.socket(), String.t(), map(), timeout()) :: {:ok, map()} | {:error, term()}
   def call(sock, method, params, timeout \\ 60_000) do
-    line = HerdrCli.Output.encode(%{"id" => "cli", "method" => method, "params" => params})
+    line =
+      HerdrCli.Output.encode(%{"id" => "cli:" <> method, "method" => method, "params" => params})
 
     with :ok <- :gen_tcp.send(sock, [line, ?\n]),
          {:ok, reply} <- recv_line(sock, deadline(timeout)) do
