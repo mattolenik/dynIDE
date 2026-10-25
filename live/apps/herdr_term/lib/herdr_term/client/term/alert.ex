@@ -4,11 +4,11 @@ defmodule HerdrTerm.Client.Term.Alert do
   props (`toast: %{delivery}`, `sound: %{enabled}`; missing ones are herdr's
   defaults, `:herdr` and enabled) and the client's environment (`Notify.backend/1`).
 
-    * A title, control characters stripped from it and the body, each at most 200
-      characters: `delivery: :terminal` is `{:write, bytes}` (`Notify.sequence/4`: OSC 9
-      or OSC 99, tmux-wrapped under `TMUX`); `:system` is `{:system, title, body}`
-      (`Render` calls the desktop notifier). `:herdr` toasts come in the scene; `:off`
-      shows nothing.
+    * A title, with newlines, returns and tabs made spaces and other control
+      characters stripped from it and the body, each at most 200 characters:
+      `delivery: :terminal` is `{:write, bytes}` (`Notify.sequence/4`: OSC 9 or OSC 99,
+      tmux-wrapped under `TMUX`); `:system` is `{:system, title, body}` (`Render` calls
+      the desktop notifier). `:herdr` toasts come in the scene; `:off` shows nothing.
     * A sound when enabled: `{:sound, :done | :request}` (`Render` runs the sound
       command, else plays the sound file, else writes BEL).
   """
@@ -38,8 +38,13 @@ defmodule HerdrTerm.Client.Term.Alert do
 
   defp clean(nil), do: nil
 
-  defp clean(text),
-    do: text |> String.replace(~r/[\x00-\x1f\x7f\x{80}-\x{9f}]/u, "") |> String.slice(0, @max)
+  # herdr's sanitize_text: newlines and tabs become spaces, other controls go
+  defp clean(text) do
+    text
+    |> String.replace(["\n", "\r", "\t"], " ")
+    |> String.replace(~r/[\x00-\x1f\x7f\x{80}-\x{9f}]/u, "")
+    |> String.slice(0, @max)
+  end
 
   defp sound(true, s) when s in [:done, :request], do: [{:sound, s}]
   defp sound(_enabled, _sound), do: []

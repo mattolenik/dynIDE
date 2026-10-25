@@ -67,7 +67,7 @@ defmodule HerdrTerm.Client.Term.AlertTest do
     a = %{alert(nil) | title: "a\e]0;x\a\nb\u009b", body: String.duplicate("z", 500)}
     [{:system, title, body}] = Alert.actions(a, props(:system))
     refute title <> body =~ ~r/[\x00-\x1f\x7f\x{80}-\x{9f}]/u
-    assert title == "a]0;xb"
+    assert title == "a]0;x b"
     assert String.length(body) == 200
   end
 end

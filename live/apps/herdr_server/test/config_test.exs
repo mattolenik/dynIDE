@@ -172,7 +172,7 @@ defmodule HerdrServer.ConfigTest do
     [ui.sound]
     enabled = false
     command = "say"
-    done_path = "~/done.mp3"
+    done_path = "sounds/done.mp3"
     request_path = "/r.mp3"
 
     [ui.toast]
@@ -186,8 +186,10 @@ defmodule HerdrServer.ConfigTest do
     dark_name = "dracula"
     """
 
+    File.mkdir_p!(Path.join(dir, "sounds"))
+    File.write!(Path.join(dir, "sounds/done.mp3"), "x")
     cfg = load(dir, toml)
-    {_kb, ui, []} = apply_cfg(cfg)
+    {_kb, ui, ["config: ui.sound.request_path: no file /r.mp3"]} = apply_cfg(cfg)
     assert %{width: 30, min: 10, max: 50, collapsed: false} = ui.sidebar
     assert ui.confirm_close == false
     assert ui.indicators == :symbols
@@ -198,15 +200,41 @@ defmodule HerdrServer.ConfigTest do
     assert ui.sound == %{
              enabled: false,
              command: "say",
-             done_path: "~/done.mp3",
+             done_path: Path.join(dir, "sounds/done.mp3"),
              request_path: "/r.mp3"
            }
 
     assert ui.toast == %{delivery: :terminal, delay_ms: 3000}
     assert ui.theme == %{name: "nord", auto_switch: true, light: "one-light", dark: "dracula"}
 
-    {_kb, ui, []} = apply_cfg(cfg, start: true)
+    {_kb, ui, _} = apply_cfg(cfg, start: true)
     assert ui.sidebar.collapsed
+  end
+
+  test "sound paths: ~ expands, a non-mp3 warns, a reload without them drops them",
+       %{tmp_dir: dir} do
+    wav = Path.join(dir, "a.wav")
+    File.write!(wav, "x")
+
+    home = Path.expand("~/herdr-live-no-such-sound.mp3")
+
+    toml =
+      "[ui.sound]\ndone_path = \"a.wav\"\nrequest_path = \"~/herdr-live-no-such-sound.mp3\"\n"
+
+    {_kb, ui, diags} = apply_cfg(load(dir, toml))
+
+    assert diags == [
+             "config: ui.sound.done_path: not an .mp3: #{wav}",
+             "config: ui.sound.request_path: no file #{home}"
+           ]
+
+    assert ui.sound.done_path == wav
+    assert ui.sound.request_path == home
+
+    {_kb, ui, []} =
+      Config.apply(load(dir, "[ui.sound]\nenabled = true\n"), Keybinds.default(), ui)
+
+    refute Map.has_key?(ui.sound, :done_path) or Map.has_key?(ui.sound, :request_path)
   end
 
   test "invalid values keep the current value with a diagnostic; unset keys keep theirs",

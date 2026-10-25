@@ -23,8 +23,9 @@ defmodule HerdrServer.Config do
   `command` (run by an in-VM terminal client with the sound name as its last argument;
   never sent to a socket client, which runs its own `HERDR_LIVE_SOUND_COMMAND`),
   `done_path`, `request_path` (sound files played instead of the built-in ones, same
-  rule: socket clients use `HERDR_LIVE_SOUND_DONE_PATH` / `_REQUEST_PATH`; unset keys
-  are absent from `ui.sound`);
+  rule: socket clients use `HERDR_LIVE_SOUND_DONE_PATH` / `_REQUEST_PATH`; relative to
+  the config file's directory, `~` expanded; a missing or non-`.mp3` file is kept with a
+  diagnostic; unset keys are absent from `ui.sound`, also after a reload drops them);
   `[ui.toast]` `delivery`
   (`off | herdr | terminal | system`), `delay_seconds` (0..3600); `[theme]` `name`,
   `auto_switch`, `light_name`, `dark_name`; `[worktrees]` `directory` (new checkouts go
@@ -93,7 +94,7 @@ defmodule HerdrServer.Config do
   @spec load(Path.t()) :: t
   def load(path \\ path()) do
     case File.read(path) do
-      {:ok, bin} -> decode(bin)
+      {:ok, bin} -> bin |> decode() |> sound_paths(Path.dirname(path))
       {:error, :enoent} -> %{defaults(true, []) | failed: false}
       {:error, r} -> defaults(false, ["config: #{path}: #{:file.format_error(r)}"])
     end
@@ -125,6 +126,36 @@ defmodule HerdrServer.Config do
     end
   end
 
+  @sound_paths ~w(done_path request_path)
+
+  # herdr: sound paths are relative to the config file's directory; a missing or non-mp3
+  # file is kept (the client falls back to the built-in sound) with a diagnostic
+  defp sound_paths(%{ui: %{"sound" => %{} = snd}} = cfg, dir) do
+    Enum.reduce(@sound_paths, cfg, fn key, cfg ->
+      case snd do
+        %{^key => p} when is_binary(p) and p != "" -> sound_path(cfg, key, Path.expand(p, dir))
+        _ -> cfg
+      end
+    end)
+  end
+
+  defp sound_paths(cfg, _dir), do: cfg
+
+  defp sound_path(cfg, key, full) do
+    cfg = put_in(cfg, [:ui, "sound", key], full)
+
+    why =
+      cond do
+        not File.regular?(full) -> "no file #{full}"
+        Path.extname(full) != ".mp3" -> "not an .mp3: #{full}"
+        true -> nil
+      end
+
+    if why,
+      do: %{cfg | diagnostics: cfg.diagnostics ++ ["config: ui.sound.#{key}: #{why}"]},
+      else: cfg
+  end
+
   defp table(t, name, diags) do
     case Map.get(t, name, %{}) do
       m when is_map(m) -> {m, diags}
@@ -149,6 +180,8 @@ defmodule HerdrServer.Config do
   @doc "Puts `cfg` over `kb` and `ui`: `{kb, ui, load diagnostics ++ apply diagnostics}`."
   @spec apply(t, Keybinds.t(), Ui.t(), keyword) :: {Keybinds.t(), Ui.t(), [binary]}
   def apply(cfg, kb, ui, opts \\ []) do
+    # file-only keys: a reload without them goes back to the built-in sounds
+    ui = %{ui | sound: Map.drop(ui.sound, [:done_path, :request_path])}
     {kb, kd} = keys(Map.delete(cfg.keys, "command"), kb)
     {kb, cmds, cd} = commands(Map.get(cfg.keys, "command", []), kb)
     kd = kd ++ cd

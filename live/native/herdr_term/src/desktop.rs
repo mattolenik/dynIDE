@@ -74,10 +74,17 @@ fn notify_tools(_env_set: impl Fn(&str) -> bool) -> Vec<Tool> {
     Vec::new()
 }
 
-/// Trailing arguments: osascript reads both argv items, notify-send takes the
-/// body only when there is one.
+/// osascript reads both argv items, so the body is always passed.
+#[cfg(target_os = "macos")]
+const NOTIFY_EMPTY_BODY: bool = true;
+
+/// notify-send takes the body only when there is one.
+#[cfg(not(target_os = "macos"))]
+const NOTIFY_EMPTY_BODY: bool = false;
+
+/// Trailing notifier arguments: title, then body (see `NOTIFY_EMPTY_BODY`).
 fn notify_args<'a>(title: &'a str, body: &'a str) -> Vec<&'a str> {
-    if cfg!(target_os = "macos") || !body.is_empty() {
+    if NOTIFY_EMPTY_BODY || !body.is_empty() {
         vec![title, body]
     } else {
         vec![title]
@@ -117,8 +124,9 @@ fn argv<'a>(tool: &[&'a str], args: &[&'a str]) -> Vec<&'a str> {
     tool.iter().copied().chain(args.iter().copied()).collect()
 }
 
-/// Spawns the first tool that starts (null stdout/stderr, trailing `args`), with a piped stdin when `input` is given, and hands the child to a
-/// thread that writes `input`, closes stdin and waits.
+/// Spawns the first tool that starts (null stdout/stderr, trailing `args`), with
+/// a piped stdin when `input` is given, and hands the child to a thread that
+/// writes `input`, closes stdin and waits.
 fn run(tools: &[&[&str]], args: &[&str], input: Option<Vec<u8>>) -> Result<(), Error> {
     let child = tools
         .iter()
