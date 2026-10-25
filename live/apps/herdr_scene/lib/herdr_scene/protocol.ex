@@ -32,7 +32,8 @@ defmodule HerdrScene.Protocol do
     * `{:bell, pane_id}`
     * `{:open_url, binary}`: only `http://` and `https://` URLs are valid
     * `{:detached, reason :: atom}`: the server ended this client's session (`:requested`:
-      the client's own detach binding or `{:detach}`); the session is gone after it
+      the client's own detach binding or `{:detach}`); the session is gone after it;
+      the server sends one of `detach_reasons/0`
     * `{:input_mode, :terminal | :prefix | :resize | :copy}`: this client's own input mode
       changed (input modes are per client). Sent to the `from_pid` of the `{:input, ...}`
       that caused it, before that input's `{:ack, seq}`; a session starts in `:terminal`,
@@ -64,6 +65,14 @@ defmodule HerdrScene.Protocol do
 
   @attach_keys [:kind, :transport, :size, :cell_px, :caps, :client]
   @alert_keys [:kind, :level, :title, :body, :pane, :sound]
+
+  # The reasons the server sends in `{:detached, reason}`. A remote client decodes frames
+  # with `[:safe]`, so each must exist in its VM: listing them here (herdr_scene is loaded
+  # there) is what defines the atoms.
+  @detach_reasons [:requested, :store_restart, :replaced, :session_ended, :pane_closed]
+
+  @spec detach_reasons() :: [atom]
+  def detach_reasons, do: @detach_reasons
 
   @spec endpoint() :: :herdr_client_endpoint
   def endpoint, do: :herdr_client_endpoint
