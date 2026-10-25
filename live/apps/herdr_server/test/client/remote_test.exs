@@ -107,7 +107,14 @@ defmodule HerdrServer.Client.RemoteTest do
     seen = seen(s, %{notice: false, ack: false, echo: false})
     assert seen == %{notice: true, ack: true, echo: true}
     assert Process.alive?(pid)
+    # the broken outbox was replaced: the next message is batched, with no second notice
+    :ok = send_frame(s, {:input, 2, Event.key("y")})
+
+    refute recv_until(s, &(match?({:notice, %{level: :error}}, &1) or shows?(&1, "y")))
+           |> notice?()
   end
+
+  defp notice?(f), do: match?({:notice, _}, f)
 
   defp seen(s, acc) do
     if Enum.all?(acc, &elem(&1, 1)) do

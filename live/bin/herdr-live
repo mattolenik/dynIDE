@@ -106,8 +106,16 @@ client() { # attach | terminal: the remote client VM, stdio to its log (R18)
   # not exec'd: a failure's reason (HerdrTerm.Remote.fail/1) goes to this stderr
   reason=$(mktemp "${TMPDIR:-/tmp}/herdr-live-client.XXXXXX") || exit 1
   trap 'rm -f "$reason"' EXIT
-  MIX_ENV=dev HERDR_LIVE_HEADLESS=1 HERDR_LIVE_CLIENT_REASON=$reason elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt --no-start -e 'HerdrTerm.Remote.main(System.argv())' -- "$@" </dev/null >>"$clog" 2>&1
+  # background + wait so TERM/HUP/INT reach the VM (a foreground child would not see them while
+  # sh waits). A non-interactive sh has no job control: the job stays in this process group, so
+  # the VM keeps the foreground tty (it opens /dev/tty itself) and gets no SIGTTIN/SIGTTOU.
+  MIX_ENV=dev HERDR_LIVE_HEADLESS=1 HERDR_LIVE_CLIENT_REASON=$reason elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt --no-start -e 'HerdrTerm.Remote.main(System.argv())' -- "$@" </dev/null >>"$clog" 2>&1 &
+  pid=$!
+  trap 'kill -TERM $pid 2>/dev/null' TERM HUP INT
+  wait $pid
   rc=$?
+  # a trapped signal ends the first wait early: wait for the VM to really go
+  while kill -0 $pid 2>/dev/null; do wait $pid; rc=$?; done
   if [ $rc -ne 0 ]; then
     why=$(cat "$reason" 2>/dev/null)
     echo "herdr-live: client exited ($rc)${why:+: $why}; see $clog" >&2

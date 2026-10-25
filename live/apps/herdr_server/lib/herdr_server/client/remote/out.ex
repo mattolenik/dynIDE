@@ -8,8 +8,8 @@ defmodule HerdrServer.Client.Remote.Out do
 
   `Client.Outbox` is editable code: every call into it goes through `HerdrReload.Guard`
   (a failed reload rolls back and runs again on the old code). A call that still fails
-  keeps the previous outbox and sends an error notice: a failed `put` sends that message
-  unbatched and forgets what the client has (the next flush resends every row), a failed
+  sends one error notice: a failed `put` sends that message unbatched and replaces the
+  outbox with a fresh one (batching resumes, the next flush resends every row); a failed
   flush sends nothing until the next frame.
   """
 
@@ -32,8 +32,9 @@ defmodule HerdrServer.Client.Remote.Out do
         %{state | outbox: outbox}
 
       {:failed, f} ->
-        state = state |> failed(f) |> write(msg)
-        %{state | outbox: %{state.outbox | sent: %{}}}
+        # a fresh outbox: the broken one never recovers, and the next scene resends in full
+        state = %{state | outbox: %Outbox{}}
+        state |> failed(f) |> write(msg)
     end
   end
 
