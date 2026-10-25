@@ -1,14 +1,14 @@
 defmodule HerdrTerm.Client.Term.Alert do
   @moduledoc """
   Pure: what this terminal does for a protocol `{:alert, a}`, given the scene root's
-  props (`toast: %{delivery}`, `sound: %{enabled, command}`; missing ones are herdr's
+  props (`toast: %{delivery}`, `sound: %{enabled}`; missing ones are herdr's
   defaults, `:herdr` and enabled).
 
     * `delivery: :terminal` and a title: `{:osc9, "<title>: <body>"}`, control
       characters stripped, at most 200 characters. `:herdr` toasts come in the scene;
       `:off` shows nothing; `:system` (an OS notifier) is a recorded gap.
-    * A sound when enabled: `{:sound, "done" | "request"}` (`Render` runs the configured
-      command with it, else writes BEL).
+    * A sound when enabled: `{:sound, "done" | "request"}` (`Render` runs the client-local
+      sound command with it, else writes BEL).
   """
 
   @max 200

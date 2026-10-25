@@ -27,8 +27,10 @@ defmodule HerdrTerm.Client.Term.Render do
   cursor keeps the last frame.
 
   Alerts: `{:alert, a}` runs `Alert.actions/2` over the root props: OSC 9 through the
-  tty; a sound runs `sound.command` with the sound name as its last argument (a port,
-  fire and forget; a missing command logs once), else writes BEL.
+  tty; a sound runs this client's own sound command (`sound_command/0`) with the sound
+  name as its last argument (a port, fire and forget; a missing command logs once), else
+  writes BEL. The command is never taken from the scene: a remote client must not run a
+  command it received over the wire.
 
   `{:detached, reason}` and
   `{:handoff, map}` go to `Tty.Owner`.
@@ -226,14 +228,27 @@ defmodule HerdrTerm.Client.Term.Render do
 
   defp perform(state, {:osc9, text}, _props), do: tty_write(state, ["\e]9;", text, "\a"])
 
-  defp perform(state, {:sound, name}, props) do
-    case get_in(props, [:sound, :command]) do
+  defp perform(state, {:sound, name}, _props) do
+    case sound_command() do
       nil -> tty_write(state, "\a")
       cmd -> play(state, cmd, name)
     end
   end
 
   defp perform(state, _other, _props), do: state
+
+  @doc """
+  The client-local sound command: app env `:herdr_term, :sound_command`, else
+  `$HERDR_LIVE_SOUND_COMMAND`; nil (BEL) when neither is set.
+  """
+  @spec sound_command() :: binary | nil
+  def sound_command do
+    case Application.get_env(:herdr_term, :sound_command) ||
+           System.get_env("HERDR_LIVE_SOUND_COMMAND") do
+      "" -> nil
+      cmd -> cmd
+    end
+  end
 
   defp tty_write(state, data) do
     _ = Kernel.tty().write(state.tty, data)

@@ -47,7 +47,7 @@ defmodule HerdrServer.View.ToastTest do
   end
 
   test "the root carries the sound and toast delivery prefs" do
-    assert %{sound: %{enabled: true, command: nil}, toast: %{delivery: :herdr}} =
+    assert %{sound: %{enabled: true}, toast: %{delivery: :herdr}} =
              scene([]).chrome.props
   end
 end

@@ -25,7 +25,7 @@ defmodule HerdrServer.View.SidebarTest do
              theme: fresh(1, 1).ui.theme,
              indicators: :dots,
              mouse: true,
-             sound: %{enabled: true, command: nil},
+             sound: %{enabled: true},
              toast: %{delivery: :herdr}
            }
   end

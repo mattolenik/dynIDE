@@ -360,28 +360,39 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     render: render,
     tty: tty
   } do
-    alert_scene(render, %{toast: %{delivery: :terminal}, sound: %{enabled: true, command: nil}})
+    alert_scene(render, %{toast: %{delivery: :terminal}, sound: %{enabled: true}})
     send(render, {:alert, alert(:done)})
     _ = :sys.get_state(render)
     assert Tty.written(tty) =~ "\e]9;pi finished: w\a\a"
   end
 
   @tag :tmp_dir
-  test "a sound command runs with the sound name, a missing one logs once", %{
+  test "a command in the scene is never run: BEL instead", %{
     render: render,
     tty: tty,
     tmp_dir: dir
   } do
     out = Path.join(dir, "out")
-    cmd = Path.join(dir, "snd")
-    File.write!(cmd, "#!/bin/sh\necho \"$1\" >> '#{out}'\n")
-    File.chmod!(cmd, 0o755)
-    alert_scene(render, %{toast: %{delivery: :herdr}, sound: %{enabled: true, command: cmd}})
+    alert_scene(render, %{sound: %{enabled: true, command: script(dir, out)}})
+    send(render, {:alert, alert(:done)})
+    _ = :sys.get_state(render)
+    assert Tty.written(tty) =~ "\a"
+    Process.sleep(100)
+    refute File.exists?(out)
+  end
+
+  @tag :tmp_dir
+  test "a client-local sound command runs with the sound name, a missing one logs once",
+       %{render: render, tty: tty, tmp_dir: dir} do
+    out = Path.join(dir, "out")
+    Application.put_env(:herdr_term, :sound_command, script(dir, out))
+    on_exit(fn -> Application.delete_env(:herdr_term, :sound_command) end)
+    alert_scene(render, %{toast: %{delivery: :herdr}, sound: %{enabled: true}})
     send(render, {:alert, alert(:request)})
     assert wait_file(out) == "request\n"
     refute Tty.written(tty) =~ "\a"
 
-    alert_scene(render, %{sound: %{enabled: true, command: Path.join(dir, "nope")}})
+    Application.put_env(:herdr_term, :sound_command, Path.join(dir, "nope"))
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
@@ -391,6 +402,13 @@ defmodule HerdrTerm.Client.Term.RenderTest do
       end)
 
     assert length(String.split(log, "sound command")) == 2
+  end
+
+  defp script(dir, out) do
+    cmd = Path.join(dir, "snd")
+    File.write!(cmd, "#!/bin/sh\necho \"$1\" >> '#{out}'\n")
+    File.chmod!(cmd, 0o755)
+    cmd
   end
 
   defp wait_file(path, n \\ 200) do

@@ -18,8 +18,8 @@ defmodule HerdrServer.Config do
   Keys: `[keys]` `prefix` and the `Keybinds.Catalog` action names (a spec string or an
   array, `[]` unbinds); `[ui]` `sidebar_width`, `sidebar_min_width`, `sidebar_max_width`,
   `sidebar_start_collapsed`, `confirm_close`, `status_indicators` (`"dots"` |
-  `"symbols"`), `prompt_new_tab_name`; `[ui.sound]` `enabled`, `command` (run by the
-  terminal client with the sound name as its last argument); `[ui.toast]` `delivery`
+  `"symbols"`), `prompt_new_tab_name`; `[ui.sound]` `enabled`, `command` (kept in `App.Ui`
+  but never sent: the terminal client runs only its own `HERDR_LIVE_SOUND_COMMAND`); `[ui.toast]` `delivery`
   (`off | herdr | terminal | system`), `delay_seconds` (0..3600); `[theme]` `name`,
   `auto_switch`, `light_name`, `dark_name`; top-level `onboarding`.
   """

@@ -14,7 +14,7 @@ defmodule HerdrTerm.Client.Term.AlertTest do
     }
 
   defp props(delivery, enabled \\ true),
-    do: %{toast: %{delivery: delivery}, sound: %{enabled: enabled, command: nil}}
+    do: %{toast: %{delivery: delivery}, sound: %{enabled: enabled}}
 
   test "herdr delivery draws from the scene: only the sound" do
     assert Alert.actions(alert(), props(:herdr)) == [{:sound, "done"}]
