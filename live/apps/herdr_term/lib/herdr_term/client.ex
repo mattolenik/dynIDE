@@ -7,8 +7,9 @@ defmodule HerdrTerm.Client do
   find their siblings again.
 
   Options: `tty_opts` (map merged into the tty kernel's `open` options),
-  `endpoint` (default `HerdrScene.Protocol.endpoint/0`), `id`, `name`, `local`
-  (true only for `HerdrTerm.LocalClient`: see `local_exit/1`).
+  `endpoint` (default `HerdrScene.Protocol.endpoint/0`), `transport` (Render), `id`,
+  `name`, `local` (true only for `HerdrTerm.LocalClient`: see `local_exit/1`), `remote`
+  (true for the remote client VM's client, `HerdrTerm.Remote`: see `Tty.Owner`).
   """
 
   use Supervisor

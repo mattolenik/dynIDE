@@ -97,6 +97,17 @@ defmodule HerdrTerm.Tty.OwnerTest do
     assert_receive :local_exit, 500
   end
 
+  test "a remote client exits on a hangup or a detach and ignores a handoff", %{ep: ep} do
+    %{sup: sup, tty: tty} = start(ep, remote: true)
+    send(Client.render(sup), {:handoff, %{phase: :begin, gen: 1, panes: []}})
+    send(Client.render(sup), {:detached, :requested})
+    assert_receive :local_exit, 2_000
+    Tty.hangup(tty)
+    assert_receive :local_exit, 2_000
+    # the handoff did not stop it (only the local client releases the tty)
+    assert Process.alive?(Client.owner(sup))
+  end
+
   test "other clients only log a hangup or a detach", %{ep: ep} do
     %{sup: sup, tty: tty} = start(ep)
     Tty.hangup(tty)

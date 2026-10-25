@@ -18,7 +18,9 @@ defmodule HerdrTerm.Tty.Owner do
   gone) and `{:detached, reason}` (from Render, sent by the server) end the
   local client through `HerdrTerm.Client.local_exit/1`; `{:handoff, %{phase: :begin}}`
   stops the local client without stopping herdr-live (`HerdrTerm.Client.stop_local/0`).
-  Other clients only log.
+  A remote client (`remote: true`, `HerdrTerm.Remote`, its own VM) also ends on a hangup
+  or a detach, and ignores a handoff (its conn holds input across it). Other clients
+  only log.
 
   SIGWINCH: when `HerdrTerm.Kernel.sigwinch?/0` (real tty),
   `:os.set_signal(:sigwinch, :handle)` makes `erl_signal_server` emit a
@@ -39,7 +41,7 @@ defmodule HerdrTerm.Tty.Owner do
   @modes_off "\e[?1004l\e[?2004l\e[?1006l\e[?1002l\e[?1000l"
   @kitty_flags 1
 
-  defstruct [:id, :tty, :size, :sigwinch, local: false]
+  defstruct [:id, :tty, :size, :sigwinch, local: false, remote: false]
 
   def start_link(opts),
     do: GenServer.start_link(__MODULE__, opts, name: Client.via(opts[:id], :tty_owner))
@@ -68,7 +70,8 @@ defmodule HerdrTerm.Tty.Owner do
            tty: tty,
            size: Kernel.tty().size(tty),
            sigwinch: sigwinch(),
-           local: Keyword.get(opts, :local, false)
+           local: Keyword.get(opts, :local, false),
+           remote: Keyword.get(opts, :remote, false)
          }}
 
       {:error, reason} ->
@@ -126,14 +129,14 @@ defmodule HerdrTerm.Tty.Owner do
   def handle_info({:exit, :tty, reason}, state) do
     state = Map.merge(%__MODULE__{}, state)
     Logger.warning("host terminal gone: #{inspect(reason)}")
-    if state.local, do: Client.local_exit({:tty, reason})
+    if state.local or state.remote, do: Client.local_exit({:tty, reason})
     {:noreply, state}
   end
 
   def handle_info({:detached, reason}, state) do
     state = Map.merge(%__MODULE__{}, state)
     Logger.info("detached: #{inspect(reason)}")
-    if state.local, do: Client.local_exit({:detached, reason})
+    if state.local or state.remote, do: Client.local_exit({:detached, reason})
     {:noreply, state}
   end
 
