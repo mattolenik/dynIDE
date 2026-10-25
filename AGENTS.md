@@ -59,8 +59,16 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   validators, no processes, no umbrella deps. `live/apps/herdr_server`:
   server layer. `live/apps/herdr_term`: terminal client. `live/apps/herdr_reload`:
   the reloader. `live/apps/herdr_cli`: the `herdr-live` CLI (depends only on
-  herdr_scene; talks JSON to the API socket). `live/apps/herdr_integration`:
+  herdr_scene; talks JSON to the API socket). `live/apps/herdr_scene_html`:
+  dev-only HTML scene renderer (`mix herdr.scene.html`), depends only on
+  herdr_scene, nothing depends on it. `live/apps/herdr_integration`:
   test-only, may depend on all of them.
+- Chrome: 19 node roles with required props in `HerdrScene.Chrome`; golden
+  fixtures in `live/apps/herdr_scene/priv/fixtures/scenes` (every role must
+  have one and render in both the terminal client and the HTML renderer).
+  User config is herdr's TOML format at
+  `${XDG_CONFIG_HOME:-~/.config}/herdr-live/config.toml` (`$HERDR_LIVE_CONFIG`
+  overrides), reloaded with `prefix R`.
 - Modules live under the app root module: design `Native.Vt` is
   `HerdrServer.Native.Vt`, `Client.Term.Input` is `HerdrTerm.Client.Term.Input`.
 - NIF crates: `live/native/herdr_kernel` (NIF module `HerdrServer.Native`,
