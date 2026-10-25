@@ -25,6 +25,33 @@ defmodule HerdrServer.Client.SocketTest do
     assert File.stat!(ctx.path).mode |> Bitwise.band(0o777) == 0o600
   end
 
+  test "an empty or whitespace-only token file is replaced, not trusted", ctx do
+    for junk <- ["", " \n\t"] do
+      path = Path.join(Path.dirname(ctx.token_path), "junk.token")
+      File.write!(path, junk)
+      t = Task.async(fn -> Socket.token(path) end)
+      assert {:ok, token} = Task.yield(t, 2000)
+      assert token =~ ~r/\A[0-9a-f]{64}\z/
+      assert File.read!(path) == token
+      assert File.stat!(path).mode |> Bitwise.band(0o777) == 0o600
+      assert Path.wildcard(path <> ".*.tmp") == []
+      File.rm!(path)
+    end
+  end
+
+  test "an empty server token refuses even an empty auth", ctx do
+    lpath = Path.join(Path.dirname(ctx.token_path), "h.sock")
+    opts = [{:ifaddr, {:local, lpath}}, :binary, packet: :raw, active: false]
+    {:ok, l} = :gen_tcp.listen(0, opts)
+    c = connect(lpath)
+    {:ok, a} = :gen_tcp.accept(l, 1000)
+    pid = spawn(Socket, :handshake, [%{token: "", session: "default"}])
+    :ok = :gen_tcp.controlling_process(a, pid)
+    send(pid, {:socket, a})
+    :ok = send_frame(c, {:auth, ""})
+    assert recv_frame(c) == {:refused, "bad token"}
+  end
+
   test "attach yields attached, then a scene with inline rows", ctx do
     s = attached!(attach(ctx))
     assert {:scene, %Scene{panes: [%{rows: {:inline, rows}, rect: rect}]} = sc} = recv_frame(s)

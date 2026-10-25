@@ -42,34 +42,63 @@ defmodule HerdrServer.Client.Socket do
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  @doc "The token at `token_path`, created once (32 random bytes, hex, mode 0600)."
+  @doc """
+  The token at `token_path`, created once (32 random bytes, hex, mode 0600). A file that
+  is empty after trimming counts as missing: it is replaced (once; a second empty one
+  raises), so a truncated token never authenticates anyone.
+  """
   @spec token(Path.t()) :: binary
-  def token(token_path) do
-    case File.read(token_path) do
-      {:ok, t} when byte_size(t) > 0 ->
-        _ = File.chmod(token_path, 0o600)
-        String.trim(t)
+  def token(token_path), do: token(token_path, 2)
 
-      _ ->
-        create_token(token_path)
+  defp token(path, tries) do
+    case File.read(path) do
+      {:ok, t} when t != "" ->
+        case String.trim(t) do
+          "" ->
+            retry_token(path, tries)
+
+          trimmed ->
+            _ = File.chmod(path, 0o600)
+            trimmed
+        end
+
+      {:ok, ""} ->
+        retry_token(path, tries)
+
+      {:error, :enoent} ->
+        create_token(path, tries)
+
+      {:error, why} ->
+        raise File.Error, reason: why, action: "read token", path: path
     end
   end
 
-  # 0600 before the token is in it; :exclusive so a racing creator's token wins
-  defp create_token(path) do
+  defp retry_token(path, tries) when tries > 1 do
+    _ = File.rm(path)
+    create_token(path, tries - 1)
+  end
+
+  defp retry_token(path, _tries),
+    do: raise(File.Error, reason: :empty, action: "read token", path: path)
+
+  # Complete before it is visible: a 0600 temp file, then a hard link that fails when a
+  # racing creator got there first (whose token then wins).
+  defp create_token(path, tries) do
     hex = Base.encode16(:crypto.strong_rand_bytes(32), case: :lower)
+    tmp = "#{path}.#{System.unique_integer([:positive])}.#{System.pid()}.tmp"
 
-    case File.write(path, "", [:exclusive]) do
-      :ok ->
-        File.chmod!(path, 0o600)
-        File.write!(path, hex)
-        hex
+    try do
+      File.write!(tmp, "", [:exclusive])
+      File.chmod!(tmp, 0o600)
+      File.write!(tmp, hex)
 
-      {:error, :eexist} ->
-        token(path)
-
-      {:error, why} ->
-        raise File.Error, reason: why, action: "create token", path: path
+      case File.ln(tmp, path) do
+        :ok -> hex
+        {:error, :eexist} -> token(path, tries)
+        {:error, why} -> raise File.Error, reason: why, action: "create token", path: path
+      end
+    after
+      _ = File.rm(tmp)
     end
   end
 
@@ -125,7 +154,10 @@ defmodule HerdrServer.Client.Socket do
     do: [:binary, packet: :raw, active: false, send_timeout: 5000, send_timeout_close: true]
 
   @impl true
-  def handle_call(:path, _from, state), do: {:reply, state.path, state}
+  def handle_call(:path, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, state.path, state}
+  end
 
   @impl true
   def handle_info({:EXIT, pid, reason}, state) do
@@ -222,6 +254,9 @@ defmodule HerdrServer.Client.Socket do
              else: (_ -> :closed)
     end
   end
+
+  # an empty server token (never created by token/1) authenticates no one
+  defp auth(_frame, ""), do: {:refused, "bad token"}
 
   defp auth({:auth, t}, token) when is_binary(t) and byte_size(t) == byte_size(token) do
     if :crypto.hash_equals(t, token), do: :ok, else: {:refused, "bad token"}
