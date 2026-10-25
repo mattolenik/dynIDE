@@ -30,6 +30,8 @@ defmodule HerdrReload.Server do
 
   @type server :: GenServer.server()
 
+  @rejected_keep 20
+
   @doc "Starts the server; see the moduledoc and opts in `init/1`."
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
@@ -102,8 +104,7 @@ defmodule HerdrReload.Server do
         decentralized_counters: true
       ])
 
-    {:ok,
-     %{
+    state = %{
        table: table,
        compile_opts: compile_opts,
        loader_opts: [allowlist: Keyword.get(opts, :allowlist, [])],
@@ -120,7 +121,35 @@ defmodule HerdrReload.Server do
        last_rolled_back: :none,
        synced: [],
        next_id: 1
-     }, {:continue, :sync_loaded}}
+     }
+
+    prune_rejected(state.rejected_dir, @rejected_keep)
+    {:ok, state, {:continue, :sync_loaded}}
+  end
+
+  @doc false
+  # Keeps the `keep` newest batch dirs (mtime, ties by name); a failed removal is logged.
+  @spec prune_rejected(Path.t(), pos_integer()) :: :ok
+  def prune_rejected(dir, keep) do
+    dir
+    |> File.ls()
+    |> case do
+      {:ok, names} -> names
+      {:error, _} -> []
+    end
+    |> Enum.map(fn n ->
+      p = Path.join(dir, n)
+      mtime = with {:ok, %File.Stat{mtime: t}} <- File.stat(p, time: :posix), do: t
+      {if(is_integer(mtime), do: mtime, else: 0), n, p}
+    end)
+    |> Enum.sort(:desc)
+    |> Enum.drop(keep)
+    |> Enum.each(fn {_, _, p} ->
+      case File.rm_rf(p) do
+        {:ok, _} -> :ok
+        {:error, reason, f} -> Logger.warning("reload prune of #{f} failed: #{inspect(reason)}")
+      end
+    end)
   end
 
   # Ruling 28: a promoted standby runs the code it preloaded at boot, while edits the

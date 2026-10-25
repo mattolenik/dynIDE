@@ -435,4 +435,20 @@ defmodule HerdrReload.ServerTest do
     :counters.add(n, 1, 1)
     :counters.get(n, 1)
   end
+
+  test "prune keeps the newest 20" do
+    dir = Path.join(System.tmp_dir!(), "prune-#{System.unique_integer([:positive])}")
+    on_exit(fn -> File.rm_rf(dir) end)
+
+    for n <- 1..25 do
+      d = Path.join(dir, "b#{n}")
+      File.mkdir_p!(d)
+      File.touch!(d, {{2026, 1, 1}, {0, 0, n}})
+    end
+
+    assert Server.prune_rejected(dir, 20) == :ok
+    left = dir |> File.ls!() |> Enum.sort()
+    assert left == Enum.sort(for n <- 6..25, do: "b#{n}")
+    assert Server.prune_rejected(Path.join(dir, "missing"), 20) == :ok
+  end
 end
