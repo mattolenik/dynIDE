@@ -4,11 +4,17 @@
 # the command, which no destructor survives. Usage: tty_guard.sh [-s] cmd [args...]
 #
 # Saves `stty -g` first and puts it back after the command exits. When the
-# command itself exits non-zero it also writes the restore sequence (M2 ruling 6:
-# mouse/paste/focus off, SGR/cursor reset, autowrap on, leave the alt screen),
-# preceded by a kitty pop inside an alt-screen sandwich (enter alt screen, pop,
-# and the final leave), so only the alt screen's stack is popped, never the
-# main screen's; a zero exit restored the terminal itself. HUP, INT, QUIT and TERM
+# command exits non-zero, or a signal reached this script, it also writes the
+# restore sequence (M2 ruling 6: mouse/paste/focus off, SGR/cursor reset,
+# autowrap on, leave the alt screen), preceded by a kitty pop inside an
+# alt-screen sandwich (enter alt screen, pop, and the final leave), so only the
+# alt screen's stack is popped, never the main screen's. Only a zero exit the
+# command chose (q, detach) restored the terminal itself; a VM stopped by
+# SIGTERM exits 0 and may halt before its tty resource's destructor runs.
+# Both steps run only while our process group owns the tty: from the
+# background (`kill %1` of a suspended job, whose suspend already restored the
+# tty) the tty is the shell's, and a tcsetattr would raise SIGTTOU against the
+# job, which can land after the shell's `fg` and stop it again. HUP, INT, QUIT and TERM
 # sent to this script are forwarded to the command as TERM (a graceful VM stop)
 # and the script waits for it. Exits with the command's status; with -s, a
 # signal that reached this script turns a zero status into 1 (live-demo).
@@ -33,7 +39,11 @@ while [ -z "$status" ]; do
 done
 vm_status=$status
 [ "$signal_fails" = 1 ] && [ "$sig" = 1 ] && [ "$status" = 0 ] && status=1
-stty "$saved" </dev/tty
-[ "$vm_status" = 0 ] ||
-  printf '\033[?1049h\033[<u\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1016l\033[?2004l\033[?1004l\033]8;;\033\\\033[0m\033[0 q\033[?25h\033[?7h\033[?1049l' >/dev/tty
+# shellcheck disable=SC2046 # word-splits the two numbers on purpose
+foreground() { set -- $(ps -o tpgid= -o pgid= -p $$ 2>/dev/null); [ "$#" = 2 ] && [ "$1" = "$2" ]; }
+if foreground; then
+  stty "$saved" </dev/tty
+  { [ "$vm_status" = 0 ] && [ "$sig" = 0 ]; } ||
+    printf '\033[?1049h\033[<u\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1016l\033[?2004l\033[?1004l\033]8;;\033\\\033[0m\033[0 q\033[?25h\033[?7h\033[?1049l' >/dev/tty
+fi
 exit "$status"

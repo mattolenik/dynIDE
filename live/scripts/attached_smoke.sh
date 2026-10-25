@@ -10,7 +10,8 @@
 # primary VM; the broker hands off to a new VM that adopts the app and whose
 # client repaints, then SIGTERM stops it with status 0, the tty settings
 # unchanged and the restore at the end. Run 3: tty_guard.sh (still used by
-# live-demo) on an early non-zero exit.
+# live-demo) on an early non-zero exit. Run 4: the guard signalled while its
+# command exits 0 without restoring (a VM halted by SIGTERM) still restores.
 # Usage: attached_smoke.sh [-v]    (SMOKE_TIMEOUT seconds to boot, default 600)
 set -u
 verbose=0
@@ -49,6 +50,19 @@ if [ "\$2" = EARLY ]; then
   stty cols 120 rows 40
   stty -a >"$tmp/before.\$run"
   "$root/scripts/tty_guard.sh" sh -c 'exit 3'
+  echo \$? >"$tmp/status.\$run"
+  stty -a >"$tmp/after.\$run"
+  exit 0
+fi
+if [ "\$2" = SIGNAL ]; then
+  stty cols 120 rows 40
+  stty -a >"$tmp/before.\$run"
+  # a VM that SIGTERM stops with status 0 and that never restores the tty itself
+  "$root/scripts/tty_guard.sh" sh -c 'trap "exit 0" TERM; while :; do sleep 0.1; done' &
+  guard=\$!
+  sleep 1
+  kill -TERM "\$guard"
+  wait "\$guard"
   echo \$? >"$tmp/status.\$run"
   stty -a >"$tmp/after.\$run"
   exit 0
@@ -189,6 +203,12 @@ LC_ALL=C sed "s/${esc}\[?1049h${esc}\[<u//g" "$tmp/transcript.early" | LC_ALL=C 
   fail "early: a kitty pop outside the alt-screen sandwich (would pop the main screen's stack)"
 ends_restored early || fail "early: transcript does not end with the guard's restore"
 echo "PASS: early non-zero exit: guard exits 3, stty unchanged, kitty pop only inside the alt-screen sandwich"
+
+in_pty signal SIGNAL
+[ "$(cat "$tmp/status.signal")" = 0 ] || fail "signal: exit status $(cat "$tmp/status.signal") (wanted 0)"
+cmp -s "$tmp/before.signal" "$tmp/after.signal" || fail "signal: stty changed: $(diff "$tmp/before.signal" "$tmp/after.signal")"
+ends_restored signal || fail "signal: a zero exit after SIGTERM does not end with the guard's restore"
+echo "PASS: SIGTERM to the guard, command exits 0: guard still writes the restore"
 
 [ "$verbose" = 1 ] && dump
 exit 0
