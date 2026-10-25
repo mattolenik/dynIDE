@@ -6,7 +6,7 @@ defmodule HerdrServer.Handoff.SnapshotterTest do
   alias HerdrServer.Native.Link, as: NLink
 
   setup do
-    path = "/tmp/hs-#{System.unique_integer([:positive])}.sock"
+    path = "/tmp/hs-#{System.pid()}-#{System.unique_integer([:positive])}.sock"
     {:ok, l} = :gen_tcp.listen(0, ifaddr: {:local, path}, mode: :binary, active: false)
     {:ok, link} = NLink.connect(path, self())
     {:ok, peer} = :gen_tcp.accept(l, 5_000)
@@ -64,7 +64,8 @@ defmodule HerdrServer.Handoff.SnapshotterTest do
     {:ok, id} = Keeper.open(spec)
     {:ok, %{vt: vt, pty: pty}} = Keeper.lookup(id)
     key = "pane/#{id}"
-    Process.sleep(200)
+    # the prompt drawn: a prompt landing between two ticks would be a real change
+    assert wait_text(vt, "$")
 
     assert {:ok, %{id: ^id, vt: snap}} = State.decode(Map.fetch!(tick(peer), key))
     assert is_binary(snap)
@@ -91,8 +92,9 @@ defmodule HerdrServer.Handoff.SnapshotterTest do
     }
 
     {:ok, id} = Keeper.open(spec)
+    {:ok, %{vt: vt}} = Keeper.lookup(id)
     key = "pane/#{id}"
-    Process.sleep(200)
+    assert wait_text(vt, "$")
     assert Map.has_key?(tick(peer), key)
     refute Map.has_key?(tick(peer), key)
     :ok = Snapshotter.pause()
@@ -101,7 +103,8 @@ defmodule HerdrServer.Handoff.SnapshotterTest do
     Keeper.close(id)
   end
 
-  defp wait_text(vt, s, deadline \\ System.monotonic_time(:millisecond) + 3000) do
+  # bounded at 10 s: a shell under host load starts slowly, a missing text still fails
+  defp wait_text(vt, s, deadline \\ System.monotonic_time(:millisecond) + 10_000) do
     cond do
       Vt.read_text(vt, :screen) =~ s -> true
       System.monotonic_time(:millisecond) > deadline -> false
