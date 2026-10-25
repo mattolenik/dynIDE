@@ -7,9 +7,9 @@
     text: nil,
     token: nil,
     props: %{
+      toast: %{delivery: :herdr},
       mouse: true,
       sound: %{command: nil, enabled: true},
-      toast: %{delivery: :herdr},
       indicators: :dots,
       theme: %{
         name: "catppuccin",
@@ -294,6 +294,24 @@
             role: :keycap,
             id: {:key, 2},
             rect: nil,
+            text: "w",
+            token: nil,
+            props: %{key: "w", mods: []},
+            children: []
+          },
+          %HerdrScene.Scene.Node{
+            role: :text,
+            id: {:hint_text, 2},
+            rect: nil,
+            text: "workspace nav",
+            token: :muted,
+            props: %{},
+            children: []
+          },
+          %HerdrScene.Scene.Node{
+            role: :keycap,
+            id: {:key, 3},
+            rect: nil,
             text: "?",
             token: nil,
             props: %{key: "?", mods: []},
@@ -301,7 +319,7 @@
           },
           %HerdrScene.Scene.Node{
             role: :text,
-            id: {:hint_text, 2},
+            id: {:hint_text, 3},
             rect: nil,
             text: "keybinds",
             token: :muted,
@@ -342,5 +360,5 @@
       graphics: []
     }
   ],
-  focus: %{pane: 1, chrome: nil}
+  focus: %{chrome: nil, pane: 1}
 }

@@ -7,9 +7,9 @@
     text: nil,
     token: nil,
     props: %{
+      toast: %{delivery: :herdr},
       mouse: true,
       sound: %{command: nil, enabled: true},
-      toast: %{delivery: :herdr},
       indicators: :dots,
       theme: %{
         name: "catppuccin",
@@ -280,7 +280,7 @@
         rect: %{x: 22, y: 9, h: 22, w: 76},
         text: nil,
         token: nil,
-        props: %{kind: :keybinds, tone: :default, dim: true},
+        props: %{kind: :keybinds, dim: true, tone: :default},
         children: [
           %HerdrScene.Scene.Node{
             role: :text,
@@ -526,6 +526,44 @@
                 ]
               },
               %HerdrScene.Scene.Node{
+                role: :item,
+                id: {:action, "goto"},
+                rect: nil,
+                text: "goto",
+                token: nil,
+                props: %{selected: false},
+                children: [
+                  %HerdrScene.Scene.Node{
+                    role: :keycap,
+                    id: {:key, 0},
+                    rect: nil,
+                    text: "prefix+g",
+                    token: nil,
+                    props: %{prefix: true, key: "g", mods: []},
+                    children: []
+                  }
+                ]
+              },
+              %HerdrScene.Scene.Node{
+                role: :item,
+                id: {:action, "navigate_workspaces"},
+                rect: nil,
+                text: "navigate workspaces",
+                token: nil,
+                props: %{selected: false},
+                children: [
+                  %HerdrScene.Scene.Node{
+                    role: :keycap,
+                    id: {:key, 0},
+                    rect: nil,
+                    text: "prefix+w",
+                    token: nil,
+                    props: %{prefix: true, key: "w", mods: []},
+                    children: []
+                  }
+                ]
+              },
+              %HerdrScene.Scene.Node{
                 role: :text,
                 id: {:group, "workspaces / tabs"},
                 rect: nil,
@@ -533,44 +571,6 @@
                 token: :accent,
                 props: %{},
                 children: []
-              },
-              %HerdrScene.Scene.Node{
-                role: :item,
-                id: {:action, "new_workspace"},
-                rect: nil,
-                text: "new workspace",
-                token: nil,
-                props: %{selected: false},
-                children: [
-                  %HerdrScene.Scene.Node{
-                    role: :keycap,
-                    id: {:key, 0},
-                    rect: nil,
-                    text: "prefix+shift+n",
-                    token: nil,
-                    props: %{prefix: true, key: "N", mods: []},
-                    children: []
-                  }
-                ]
-              },
-              %HerdrScene.Scene.Node{
-                role: :item,
-                id: {:action, "rename_workspace"},
-                rect: nil,
-                text: "rename workspace",
-                token: nil,
-                props: %{selected: false},
-                children: [
-                  %HerdrScene.Scene.Node{
-                    role: :keycap,
-                    id: {:key, 0},
-                    rect: nil,
-                    text: "prefix+shift+w",
-                    token: nil,
-                    props: %{prefix: true, key: "W", mods: []},
-                    children: []
-                  }
-                ]
               }
             ]
           },
@@ -618,5 +618,5 @@
       graphics: []
     }
   ],
-  focus: %{pane: 1, chrome: nil}
+  focus: %{chrome: nil, pane: 1}
 }
