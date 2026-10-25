@@ -133,3 +133,9 @@ what it costs if wrong.
 - 2026-10-24 (human): M14 ports only herdr's existing external-process
   plugin model; BEAM plugins are out of scope. Cost if wrong: a later
   milestone adds an in-VM plugin path beside the external one.
+- 2026-10-24: M14/M17 seam: M14 owns `pane.rename`, `pane split --no-focus`,
+  Store spawn opts (cmd/args/env) and `Plugins.Keybind.mfa/1`; M17 owns the
+  `[[keys.command]]` parser (which calls that mfa for plugin_action) and
+  builds `pane.split --cwd/--env` on M14's spawn opts; M17 row B7 dropped.
+  Plugin popups use M17's `Modal.Popup` once it exists. Cost if wrong: one
+  stopgap clause and one Spec entry to move.
