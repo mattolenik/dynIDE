@@ -63,7 +63,8 @@ defmodule HerdrServer.Client.Session do
   (`Client.Foreground`) on attach and on each slow-path input; pane bells and child clipboard writes sent to it
   go to the client as `{:bell, id}` and `{:clipboard, %{source: :pane}}`, and
   `{:pane_facts, id}` repaints when the pane is in the last scene. `{:caps, map}` merges
-  into `state.caps`; the foreground session's also go to `Pane.Colors.apply_all/1`.
+  into `state.caps`; the foreground session's also go to `Pane.Colors.apply_all/1`, and
+  a session that becomes the foreground client re-applies its stored colours.
 
   Copy mode (M9): entering mode `:copy` starts a `Client.CopyMode` (`state.copy`) on the
   focused pane and clears the pointer selection; in that mode `Client.Keys` consumes
@@ -123,7 +124,7 @@ defmodule HerdrServer.Client.Session do
     state = Map.merge(%State{}, state)
     # a mirrored mode: the client reset its own to :terminal for this new session
     if state.mode != :terminal, do: send(state.client, {:input_mode, state.mode})
-    Foreground.mark(self())
+    become_foreground(state)
     {:noreply, resized(state)}
   end
 
@@ -430,7 +431,7 @@ defmodule HerdrServer.Client.Session do
 
       # a broken resolver (failure or bad shape) still lets the client type
       other ->
-        Foreground.mark(self())
+        become_foreground(state)
         Store.event(ev, driving_size(state))
         notice(state, %{level: :error, text: "keys failed: #{inspect(other)}"})
     end
@@ -455,7 +456,7 @@ defmodule HerdrServer.Client.Session do
   end
 
   defp apply_input(state, {:mouse, _} = ev, _from) do
-    Foreground.mark(self())
+    become_foreground(state)
     ctx = Guard.run_twice(PointerIo, :context, [state.pointer, ev, state.last_scene], guard())
 
     with {:ok, ctx} <- ctx,
@@ -470,7 +471,7 @@ defmodule HerdrServer.Client.Session do
   end
 
   defp apply_input(state, ev, _from) do
-    Foreground.mark(self())
+    become_foreground(state)
     Store.event(ev, driving_size(state))
     state
   end
@@ -506,7 +507,7 @@ defmodule HerdrServer.Client.Session do
               state
 
             false ->
-              Foreground.mark(self())
+              become_foreground(state)
               Store.event(ev, driving_size(state))
               state
 
@@ -515,7 +516,7 @@ defmodule HerdrServer.Client.Session do
           end
 
         {:run, mfa} ->
-          Foreground.mark(self())
+          become_foreground(state)
           Store.run(mfa, driving_size(state))
           state
 
@@ -612,6 +613,18 @@ defmodule HerdrServer.Client.Session do
   defp copy_follow(state, _app), do: state
 
   defp guard, do: [server: Store.reload_server()]
+
+  # Marks this session the foreground client; on a change, its own host colours (if
+  # it sent any) go to every pane.
+  defp become_foreground(state) do
+    was = Foreground.current()
+    :ok = Foreground.mark(self())
+
+    if was != self() and is_map_key(state.caps || %{}, :colors),
+      do: Guard.run_twice(Colors, :apply_all, [Map.take(state.caps, [:colors, :scheme])], guard())
+
+    :ok
+  end
 
   # --- pointer ---
 

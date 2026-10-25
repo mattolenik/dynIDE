@@ -101,9 +101,9 @@ defmodule HerdrTerm.Client.Term.Input.ParseMousePasteTest do
     assert {[], %{kitty: false}} = run(["\e[?1u"])
   end
 
-  test "DA1 reply closes all windows" do
+  test "DA1 reply closes all windows but the colour window" do
     {_, t} = run(["\e[?62c"], win([:da1, :kitty_flags, :colors, :cpr]))
-    assert t.windows == %{}
+    assert Map.keys(t.windows) == [:colors]
     assert {[], _} = run(["\e[?1u"], t)
   end
 

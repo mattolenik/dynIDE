@@ -40,7 +40,8 @@ defmodule HerdrTerm.Kernel do
   def blit, do: :persistent_term.get(@key).blit
 
   @spec desktop() :: module
-  def desktop, do: :persistent_term.get(@key).desktop
+  # an older cached map (loaded before `desktop` existed) has no entry
+  def desktop, do: Map.get(:persistent_term.get(@key), :desktop, HerdrTerm.Native.Desktop)
 
   @spec sigwinch?() :: boolean
   def sigwinch?, do: :persistent_term.get(@key).sigwinch

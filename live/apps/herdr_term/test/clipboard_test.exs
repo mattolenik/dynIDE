@@ -41,4 +41,15 @@ defmodule HerdrTerm.ClipboardTest do
     assert_received {:desktop, :clipboard_write, "abc"}
     assert Tty.written(tty) == "\e]52;c;YWJj\a"
   end
+
+  test "OSC 52 text over 192 KiB is refused, the desktop tool still takes it", %{tty: tty} do
+    big = String.duplicate("x", 196_609)
+    Desktop.listen(self(), {:error, :unavailable})
+    assert Clipboard.write(tty, big) == {:error, :too_large}
+    assert Tty.written(tty) == ""
+    assert Clipboard.write(tty, binary_part(big, 0, 196_608)) == :ok
+
+    Desktop.listen(self())
+    assert Clipboard.write(tty, big) == :ok
+  end
 end

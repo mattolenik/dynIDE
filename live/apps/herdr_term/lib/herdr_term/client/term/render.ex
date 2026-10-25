@@ -37,7 +37,7 @@ defmodule HerdrTerm.Client.Term.Render do
 
   Desktop: `{:bell, _}` writes one BEL to the host, `{:clipboard, %{text: t}}` goes
   through `HerdrTerm.Clipboard`, `{:open_url, url}` (http/https only, re-checked here)
-  through `HerdrTerm.Kernel.desktop/0`. `{:host_colors, %{fg, bg}}` (from Input, rgb
+  through `HerdrTerm.Kernel.desktop/0` (UTF-8 only); a failed copy is logged. `{:host_colors, %{fg, bg}}` (from Input, rgb
   3-tuples or nil) becomes `theme.host`.
   """
 
@@ -226,14 +226,19 @@ defmodule HerdrTerm.Client.Term.Render do
 
   def handle_info({:clipboard, %{text: text}}, state) when is_binary(text) do
     state = Map.merge(%__MODULE__{}, state)
-    Guard.run_twice(Clipboard, :write, [state.tty, text], scan: false)
+    # no notice channel of its own: a refused copy is a log line
+    case Guard.run_twice(Clipboard, :write, [state.tty, text], scan: false) do
+      {:ok, :ok} -> :ok
+      other -> Logger.warning("clipboard write failed: #{inspect(other)}")
+    end
+
     {:noreply, state}
   end
 
   def handle_info({:open_url, url}, state) when is_binary(url) do
     state = Map.merge(%__MODULE__{}, state)
 
-    with true <- String.starts_with?(url, ["http://", "https://"]),
+    with true <- String.valid?(url) and String.starts_with?(url, ["http://", "https://"]),
          {:error, why} <- Kernel.desktop().open_url(url),
          do: Logger.warning("open url failed: #{inspect(why)}")
 

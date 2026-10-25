@@ -46,6 +46,26 @@ defmodule HerdrTerm.Client.Term.RenderDesktopTest do
     assert_receive {:desktop, :clipboard_write, "copied"}
   end
 
+  test "a clipboard write that cannot reach the host is logged", %{render: render} do
+    System.put_env("SSH_TTY", "/dev/pts/1")
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        send(render, {:clipboard, %{text: String.duplicate("x", 200_000), source: :pane}})
+        :sys.get_state(render)
+      end)
+
+    assert log =~ "clipboard"
+    assert log =~ "too_large"
+  end
+
+  test "a non-UTF-8 url is ignored", %{render: render} do
+    send(render, {:open_url, "https://x/" <> <<0xFF>>})
+    :sys.get_state(render)
+    refute_received {:desktop, :open_url, _}
+    assert Process.alive?(render)
+  end
+
   test "only http(s) urls are opened", %{render: render} do
     send(render, {:open_url, "file:///etc/passwd"})
     send(render, {:open_url, "https://example.com/a"})

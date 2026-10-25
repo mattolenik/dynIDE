@@ -19,11 +19,17 @@ defmodule HerdrTerm.Client.Term.Input do
 
   Host colours: after the startup windows (500ms) and on `{:tty_resumed}`, Input asks
   the host for its colour scheme (`CSI ? 996 n`), default fg/bg (OSC 10/11) and palette
-  (OSC 4, 0..255) with a 1s `:colors` window. When all 258 colours arrived or the window
-  closed, and the host answered anything, the session gets
+  (OSC 4, 0..255), then `CSI 5 n` as end sentinel, with a 1s `:colors` window. When
+  all 258 colours or the sentinel's reply arrived or the window closed, and the host
+  answered anything, the session gets
   `{:caps, %{colors: %{fg, bg, palette}, scheme}}` (rgb `{r, g, b}`, unanswered fg/bg/
   scheme nil) and Render `{:host_colors, %{fg, bg}}`; a later unsolicited scheme report
-  (mode 2031) sends `{:caps, %{scheme: s}}`. The latest caps go to every new session.
+  (mode 2031) sends `{:caps, %{scheme: s}}` and queries the colours again (the theme
+  changed). The latest caps go to every new session.
+
+  Pointer moves (any-motion mode 1003) coalesce: a queued `:move` is replaced by the
+  newest one, so at most one waits behind an in-flight event and keys never queue
+  behind a stream of moves.
 
   Parse runs through `HerdrReload.Guard`: a failing chunk is dropped (logged) and the parser
   state, queue and in-flight event stay as they were. `{:tty_resumed}` and
@@ -50,7 +56,9 @@ defmodule HerdrTerm.Client.Term.Input do
   @colors_ms 1000
   @color_queries IO.iodata_to_binary([
                    "\e[?996n\e]10;?\e\\\e]11;?\e\\",
-                   for(n <- 0..255, do: "\e]4;#{n};?\e\\")
+                   for(n <- 0..255, do: "\e]4;#{n};?\e\\"),
+                   # DSR status: its `ESC[0n` reply ends the query (Parse :colors_end)
+                   "\e[5n"
                  ])
 
   defstruct [
@@ -231,7 +239,9 @@ defmodule HerdrTerm.Client.Term.Input do
 
   defp enqueue(state, items) do
     {replies, events} = Enum.split_with(items, &match?({:reply, _, _}, &1))
-    {colors, replies} = Enum.split_with(replies, &(elem(&1, 1) in [:fg, :bg, :palette, :scheme]))
+
+    {colors, replies} =
+      Enum.split_with(replies, &(elem(&1, 1) in [:fg, :bg, :palette, :scheme, :colors_end]))
 
     replies =
       Enum.reduce(replies, state.replies, fn {:reply, kind, data}, acc ->
@@ -241,8 +251,14 @@ defmodule HerdrTerm.Client.Term.Input do
 
     state = Enum.reduce(colors, %{state | replies: replies}, &color_reply/2)
     {events, state} = Enum.flat_map_reduce(events, state, &hit/2)
-    drain(%{state | queue: state.queue ++ events})
+    drain(%{state | queue: Enum.reduce(events, state.queue, &queue_event/2)})
   end
+
+  # a new pointer move replaces any queued one (newest position wins)
+  defp queue_event({:mouse, %{kind: :move}} = ev, queue),
+    do: Enum.reject(queue, &match?({:mouse, %{kind: :move}}, &1)) ++ [ev]
+
+  defp queue_event(ev, queue), do: queue ++ [ev]
 
   # -- host colours ----------------------------------------------------------
 
@@ -262,11 +278,14 @@ defmodule HerdrTerm.Client.Term.Input do
   end
 
   # unsolicited (mode 2031) scheme report
-  defp color_reply({:reply, :scheme, s}, %{colors: nil} = state),
-    do: publish(%{state | caps: Map.put(state.caps || %{}, :scheme, s)}, %{scheme: s})
+  defp color_reply({:reply, :scheme, s}, %{colors: nil} = state) do
+    state = publish(%{state | caps: Map.put(state.caps || %{}, :scheme, s)}, %{scheme: s})
+    query_colors(state)
+  end
 
   defp color_reply({:reply, :scheme, s}, state), do: put_in(state.colors.scheme, s)
   defp color_reply(_late, %{colors: nil} = state), do: state
+  defp color_reply({:reply, :colors_end, _}, state), do: colors_done(state)
 
   defp color_reply({:reply, kind, v}, %{colors: c} = state) do
     c =

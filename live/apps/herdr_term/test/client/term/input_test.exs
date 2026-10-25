@@ -160,6 +160,20 @@ defmodule HerdrTerm.Client.Term.InputTest do
     assert Client.input(sup) == input
   end
 
+  test "pointer moves behind an in-flight event coalesce to the newest", %{tty: tty, sup: sup} do
+    Tty.inject(tty, "a")
+    assert_receive {:input, from, 1, {:key, %{key: "a"}}}
+    for x <- 1..50, do: Tty.inject(tty, "\e[<35;#{x};1M")
+    Tty.inject(tty, "b")
+    :sys.get_state(Client.input(sup))
+    send(from, {:ack, 1})
+    assert_receive {:input, ^from, 2, {:mouse, %{kind: :move, x: 49}}}
+    send(from, {:ack, 2})
+    assert_receive {:input, ^from, 3, {:key, %{key: "b"}}}
+    send(from, {:ack, 3})
+    refute_receive {:input, _, _, _}, 50
+  end
+
   describe "host colours" do
     defp palette_replies(range),
       do: for(n <- range, into: "", do: "\e]4;#{n};rgb:#{hex(n)}/00/00\e\\")
@@ -174,6 +188,7 @@ defmodule HerdrTerm.Client.Term.InputTest do
       assert wait_until(fn -> queried(tty, 1) end, 200)
       w = Tty.written(tty)
       assert w =~ "\e]10;?\e\\\e]11;?\e\\"
+      assert String.ends_with?(w, "\e]4;255;?\e\\\e[5n")
       assert w =~ "\e]4;0;?\e\\" and w =~ "\e]4;255;?\e\\"
 
       Tty.inject(tty, "\e[?997;1n\e]10;rgb:ffff/ffff/ffff\e\\\e]11;rgb:1e1e/1e1e/2e2e\e\\")
@@ -195,10 +210,11 @@ defmodule HerdrTerm.Client.Term.InputTest do
 
       refute_receive {:input, _, _, _}, 50
 
-      # a later scheme report alone
+      # a later scheme report alone, and the colours are asked again
       Tty.inject(tty, "\e[?997;2n")
       assert_receive {:caps, caps}
       assert caps == %{scheme: :light}
+      assert wait_until(fn -> queried(tty, 2) end)
 
       # a new session gets the latest caps
       send(Client.input(sup), {:session, self()})
@@ -219,6 +235,12 @@ defmodule HerdrTerm.Client.Term.InputTest do
 
       send(Client.input(sup), {:tty_resumed})
       assert wait_until(fn -> queried(tty, 2) end, 200)
+    end
+
+    test "a late startup DA1 keeps the window; the status sentinel ends it early", %{tty: tty} do
+      assert wait_until(fn -> queried(tty, 1) end, 200)
+      Tty.inject(tty, "\e[?62;22c\e]10;rgb:00/00/00\a\e[0n")
+      assert_receive {:caps, %{colors: %{fg: {0, 0, 0}, bg: nil}}}, 300
     end
 
     test "no answer sends no caps", %{tty: tty} do

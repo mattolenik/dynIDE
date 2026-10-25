@@ -5,6 +5,7 @@
 use std::io::{self, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
@@ -74,23 +75,44 @@ fn run(tools: &[&[&str]], arg: Option<&str>, input: Option<Vec<u8>>) -> Result<(
                 .ok()
         })
         .ok_or(Error::Unavailable)?;
-    // ponytail: if the thread cannot start the child is never reaped (one zombie per failure).
     reap(child, input).map_err(|_| Error::Unavailable)
 }
 
+/// Hands the child to a kernel thread that writes `input`, closes stdin and
+/// waits. The thread lives as long as the tool: `xdg-open` may block until a
+/// browser it started in the foreground exits. When no thread can start, the
+/// child is killed and reaped here (no zombie, and a killed clipboard tool
+/// never sets an empty clipboard), and the caller falls back.
 fn reap(mut child: Child, input: Option<Vec<u8>>) -> io::Result<()> {
-    std::thread::Builder::new()
+    let (tx, rx) = mpsc::channel::<(Child, Option<Vec<u8>>)>();
+    let spawned = std::thread::Builder::new()
         .name("herdr-desktop".into())
         .spawn(move || {
+            let Ok((mut child, input)) = rx.recv() else {
+                return;
+            };
             // Nobody to report to: a failing tool is the same as a slow one.
             let _ = catch_unwind(AssertUnwindSafe(|| {
                 if let (Some(bytes), Some(mut stdin)) = (input, child.stdin.take()) {
                     let _ = stdin.write_all(&bytes);
                 }
-                let _ = child.wait();
             }));
-        })
-        .map(|_| ())
+            let _ = child.wait();
+        });
+    let failed = match spawned {
+        Ok(_) => match tx.send((child, input)) {
+            Ok(()) => return Ok(()),
+            // the thread is gone already: take the child back
+            Err(mpsc::SendError((back, _))) => {
+                child = back;
+                io::Error::other("desktop thread exited")
+            }
+        },
+        Err(err) => err,
+    };
+    let _ = child.kill();
+    let _ = child.wait();
+    Err(failed)
 }
 
 pub fn clipboard_write(text: Vec<u8>) -> Result<(), Error> {

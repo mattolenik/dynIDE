@@ -43,6 +43,13 @@ defmodule HerdrTerm.Client.Term.Input.ParseColorsTest do
     assert run("\e]4;1;rgb:ff/00/00\a", Parse.new()) == []
   end
 
+  test "DA1 leaves the colour window open; the status reply ends it" do
+    {items, t} = Parse.events("\e[?62c\e]10;rgb:ff/ff/ff\a\e[0n", colors())
+    assert items == [{:reply, :fg, {255, 255, 255}}, {:reply, :colors_end, nil}]
+    refute is_map_key(t.windows, :colors)
+    assert run("\e[0n", Parse.new()) == []
+  end
+
   test "colour scheme reports are parsed outside any window" do
     assert run("\e[?997;2n", Parse.new()) == [{:reply, :scheme, :light}]
     assert run("\e[?997;1n", Parse.new()) == [{:reply, :scheme, :dark}]

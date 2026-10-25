@@ -32,8 +32,10 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
       arrives as several `{:paste, _}` events.
     * Query replies (DA1, kitty flags, colours, cursor position) are emitted as
       `{:reply, kind, data}` only while a window opened with `open_window/3` is
-      live, else dropped. A DA1 reply closes all windows. Colour replies (`:colors`
-      window): OSC 10/11 -> `{:reply, :fg | :bg, {r, g, b}}`, OSC 4 ->
+      live, else dropped. A DA1 reply closes all windows but `:colors` (a late startup
+      DA1 must not end a colour query); the DSR status reply `\\e[0n` inside `:colors`
+      is the colour query's end sentinel, `{:reply, :colors_end, nil}`, and closes it.
+      Colour replies (`:colors` window): OSC 10/11 -> `{:reply, :fg | :bg, {r, g, b}}`, OSC 4 ->
       `{:reply, :palette, {n, {r, g, b}}}`, from `rgb:` specs of 1-4 hex digits per
       channel (anything else is dropped). An OSC reply body over 256 bytes without
       terminator is dropped.
@@ -324,8 +326,11 @@ defmodule HerdrTerm.Client.Term.Input.Parse do
   # Replies need window state; everything else is stateless via csi/3.
   defp reply("?" <> p, ?c, rest, t) do
     items = if is_map_key(t.windows, :da1), do: [{:reply, :da1, params(p)}], else: []
-    {items, rest, %{t | windows: %{}}}
+    {items, rest, %{t | windows: Map.take(t.windows, [:colors])}}
   end
+
+  defp reply("0", ?n, rest, %{windows: %{colors: _}} = t),
+    do: {[{:reply, :colors_end, nil}], rest, %{t | windows: Map.delete(t.windows, :colors)}}
 
   defp reply("?" <> p, ?u, rest, t) do
     with true <- is_map_key(t.windows, :kitty_flags), n when is_integer(n) <- int(p) do

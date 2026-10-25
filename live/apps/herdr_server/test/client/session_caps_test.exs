@@ -101,6 +101,25 @@ defmodule HerdrServer.Client.SessionCapsTest do
     assert vt_colors(1) == %{colors: nil, scheme: nil}
   end
 
+  test "becoming the foreground client re-applies the session's own colours", %{session: s} do
+    b = attach()
+    send(s, {:caps, %{colors: @colors, scheme: :dark}})
+    assert :sys.get_state(s).caps == %{colors: @colors, scheme: :dark}
+    assert vt_colors(1) == %{colors: nil, scheme: nil}
+
+    # a slow-path input makes `s` the foreground client
+    send(s, {:input, self(), 1, {:focus, true}})
+    assert_receive {:ack, 1}
+    want = %{colors: @colors, scheme: :dark}
+    assert eventually(fn -> vt_colors(1) == want and vt_colors(2) == want end)
+
+    # back to `b`, which has no colours: nothing changes
+    send(b, {:input, self(), 1, {:focus, true}})
+    assert_receive {:ack, 1}
+    :sys.get_state(b)
+    assert vt_colors(1) == want
+  end
+
   test "malformed colours are ignored", %{session: s} do
     send(s, {:caps, %{colors: %{fg: {256, 0, 0}}, scheme: :dark}})
     :sys.get_state(s)
