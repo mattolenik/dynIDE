@@ -217,7 +217,9 @@ defmodule HerdrIntegration.ArchitectureTest do
         {"handoff #{phase}", {:handoff, %{phase: phase, gen: 2, panes: [1, 2]}}}
       end
 
-    scenes ++ statuses ++ modal_scenes(split, state.(:terminal, [])) ++
+    scenes ++
+      statuses ++
+      modal_scenes(split, state.(:terminal, [])) ++
       pane_scenes ++ handoffs ++ simple_messages(row)
   end
 
