@@ -17,8 +17,9 @@ defmodule HerdrCli.MixProject do
   end
 
   # No application callback: the CLI runs as `erl -run Elixir.HerdrCli main_erl`
-  # (see bin/herdr-live) and only needs its own ebin and Elixir's.
-  def application, do: []
+  # (see bin/herdr-live) and only needs its own ebin and Elixir's; `update` (HerdrCli.Update)
+  # also uses crypto, and inets/ssl/public_key for http(s) manifests.
+  def application, do: [extra_applications: [:crypto, :inets, :ssl, :public_key]]
 
   defp deps do
     [{:herdr_scene, in_umbrella: true}]

@@ -81,6 +81,9 @@ defmodule HerdrCli do
         out(text)
         0
 
+      {:update, rest} ->
+        HerdrCli.Update.run(rest, env)
+
       {:call, method, params, out} ->
         run_call(read_files(params), method, out, env)
 

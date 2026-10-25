@@ -27,6 +27,8 @@
 # $HERDR_LIVE_RUNTIME_DIR/state, so two instances with their own runtime dirs never share
 # one session file.
 #
+# herdr-live update [--manifest URL] [--check] [--yes] [--no-restart] (M18, release only
+# beyond --check): HerdrCli.Update; docs/herdr-live/site/update-manifest.md.
 # Every other verb (ping, pane ..., rollback, test-on-save, ...; `herdr-live help`
 # lists them, docs/herdr-live/api.md describes them) runs the CLI (apps/herdr_cli)
 # against the API socket ($HERDR_LIVE_API, else the api.sock beside the default log):
@@ -85,10 +87,13 @@ if [ -f "$root/releases/start_erl.data" ]; then
 fi
 cli() { # runs in the caller's cwd, so a relative HERDR_LIVE_API keeps its meaning
   if [ -n "$rel" ]; then # the release's erts and ebins; bin/no_dot_erlang.boot is OTP's
-    for erl in "$root"/erts-*/bin/erl; do :; done
-    for exs in "$root"/lib/elixir-*/ebin; do :; done
-    for ebin in "$root"/lib/herdr_cli-*/ebin; do :; done
-    for scene in "$root"/lib/herdr_scene-*/ebin; do :; done
+    # through `current` resolved: a CLI that loads a module after `update` flipped `current`
+    # (HerdrCli.Update) still loads it from its own release
+    real=$(cd -P "$root" && pwd) || exit 1
+    for erl in "$real"/erts-*/bin/erl; do :; done
+    for exs in "$real"/lib/elixir-*/ebin; do :; done
+    for ebin in "$real"/lib/herdr_cli-*/ebin; do :; done
+    for scene in "$real"/lib/herdr_scene-*/ebin; do :; done
     ERL_CRASH_DUMP_SECONDS=0 exec "$erl" -noinput -boot no_dot_erlang -pa "$exs" -pa "$ebin" -pa "$scene" -run Elixir.HerdrCli main_erl -extra "$@"
   fi
   ebin=$root/_build/dev/lib/herdr_cli/ebin

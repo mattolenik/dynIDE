@@ -7,6 +7,8 @@
 # (build output goes to stderr). The tarball's top dir herdr-live-<V>/ is a release root:
 # bin/herdr-live (the launcher), bin/herdr_broker, bin/herdr_live (the Mix release
 # script), scripts/tty_guard.sh, erts-*/, lib/, releases/<V>/ (see mix.exs `releases`).
+# releases/<V>/update-keys/ gets $HERDR_LIVE_UPDATE_PUBKEY, else the dev key from keygen.sh
+# when it exists, else nothing (that release refuses every update).
 # On macOS, dylibs from outside the OS (Homebrew's libcrypto under crypto.so) are copied
 # next to the library that links them, relinked with @loader_path and ad-hoc re-signed;
 # the build fails if any non-OS link is left. Linux links the OS's libcrypto.so.3.
@@ -25,6 +27,8 @@ while [ $# -gt 0 ]; do
   esac
   shift 2
 done
+# the trusted update key (R5) is read from live/ (mix.exs update_files/1)
+case ${HERDR_LIVE_UPDATE_PUBKEY:-} in '' | /*) ;; *) export HERDR_LIVE_UPDATE_PUBKEY="$PWD/$HERDR_LIVE_UPDATE_PUBKEY" ;; esac
 case $v in '' | *[!0-9A-Za-z._+-]*) echo "build.sh: bad version '$v' (want [0-9A-Za-z._+-]+)" >&2 && exit 2 ;; esac
 case $(uname -s) in Darwin) os=macos ;; Linux) os=linux ;; *) echo "build.sh: unsupported OS" >&2 && exit 1 ;; esac
 case $(uname -m) in arm64 | aarch64) arch=aarch64 ;; x86_64 | amd64) arch=x86_64 ;; *) echo "build.sh: unsupported arch" >&2 && exit 1 ;; esac

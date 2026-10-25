@@ -24,6 +24,7 @@ defmodule HerdrCli.Argv do
           | {:usage, String.t()}
           | {:help, String.t()}
           | {:print, binary()}
+          | {:update, [String.t()]}
 
   @sources ~w(visible recent)
   @agent_states ~w(idle working blocked done unknown)
@@ -161,7 +162,16 @@ defmodule HerdrCli.Argv do
       ),
       # CLI-local (no API method): answered by `parse/2` itself
       cmd(["--default-config"], :print, [], %{}, :text, "--default-config"),
-      cmd(["completion"], :print, [], %{}, :text, "completion bash|zsh|fish")
+      cmd(["completion"], :print, [], %{}, :text, "completion bash|zsh|fish"),
+      # CLI-local, run by HerdrCli.Update (M18)
+      cmd(
+        ["update"],
+        :update,
+        [],
+        %{},
+        :text,
+        "update [--manifest URL] [--check] [--yes] [--no-restart]"
+      )
     ]
   end
 
@@ -713,6 +723,7 @@ defmodule HerdrCli.Argv do
     case find(argv) do
       {%{method: :raw} = c, rest} -> raw(c, rest)
       {%{method: :print} = c, rest} -> print(c, rest)
+      {%{method: :update}, rest} -> {:update, rest}
       {c, rest} -> with_usage(c, build(c, rest, env))
       nil -> {:usage, unknown(argv) <> usage()}
     end

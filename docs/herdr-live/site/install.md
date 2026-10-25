@@ -40,12 +40,12 @@ distribution or remote shell. To edit herdr-live while it runs, use a source che
 
 ## Update in place
 
-<!-- m18: verify against task 3 -->
 ```sh
 herdr-live update [--manifest URL] [--check] [--yes] [--no-restart]
 ```
 
-`--check` only reports whether a newer version exists. Otherwise the update downloads the
+`--check` only reports whether a newer version exists, and so does a run without `--yes`.
+With `--yes` the update downloads the
 tarball named in a signed manifest, verifies its sha256 and the manifest's ed25519
 signature against the keys shipped in the release, installs it beside the old release,
 flips `current`, and runs `kernel-restart` so the running sessions move to the new

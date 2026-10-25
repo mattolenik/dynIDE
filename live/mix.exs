@@ -55,7 +55,33 @@ defmodule Live.MixProject do
     File.cp!("scripts/tty_guard.sh", Path.join(scripts, "tty_guard.sh"))
     boot = "no_dot_erlang.boot"
     File.cp!(Path.join([:code.root_dir(), "bin", boot]), Path.join(bin, boot))
+    update_files(release.version_path)
     release
+  end
+
+  # `herdr-live update` (R5): the trusted key ($HERDR_LIVE_UPDATE_PUBKEY, else the dev key
+  # from scripts/release/keygen.sh when present) and the default manifest URL (a placeholder:
+  # no channel is published). No key: update-keys/ is empty and every update is refused.
+  @update_url "https://updates.herdr-live.invalid/stable/manifest.json"
+  defp update_files(dir) do
+    keys = Path.join(dir, "update-keys")
+    File.rm_rf!(keys)
+    File.mkdir_p!(keys)
+    File.write!(Path.join(dir, "update.url"), @update_url <> "\n")
+
+    env = System.get_env("HERDR_LIVE_UPDATE_PUBKEY", "")
+    pub = if env == "", do: "_build/release/keys/dev-update.pub", else: env
+
+    if env == "" and not File.regular?(pub) do
+      Mix.shell().info("no update key (HERDR_LIVE_UPDATE_PUBKEY, #{pub}): updates refused")
+    else
+      b64 = File.read!(pub) |> String.trim()
+
+      match?({:ok, <<_::binary-size(32)>>}, Base.decode64(b64)) ||
+        Mix.raise("#{pub}: not a base64 raw 32-byte ed25519 public key")
+
+      File.write!(Path.join(keys, Path.basename(pub)), b64 <> "\n")
+    end
   end
 
   defp deps do
