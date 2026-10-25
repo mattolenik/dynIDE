@@ -7,7 +7,7 @@ defmodule HerdrIntegration.ArchitectureTest do
   use ExUnit.Case, async: true
 
   alias HerdrScene.{Cell, Event}
-  alias HerdrServer.App.Actions
+  alias HerdrServer.App.{Actions, Modal}
   alias HerdrServer.Client.{Keys, PaneScene, State}
   alias HerdrServer.{RuntimeStatus, View}
 
@@ -217,7 +217,38 @@ defmodule HerdrIntegration.ArchitectureTest do
         {"handoff #{phase}", {:handoff, %{phase: phase, gen: 2, panes: [1, 2]}}}
       end
 
-    scenes ++ statuses ++ pane_scenes ++ handoffs ++ simple_messages(row)
+    scenes ++ statuses ++ modal_scenes(split, state.(:terminal, [])) ++
+      pane_scenes ++ handoffs ++ simple_messages(row)
+  end
+
+  # every M13 modal kind open over the split app (menus, prompts, confirms, settings, ...)
+  defp modal_scenes(app, st) do
+    at = %{x: 1, y: 1}
+    ws = app.session.active_workspace
+
+    opens = [
+      onboarding: &Modal.Onboarding.at_start(%{&1 | ui: %{&1.ui | onboarding: true}}),
+      keybinds: &elem(Modal.Keybinds.open(&1), 0),
+      settings: &elem(Modal.Settings.open(&1), 0),
+      settings_indicators: &settings(&1, 1),
+      settings_sound: &settings(&1, 2),
+      settings_toasts: &settings(&1, 3),
+      new_tab: &elem(Modal.Prompt.new_tab(&1), 0),
+      rename_pane: &elem(Modal.Prompt.rename_pane(&1), 0),
+      close_pane: &elem(Modal.Confirm.close_pane(&1), 0),
+      close_workspace: &elem(Modal.Confirm.close_workspace(&1), 0),
+      menu_tab: &elem(Modal.Menu.open(&1, :tab, 1, at), 0),
+      menu_workspace: &elem(Modal.Menu.open(&1, :workspace, ws, at), 0),
+      menu_pane: &elem(Modal.Menu.open(&1, :pane, &1.focus.pane, at), 0),
+      menu_global: &elem(Modal.Menu.open(&1, :global, nil, at), 0)
+    ]
+
+    for {n, open} <- opens, do: {"scene modal #{n}", {:scene, View.compute(open.(app), st)}}
+  end
+
+  defp settings(app, tabs) do
+    {app, _} = Modal.Settings.open(app)
+    Enum.reduce(1..tabs, app, fn _, a -> elem(Modal.key(a, Event.key(:tab)), 0) end)
   end
 
   defp simple_messages(row) do

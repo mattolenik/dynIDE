@@ -47,6 +47,15 @@ defmodule HerdrScene.Chrome do
   @action_kinds [:click, :double_click, :right_click, :middle_click, :drag, :drop] ++
                   [:scroll_up, :scroll_down]
 
+  # Atom ids, actions, targets and text names the server's chrome uses. Clients treat
+  # them as opaque (echoed back in `{:chrome, path, action}`); naming them here makes
+  # them exist in every client VM, so a remote client's `[:safe]` decode accepts them
+  # (M16 R7, checked by herdr_integration's architecture test).
+  @ids [:agent, :fill, :gap2, :global_menu, :heading, :help_text, :hint_text] ++
+         [:horizontal, :keybinds, :new_workspace, :onboarding, :reload_config, :save] ++
+         [:settings, :sidebar_split, :sidebar_width, :split_down, :split_right, :subtitle] ++
+         [:toasts, :toggle_sidebar, :workspace, :zoomed]
+
   @required %{
     tab: [:index, :active],
     badge: [:kind, :state],
@@ -69,6 +78,10 @@ defmodule HerdrScene.Chrome do
 
   @spec drop_markers() :: [atom]
   def drop_markers, do: @drop_markers
+
+  @doc "Opaque atom ids, actions and targets the server's chrome may carry."
+  @spec ids() :: [atom]
+  def ids, do: @ids
 
   @spec region_roles() :: [atom]
   def region_roles, do: @regions
