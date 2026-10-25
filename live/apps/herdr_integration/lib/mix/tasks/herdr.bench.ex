@@ -763,7 +763,7 @@ if Mix.env() == :test do
       | flood: Process.sleep(1) probe max overshoot | #{fmt(st.probe_max_ms)} ms | no stall > 10ms |
       | flood: long_schedule >= 5ms events (max) | #{st.monitor.long_schedule.count} (#{st.monitor.long_schedule.max_ms} ms, #{st.monitor.long_schedule.max_who}, in #{st.monitor.long_schedule.max_in}, out #{st.monitor.long_schedule.max_out}) | |
       | flood: long_gc >= 5ms events (max) | #{st.monitor.long_gc.count} (#{st.monitor.long_gc.max_ms} ms) | |
-      | flood: typing in a 16th pane (n=#{st.typing.n}) | #{keys(st.typing)} | <= 20ms |
+      | flood: typing in a 16th pane (n=#{st.typing.n}) | #{keys(st.typing)} | #{flood_typing_target(cfg)} |
 
       Method: keystroke t0 = monotonic time before `Fake.Tty.inject` of one printable char;
       t1 = `at` of the latest logged `Fake.Blit` frame when the target cell first shows it
@@ -785,6 +785,11 @@ if Mix.env() == :test do
       Environment: OTP #{env.otp}, Elixir #{env.elixir}, #{env.schedulers} schedulers, #{env.os}
       """
     end
+
+    # The design row is judged on the real kernel (M6 gate). The fake flood parses in
+    # Fake.Vt on the BEAM's own schedulers, so its typing tail tracks host load.
+    defp flood_typing_target(%{kernel: :real}), do: "<= 20ms p95"
+    defp flood_typing_target(_cfg), do: "reference (judged on --kernel real)"
 
     defp title(%{kernel: :real}),
       do: "real server kernel (HerdrServer.Native.*, /bin/sh panes), fake terminal client"
