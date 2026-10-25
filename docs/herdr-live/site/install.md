@@ -48,8 +48,8 @@ herdr-live update [--manifest URL] [--check] [--yes] [--no-restart]
 With `--yes` the update downloads the
 tarball named in a signed manifest, verifies its sha256 and the manifest's ed25519
 signature against the keys shipped in the release, installs it beside the old release,
-flips `current`, and runs `kernel-restart` so the running sessions move to the new
-version without losing terminals. If the restart fails, `current` is flipped back. With no
+runs `kernel-restart` into it so the running sessions move to the new version without
+losing terminals, and then flips `current`. If the restart fails, `current` is untouched. With no
 instance running it installs and says so. `--no-restart` leaves the running instance on
 the old version until you restart it.
 

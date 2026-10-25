@@ -81,6 +81,12 @@ defmodule Live.MixProject do
         Mix.raise("#{pub}: not a base64 raw 32-byte ed25519 public key")
 
       File.write!(Path.join(keys, Path.basename(pub)), b64 <> "\n")
+
+      if env == "",
+        do:
+          Mix.shell().info(
+            "release trusts the DEV update key #{pub} (set HERDR_LIVE_UPDATE_PUBKEY for a real one)"
+          )
     end
   end
 

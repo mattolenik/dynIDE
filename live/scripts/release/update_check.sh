@@ -12,8 +12,9 @@
 #     each: ping reports the new version, same pane ids, same pids alive, the seq pane
 #     still has 2999, the date pane keeps ticking
 #   broken: 0.1.3 (0.1.2 repackaged with a bin/herdr_live that exits 1): kernel-restart
-#     fails, update exits 1 restart_failed, current back on 0.1.2, the old VM thawed
-#     (ping 0.1.2, same panes and pids)
+#     fails, update exits 1 restart_failed, current never left 0.1.2, the old VM thawed
+#     (ping 0.1.2, same panes and pids), releases/0.1.3 kept, and a standby booted from the
+#     broker's unchanged 0.1.2 argv is ready within 30 s
 # Then log_summary.py on the instance log must end with `session_losses=0 -> OK`.
 # PASS/FAIL lines like release_smoke.sh; kills only the pids it started.
 set -u
@@ -159,6 +160,8 @@ done
 update "http://127.0.0.1:$port/http/manifest.json" >"$tmp/out" 2>"$tmp/err" || fail "http update: $(cat "$tmp/out" "$tmp/err")"
 grep -q "updated 0.1.0 -> 0.1.1" "$tmp/out" || fail "http update: $(cat "$tmp/out")"
 same 0.1.1 http
+"$x" "$bin" status 2>&1 | grep -q '^vm_argv=.*/releases/0.1.1/bin/herdr_live start$' ||
+  fail "http: broker vm argv is not releases/0.1.1: $("$x" "$bin" status 2>&1 | grep '^vm_argv=')"
 echo "INFO: update said: $(paste -sd' ' - <"$tmp/out")"
 echo "PASS: http update to 0.1.1 through kernel-restart: same panes, pids alive, scrollback kept, date ticking"
 
@@ -168,13 +171,20 @@ echo "PASS: file:// update to 0.1.2 through kernel-restart: same panes, pids ali
 
 update "file://$serve/broken/manifest.json" >"$tmp/out" 2>"$tmp/err" && fail "broken update exit 0"
 grep -q '"code":"restart_failed"' "$tmp/err" || fail "broken update: $(cat "$tmp/err")"
-grep -q 'current flipped back to 0.1.2' "$tmp/err" || fail "broken update: $(cat "$tmp/err")"
-same 0.1.2 broken
-[ ! -e "$lib/releases/0.1.3" ] || fail "broken: releases/0.1.3 left behind"
+grep -q 'current still points at 0.1.2' "$tmp/err" || fail "broken update: $(cat "$tmp/err")"
 echo "INFO: update said: $(cat "$tmp/err")"
-echo "PASS: broken 0.1.3 refused at kernel-restart, current flipped back, old VM thawed (0.1.2, same panes)"
-"$x" "$bin" status >"$tmp/status" 2>&1
-echo "INFO: broker after the failed restart: $(grep -E '^(standby_gen|standby_ready|handoffs)=' "$tmp/status" | paste -sd' ' -)"
+same 0.1.2 broken
+[ -d "$lib/releases/0.1.3" ] || fail "broken: releases/0.1.3 removed (it is kept for the next update or prune)"
+# the broker kept its 0.1.2 argv: the standby it boots after the thaw comes up
+i=0
+until "$x" "$bin" status >"$tmp/status" 2>&1 && grep -qx 'standby_ready=1' "$tmp/status"; do
+  i=$((i + 1))
+  [ "$i" -lt 60 ] || fail "broken: no ready standby 30 s after the failed restart: $(cat "$tmp/status")"
+  sleep 0.5
+done
+grep -q '^vm_argv=.*/releases/0.1.2/bin/herdr_live start$' "$tmp/status" ||
+  fail "broken: broker vm argv $(grep '^vm_argv=' "$tmp/status") (wanted releases/0.1.2)"
+echo "PASS: broken 0.1.3 refused at kernel-restart, current unchanged, old VM thawed (0.1.2, same panes), standby ready on 0.1.2 within $((i / 2)) s"
 
 # shellcheck disable=SC2012 # the names are versions and dot-dirs
 rels=$(cd "$lib/releases" && ls -A | paste -sd' ' -)

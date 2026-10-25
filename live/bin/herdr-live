@@ -205,6 +205,9 @@ fi
 case ${1:-} in
   kernel-restart)
     [ -x "$broker" ] || build >&2 || exit 1
+    # a release restarts into `current` (the broker keeps that argv once it succeeds;
+    # `update` passes releases/<V> itself and flips `current` after)
+    [ -z "$rel" ] || exec "$broker" kernel-restart -- "$root/bin/herdr_live" start
     exec "$broker" "$1"
     ;;
   status)

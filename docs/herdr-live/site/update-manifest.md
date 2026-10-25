@@ -61,34 +61,44 @@ checkout, `herdr-live update --check` trusts only `HERDR_LIVE_UPDATE_PUBKEY`.
 
 ## What an update does
 
+One update runs per prefix at a time (`<prefix>/lib/herdr-live/.update.lock`, removed
+when the run ends; a killed run leaves it, and the refusal names it).
+
 1. Fetch and verify the manifest; compare `version` with the running release
    (`Version.compare`; `--check` stops here and prints `update available <v>` or
    `up to date <v>`; without `--yes` nothing is installed).
-2. Download the artifact for this OS and arch to `<prefix>/lib/herdr-live/.download/`,
-   check size and sha256.
-3. Extract into `releases/.<v>.partial` (only regular files and directories under
+2. Unless `releases/<v>/` already holds that release (an earlier update whose restart
+   failed: it is reused, never replaced), download the artifact for this OS and arch to
+   `<prefix>/lib/herdr-live/.download/` (at most its manifest `size`; redirects are
+   followed by the updater, at most 5, never from https to anything else), check size and
+   sha256, extract into `releases/.<v>.partial` (only regular files and directories under
    `herdr-live-<v>/`), check `releases/start_erl.data` names `<v>`, rename to
    `releases/<v>`.
-4. Flip `current` to `releases/<v>` atomically (a temp symlink renamed over it).
-5. If a broker answers on this instance (the runtime dir rule of `kernel-restart`), run
-   `kernel-restart`: the VM restarts through `current` into the new version and keeps
-   every pane. With no instance it prints `no running instance, restart skipped`;
-   `--no-restart` skips it on purpose.
-6. If the restart fails, the broker thaws the old VM, `current` is flipped back and the
-   new release removed; exit 1 with `restart_failed`.
-7. After a good update, releases older than the previous two are removed. Dot-names in
+3. If a broker answers on this instance (the runtime dir rule of `kernel-restart`), run
+   `herdr_broker kernel-restart -- <prefix>/lib/herdr-live/releases/<v>/bin/herdr_live start`:
+   the restart target boots the new release and adopts every pane. The broker keeps that
+   VM argv for later standbys, crash handoffs and restarts only if the restart succeeds.
+4. Then flip `current` to `releases/<v>` atomically (a temp symlink renamed over it). With
+   no instance (`no running instance, restart skipped`) or `--no-restart`, the flip
+   happens without a restart. A broker that does not answer `status` is a refusal
+   (`broker_unreachable`, `current` unchanged).
+5. If the restart fails, the broker thaws the old VM and keeps its old argv; `current` is
+   not touched and `releases/<v>` stays for a retry; exit 1 with `restart_failed`.
+6. After a flip, releases older than the previous two are removed. Dot-names in
    `releases/` are never touched.
 
-The running broker binary is not replaced; a full stop and start picks up a new one.
+`herdr-live kernel-restart` in a release restarts into `<prefix>/lib/herdr-live/current`
+the same way, so after `--no-restart` it boots the new version. The running broker binary
+is not replaced; a full stop and start picks up a new one.
 
 ## Exit codes and errors
 
 0 updated, up to date, or `--check`; 1 refused; 2 usage. A refusal prints one JSON object
 on stderr, `{"code": "...", "message": "..."}`, with `code` one of `no_trusted_keys`,
 `no_manifest_url`, `fetch_failed`, `bad_signature`, `bad_schema`, `unsupported_schema`,
-`not_installed`, `no_artifact`, `size_mismatch`, `sha256_mismatch`, `bad_tarball`,
-`install_failed`, `restart_failed`. Every refusal before step 4 leaves `current` as it
-was.
+`not_installed`, `no_artifact`, `locked`, `size_mismatch`, `sha256_mismatch`,
+`bad_tarball`, `install_failed`, `broker_unreachable`, `restart_failed`. Every refusal
+leaves `current` as it was.
 
 ## Making a manifest
 

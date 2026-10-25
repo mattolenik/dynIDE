@@ -2,16 +2,20 @@ defmodule HerdrCli.Update do
   @moduledoc """
   `herdr-live update [--manifest URL] [--check] [--yes] [--no-restart]` (M18 R4, R5).
 
-  Fetches the channel manifest and its `.sig` (`file://` or `http(s)://`), verifies the
-  signature against the release's `releases/<V>/update-keys/*.pub` (in a source tree only
-  `$HERDR_LIVE_UPDATE_PUBKEY`), and with `--yes` installs the artifact for this OS and arch
-  beside the running release: download to `<lib>/.download/`, size and sha256 check,
-  extract into `releases/.<V>.partial`, rename to `releases/<V>`, flip `current` (a temp
-  symlink renamed over it), then `herdr_broker kernel-restart` when a broker answers this
-  instance (the same runtime-dir env as `herdr-live kernel-restart`). A failed restart
-  flips `current` back (the broker has thawed the old VM) and exits 1. After a good
-  update, releases older than the previous two are pruned; dot-names in `releases/` (stage
-  and partial dirs) are never touched.
+  Fetches the channel manifest and its `.sig` (`file://` or `http(s)://`, bodies capped:
+  manifest 1 MiB, artifact its manifest `size`; redirects never leave https), verifies
+  the signature against the release's `releases/<V>/update-keys/*.pub` (in a source tree
+  only `$HERDR_LIVE_UPDATE_PUBKEY`), and with `--yes` installs the artifact for this OS
+  and arch beside the running release under `<lib>/.update.lock`: download to
+  `<lib>/.download/`, size and sha256 check, extract into `releases/.<V>.partial`, rename
+  to `releases/<V>` (an existing `releases/<V>` that is that release is reused, never
+  replaced). When a broker answers this instance (the runtime-dir env of `herdr-live
+  kernel-restart`), `herdr_broker kernel-restart -- <lib>/releases/<V>/bin/herdr_live
+  start` boots the new release; the broker keeps that VM argv only if the restart
+  succeeds. `current` flips (a temp symlink renamed over it) only after that success, or
+  when no instance runs, or with `--no-restart`; a failed restart leaves `current` and the
+  broker on the old release and exits 1. After a flip, releases older than the previous
+  two are pruned; dot-names in `releases/` (stage and partial dirs) are never touched.
 
   Manifest URL: `--manifest`, else `$HERDR_LIVE_UPDATE_URL`, else `releases/<V>/update.url`.
   Exit 0 updated or up to date, 1 refused (`{"code":..,"message":..}` on stderr), 2 usage.
@@ -175,9 +179,13 @@ defmodule HerdrCli.Update do
     end
   end
 
-  defp start_http("http" <> _) do
-    {:ok, _} = Application.ensure_all_started([:inets, :ssl])
-    :ok
+  defp start_http("http" <> _ = url) do
+    with {:ok, _} <- Application.ensure_all_started([:inets, :ssl]),
+         :ok <- if(String.starts_with?(url, "https:"), do: :public_key.cacerts_load(), else: :ok) do
+      :ok
+    else
+      {:error, r} -> fetch_error(url, "cannot start the http client: #{inspect(r, limit: 10)}")
+    end
   end
 
   defp start_http(_url), do: :ok
@@ -210,36 +218,161 @@ defmodule HerdrCli.Update do
   end
 
   defp fetch("http" <> _ = url) do
-    case :httpc.request(:get, {String.to_charlist(url), []}, http_opts(url), body_format: :binary) do
-      {:ok, {{_, 200, _}, _, body}} when byte_size(body) <= @max_manifest -> {:ok, body}
-      {:ok, {{_, 200, _}, _, _}} -> fetch_error(url, "over #{@max_manifest} bytes")
-      {:ok, {{_, status, _}, _, _}} -> fetch_error(url, "HTTP #{status}")
-      {:error, r} -> fetch_error(url, why(r))
+    case http_get(url, @max_manifest, {:mem, []}) do
+      {:error, :too_big} -> fetch_error(url, "over #{@max_manifest} bytes")
+      other -> other
     end
   end
 
   defp fetch(url),
     do: fetch_error(url, "unsupported URL scheme (want file://, http:// or https://)")
 
-  defp download("file://" <> _ = url, dest) do
-    case File.cp(URI.decode(URI.parse(url).path || ""), dest) do
-      :ok -> :ok
-      {:error, r} -> fetch_error(url, :file.format_error(r))
+  defp download("file://" <> _ = url, dest, size) do
+    path = URI.decode(URI.parse(url).path || "")
+
+    with {:ok, %{size: ^size}} <- File.stat(path),
+         :ok <- File.cp(path, dest) do
+      :ok
+    else
+      {:ok, %{size: n}} ->
+        {:error, :size_mismatch, "#{url} is #{n} bytes, the manifest says #{size}"}
+
+      {:error, r} ->
+        fetch_error(url, :file.format_error(r))
     end
   end
 
-  defp download("http" <> _ = url, dest) do
-    case :httpc.request(:get, {String.to_charlist(url), []}, http_opts(url),
-           stream: String.to_charlist(dest)
-         ) do
-      {:ok, :saved_to_file} -> :ok
-      {:ok, {{_, status, _}, _, _}} -> fetch_error(url, "HTTP #{status}")
+  defp download("http" <> _ = url, dest, size) do
+    case File.open(dest, [:write, :binary, :raw]) do
+      {:ok, dev} ->
+        res = http_get(url, size, {:file, dev})
+        File.close(dev)
+
+        case res do
+          {:ok, _} ->
+            :ok
+
+          {:error, :too_big} ->
+            {:error, :size_mismatch, "#{url} is over the manifest's #{size} bytes"}
+
+          e ->
+            e
+        end
+
+      {:error, r} ->
+        {:error, :install_failed, "cannot write #{dest}: #{:file.format_error(r)}"}
+    end
+  end
+
+  defp download(url, _dest, _size),
+    do: fetch_error(url, "unsupported URL scheme (want file://, http:// or https://)")
+
+  @http_timeout 300_000
+  @max_hops 5
+
+  # GET `url` into `sink` ({:mem, iodata} or {:file, device}), at most `max` body bytes
+  # (Content-Length checked first, then a running count). Redirects are followed here,
+  # at most @max_hops, never from https to anything else.
+  defp http_get(url, max, sink, hops \\ 0) do
+    opts = [sync: false, stream: :self, body_format: :binary]
+
+    case :httpc.request(:get, {String.to_charlist(url), []}, http_opts(url), opts) do
+      {:ok, ref} -> response(ref, url, max, sink, hops)
       {:error, r} -> fetch_error(url, why(r))
     end
   end
 
-  defp download(url, _dest),
-    do: fetch_error(url, "unsupported URL scheme (want file://, http:// or https://)")
+  defp response(ref, url, max, sink, hops) do
+    receive do
+      {:http, {^ref, :stream_start, headers}} ->
+        if content_length(headers) > max,
+          do: cancel(ref),
+          else: body(ref, url, max, sink, 0)
+
+      {:http, {^ref, {{_, 200, _}, _, data}}} when byte_size(data) > max ->
+        {:error, :too_big}
+
+      {:http, {^ref, {{_, 200, _}, _, data}}} ->
+        {:ok, finish(put(sink, data))}
+
+      {:http, {^ref, {{_, status, _}, headers, _}}} when status in [301, 302, 303, 307, 308] ->
+        redirect(url, location(headers), max, sink, hops)
+
+      {:http, {^ref, {{_, status, _}, _, _}}} ->
+        fetch_error(url, "HTTP #{status}")
+
+      {:http, {^ref, {:error, r}}} ->
+        fetch_error(url, why(r))
+    after
+      @http_timeout ->
+        :httpc.cancel_request(ref)
+        fetch_error(url, "no response in #{div(@http_timeout, 1000)} s")
+    end
+  end
+
+  defp body(ref, url, max, sink, n) do
+    receive do
+      {:http, {^ref, :stream, data}} when n + byte_size(data) > max -> cancel(ref)
+      {:http, {^ref, :stream, data}} -> body(ref, url, max, put(sink, data), n + byte_size(data))
+      {:http, {^ref, :stream_end, _}} -> {:ok, finish(sink)}
+      {:http, {^ref, {:error, r}}} -> fetch_error(url, why(r))
+    after
+      @http_timeout ->
+        :httpc.cancel_request(ref)
+        fetch_error(url, "stalled for #{div(@http_timeout, 1000)} s")
+    end
+  end
+
+  defp cancel(ref) do
+    :httpc.cancel_request(ref)
+    {:error, :too_big}
+  end
+
+  defp put({:mem, acc}, data), do: {:mem, [acc, data]}
+
+  defp put({:file, dev} = sink, data) do
+    :ok = IO.binwrite(dev, data)
+    sink
+  end
+
+  defp finish({:mem, acc}), do: IO.iodata_to_binary(acc)
+  defp finish({:file, _}), do: :file
+
+  defp content_length(headers) do
+    with {_, v} <- List.keyfind(headers, ~c"content-length", 0),
+         {n, ""} <- Integer.parse(List.to_string(v)) do
+      n
+    else
+      _ -> 0
+    end
+  end
+
+  defp location(headers) do
+    case List.keyfind(headers, ~c"location", 0) do
+      {_, v} -> List.to_string(v)
+      nil -> nil
+    end
+  end
+
+  defp redirect(url, nil, _max, _sink, _hops), do: fetch_error(url, "redirect without a location")
+
+  defp redirect(url, _to, _max, _sink, hops) when hops >= @max_hops,
+    do: fetch_error(url, "more than #{@max_hops} redirects")
+
+  defp redirect(url, to, max, sink, hops) do
+    next = url |> URI.merge(to) |> URI.to_string()
+
+    cond do
+      String.starts_with?(url, "https:") and not String.starts_with?(next, "https:") ->
+        fetch_error(url, "refusing a redirect from https to #{next}")
+
+      not String.starts_with?(next, ["http:", "https:"]) ->
+        fetch_error(url, "refusing a redirect to #{next}")
+
+      true ->
+        with :ok <- start_http(next), do: http_get(next, max, sink, hops + 1)
+    end
+  end
 
   defp http_opts("https" <> _) do
     ssl = [
@@ -251,7 +384,7 @@ defmodule HerdrCli.Update do
     [ssl: ssl] ++ http_opts("http")
   end
 
-  defp http_opts(_), do: [timeout: 300_000, connect_timeout: 10_000, autoredirect: true]
+  defp http_opts(_), do: [timeout: @http_timeout, connect_timeout: 10_000, autoredirect: false]
 
   # httpc's {:failed_connect, [{:to_address, _}, {family, opts, reason}]}: the reason
   defp why({:failed_connect, [_, {_, _, r}]}), do: inspect(r, limit: 10)
@@ -265,11 +398,64 @@ defmodule HerdrCli.Update do
     v = m["version"]
 
     with {:ok, lib, prev} <- layout(ctx),
-         {:ok, art} <- pick(m, ctx),
-         {:ok, tarball} <- fetch_artifact(art, lib, v),
-         :ok <- unpack(tarball, lib, v),
-         :ok <- flip(lib, v) do
-      restart(lib, prev, v, opts)
+         {:ok, art} <- pick(m, ctx) do
+      locked(lib, fn -> place_and_activate(art, lib, prev, v, opts) end)
+    end
+  end
+
+  defp place_and_activate(art, lib, prev, v, opts) do
+    with :ok <- place(art, lib, v), do: activate(lib, prev, v, opts)
+  end
+
+  # one update per prefix at a time; the lock goes when this run ends (a killed run leaves
+  # it: the message names the file)
+  defp locked(lib, fun) do
+    lock = Path.join(lib, ".update.lock")
+
+    case File.open(lock, [:write, :exclusive]) do
+      {:ok, dev} ->
+        IO.write(dev, "#{:os.getpid()}\n")
+        File.close(dev)
+
+        try do
+          fun.()
+        after
+          File.rm(lock)
+        end
+
+      {:error, :eexist} ->
+        {:error, :locked, "another update is running (#{lock}; remove it if no update runs)"}
+
+      {:error, r} ->
+        {:error, :install_failed, "cannot create #{lock}: #{:file.format_error(r)}"}
+    end
+  end
+
+  # releases/<v>: an existing dir is reused when it is that release (an earlier update
+  # whose restart failed, or the release a broker runs), never removed or replaced
+  defp place(art, lib, v) do
+    dest = Path.join([lib, "releases", v])
+
+    cond do
+      not File.exists?(dest) ->
+        with {:ok, tarball} <- fetch_artifact(art, lib, v), do: unpack(tarball, lib, v)
+
+      release_dir?(dest, v) ->
+        :ok
+
+      true ->
+        {:error, :install_failed,
+         "#{dest} exists but is not the herdr-live #{v} release; remove it and retry"}
+    end
+  end
+
+  defp release_dir?(dir, v) do
+    with {:ok, data} <- File.read(Path.join(dir, "releases/start_erl.data")),
+         [_, ^v] <- String.split(data) do
+      File.regular?(Path.join(dir, "bin/herdr-live")) and
+        File.regular?(Path.join(dir, "bin/herdr_live"))
+    else
+      _ -> false
     end
   end
 
@@ -314,7 +500,7 @@ defmodule HerdrCli.Update do
 
     with :ok <- File.mkdir_p(dir),
          :ok <- start_http(url),
-         :ok <- download(url, dest) do
+         :ok <- download(url, dest, size) do
       got = sha256(dest)
       got_size = File.stat!(dest).size
 
@@ -361,10 +547,7 @@ defmodule HerdrCli.Update do
            :ok <- safe_entries(entries, top),
            :ok <- File.mkdir_p(partial),
            :ok <- :erl_tar.extract(tar, [:compressed, {:cwd, String.to_charlist(partial)}]),
-           {:ok, data} <- File.read(Path.join([partial, top, "releases/start_erl.data"])),
-           [_, ^v] <- String.split(data),
-           true <- File.regular?(Path.join([partial, top, "bin/herdr-live"])) do
-        File.rm_rf(dest)
+           true <- release_dir?(Path.join(partial, top), v) do
         :file.rename(Path.join(partial, top), dest)
       else
         {:error, :unsafe, name} ->
@@ -422,16 +605,17 @@ defmodule HerdrCli.Update do
 
   # -- restart ----------------------------------------------------------------
 
-  defp restart(lib, prev, v, opts) do
-    done = "updated #{prev} -> #{v}\n"
-
+  # `current` flips only once the new release runs (or nothing runs): a failed restart
+  # leaves it, and the broker's VM argv, on the old release
+  defp activate(lib, prev, v, opts) do
     # the running release's broker client speaks the running broker's protocol
     broker = Path.join([lib, "releases", prev, "bin/herdr_broker"])
+    done = "updated #{prev} -> #{v}\n"
 
     if opts[:no_restart] do
-      pruned(
+      flipped(
         lib,
-        prev,
+        [prev, v],
         v,
         done <> "restart skipped (--no-restart); run herdr-live kernel-restart to boot #{v}\n"
       )
@@ -441,44 +625,34 @@ defmodule HerdrCli.Update do
           kernel_restart(broker, lib, prev, v, done)
 
         {_, 2} ->
-          pruned(lib, prev, v, done <> "no running instance, restart skipped\n")
+          flipped(lib, [prev, v], v, done <> "no running instance, restart skipped\n")
 
-        {text, _} ->
-          pruned(
-            lib,
-            prev,
-            v,
-            done <>
-              "broker did not answer (#{String.trim(text)}), restart skipped; run herdr-live kernel-restart\n"
-          )
+        {text, code} ->
+          {:error, :broker_unreachable,
+           "the broker did not answer status (exit #{code}: #{String.trim(text)}); releases/#{v} is installed, current still points at #{prev}; retry herdr-live update"}
       end
     end
   end
 
-  defp pruned(lib, prev, v, text) do
-    prune(lib, [prev, v])
-    {:ok, text}
+  defp flipped(lib, keep, v, text) do
+    with :ok <- flip(lib, v) do
+      prune(lib, keep)
+      {:ok, text}
+    end
   end
 
   defp kernel_restart(broker, lib, prev, v, done) do
-    case System.cmd(broker, ["kernel-restart"], stderr_to_stdout: true) do
+    vm = [Path.join([lib, "releases", v, "bin/herdr_live"]), "start"]
+
+    case System.cmd(broker, ["kernel-restart", "--" | vm], stderr_to_stdout: true) do
       {text, 0} ->
-        pruned(lib, prev, v, done <> "kernel-restart: " <> text)
+        with {:error, _, msg} <- flipped(lib, [prev, v], v, done <> "kernel-restart: " <> text) do
+          {:error, :install_failed, "the instance runs #{v}, but #{msg}"}
+        end
 
       {text, code} ->
-        # the broker SIGKILLed the target, and nothing boots through releases/<v> any more
-        back =
-          case flip(lib, prev) do
-            :ok ->
-              File.rm_rf(Path.join([lib, "releases", v]))
-              "current flipped back to #{prev}"
-
-            {:error, _, msg} ->
-              msg
-          end
-
         {:error, :restart_failed,
-         "kernel-restart into #{v} failed (exit #{code}: #{String.trim(text)}); #{back}; the running session stays on #{prev}"}
+         "kernel-restart into #{v} failed (exit #{code}: #{String.trim(text)}); current still points at #{prev}, the running session stays on #{prev}; releases/#{v} is kept"}
     end
   end
 

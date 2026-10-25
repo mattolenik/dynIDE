@@ -19,8 +19,9 @@ defmodule HerdrCli.UpdateTest do
     {:ok, tmp: tmp, lib: lib, pub: pub, priv: priv, tarball: tarball, ctx: ctx}
   end
 
-  # a release root: start_erl.data, update keys, a launcher and a fake broker whose status
-  # and kernel-restart exit codes come from files beside it (default: no instance)
+  # a release root: start_erl.data, update keys, a launcher, a VM script and a fake broker
+  # whose status and kernel-restart exit codes come from files beside it (default: no
+  # instance); kernel-restart records its arguments in bin/restart_args
   defp fake_release(dir, v, pub) do
     File.mkdir_p!(Path.join([dir, "releases", v, "update-keys"]))
     File.mkdir_p!(Path.join(dir, "bin"))
@@ -32,6 +33,7 @@ defmodule HerdrCli.UpdateTest do
     )
 
     File.write!(Path.join(dir, "bin/herdr-live"), "#!/bin/sh\n")
+    File.write!(Path.join(dir, "bin/herdr_live"), "#!/bin/sh\n")
     broker = Path.join(dir, "bin/herdr_broker")
 
     File.write!(broker, """
@@ -39,7 +41,7 @@ defmodule HerdrCli.UpdateTest do
     d=$(dirname "$0")
     case $1 in
       status) exit $(cat "$d/status" 2>/dev/null || echo 2) ;;
-      kernel-restart) echo "restarted"; exit $(cat "$d/restart" 2>/dev/null || echo 0) ;;
+      kernel-restart) shift; echo "$*" >"$d/restart_args"; echo "restarted"; exit $(cat "$d/restart" 2>/dev/null || echo 0) ;;
     esac
     """)
 
@@ -164,6 +166,8 @@ defmodule HerdrCli.UpdateTest do
     assert {code, err} == {0, ""}
     assert out =~ "updated 0.1.0 -> 0.1.1"
     assert out =~ "kernel-restart: restarted"
+    vm = Path.join(c.lib, "releases/0.1.1/bin/herdr_live")
+    assert File.read!(Path.join(c.lib, "releases/0.1.0/bin/restart_args")) == "-- #{vm} start\n"
     assert current(c.lib) == "releases/0.1.1"
     assert File.regular?(Path.join(c.lib, "current/bin/herdr-live"))
     assert {:ok, %{mode: mode}} = File.stat(Path.join(c.lib, "current/bin/herdr_broker"))
@@ -182,38 +186,99 @@ defmodule HerdrCli.UpdateTest do
     assert current(c.lib) == "releases/0.1.1"
   end
 
-  test "a failed kernel-restart flips current back and exits 1", c do
+  test "a failed kernel-restart leaves current and the new release; a retry reuses it", c do
     File.write!(Path.join(c.lib, "releases/0.1.0/bin/status"), "0")
     File.write!(Path.join(c.lib, "releases/0.1.0/bin/restart"), "1")
     url = write_manifest(c.tmp, c.tarball, c.priv)
     {code, _out, err} = update(["--manifest", url, "--yes"], c.ctx)
     assert code == 1
     assert %{"code" => "restart_failed", "message" => msg} = JSON.decode!(err)
-    assert msg =~ "current flipped back to 0.1.0"
+    assert msg =~ "current still points at 0.1.0"
     assert current(c.lib) == "releases/0.1.0"
-    refute File.exists?(Path.join(c.lib, "releases/0.1.1"))
+    assert File.dir?(Path.join(c.lib, "releases/0.1.1"))
     # nothing is pruned after a failed update
     assert File.dir?(Path.join(c.lib, "releases/0.0.8"))
+    refute File.exists?(Path.join(c.lib, ".update.lock"))
+
+    # the retry downloads nothing: the artifact url is gone, releases/0.1.1 is reused
+    File.write!(Path.join(c.lib, "releases/0.1.0/bin/restart"), "0")
+    File.rm!(c.tarball)
+    {0, out, ""} = update(["--manifest", url, "--yes"], c.ctx)
+    assert out =~ "updated 0.1.0 -> 0.1.1"
+    assert current(c.lib) == "releases/0.1.1"
   end
 
-  test "a tarball entry outside herdr-live-<V>/ is refused", c do
-    evil = Path.join(c.tmp, "evil.tar.gz")
-    File.write!(Path.join(c.tmp, "x"), "x")
+  test "an existing releases/<v> that is not that release is refused, never replaced", c do
+    junk = Path.join(c.lib, "releases/0.1.1")
+    File.mkdir_p!(junk)
+    File.write!(Path.join(junk, "keep"), "x")
+    url = write_manifest(c.tmp, c.tarball, c.priv)
+    {1, _out, err} = update(["--manifest", url, "--yes"], c.ctx)
+    assert %{"code" => "install_failed"} = JSON.decode!(err)
+    assert File.read!(Path.join(junk, "keep")) == "x"
+    assert current(c.lib) == "releases/0.1.0"
+  end
+
+  test "a broker that does not answer status leaves current and exits 1", c do
+    File.write!(Path.join(c.lib, "releases/0.1.0/bin/status"), "1")
+    url = write_manifest(c.tmp, c.tarball, c.priv)
+    {1, _out, err} = update(["--manifest", url, "--yes"], c.ctx)
+    assert %{"code" => "broker_unreachable"} = JSON.decode!(err)
+    assert current(c.lib) == "releases/0.1.0"
+    refute File.exists?(Path.join(c.lib, "releases/0.1.0/bin/restart_args"))
+  end
+
+  test "a held update lock refuses and is left alone", c do
+    lock = Path.join(c.lib, ".update.lock")
+    File.write!(lock, "1\n")
+    url = write_manifest(c.tmp, c.tarball, c.priv)
+    {1, _out, err} = update(["--manifest", url, "--yes"], c.ctx)
+    assert %{"code" => "locked"} = JSON.decode!(err)
+    assert File.exists?(lock)
+    assert current(c.lib) == "releases/0.1.0"
+  end
+
+  for {name, entry} <- [
+        {"outside herdr-live-<V>/", :dotdot},
+        {"a symlink", :symlink},
+        {"an absolute name", :absolute}
+      ] do
+    test "a tarball entry that is #{name} is refused", c do
+      tar = evil_tarball(c.tmp, unquote(entry))
+      url = write_manifest(c.tmp, tar, c.priv)
+      {1, _out, err} = update(["--manifest", url, "--yes"], c.ctx)
+      assert %{"code" => "bad_tarball"} = JSON.decode!(err)
+      assert current(c.lib) == "releases/0.1.0"
+
+      assert c.lib |> Path.join("releases") |> File.ls!() |> Enum.sort() ==
+               ~w(.stage.123 0.0.8 0.0.9 0.1.0)
+    end
+  end
+
+  # the good 0.1.1 tree plus one bad entry
+  defp evil_tarball(tmp, kind) do
+    stage = Path.join(tmp, "stage/herdr-live-0.1.1")
+    File.write!(Path.join(tmp, "x"), "x")
+    File.ln_s!("/etc/passwd", Path.join(tmp, "link"))
+
+    bad =
+      case kind do
+        :dotdot -> {~c"herdr-live-0.1.1/../x", Path.join(tmp, "x")}
+        :symlink -> {~c"herdr-live-0.1.1/bin/link", Path.join(tmp, "link")}
+        :absolute -> {~c"/tmp/herdr-live-evil", Path.join(tmp, "x")}
+      end
+
+    tar = Path.join(tmp, "evil-#{kind}.tar.gz")
 
     :ok =
       :erl_tar.create(
-        String.to_charlist(evil),
-        [{~c"../x", String.to_charlist(Path.join(c.tmp, "x"))}],
+        String.to_charlist(tar),
+        [{~c"herdr-live-0.1.1", String.to_charlist(stage)}, bad]
+        |> Enum.map(fn {n, p} -> {n, to_charlist(p)} end),
         [:compressed]
       )
 
-    url = write_manifest(c.tmp, evil, c.priv)
-    {1, _out, err} = update(["--manifest", url, "--yes"], c.ctx)
-    assert %{"code" => "bad_tarball"} = JSON.decode!(err)
-    assert current(c.lib) == "releases/0.1.0"
-
-    assert c.lib |> Path.join("releases") |> File.ls!() |> Enum.sort() ==
-             ~w(.stage.123 0.0.8 0.0.9 0.1.0)
+    tar
   end
 
   test "usage errors exit 2", c do
