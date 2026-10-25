@@ -28,7 +28,8 @@ defmodule HerdrTerm.Client.Term.Input do
   scheme nil) and Render `{:host_colors, %{fg, bg}}`; a later unsolicited scheme report
   (mode 2031) sends `{:caps, %{scheme: s}}` and queries the colours again (the theme
   changed); a report of the scheme already sent is ignored (a late answer to our own
-  query, not a change, so no query loop). The latest caps go to every new session.
+  query, not a change). So a host answering after the window costs at most one extra
+  query: the first late report, before any scheme was sent, still re-queries. The latest caps go to every new session.
 
   Pointer moves (any-motion mode 1003) coalesce: a queued `:move` is replaced by the
   newest one, so at most one waits behind an in-flight event and keys never queue

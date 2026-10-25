@@ -235,6 +235,20 @@ defmodule HerdrTerm.Client.Term.InputTest do
       assert wait_until(fn -> queried(tty, 2) end)
     end
 
+    test "the colour window follows :colors_window_ms", %{tty: tty, sup: sup} do
+      old = Application.get_env(:herdr_term, :colors_window_ms)
+      on_exit(fn -> Application.put_env(:herdr_term, :colors_window_ms, old) end)
+      Application.put_env(:herdr_term, :colors_window_ms, 300)
+      assert wait_until(fn -> queried(tty, 1) end, 200)
+      # a query started now uses the 300 ms window (the startup one's timer goes stale)
+      send(Client.input(sup), {:tty_resumed})
+      assert wait_until(fn -> queried(tty, 2) end, 200)
+      Tty.inject(tty, "\e]11;rgb:ff/ff/ff\a")
+      refute_receive {:caps, _}, 150
+      # accepted inside the window, sent when it closes at 300 ms, well before 1 s
+      assert_receive {:caps, %{colors: %{bg: {255, 255, 255}}}}, 450
+    end
+
     test "a partial answer is sent when the window closes; resume re-queries", %{
       tty: tty,
       sup: sup

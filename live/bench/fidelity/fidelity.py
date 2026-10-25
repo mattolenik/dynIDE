@@ -56,6 +56,8 @@ class Host(th.Herdr):
     def pump(self, wait=0.05):
         super().pump(wait)
         buf = bytes(th.transcript[self.scanned:])
+        # rescan a 64-byte tail next time: a query split across reads (the longest,
+        # `ESC ] 4 ; 255 ; ? ESC \`, is 12 bytes) is answered once it is whole
         end = 0
         for m in HOST_QUERY.finditer(buf):
             self.send(answer(m))
@@ -125,6 +127,9 @@ def check_queries(h, tmp):
     bad = [k for k, v in lines.items() if v.startswith("(")]
     if bad:
         raise CheckFail(f"unanswered: {', '.join(bad)} ({detail})")
+    for name, want in (("DA1", "\\x1b[?"), ("XTVERSION", "libghostty"), ("DECRQM2004", "[?2004;")):
+        if want not in lines.get(name, "") or (name == "DA1" and not lines[name].startswith(want)):
+            raise CheckFail(f"{name} reply {lines.get(name)!r} lacks {want!r}")
     if BG.decode() not in lines.get("OSC11", ""):
         raise CheckFail(f"OSC 11 reply {lines.get('OSC11')!r} lacks the host bg {BG.decode()}")
     return detail
@@ -403,7 +408,7 @@ def main():
             try:
                 h.new_tab(name)
                 print(f"PASS {name} {check(h, tmp)}", flush=True)
-            except (CheckFail, TypeError, ValueError, OSError) as e:
+            except Exception as e:  # noqa: BLE001 - any check error is that check's FAIL
                 failed += 1
                 print(f"FAIL {name}: {type(e).__name__ + ': ' if not isinstance(e, CheckFail) else ''}{e}",
                       flush=True)
