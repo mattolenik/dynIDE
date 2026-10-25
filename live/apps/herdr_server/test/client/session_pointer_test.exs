@@ -270,14 +270,17 @@ defmodule HerdrServer.Client.SessionPointerTest do
 
   test "pane bells and child clipboard writes forward; inputs mark the foreground" do
     {a, sa} = client()
+    # an attach marks the foreground in handle_continue, after the attach reply: wait
+    # for a's first scene (pushed after its mark) before b attaches
+    _ = scene(a)
     {_b, sb} = client()
-    assert Facts.get(:foreground) == sb
+    assert eventually(fn -> Facts.get(:foreground) == sb end)
     send(sa, {:pane_bell, 1})
     assert_receive {^a, {:bell, 1}}, 500
     send(sa, {:pane_clipboard, 1, "x"})
     assert_receive {^a, {:clipboard, %{text: "x", source: :pane}}}, 500
     input(sa, a, mouse(:move, :none, 0, 0))
-    assert Facts.get(:foreground) == sa
+    assert eventually(fn -> Facts.get(:foreground) == sa end)
   end
 
   defp pty(id) do
@@ -327,6 +330,21 @@ defmodule HerdrServer.Client.SessionPointerTest do
       assert %{url: "https://e.com/x"} = pointer(sa).hover
       Server.scroll(1, {:delta, -2})
       assert eventually(fn -> pointer(sa).hover == nil end)
+    end
+
+    test "a ctrl+move from a link straight onto chrome clears the hover" do
+      {a, sa} = client()
+      r = rect(last_scene(a), 1)
+      # sidebar left of the pane and the row above it (tab bar): outside every pane
+      assert r.x > 0 and r.y > 0
+      output(1, "go https://e.com/x")
+
+      for {x, y} <- [{0, r.y}, {r.x + 5, r.y - 1}] do
+        input(sa, a, mouse(:move, :none, r.x + 5, r.y, [:ctrl]))
+        assert %{url: "https://e.com/x"} = pointer(sa).hover
+        input(sa, a, mouse(:move, :none, x, y, [:ctrl]))
+        assert pointer(sa).hover == nil
+      end
     end
   end
 
