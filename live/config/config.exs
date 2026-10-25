@@ -95,6 +95,9 @@ config :herdr_term,
 # the same at runtime. Frames are at least min_frame_interval_ms apart.
 config :herdr_term, headless: config_env() == :test, min_frame_interval_ms: 6
 
+# host colour query window (Client.Term.Input); shorter in tests
+config :herdr_term, colors_window_ms: if(config_env() == :test, do: 1000, else: 5000)
+
 # Config file (M13, HerdrServer.Config): tests read a fresh per-run file with onboarding
 # off (so unrelated tests see no modal); written here because every app's tests start
 # herdr_server, and modal tests may write to it. Tests needing another file set the path.

@@ -19,13 +19,16 @@ defmodule HerdrTerm.Client.Term.Input do
 
   Host colours: after the startup windows (500ms) and on `{:tty_resumed}`, Input asks
   the host for its colour scheme (`CSI ? 996 n`), default fg/bg (OSC 10/11) and palette
-  (OSC 4, 0..255), then `CSI 5 n` as end sentinel, with a 1s `:colors` window. When
+  (OSC 4, 0..255), then `CSI 5 n` as end sentinel, with a `:colors` window
+  (`config :herdr_term, :colors_window_ms`, default 5 s: a loaded host or a slow ssh
+  link answers seconds late, and every terminal answers the sentinel early). When
   all 258 colours or the sentinel's reply arrived or the window closed, and the host
   answered anything, the session gets
   `{:caps, %{colors: %{fg, bg, palette}, scheme}}` (rgb `{r, g, b}`, unanswered fg/bg/
   scheme nil) and Render `{:host_colors, %{fg, bg}}`; a later unsolicited scheme report
   (mode 2031) sends `{:caps, %{scheme: s}}` and queries the colours again (the theme
-  changed). The latest caps go to every new session.
+  changed); a report of the scheme already sent is ignored (a late answer to our own
+  query, not a change, so no query loop). The latest caps go to every new session.
 
   Pointer moves (any-motion mode 1003) coalesce: a queued `:move` is replaced by the
   newest one, so at most one waits behind an in-flight event and keys never queue
@@ -53,7 +56,6 @@ defmodule HerdrTerm.Client.Term.Input do
 
   @esc_ms 25
   @window_ms 500
-  @colors_ms 1000
   @color_queries IO.iodata_to_binary([
                    "\e[?996n\e]10;?\e\\\e]11;?\e\\",
                    for(n <- 0..255, do: "\e]4;#{n};?\e\\"),
@@ -265,10 +267,11 @@ defmodule HerdrTerm.Client.Term.Input do
   defp query_colors(state) do
     _ = Kernel.tty().write(state.tty, @color_queries)
     ref = make_ref()
-    Process.send_after(self(), {:colors_done, ref}, @colors_ms)
+    window = Application.get_env(:herdr_term, :colors_window_ms, 5000)
+    Process.send_after(self(), {:colors_done, ref}, window)
 
     parse =
-      case Guard.run_twice(Parse, :open_window, [state.parse, :colors, now() + @colors_ms]) do
+      case Guard.run_twice(Parse, :open_window, [state.parse, :colors, now() + window]) do
         {:ok, p} -> p
         {:failed, _} -> state.parse
       end
@@ -276,6 +279,9 @@ defmodule HerdrTerm.Client.Term.Input do
     colors = %{fg: nil, bg: nil, palette: %{}, scheme: nil, n: 0, ref: ref}
     %{state | parse: parse, colors: colors}
   end
+
+  # a report of the scheme already sent: a late answer to our own `CSI ? 996 n`
+  defp color_reply({:reply, :scheme, s}, %{colors: nil, caps: %{scheme: s}} = state), do: state
 
   # unsolicited (mode 2031) scheme report
   defp color_reply({:reply, :scheme, s}, %{colors: nil} = state) do

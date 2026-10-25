@@ -221,6 +221,20 @@ defmodule HerdrTerm.Client.Term.InputTest do
       assert_receive {:caps, %{colors: %{fg: {255, 255, 255}}, scheme: :light}}
     end
 
+    test "a late report of the scheme already sent does not query again", %{tty: tty} do
+      assert wait_until(fn -> queried(tty, 1) end, 200)
+      Tty.inject(tty, "\e[?997;1n\e]10;rgb:ffff/ffff/ffff\e\\\e[0n")
+      assert_receive {:caps, %{scheme: :dark}}, 500
+      # e.g. the answer to the query a slow host replied to after the window closed
+      Tty.inject(tty, "\e[?997;1n")
+      refute_receive {:caps, _}, 200
+      refute queried(tty, 2)
+      # a real change still re-queries
+      Tty.inject(tty, "\e[?997;2n")
+      assert_receive {:caps, %{scheme: :light}}, 500
+      assert wait_until(fn -> queried(tty, 2) end)
+    end
+
     test "a partial answer is sent when the window closes; resume re-queries", %{
       tty: tty,
       sup: sup
