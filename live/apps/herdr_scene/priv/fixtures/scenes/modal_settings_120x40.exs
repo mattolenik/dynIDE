@@ -7,14 +7,16 @@
     text: nil,
     token: nil,
     props: %{
+      mouse: true,
+      sound: %{command: nil, enabled: true},
+      toast: %{delivery: :herdr},
+      indicators: :dots,
       theme: %{
         name: "catppuccin",
         auto_switch: false,
         dark: "catppuccin",
         light: "catppuccin-latte"
-      },
-      indicators: :dots,
-      mouse: true
+      }
     },
     children: [
       %HerdrScene.Scene.Node{
@@ -385,7 +387,7 @@
                 rect: nil,
                 text: "color dots",
                 token: nil,
-                props: %{selected: true, current: true, indicators: :dots},
+                props: %{selected: true, indicators: :dots, current: true},
                 children: []
               },
               %HerdrScene.Scene.Node{
@@ -394,7 +396,7 @@
                 rect: nil,
                 text: "distinct symbols",
                 token: nil,
-                props: %{selected: false, current: false, indicators: :symbols},
+                props: %{selected: false, indicators: :symbols, current: false},
                 children: []
               }
             ]
@@ -452,5 +454,5 @@
       graphics: []
     }
   ],
-  focus: %{chrome: nil, pane: 1}
+  focus: %{pane: 1, chrome: nil}
 }

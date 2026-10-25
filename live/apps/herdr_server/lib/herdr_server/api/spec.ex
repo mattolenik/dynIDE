@@ -544,7 +544,18 @@ defmodule HerdrServer.Api.Spec do
       ev("pane.closed", "A pane was closed.", pane),
       ev("pane.focused", "The focused pane changed.", pane_obj),
       ev("pane.updated", "A pane's title or size changed.", pane_obj),
-      ev("layout.updated", "A tab's split tree changed.", tab ++ [f("layout", {:ref, "layout"})])
+      ev("layout.updated", "A tab's split tree changed.", tab ++ [f("layout", {:ref, "layout"})]),
+      ev(
+        "notification.shown",
+        "An agent needs attention or finished.",
+        pane ++
+          [
+            f("level", {:enum, ["attention", "done"]}),
+            f("title", :string),
+            f("body", :string),
+            f("sound", {:enum, ["request", "done"]})
+          ]
+      )
     ]
   end
 

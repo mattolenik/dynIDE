@@ -13,9 +13,9 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
     * `dim`: the top-of-stack `:modal` has `props.dim`.
 
   Segments and hits are clipped to `size`. One module per region role (`:modal` and
-  `:menu` share `Chrome.Modal`, which adds a whole-screen backdrop hit); a region role
-  without its own module (toast until Task 11) draws a blank box of its rect with one
-  hit. The root's `indicators` prop (`:dots`, default, or
+  `:menu` share `Chrome.Modal`, which adds a whole-screen backdrop hit; `:toast` is
+  `Chrome.Toast`); a region role without its own module draws a blank box of its rect
+  with one hit. The root's `indicators` prop (`:dots`, default, or
   `:symbols`) picks the sidebar's badge glyphs.
   """
 
@@ -23,7 +23,7 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
   alias HerdrScene.Scene
   alias HerdrScene.Scene.Node
   alias HerdrTerm.Cells
-  alias HerdrTerm.Client.Term.Render.Chrome.{Modal, Sidebar, Status, Tabs}
+  alias HerdrTerm.Client.Term.Render.Chrome.{Modal, Sidebar, Status, Tabs, Toast}
   alias HerdrTerm.Client.Term.Theme
 
   @type seg :: {non_neg_integer, non_neg_integer, Cell.row()}
@@ -85,6 +85,8 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
 
   defp region(%Node{role: role} = n, theme, _, size) when role in [:modal, :menu],
     do: Modal.render(n, theme, size)
+
+  defp region(%Node{role: :toast} = n, theme, _, _), do: Toast.render(n, theme)
 
   defp region(%Node{role: :divider, id: id, rect: r}, _, _, _),
     do: {[], [hit(r, [id], :divider, true)]}

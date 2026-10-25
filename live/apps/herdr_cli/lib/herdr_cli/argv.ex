@@ -25,7 +25,8 @@ defmodule HerdrCli.Argv do
   @agent_states ~w(idle working blocked done unknown)
   @event_types ~w(workspace.created workspace.closed workspace.focused workspace.renamed
                   tab.created tab.closed tab.focused tab.renamed
-                  pane.created pane.closed pane.focused pane.updated layout.updated)
+                  pane.created pane.closed pane.focused pane.updated layout.updated
+                  notification.shown)
 
   @source {:enum, @sources}
   @read_opts %{"source" => {"source", @source}, "lines" => {"lines", :int}}

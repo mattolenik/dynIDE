@@ -10,10 +10,12 @@ defmodule HerdrServer.View do
       rect, the border carries the outer rect (see `Layout.borders/2`). Rows are
       `{:ref, id, layout_gen}` (or `{:inline, []}` for inline clients; the caller fills
       rows). Pane cursors are nil here.
-    * Chrome: `:root` (props `theme`, `indicators` and `mouse: true`) holding the
+    * Chrome: `:root` (props `theme`, `indicators`, `mouse: true`, the `sound` prefs
+      `%{enabled, command}` and `toast: %{delivery}`, plain data a client acts on) holding the
       `:sidebar` region (`View.Sidebar`, omitted when the frame has none), the `:tabs`
       region (`View.Tabs`, omitted when the frame has no tab bar), one `:divider` node per
-      split in `Layout.splits` preorder, then the `:status` region (`View.Status`), then
+      split in `Layout.splits` preorder, then the `:status` region (`View.Status`), this
+      client's `:toast` regions (`View.Toast`), then
       the top modal's `:modal` / `:menu` region (`App.Modal.view/2`) when the stack is
       non-empty. A prompt on top puts `focus.chrome` on its input and sets the scene
       `cursor` there (`View.Modal.cursor/1`); otherwise both are nil.
@@ -32,7 +34,7 @@ defmodule HerdrServer.View do
   alias HerdrServer.App.Modal
   alias HerdrServer.Client.State
   alias HerdrServer.Layout
-  alias HerdrServer.View.{Frame, Sidebar, Status, Tabs}
+  alias HerdrServer.View.{Frame, Sidebar, Status, Tabs, Toast}
   alias HerdrServer.View.Modal, as: ModalView
 
   @spec compute(map, State.t()) :: Scene.t()
@@ -88,8 +90,22 @@ defmodule HerdrServer.View do
       end
 
     status = Status.node(app, client, regions.status)
-    props = %{theme: app.ui.theme, indicators: app.ui.indicators, mouse: true}
-    %Node{role: :root, id: :root, props: props, children: sidebar ++ tabs ++ dividers ++ [status]}
+    toasts = Toast.nodes(client.toasts, area)
+
+    props = %{
+      theme: app.ui.theme,
+      indicators: app.ui.indicators,
+      mouse: true,
+      sound: app.ui.sound,
+      toast: %{delivery: app.ui.toast.delivery}
+    }
+
+    %Node{
+      role: :root,
+      id: :root,
+      props: props,
+      children: sidebar ++ tabs ++ dividers ++ [status | toasts]
+    }
   end
 
   defp divider_rect(%{direction: :horizontal, pos: pos, area: a}, area),

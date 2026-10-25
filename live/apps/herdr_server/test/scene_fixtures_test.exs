@@ -28,7 +28,8 @@ defmodule HerdrServer.SceneFixturesTest do
     {"modal_onboarding_80x24", {80, 24}, [:onboarding]},
     {"modal_keybinds_120x40", {120, 40}, [{:open, KeybindsModal}, {:key, "j"}]},
     {"modal_keybind_capture_120x40", {120, 40},
-     [{:open, KeybindsModal}, {:click, [{:modal, 0}, :list, {:action, "rename_tab"}], 0, 0}]}
+     [{:open, KeybindsModal}, {:click, [{:modal, 0}, :list, {:action, "rename_tab"}], 0, 0}]},
+    {"toast_120x40", {120, 40}, [:c, :toast]}
   ]
 
   for {name, size, steps} <- @fixtures do
@@ -38,7 +39,21 @@ defmodule HerdrServer.SceneFixturesTest do
       app = build(cols, rows, steps)
       # the prefix step is client input state, not app state
       mode = if :prefix in steps, do: :prefix, else: :terminal
-      client = %State{size: %{cols: cols, rows: rows}, transport: :ref, mode: mode}
+      # so is a toast: one for pane 1, in the background tab
+      toasts =
+        if :toast in steps,
+          do: [
+            %{id: 1, level: :attention, title: "pi needs attention", body: "1 · 1 · 1", pane: 1}
+          ],
+          else: []
+
+      client = %State{
+        size: %{cols: cols, rows: rows},
+        transport: :ref,
+        mode: mode,
+        toasts: toasts
+      }
+
       scene = View.compute(app, client)
       assert :ok = Scene.validate(scene)
 
@@ -81,5 +96,6 @@ defmodule HerdrServer.SceneFixturesTest do
   defp step(:b, app), do: HerdrServer.ViewHelpers.pfx(app, "b")
   defp step({:workspace, name}, app), do: HerdrServer.ViewHelpers.add_workspace(app, name)
   defp step(:prefix, app), do: app
+  defp step(:toast, app), do: app
   defp step({:many, n}, app), do: HerdrServer.ViewHelpers.many(app, n)
 end

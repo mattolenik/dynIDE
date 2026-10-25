@@ -334,4 +334,69 @@ defmodule HerdrTerm.Client.Term.RenderTest do
       0 -> []
     end
   end
+
+  # --- alerts (M13 Task 11) ---
+
+  alias HerdrTerm.Kernel.Fake.Tty
+
+  defp alert_scene(render, props) do
+    s = Fixture.load("single_pane_80x24")
+    send(render, {:scene, %{s | chrome: %{s.chrome | props: Map.merge(s.chrome.props, props)}}})
+    assert_receive {:frame, _, _}
+  end
+
+  defp alert(sound),
+    do: %{
+      kind: :notification,
+      level: :done,
+      title: "pi finished",
+      body: "w",
+      pane: 1,
+      sound: sound
+    }
+
+  test "terminal delivery writes OSC 9; a sound without a command is BEL", %{
+    render: render,
+    tty: tty
+  } do
+    alert_scene(render, %{toast: %{delivery: :terminal}, sound: %{enabled: true, command: nil}})
+    send(render, {:alert, alert(:done)})
+    _ = :sys.get_state(render)
+    assert Tty.written(tty) =~ "\e]9;pi finished: w\a\a"
+  end
+
+  @tag :tmp_dir
+  test "a sound command runs with the sound name, a missing one logs once", %{
+    render: render,
+    tty: tty,
+    tmp_dir: dir
+  } do
+    out = Path.join(dir, "out")
+    cmd = Path.join(dir, "snd")
+    File.write!(cmd, "#!/bin/sh\necho \"$1\" >> '#{out}'\n")
+    File.chmod!(cmd, 0o755)
+    alert_scene(render, %{toast: %{delivery: :herdr}, sound: %{enabled: true, command: cmd}})
+    send(render, {:alert, alert(:request)})
+    assert wait_file(out) == "request\n"
+    refute Tty.written(tty) =~ "\a"
+
+    alert_scene(render, %{sound: %{enabled: true, command: Path.join(dir, "nope")}})
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        send(render, {:alert, alert(:done)})
+        send(render, {:alert, alert(:done)})
+        _ = :sys.get_state(render)
+      end)
+
+    assert length(String.split(log, "sound command")) == 2
+  end
+
+  defp wait_file(path, n \\ 200) do
+    case File.read(path) do
+      {:ok, s} when s != "" -> s
+      _ when n > 0 -> Process.sleep(10) && wait_file(path, n - 1)
+      _ -> flunk("#{path} never written")
+    end
+  end
 end

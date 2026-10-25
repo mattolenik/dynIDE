@@ -37,6 +37,11 @@ defmodule HerdrServer.Client.Session do
   `Mirror.get(:runtime_status)`) is kept in `state.runtime` for View's status line; a
   changed status repaints (the scene is pushed only if it differs).
 
+  Alerts (M13): `{:alert, a}` from the Store goes through `Client.Toasts` with the app and
+  this client's last `{:focus, bool}`: forwarded to the client (or not) and queued as a
+  toast that expires after 8 s (attention) or 5 s (`config :herdr_server, :toast_ms`);
+  a click on `[{:toast, id}]` dismisses it and focuses its pane.
+
   Handoff (M5): every `Handoff.Notice` event is forwarded verbatim (`{:handoff, map}`).
   From `:begin` input is held: it gets no ack (one warning notice per handoff), so the
   client keeps it unacked (at-least-once: resent first to its next session, in the new
@@ -53,8 +58,8 @@ defmodule HerdrServer.Client.Session do
 
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
-  alias HerdrServer.App.{Keybinds, Modal, Store}
-  alias HerdrServer.Client.{Keys, State}
+  alias HerdrServer.App.{Actions, Keybinds, Modal, Store}
+  alias HerdrServer.Client.{Keys, State, Toasts}
   alias HerdrServer.Handoff.Notice
   alias HerdrServer.Mirror
   alias HerdrServer.Pane.Rows
@@ -172,6 +177,18 @@ defmodule HerdrServer.Client.Session do
   def handle_info({:notice_expired, ref}, %{notice: %{ref: ref}} = state) do
     state = Map.merge(%State{}, state)
     {:noreply, repaint(%{state | notice: nil})}
+  end
+
+  # an agent alert (`App.Alerts`, broadcast by the Store): `Client.Toasts` decides
+  def handle_info({:alert, a}, state) do
+    state = Map.merge(%State{}, state)
+    {:noreply, alerted(state, a)}
+  end
+
+  def handle_info({:toast_expired, id}, state) do
+    state = Map.merge(%State{}, state)
+    {_, toasts} = Toasts.drop(state.toasts, id)
+    {:noreply, if(toasts == state.toasts, do: state, else: repaint(%{state | toasts: toasts}))}
   end
 
   # the protocol's client -> server detach message, or the Store's {:detach} effect for an
@@ -326,9 +343,50 @@ defmodule HerdrServer.Client.Session do
     end
   end
 
+  defp apply_input(state, {:focus, f} = ev, _from) do
+    Store.event(ev, driving_size(state))
+    %{state | focused: f}
+  end
+
+  # a toast is this client's: a click dismisses it and focuses its pane
+  defp apply_input(state, {:chrome, [{:toast, id} | _], {kind, _}}, _from) do
+    case Toasts.drop(state.toasts, id) do
+      {%{pane: pane}, rest} when kind == :click ->
+        if pane, do: Store.run({Actions, :focus_pane, [pane]}, driving_size(state))
+        repaint(%{state | toasts: rest})
+
+      _ ->
+        state
+    end
+  end
+
   defp apply_input(state, ev, _from) do
     Store.event(ev, driving_size(state))
     state
+  end
+
+  defp alerted(state, a) do
+    app = Store.snapshot()
+    id = System.unique_integer([:positive])
+    args = [state.toasts, a, app, state.focused, id]
+
+    # a failing policy still lets the client hear the alert
+    {fwd, toasts} =
+      case Guard.run_twice(Toasts, :alert, args, scan: false, server: Store.reload_server()) do
+        {:ok, {_, _} = r} -> r
+        _ -> {a, state.toasts}
+      end
+
+    if fwd, do: send(state.client, {:alert, fwd})
+    ms = Application.get_env(:herdr_server, :toast_ms, attention: 8000, done: 5000)
+
+    if toasts != state.toasts,
+      do: Process.send_after(self(), {:toast_expired, id}, ms[a.level] || ms[:done])
+
+    push(%{state | toasts: toasts}, app)
+  catch
+    # the Store is restarting: the session follows it and repaints then
+    :exit, _ -> state
   end
 
   defp keyed(state, old_mode, result, from) do
@@ -456,7 +514,8 @@ defmodule HerdrServer.Client.Session do
       transport: state.transport,
       mode: state.mode,
       notice: state.notice,
-      runtime: state.runtime
+      runtime: state.runtime,
+      toasts: state.toasts
     }
 
     case Guard.run_twice(View, :compute, [app, view_state],

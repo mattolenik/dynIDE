@@ -83,6 +83,26 @@ defmodule HerdrServer.Api.EventsTest do
     assert %{"event" => "pane.focused", "data" => %{"pane_id" => "p1"}} = event!(s)
   end
 
+  test "an agent notification is published as notification.shown", %{path: path} do
+    s = subscribe!(path, [%{"type" => "notification.shown", "pane_id" => "p1"}])
+    Store.event_async({:agent_state, 1, :working})
+    Store.event_async({:agent_state, 1, :blocked})
+
+    assert %{"event" => "notification.shown", "data" => data} = event!(s)
+
+    assert data == %{
+             "pane_id" => "p1",
+             "tab_id" => "w1:t1",
+             "workspace_id" => "w1",
+             "level" => "attention",
+             "title" => "agent needs attention",
+             "body" => "1 · 1",
+             "sound" => "request"
+           }
+
+    assert ApiClient.recv_line(s, 300) == {:error, :timeout}
+  end
+
   test "request lines on a subscription are ignored", %{path: path, ctl: ctl} do
     s = subscribe!(path, [%{"type" => "tab.created"}])
     ApiClient.send_line(s, ~s({"id":"x","method":"ping"}))

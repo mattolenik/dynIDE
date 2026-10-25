@@ -24,7 +24,13 @@ defmodule HerdrTerm.Client.Term.Render do
   pending timer. A frame repaints fully on the first frame, after a re-attach, when the
   scene size changes and on `:repaint` (`Tty.Owner` sends it when the tty resumes). A
   failing compose keeps the last frame and retries a full repaint every 500ms; a failing
-  cursor keeps the last frame. `{:detached, reason}` and
+  cursor keeps the last frame.
+
+  Alerts: `{:alert, a}` runs `Alert.actions/2` over the root props: OSC 9 through the
+  tty; a sound runs `sound.command` with the sound name as its last argument (a port,
+  fire and forget; a missing command logs once), else writes BEL.
+
+  `{:detached, reason}` and
   `{:handoff, map}` go to `Tty.Owner`.
   """
 
@@ -36,6 +42,7 @@ defmodule HerdrTerm.Client.Term.Render do
   alias HerdrScene.Protocol
   alias HerdrScene.Scene
   alias HerdrTerm.{Client, Kernel}
+  alias HerdrTerm.Client.Term.Alert
   alias HerdrTerm.Client.Term.Render.{Chrome, Compose}
   alias HerdrTerm.Client.Term.Theme
   alias HerdrTerm.Client.Term.Theme.Detect
@@ -62,6 +69,7 @@ defmodule HerdrTerm.Client.Term.Render do
     :colorfgbg,
     :chrome_key,
     :chrome_retry,
+    :sound_warned,
     transport: :ref,
     caps: nil,
     appearance: :dark,
@@ -183,6 +191,21 @@ defmodule HerdrTerm.Client.Term.Render do
     {:noreply, state}
   end
 
+  # a protocol alert: OSC 9, BEL or the sound command, per the scene root's props
+  def handle_info({:alert, a}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    props = (state.scene && state.scene.chrome && state.scene.chrome.props) || %{}
+
+    case Guard.run_twice(Alert, :actions, [a, props], scan: false) do
+      {:ok, actions} -> {:noreply, Enum.reduce(actions, state, &perform(&2, &1, props))}
+      {:failed, _} -> {:noreply, state}
+    end
+  end
+
+  # a sound command's output or exit (its port is closed by then): nothing to do
+  def handle_info({port, _}, state) when is_port(port),
+    do: {:noreply, Map.merge(%__MODULE__{}, state)}
+
   def handle_info(:chrome_retry, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:noreply, %{state | chrome_retry: nil, repaint: true} |> chrome() |> schedule()}
@@ -197,6 +220,51 @@ defmodule HerdrTerm.Client.Term.Render do
     state = Map.merge(%__MODULE__{}, state)
     Logger.debug("render: ignored #{inspect(msg)}")
     {:noreply, state}
+  end
+
+  # alerts
+
+  defp perform(state, {:osc9, text}, _props), do: tty_write(state, ["\e]9;", text, "\a"])
+
+  defp perform(state, {:sound, name}, props) do
+    case get_in(props, [:sound, :command]) do
+      nil -> tty_write(state, "\a")
+      cmd -> play(state, cmd, name)
+    end
+  end
+
+  defp perform(state, _other, _props), do: state
+
+  defp tty_write(state, data) do
+    _ = Kernel.tty().write(state.tty, data)
+    state
+  end
+
+  # fire and forget; output is discarded with the port's messages
+  defp play(state, cmd, name) do
+    case System.find_executable(cmd) do
+      nil ->
+        missing(state, cmd)
+
+      exe ->
+        Port.open({:spawn_executable, exe}, [
+          :binary,
+          :exit_status,
+          :stderr_to_stdout,
+          args: [name]
+        ])
+
+        state
+    end
+  rescue
+    _ in ErlangError -> missing(state, cmd)
+  end
+
+  defp missing(%{sound_warned: cmd} = state, cmd), do: state
+
+  defp missing(state, cmd) do
+    Logger.warning("sound command #{inspect(cmd)} not found or not executable")
+    %{state | sound_warned: cmd}
   end
 
   # attach

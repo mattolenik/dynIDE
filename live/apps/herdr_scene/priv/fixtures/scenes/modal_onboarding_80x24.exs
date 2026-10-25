@@ -7,14 +7,16 @@
     text: nil,
     token: nil,
     props: %{
+      mouse: true,
+      sound: %{command: nil, enabled: true},
+      toast: %{delivery: :herdr},
+      indicators: :dots,
       theme: %{
         name: "catppuccin",
         auto_switch: false,
         dark: "catppuccin",
         light: "catppuccin-latte"
-      },
-      indicators: :dots,
-      mouse: true
+      }
     },
     children: [
       %HerdrScene.Scene.Node{
@@ -447,5 +449,5 @@
       graphics: []
     }
   ],
-  focus: %{chrome: nil, pane: 1}
+  focus: %{pane: 1, chrome: nil}
 }

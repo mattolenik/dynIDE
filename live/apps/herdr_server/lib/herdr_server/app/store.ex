@@ -10,6 +10,8 @@ defmodule HerdrServer.App.Store do
     * The Store remembers each session's last size. When the driving session goes down,
       the latest active remaining session drives and pane sizes are re-settled at its size.
     * `event_async/1` (cast) is for processes the Store calls into (`Pane.Server`).
+    * An `{:alert, a}` effect (`App.Alerts`) is sent to every subscriber as is, ahead of
+      that event's `{:app_changed, app}`.
     * Subscribers get `{:app_changed, app}` after each event that changed the app. The
       Store only ever `send`s to sessions, so there is no call cycle.
     * After each event: panes of inactive tabs are hidden, active-tab panes are resized to
@@ -512,6 +514,12 @@ defmodule HerdrServer.App.Store do
   end
 
   defp effect(state, {:config_diagnostics, d}, _origin), do: StoreConfig.diagnostics(state, d)
+
+  # every subscriber decides for itself (sessions: `Client.Toasts`; the API hub publishes)
+  defp effect(state, {:alert, a}, _origin) do
+    Enum.each(Map.keys(state.subs), &send(&1, {:alert, a}))
+    state
+  end
 
   defp effect(state, other, origin) do
     io(other, origin)

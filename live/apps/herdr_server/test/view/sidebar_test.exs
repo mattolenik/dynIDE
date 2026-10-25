@@ -24,7 +24,9 @@ defmodule HerdrServer.View.SidebarTest do
     assert s.chrome.props == %{
              theme: fresh(1, 1).ui.theme,
              indicators: :dots,
-             mouse: true
+             mouse: true,
+             sound: %{enabled: true, command: nil},
+             toast: %{delivery: :herdr}
            }
   end
 

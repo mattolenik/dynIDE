@@ -977,6 +977,9 @@ defmodule HerdrServer.ServerTest do
     assert_receive {^c, {:ack, 7}}
     input(s, c, 8, {:pane_title, 1, "pwned"})
     assert_receive {^c, {:ack, 8}}
+    input(s, c, 9, {:agent_state, 1, :blocked})
+    assert_receive {^c, {:ack, 9}}
+    refute Map.has_key?(Store.snapshot().session.panes[1], :agent_state)
     assert Map.has_key?(Store.snapshot().session.panes, 1)
   end
 
@@ -1166,5 +1169,60 @@ defmodule HerdrServer.ServerTest do
 
     for sess <- [s, s2],
         do: assert(Process.info(sess, :message_queue_len) == {:message_queue_len, 0})
+  end
+
+  # --- alerts and toasts (M13 Task 11) ---
+
+  defp toast(scene), do: Enum.find(scene.chrome.children, &(&1.role == :toast))
+
+  defp background_pane(c) do
+    :ok = Store.run({HerdrServer.App.Actions, :new_tab, []}, %{cols: 80, rows: 24})
+    scene_until(c, &match?([%{id: 2}], &1.panes))
+  end
+
+  test "a background pane's alert reaches the client and its toast focuses the pane" do
+    {c, s} = client()
+    scene(c)
+    background_pane(c)
+    Store.event_async({:agent_state, 1, :working})
+    Store.event_async({:agent_state, 1, :blocked})
+    assert_receive {^c, {:alert, %{level: :attention, pane: 1, sound: :request} = a}}, 1000
+    assert Protocol.validate_server_msg({:alert, a}) == :ok
+    t = c |> scene_until(&toast/1) |> toast()
+    assert %{props: %{pane: 1, level: :attention}} = t
+    input(s, c, 1, {:chrome, [t.id], {:click, %{x: t.rect.x, y: t.rect.y}}})
+    assert_receive {^c, {:ack, 1}}
+    scene_until(c, &(toast(&1) == nil and match?([%{id: 1}], &1.panes)))
+    assert Store.snapshot().focus.pane == 1
+  end
+
+  test "the active tab suppresses toasts and the done sound unless the terminal is unfocused" do
+    {c, s} = client()
+    scene(c)
+    Store.event_async({:agent_state, 1, :blocked})
+    # the request sound is never suppressed
+    assert_receive {^c, {:alert, %{title: nil, body: nil, sound: :request}}}, 1000
+    Store.event_async({:agent_state, 1, :idle})
+    _ = Store.snapshot()
+    _ = :sys.get_state(s)
+    refute_received {^c, {:alert, _}}
+    assert :sys.get_state(s).toasts == []
+
+    input(s, c, 1, {:focus, false})
+    assert_receive {^c, {:ack, 1}}
+    Store.event_async({:agent_state, 1, :blocked})
+    assert_receive {^c, {:alert, %{title: "agent needs attention"}}}, 1000
+    assert %{props: %{pane: 1}} = c |> scene_until(&toast/1) |> toast()
+  end
+
+  test "a toast expires" do
+    Application.put_env(:herdr_server, :toast_ms, attention: 100, done: 100)
+    on_exit(fn -> Application.delete_env(:herdr_server, :toast_ms) end)
+    {c, _s} = client()
+    scene(c)
+    background_pane(c)
+    Store.event_async({:agent_state, 1, :blocked})
+    scene_until(c, &toast/1)
+    scene_until(c, &(toast(&1) == nil))
   end
 end

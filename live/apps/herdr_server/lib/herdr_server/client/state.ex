@@ -5,7 +5,9 @@ defmodule HerdrServer.Client.State do
   keybinds from the last app the session saw, `capture` whether its top modal captures
   keys (`App.Modal.capturing?/1`); `runtime` is the last
   `HerdrServer.RuntimeStatus` the session got from `ReloadNotices` (shared facts, copied
-  here so the pure View reads only its client).
+  here so the pure View reads only its client). `toasts` are this client's queued
+  notifications (`Client.Toasts`, newest first), `focused` its outer terminal's last
+  `{:focus, bool}` report (nil: unknown).
   """
 
   defstruct [
@@ -26,7 +28,9 @@ defmodule HerdrServer.Client.State do
     last_scene: nil,
     monitor: nil,
     store_monitor: nil,
-    held: nil
+    held: nil,
+    toasts: [],
+    focused: nil
   ]
 
   @type t :: %__MODULE__{
@@ -47,6 +51,8 @@ defmodule HerdrServer.Client.State do
           last_scene: term(),
           monitor: reference() | nil,
           store_monitor: reference() | nil,
-          held: [tuple()] | nil
+          held: [tuple()] | nil,
+          toasts: [HerdrServer.Client.Toasts.toast()],
+          focused: boolean() | nil
         }
 end

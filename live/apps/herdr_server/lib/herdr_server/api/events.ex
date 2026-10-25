@@ -6,6 +6,7 @@ defmodule HerdrServer.Api.Events do
   subscription subscribes the hub itself to the Store. On each `{:app_changed, app}` the
   hub diffs against the last app (`Api.EventDiff`, guarded) and sends
   `{:api_event, event}` to each subscriber with a matching filter, at most once per event.
+  The Store's `{:alert, a}` becomes `notification.shown`, placed in the last app.
   The hub monitors the Store: after a Store restart it subscribes again (retrying every
   100 ms until the Store is registered) and diffs from the new Store's snapshot, so
   changes during the restart give no events. When the last subscriber goes, the hub
@@ -19,7 +20,7 @@ defmodule HerdrServer.Api.Events do
 
   alias HerdrReload.Guard
   alias HerdrServer.Api.{EventDiff, Ids, View}
-  alias HerdrServer.App.Store
+  alias HerdrServer.App.{Commands, Store}
 
   @ids ~w(workspace_id tab_id pane_id)
 
@@ -114,6 +115,31 @@ defmodule HerdrServer.Api.Events do
     {:noreply, %{state | last: app}}
   end
 
+  # an agent alert (the Store's `{:alert, a}`), placed in the last app
+  def handle_info({:alert, a}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+
+    with %{} <- state.last,
+         {:ok, {w, t}} <- locate(state.last, a.pane) do
+      event = %{
+        "event" => "notification.shown",
+        "workspace_id" => Ids.workspace(w),
+        "tab_id" => Ids.tab(w, t),
+        "pane_id" => Ids.pane(a.pane),
+        "level" => Atom.to_string(a.level),
+        "title" => a.title,
+        "body" => a.body,
+        "sound" => Atom.to_string(a.sound)
+      }
+
+      for {pid, {_, filters}} <- state.subs,
+          Enum.any?(filters, &matches?(&1, event)),
+          do: send(pid, {:api_event, event})
+    end
+
+    {:noreply, state}
+  end
+
   # the Store restarted: it forgot this subscription; subscribe again once it is back
   def handle_info({:DOWN, ref, :process, _, _}, %{store?: ref} = state) do
     state = Map.merge(%__MODULE__{}, state)
@@ -190,6 +216,10 @@ defmodule HerdrServer.Api.Events do
     when reason in [:noproc, :normal, :shutdown, :killed] ->
       :error
   end
+
+  defp locate(app, pane),
+    do:
+      Guard.run_twice(Commands, :locate, [app, pane], server: Store.reload_server(), scan: false)
 
   defp fan_out(old, new, subs) do
     case Guard.run_twice(EventDiff, :diff, [old, new], server: Store.reload_server(), scan: false) do

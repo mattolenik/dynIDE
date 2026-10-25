@@ -8,6 +8,8 @@
     token: nil,
     props: %{
       mouse: true,
+      sound: %{command: nil, enabled: true},
+      toast: %{delivery: :herdr},
       indicators: :dots,
       theme: %{
         name: "catppuccin",

@@ -137,6 +137,7 @@ defmodule HerdrServer.Api.EventDiffTest do
       |> Enum.zip(tl(steps))
       |> Enum.flat_map(fn {x, y} -> types(diff(x, y)) end)
 
-    assert Enum.sort(Enum.uniq(seen)) == Enum.sort(Spec.event_types())
+    # notification.shown comes from the Store's alerts (Api.Events), not from a diff
+    assert Enum.sort(Enum.uniq(seen)) == Enum.sort(Spec.event_types() -- ["notification.shown"])
   end
 end

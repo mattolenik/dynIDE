@@ -498,7 +498,7 @@ CLI: `herdr-live events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] 
 
 | param | type | required | description |
 | --- | --- | --- | --- |
-| `subscriptions` | list of object {type: `workspace.created`, `workspace.closed`, `workspace.focused`, `workspace.renamed`, `tab.created`, `tab.closed`, `tab.focused`, `tab.renamed`, `pane.created`, `pane.closed`, `pane.focused`, `pane.updated` or `layout.updated`, pane_id?: pane id, tab_id?: tab id, workspace_id?: workspace id} (at least 1) | yes | Subscriptions. |
+| `subscriptions` | list of object {type: `workspace.created`, `workspace.closed`, `workspace.focused`, `workspace.renamed`, `tab.created`, `tab.closed`, `tab.focused`, `tab.renamed`, `pane.created`, `pane.closed`, `pane.focused`, `pane.updated`, `layout.updated` or `notification.shown`, pane_id?: pane id, tab_id?: tab id, workspace_id?: workspace id} (at least 1) | yes | Subscriptions. |
 
 Result: `subscription_started` with `subscriptions` (integer).
 
@@ -790,3 +790,17 @@ A tab's split tree changed.
 | `tab_id` | tab id |
 | `workspace_id` | workspace id |
 | `layout` | `layout` object |
+
+### `notification.shown`
+
+An agent needs attention or finished.
+
+| data field | type |
+| --- | --- |
+| `pane_id` | pane id |
+| `tab_id` | tab id |
+| `workspace_id` | workspace id |
+| `level` | `attention` or `done` |
+| `title` | string |
+| `body` | string |
+| `sound` | `request` or `done` |

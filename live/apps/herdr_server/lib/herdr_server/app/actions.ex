@@ -1,14 +1,14 @@
 defmodule HerdrServer.App.Actions do
   @moduledoc """
   Pure input handling: `apply/2` turns a neutral `HerdrScene.Event` (plus the
-  server-internal `{:pane_exited, id}` and `{:pane_title, id, title}`, which are never
-  accepted from clients) into new app state and a list of effects. Effects are the only
+  server-internal `{:pane_exited, id}`, `{:pane_title, id, title}`, `{:config_loaded, cfg}`
+  and `{:agent_state, id, state}`, which are never accepted from clients) into new app state and a list of effects. Effects are the only
   side-effect channel; this module does no I/O and sends no messages.
 
   Effects: `{:spawn, id, %{cols, rows}}`, `{:close, id}`, `{:key, id, event}`,
   `{:mouse, id, event}` (coordinates pane-relative), `{:paste, id, binary}`,
   `{:focus_report, id, boolean}`, `{:notice, %{level, text}}`, `{:detach}`,
-  `{:reload_config}`, `{:config_diagnostics, [binary]}`.
+  `{:reload_config}`, `{:config_diagnostics, [binary]}`, `{:alert, alert}` (`App.Alerts`).
 
   Config (`HerdrServer.Config`): `init/2` and the server-internal `{:config_loaded, cfg}`
   put the file over the ui (keybinds are always `Keybinds.default/0` plus the file); a
@@ -24,7 +24,18 @@ defmodule HerdrServer.App.Actions do
   Ponytail: panes' `layout_gen` is not bumped here; the Store owns resize bookkeeping.
   """
 
-  alias HerdrServer.App.{Chrome, Commands, Focus, Keybinds, Modal, Session, Ui, Workspaces}
+  alias HerdrServer.App.{
+    Alerts,
+    Chrome,
+    Commands,
+    Focus,
+    Keybinds,
+    Modal,
+    Session,
+    Ui,
+    Workspaces
+  }
+
   alias HerdrServer.App.Modal.Onboarding
   alias HerdrServer.{Config, Layout}
   alias HerdrServer.View.Frame
@@ -113,6 +124,20 @@ defmodule HerdrServer.App.Actions do
     case app.session.panes do
       %{^id => meta} -> {put_in(app.session.panes[id], %{meta | title: clean_title(title)}), []}
       _ -> {app, []}
+    end
+  end
+
+  # server-internal (M11 detection): stores the state, alerts on herdr's transitions
+  def apply(app, {:agent_state, id, state}) do
+    case app.session.panes do
+      %{^id => meta} ->
+        alerts = Alerts.from_agent(app, id, Map.get(meta, :agent_state), state)
+
+        {put_in(app.session.panes[id], Map.put(meta, :agent_state, state)),
+         Enum.map(alerts, &{:alert, &1})}
+
+      _ ->
+        {app, []}
     end
   end
 
