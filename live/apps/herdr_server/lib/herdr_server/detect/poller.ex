@@ -45,7 +45,8 @@ defmodule HerdrServer.Detect.Poller do
             engine: Engine,
             timer: nil,
             last: %{scans: 0, probes: 0, us: 0},
-            window: nil
+            window: nil,
+            warned: false
 
   @doc """
   Opts: `name` (default `#{inspect(__MODULE__)}`), `grace_ms` (tracker grace),
@@ -89,8 +90,9 @@ defmodule HerdrServer.Detect.Poller do
     state =
       struct(%__MODULE__{}, Keyword.take(opts, [:grace_ms, :interval_ms, :window_ms, :engine]))
 
-    # rows left by a previous poller: the first tick drops those of panes now gone
-    trackers = Map.new(Facts.agent_ids(), &{&1, Tracker.new(grace_ms: state.grace_ms)})
+    # rows left by a previous poller: the first tick drops those of panes now gone; the
+    # rest resume their label and state, so a stale label is cleared by the miss rule
+    trackers = Map.new(Facts.agent_ids(), &{&1, resumed(state, Facts.agent(&1))})
     state = %{state | trackers: trackers, window: window(now())}
     {:ok, schedule(state, state.interval_ms)}
   end
@@ -269,10 +271,7 @@ defmodule HerdrServer.Detect.Poller do
   end
 
   defp apply_effects(state, id, t, effects, now) do
-    Enum.each(effects, fn
-      {:agent, label} -> Store.event_async({:pane_agent, id, label})
-      {:state, s} -> Store.event_async({:agent_state, id, s})
-    end)
+    state = Enum.reduce(effects, state, &effect(&2, id, &1))
 
     with {:ok, facts} <- pure(Tracker, :facts, [t]) do
       if Map.delete(Facts.agent(id) || %{}, :updated_ms) != facts,
@@ -280,6 +279,20 @@ defmodule HerdrServer.Detect.Poller do
     end
 
     put_in(state.trackers[id], t)
+  end
+
+  defp effect(state, id, {:agent, label}),
+    do: tap(state, fn _ -> Store.event_async({:pane_agent, id, label}) end)
+
+  defp effect(state, id, {:state, s}),
+    do: tap(state, fn _ -> Store.event_async({:agent_state, id, s}) end)
+
+  # an edited Tracker returning a shape this poller does not know: ignored, logged once
+  defp effect(%{warned: true} = state, _id, _effect), do: state
+
+  defp effect(state, id, effect) do
+    Logger.warning("detect: ignoring unknown tracker effect #{inspect(effect)} for pane #{id}")
+    %{state | warned: true}
   end
 
   # -- telemetry --------------------------------------------------------------
@@ -339,6 +352,11 @@ defmodule HerdrServer.Detect.Poller do
   defp osc(id) do
     facts = Facts.get(id) || %{}
     {Map.get(facts, :title) || "", Map.get(facts, :progress) || ""}
+  end
+
+  defp resumed(state, row) do
+    t = Tracker.new(grace_ms: state.grace_ms)
+    if row, do: %{t | agent: row.agent, state: row.state}, else: t
   end
 
   defp tracker(state, id),

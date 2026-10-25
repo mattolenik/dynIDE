@@ -17,6 +17,8 @@ defmodule HerdrServer.Detect.BundledManifestsTest do
 
   test "all 22 herdr manifests are bundled" do
     assert length(Path.wildcard(Path.join(Manifests.bundled_dir(), "*.toml"))) == 22
+    # one entry per id: no two files claim the same agent
+    assert map_size(Manifests.load(Manifests.bundled_dir(), "/nonexistent")) == 22
   end
 
   for path <- files do

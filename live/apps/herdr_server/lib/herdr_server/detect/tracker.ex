@@ -8,7 +8,8 @@ defmodule HerdrServer.Detect.Tracker do
   `decide_screen_detection_publish` and `PendingIdleConfirmation`
   (src/pane/agent_detection.rs), and a simplified hook authority
   (src/terminal/state.rs). Effects are `{:agent, label | nil}` and
-  `{:state, state}`; a state effect is emitted only when `effective/1` changes.
+  `{:state, state}`; a state effect is emitted only when `effective/1` changes
+  (never on a clear, whose `{:agent, nil}` drops the state).
   """
 
   alias HerdrServer.Detect.Engine.Detection
@@ -132,7 +133,9 @@ defmodule HerdrServer.Detect.Tracker do
           hook: nil
       }
 
-      publish(t, cleared, [{:agent, nil}])
+      # the label effect alone: `{:pane_agent, id, nil}` clears the published state too,
+      # so a state effect would be a second status event
+      {cleared, [{:agent, nil}]}
     end
   end
 

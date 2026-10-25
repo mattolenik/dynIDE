@@ -8,7 +8,7 @@ defmodule HerdrServer.Detect.Manifests do
   manifest stays active with a `warning`, as in herdr. A bundled file that does
   not parse yields an entry with `error` set and `manifest: nil`.
 
-  The loaded entries live in `:persistent_term`; `reload/0` replaces them.
+  The loaded entries live in `:persistent_term`; `reload/0` replaces them, one at a time.
   """
 
   alias HerdrServer.Detect.{Identify, Manifest}
@@ -47,9 +47,17 @@ defmodule HerdrServer.Detect.Manifests do
   @doc "Reloads the store from disk and returns the new summaries."
   @spec reload() :: [map]
   def reload do
-    entries = load(bundled_dir(), override_dir())
-    :persistent_term.put(@key, entries)
-    summaries(entries)
+    # serialized (the watcher, the API and a cold `get/1` may race): a read that
+    # started earlier cannot overwrite a newer one in `:persistent_term`
+    :global.trans(
+      {{__MODULE__, :reload}, self()},
+      fn ->
+        entries = load(bundled_dir(), override_dir())
+        :persistent_term.put(@key, entries)
+        summaries(entries)
+      end,
+      [node()]
+    )
   end
 
   @doc "Reloads after a watcher batch and logs one `agent_manifests_reloaded` event."

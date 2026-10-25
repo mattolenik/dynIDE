@@ -60,7 +60,8 @@ defmodule HerdrServer.Detect.TrackerTest do
 
     assert t.agent == "claude"
     {t, effects} = Tracker.job(t, nil, true, 600, @osc)
-    assert effects == [{:agent, nil}, {:state, :unknown}]
+    # the clear is the label effect alone: Actions drops the state with the label
+    assert effects == [{:agent, nil}]
     assert t.agent == nil and t.misses == 0 and not t.exited
   end
 

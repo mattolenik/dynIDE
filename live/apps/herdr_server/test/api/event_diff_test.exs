@@ -203,6 +203,33 @@ defmodule HerdrServer.Api.EventDiffTest do
            ] = diff(c, d)
   end
 
+  # the tracker's clear, applied as the poller applies effects, is one status event
+  test "an agent clear gives one pane.agent_status_changed" do
+    alias HerdrServer.Detect.Tracker
+
+    {t, _} = Tracker.job(Tracker.new(grace_ms: 0), {"claude", 42}, false, 0, {"", ""})
+    {t, _} = Tracker.screen(t, %HerdrServer.Detect.Engine.Detection{state: :working}, 1, 0)
+
+    {t, _} =
+      Enum.reduce(1..5, {t, []}, fn i, {t, _} -> Tracker.job(t, nil, true, i, {"", ""}) end)
+
+    {_t, effects} = Tracker.job(t, nil, true, 6, {"", ""})
+
+    a = app()
+    {b, _} = Actions.apply(a, {:pane_agent, 1, "claude"})
+    {b, _} = Actions.apply(b, {:agent_state, 1, :working})
+
+    # the Store applies and diffs each event on its own
+    steps =
+      Enum.scan(effects, b, fn
+        {:agent, l}, app -> elem(Actions.apply(app, {:pane_agent, 1, l}), 0)
+        {:state, s}, app -> elem(Actions.apply(app, {:agent_state, 1, s}), 0)
+      end)
+
+    events = [b | steps] |> Enum.zip(steps) |> Enum.flat_map(fn {x, y} -> types(diff(x, y)) end)
+    assert events == ["pane.agent_detected", "pane.agent_status_changed"]
+  end
+
   test "moves are no diff events; EventDiff.moved/2 builds them from the move effect" do
     a = app()
     {a, _} = Commands.create_tab(a, 1, "b", false)

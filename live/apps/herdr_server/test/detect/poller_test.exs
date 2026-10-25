@@ -169,6 +169,28 @@ defmodule HerdrServer.Detect.PollerTest do
     assert eventually(fn -> Facts.agent(77) == nil end)
   end
 
+  test "a new poller resumes a previous one's label, so the miss rule can clear it" do
+    Facts.put_agent(1, %{
+      agent: "claude",
+      state: :working,
+      visible: %{},
+      hook_source: nil,
+      skipped: false,
+      updated_ms: 0
+    })
+
+    p = poller([])
+    assert %{agent: "claude", state: :working} = :sys.get_state(p).trackers[1]
+    # the pane's job is its shell: each probe is a miss toward the clear
+    assert eventually(fn -> :sys.get_state(p).trackers[1].misses >= 1 end)
+  end
+
+  test "an agent that is the pane's root process is detected" do
+    poller([])
+    :ok = Fake.Pty.set_foreground(res(1).pty, %{@claude | shell: true})
+    assert eventually(fn -> match?(%{agent: "claude"}, Facts.agent(1)) end, 4000)
+  end
+
   test "at most 4 scans per tick with 15 active panes" do
     for _ <- 2..15, do: :ok = Store.run({Actions, :new_tab, []}, @size)
     assert eventually(fn -> Enum.all?(1..15, &(Facts.get(&1) != nil)) end)
