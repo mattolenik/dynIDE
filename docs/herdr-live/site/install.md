@@ -45,13 +45,14 @@ herdr-live update [--manifest URL] [--check] [--yes] [--no-restart]
 ```
 
 `--check` only reports whether a newer version exists, and so does a run without `--yes`.
-With `--yes` the update downloads the
-tarball named in a signed manifest, verifies its sha256 and the manifest's ed25519
-signature against the keys shipped in the release, installs it beside the old release,
-runs `kernel-restart` into it so the running sessions move to the new version without
-losing terminals, and then flips `current`. If the restart fails, `current` is untouched. With no
-instance running it installs and says so. `--no-restart` leaves the running instance on
-the old version until you restart it.
+With `--yes` the update downloads the tarball named in a signed manifest, verifies its
+sha256 and the manifest's ed25519 signature against the keys shipped in the release,
+installs it beside the old release, runs `kernel-restart` into it so the running sessions
+move to the new version without losing terminals, and flips `current` once the instance
+answers as the new version. If the restart fails, `current` is untouched. With no
+instance running it installs, flips `current` and says so. `--no-restart` only flips
+`current`: the running instance stays on its release (the broker pins it) until the next
+start or `herdr-live kernel-restart`.
 
 The broker process keeps running the old binary until a full stop and start; broker-side
 fixes need that. Manifest format: [update-manifest.md](update-manifest.md). Keys and

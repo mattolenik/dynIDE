@@ -79,6 +79,8 @@ taken over with a note on stderr).
    `herdr_broker kernel-restart -- <prefix>/lib/herdr-live/releases/<v>/bin/herdr_live start`:
    the restart target boots the new release and adopts every pane. The broker keeps that
    VM argv for later standbys, crash handoffs and restarts only if the restart succeeds.
+   The updater then checks that `ping` reports `<v>`; if not, it refuses
+   (`restart_did_not_switch`) and leaves `current`.
 4. Then flip `current` to `releases/<v>` atomically (a temp symlink renamed over it). With
    no instance (`no running instance, restart skipped`) or `--no-restart`, the flip
    happens without a restart. A broker that does not answer `status` is a refusal
@@ -89,9 +91,12 @@ taken over with a note on stderr).
    running broker boots from (its status `vm_argv=`). Dot-names in
    `releases/` are never touched.
 
-`herdr-live kernel-restart` in a release restarts into `<prefix>/lib/herdr-live/current`
-the same way, so after `--no-restart` it boots the new version. The running broker binary
-is not replaced; a full stop and start picks up a new one.
+In a release the broker's VM argv is always pinned to a resolved
+`<prefix>/lib/herdr-live/releases/<x>/bin/herdr_live start`, never `current`: a start
+and a plain `herdr-live kernel-restart` resolve `current` at that moment. So `current`
+decides what the next start or restart runs, standby and crash boots never change
+version, and `--no-restart` only moves `current`. The running broker binary is not
+replaced; a full stop and start picks up a new one.
 
 ## Exit codes and errors
 
@@ -99,7 +104,8 @@ is not replaced; a full stop and start picks up a new one.
 on stderr, `{"code": "...", "message": "..."}`, with `code` one of `no_trusted_keys`,
 `no_manifest_url`, `fetch_failed`, `bad_signature`, `bad_schema`, `unsupported_schema`,
 `not_installed`, `no_artifact`, `locked`, `size_mismatch`, `sha256_mismatch`,
-`bad_tarball`, `install_failed`, `broker_unreachable`, `restart_failed`. Every refusal
+`bad_tarball`, `install_failed`, `broker_unreachable`, `restart_failed`,
+`restart_did_not_switch`. Every refusal
 leaves `current` as it was.
 
 ## Making a manifest

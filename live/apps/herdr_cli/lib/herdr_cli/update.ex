@@ -112,7 +112,7 @@ defmodule HerdrCli.Update do
         opts[:check] and Manifest.newer?(v, cur) -> {:ok, "update available #{v}\n"}
         not Manifest.newer?(v, cur) -> {:ok, "up to date #{cur}\n"}
         not opts[:yes] -> {:ok, "update available #{v}; run herdr-live update --yes to install\n"}
-        true -> install(m, opts, ctx)
+        true -> install(m, opts, Map.put(ctx, :env, env))
       end
     end
   end
@@ -293,7 +293,7 @@ defmodule HerdrCli.Update do
         {:error, :too_big}
 
       {:http, {^ref, {{_, 200, _}, _, data}}} ->
-        {:ok, finish(put(sink, data))}
+        with {:ok, sink} <- put(sink, data), do: {:ok, finish(sink)}
 
       {:http, {^ref, {{_, status, _}, headers, _}}} when status in [301, 302, 303, 307, 308] ->
         redirect(url, location(headers), max, sink, hops)
@@ -313,7 +313,7 @@ defmodule HerdrCli.Update do
   defp body(ref, url, max, sink, n) do
     receive do
       {:http, {^ref, :stream, data}} when n + byte_size(data) > max -> cancel(ref)
-      {:http, {^ref, :stream, data}} -> body(ref, url, max, put(sink, data), n + byte_size(data))
+      {:http, {^ref, :stream, data}} -> more(ref, url, max, put(sink, data), n + byte_size(data))
       {:http, {^ref, :stream_end, _}} -> {:ok, finish(sink)}
       {:http, {^ref, {:error, r}}} -> fetch_error(url, why(r))
     after
@@ -323,16 +323,28 @@ defmodule HerdrCli.Update do
     end
   end
 
+  defp more(ref, url, max, {:ok, sink}, n), do: body(ref, url, max, sink, n)
+
+  defp more(ref, _url, _max, error, _n) do
+    :httpc.cancel_request(ref)
+    error
+  end
+
   defp cancel(ref) do
     :httpc.cancel_request(ref)
     {:error, :too_big}
   end
 
-  defp put({:mem, acc}, data), do: {:mem, [acc, data]}
+  defp put({:mem, acc}, data), do: {:ok, {:mem, [acc, data]}}
 
   defp put({:file, dev} = sink, data) do
-    :ok = IO.binwrite(dev, data)
-    sink
+    case :file.write(dev, data) do
+      :ok ->
+        {:ok, sink}
+
+      {:error, r} ->
+        {:error, :install_failed, "cannot write the download: #{:file.format_error(r)}"}
+    end
   end
 
   defp finish({:mem, acc}), do: IO.iodata_to_binary(acc)
@@ -409,12 +421,12 @@ defmodule HerdrCli.Update do
 
     with {:ok, lib, prev} <- layout(ctx),
          {:ok, art} <- pick(m, ctx) do
-      locked(lib, fn -> place_and_activate(art, lib, prev, v, opts) end)
+      locked(lib, fn -> place_and_activate(art, lib, prev, v, opts, ctx) end)
     end
   end
 
-  defp place_and_activate(art, lib, prev, v, opts) do
-    with :ok <- place(art, lib, v), do: activate(lib, prev, v, opts)
+  defp place_and_activate(art, lib, prev, v, opts, ctx) do
+    with :ok <- place(art, lib, v), do: activate(lib, prev, v, opts, ctx)
   end
 
   # one update per prefix at a time; the lock goes when this run ends (a killed run leaves
@@ -646,7 +658,7 @@ defmodule HerdrCli.Update do
 
   # `current` flips only once the new release runs (or nothing runs): a failed restart
   # leaves it, and the broker's VM argv, on the old release
-  defp activate(lib, prev, v, opts) do
+  defp activate(lib, prev, v, opts, ctx) do
     # the running release's broker client speaks the running broker's protocol
     broker = Path.join([lib, "releases", prev, "bin/herdr_broker"])
     done = "updated #{prev} -> #{v}\n"
@@ -661,7 +673,7 @@ defmodule HerdrCli.Update do
         )
 
       {text, 0} ->
-        kernel_restart(broker, lib, [prev, v | running(text)], prev, v, done)
+        kernel_restart(broker, lib, [prev, v | running(text)], {prev, v, done}, ctx)
 
       {_, 2} ->
         flipped(lib, [prev, v], v, done <> "no running instance, restart skipped\n")
@@ -690,18 +702,43 @@ defmodule HerdrCli.Update do
     end
   end
 
-  defp kernel_restart(broker, lib, keep, prev, v, done) do
+  defp kernel_restart(broker, lib, keep, {prev, v, done}, ctx) do
     vm = [Path.join([lib, "releases", v, "bin/herdr_live"]), "start"]
 
     case System.cmd(broker, ["kernel-restart", "--" | vm], stderr_to_stdout: true) do
       {text, 0} ->
-        with {:error, _, msg} <- flipped(lib, keep, v, done <> "kernel-restart: " <> text) do
-          {:error, :install_failed, "the instance runs #{v}, but #{msg}"}
-        end
+        switched(lib, keep, {prev, v, done <> "kernel-restart: " <> text}, ctx)
 
       {text, code} ->
         {:error, :restart_failed,
          "kernel-restart into #{v} failed (exit #{code}: #{String.trim(text)}); current still points at #{prev}, the running session stays on #{prev}; releases/#{v} is kept"}
+    end
+  end
+
+  # `current` flips only once the instance answers as <v>
+  defp switched(lib, keep, {prev, v, text}, ctx) do
+    case Map.get(ctx, :ping, &api_version/1).(ctx.env) do
+      {:ok, ^v} ->
+        with {:error, _, msg} <- flipped(lib, keep, v, text) do
+          {:error, :install_failed, "the instance runs #{v}, but #{msg}"}
+        end
+
+      other ->
+        {:error, :restart_did_not_switch,
+         "kernel-restart reported ok but ping answers #{inspect(other, limit: 10)}, not #{v}; current still points at #{prev}"}
+    end
+  end
+
+  # the version the instance's API reports (the same socket rule as every other verb)
+  defp api_version(env) do
+    with {:ok, s} <- HerdrCli.Client.connect(HerdrCli.Client.socket_path(env), 5000) do
+      reply = HerdrCli.Client.call(s, "ping", %{}, 10_000)
+      :gen_tcp.close(s)
+
+      case reply do
+        {:ok, %{"result" => %{"version" => v}}} -> {:ok, v}
+        other -> other
+      end
     end
   end
 

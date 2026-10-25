@@ -5,9 +5,11 @@
 # releases/start_erl.data) it runs the bundled broker, `bin/herdr_live start` as the VM
 # with cwd $HOME, and the bundled erts for the CLI and the attach client (no elixir,
 # mix or cargo on PATH). Installed as <prefix>/bin/herdr-live -> ../lib/herdr-live/current/
-# bin/herdr-live (R4), symlinks are resolved only down to that path, never through
-# `current`, so the broker's VM argv (and a kernel-restart) follows a flipped `current`,
-# and HERDR_LIVE_BIN is the path it was invoked through. `--version` prints
+# bin/herdr-live (R4), symlinks are resolved only down to that path, and HERDR_LIVE_BIN
+# is the path it was invoked through. The broker's VM argv is pinned: a start and a
+# `kernel-restart` resolve `current` (one level) to <lib>/releases/<V>/bin/herdr_live, so
+# `current` decides what the next start or restart runs, and standby or crash boots never
+# change version behind a flip (`herdr-live update --no-restart`). `--version` prints
 # `herdr-live <V>` (a source tree: mix.exs's version with -dev).
 # With no argument it builds native/herdr_broker and execs `herdr_broker run`,
 # which supervises the VMs (warm standby, fd holding, handoff on kill -9 or
@@ -85,6 +87,14 @@ if [ -f "$root/releases/start_erl.data" ]; then
   # give their children (panes, plugins, hooks, ssh) this one back (config/runtime.exs)
   export HERDR_LIVE_PANE_PATH="$PATH"
 fi
+pinned() { # the release a VM boots: $root with `current` resolved one level (R4)
+  if [ -L "$root" ]; then
+    t=$(readlink "$root") || return 1
+    case $t in /*) echo "$t" ;; *) echo "$(dirname "$root")/$t" ;; esac
+  else
+    echo "$root"
+  fi
+}
 cli() { # runs in the caller's cwd, so a relative HERDR_LIVE_API keeps its meaning
   if [ -n "$rel" ]; then # the release's erts and ebins; bin/no_dot_erlang.boot is OTP's
     # through `current` resolved: a CLI that loads a module after `update` flipped `current`
@@ -205,9 +215,12 @@ fi
 case ${1:-} in
   kernel-restart)
     [ -x "$broker" ] || build >&2 || exit 1
-    # a release restarts into `current` (the broker keeps that argv once it succeeds;
-    # `update` passes releases/<V> itself and flips `current` after)
-    [ -z "$rel" ] || exec "$broker" kernel-restart -- "$root/bin/herdr_live" start
+    # a release restarts into what `current` names now, pinned (the broker keeps that
+    # argv once the restart succeeds; `update` passes releases/<V> itself)
+    if [ -n "$rel" ]; then
+      vmroot=$(pinned) || exit 1
+      exec "$broker" kernel-restart -- "$vmroot/bin/herdr_live" start
+    fi
     exec "$broker" "$1"
     ;;
   status)
@@ -228,7 +241,8 @@ exec </dev/null >>"$log" 2>&1
 # process group, so a terminal ^C must not open the BEAM break menu (the broker
 # turns SIGINT into a clean stop).
 if [ -n "$rel" ]; then
-  set -- "$root/bin/herdr_live" start
+  vmroot=$(pinned) || exit 1
+  set -- "$vmroot/bin/herdr_live" start
 else
   export MIX_ENV="${MIX_ENV:-dev}"
   set -- elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt

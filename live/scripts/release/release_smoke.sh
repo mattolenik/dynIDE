@@ -6,8 +6,8 @@
 # command through that symlink in a clean env (env -i: temp HOME, XDG dirs, runtime dir,
 # PATH=/usr/bin:/bin with no erl, elixir or mix), started from cwd /. Checks: --version;
 # a headless start answers ping within 20 s with the version; one pane, whose shell
-# starts in $HOME and inherits no RELEASE_* env; the broker's VM argv goes through
-# `current`; kernel-restart keeps the pane id; 20 pings p50 < 300 ms (printed with the
+# starts in $HOME and inherits no RELEASE_* env; the broker's VM argv is pinned to
+# releases/<V> (`current` resolved); kernel-restart keeps the pane id; 20 pings p50 < 300 ms (printed with the
 # load average); attach reaches the client socket; SIGTERM stops the broker with status
 # 0 and leaves no process of this run. PASS/FAIL lines like launcher_smoke.sh.
 set -u
@@ -83,9 +83,11 @@ grep -q "\"version\":\"$v\"" "$tmp/ping" || fail "ping: $(cat "$tmp/ping") (want
 echo "PASS: ping answers within 20 s with version $v"
 [ ! -s "$tmp/start.out" ] || fail "launcher wrote to its stdout/stderr: $(cat "$tmp/start.out")"
 
-ps -o command= -p "$pid" | grep -qF "$prefix/lib/herdr-live/current/bin/herdr_live start" ||
-  fail "broker argv does not go through current: $(ps -o command= -p "$pid")"
-echo "PASS: broker runs the VM through current"
+ps -o command= -p "$pid" | grep -qF "$prefix/lib/herdr-live/releases/$v/bin/herdr_live start" ||
+  fail "broker argv is not pinned to releases/$v: $(ps -o command= -p "$pid")"
+"$x" "$bin" status 2>&1 | grep -qxF "vm_argv=$prefix/lib/herdr-live/releases/$v/bin/herdr_live start" ||
+  fail "broker vm_argv is not pinned to releases/$v: $("$x" "$bin" status 2>&1 | grep '^vm_argv=')"
+echo "PASS: broker VM argv pinned to releases/$v (current resolved)"
 
 panes() { "$x" "$bin" pane list | grep -o '"pane_id":"[^"]*"' | sort -u; }
 ids=$(panes)

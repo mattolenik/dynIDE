@@ -15,7 +15,14 @@ defmodule HerdrCli.UpdateTest do
     File.mkdir_p!(Path.join(lib, "releases/.stage.123"))
     File.ln_s!("releases/0.1.0", Path.join(lib, "current"))
     tarball = make_tarball(tmp, "0.1.1", pub)
-    ctx = %{root: Path.join(lib, "current"), os: "macos", arch: "aarch64"}
+    # the instance answers ping as the new version unless a test says otherwise
+    ctx = %{
+      root: Path.join(lib, "current"),
+      os: "macos",
+      arch: "aarch64",
+      ping: fn _ -> {:ok, "0.1.1"} end
+    }
+
     {:ok, tmp: tmp, lib: lib, pub: pub, priv: priv, tarball: tarball, ctx: ctx}
   end
 
@@ -217,6 +224,32 @@ defmodule HerdrCli.UpdateTest do
     assert %{"code" => "install_failed"} = JSON.decode!(err)
     assert File.read!(Path.join(junk, "keep")) == "x"
     assert current(c.lib) == "releases/0.1.0"
+  end
+
+  test "a restart that reports ok but leaves the old version answering does not flip", c do
+    File.write!(Path.join(c.lib, "releases/0.1.0/bin/status"), "0")
+    url = write_manifest(c.tmp, c.tarball, c.priv)
+    ctx = %{c.ctx | ping: fn _ -> {:ok, "0.1.0"} end}
+    {1, _out, err} = update(["--manifest", url, "--yes"], ctx)
+    assert %{"code" => "restart_did_not_switch"} = JSON.decode!(err)
+    assert current(c.lib) == "releases/0.1.0"
+    assert File.dir?(Path.join(c.lib, "releases/0.1.1"))
+  end
+
+  test "--no-restart flips current, and prune keeps the release the broker is pinned to", c do
+    fake_release(Path.join(c.lib, "releases/0.0.7"), "0.0.7", c.pub)
+    bin = Path.join(c.lib, "releases/0.1.0/bin")
+    File.write!(Path.join(bin, "status"), "0")
+    vm = Path.join(c.lib, "releases/0.0.7/bin/herdr_live")
+    File.write!(Path.join(bin, "status_text"), "vm_argv=#{vm} start\n")
+    url = write_manifest(c.tmp, c.tarball, c.priv)
+    {0, out, ""} = update(["--manifest", url, "--yes", "--no-restart"], c.ctx)
+    assert out =~ "restart skipped (--no-restart)"
+    refute File.exists?(Path.join(bin, "restart_args"))
+    assert current(c.lib) == "releases/0.1.1"
+    # kept: new, replaced, the pinned 0.0.7, and the newest other (0.0.9); 0.0.8 goes
+    assert c.lib |> Path.join("releases") |> File.ls!() |> Enum.sort() ==
+             ~w(.stage.123 0.0.7 0.0.9 0.1.0 0.1.1)
   end
 
   test "a broker that does not answer status leaves current and exits 1", c do
