@@ -96,6 +96,11 @@ defmodule HerdrServer.Api.ConformanceTest do
 
   defp produce("agent." <> _ = method, :not_available, ctx), do: call(listen(ctx), method)
 
+  defp produce(method, :not_available, ctx)
+       when method in ~w(server.agent_manifests server.reload_agent_manifests
+                         pane.report_agent pane.release_agent),
+       do: call(listen(ctx), method)
+
   # published ahead of their M14 tasks
   defp produce("plugin." <> _ = method, :not_available, ctx), do: call(listen(ctx), method)
 

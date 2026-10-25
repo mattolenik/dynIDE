@@ -13,6 +13,15 @@ defmodule HerdrCliTest do
     assert HerdrCli.chars(:binary.bin_to_list("é api"), :latin1) == "é api"
   end
 
+  test "an unreadable --file exits 1 with a message on stderr" do
+    err =
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        assert HerdrCli.run(~w(agent explain --file /nonexistent/x --agent a), %{}) == 1
+      end)
+
+    assert err =~ "cannot read /nonexistent/x"
+  end
+
   test "a usage error exits 2 without touching the socket" do
     assert ExUnit.CaptureIO.capture_io(:stderr, fn ->
              assert HerdrCli.run(["pane", "split", "--direction", "left"], %{}) == 2

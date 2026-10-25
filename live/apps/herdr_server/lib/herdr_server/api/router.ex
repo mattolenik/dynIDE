@@ -51,6 +51,11 @@ defmodule HerdrServer.Api.Router do
 
   def handle("agent." <> _ = method, params, _ctx), do: Handlers.Agents.handle(method, params)
 
+  def handle(method, params, _ctx)
+      when method in ~w(server.agent_manifests server.reload_agent_manifests
+                        pane.report_agent pane.release_agent),
+      do: Handlers.Agents.handle(method, params)
+
   def handle("plugin." <> _ = method, params, _ctx), do: Handlers.Plugins.handle(method, params)
 
   def handle("pane.link.activate", params, _ctx),

@@ -85,6 +85,10 @@ defmodule HerdrServer.Api.Spec do
     }
   end
 
+  # Final lists (M11 task 0 contract): list [], get/read/explain/prompt/send_keys
+  # [:not_found], wait [:not_found, :timeout], explain also :failed. The conformance
+  # test needs every declared code producible and the stub only answers not_available,
+  # so `:not_available` stays declared until the M11 handler task narrows each list.
   defp agent(name, summary, params, result, cli),
     do: method("agent." <> name, "agent", summary, params, result, [:not_available], cli)
 
@@ -118,6 +122,24 @@ defmodule HerdrServer.Api.Spec do
         "server_status",
         [],
         "herdr-live server status [--kv]"
+      ),
+      method(
+        "server.agent_manifests",
+        "server",
+        "The loaded agent detection manifests.",
+        [],
+        "agent_manifests",
+        [:not_available],
+        "herdr-live server agent-manifests"
+      ),
+      method(
+        "server.reload_agent_manifests",
+        "server",
+        "Reload the agent detection manifests from disk.",
+        [],
+        "agent_manifests",
+        [:not_available],
+        "herdr-live server reload-agent-manifests"
       )
     ]
   end
@@ -366,6 +388,39 @@ defmodule HerdrServer.Api.Spec do
         "herdr-live pane split [<pane_id>] --direction right|down [--ratio R] [--focus|--no-focus]"
       ),
       method(
+        "pane.report_agent",
+        g,
+        "Report an agent's state for a pane from an integration (hook).",
+        [
+          pid,
+          req("source", :string, "Reporting integration."),
+          req("agent", :string, "Agent label."),
+          req("state", {:enum, ~w(idle working blocked unknown)}, "Reported state."),
+          opt("message", :string, "Status message."),
+          opt("seq", {:integer, 0, 9_007_199_254_740_991}, "Report sequence number."),
+          opt("agent_session_id", :string, "Accepted and ignored (M17)."),
+          opt("agent_session_path", :string, "Accepted and ignored (M17)."),
+          opt("resume_argv", {:list, :string}, "Accepted and ignored (M17).")
+        ],
+        "ok",
+        [:not_available],
+        "herdr-live pane report-agent <pane_id> --source S --agent A --state S [--message T] [--seq N]"
+      ),
+      method(
+        "pane.release_agent",
+        g,
+        "Release an integration's agent report for a pane.",
+        [
+          pid,
+          req("source", :string, "Reporting integration."),
+          req("agent", :string, "Agent label."),
+          opt("seq", {:integer, 0, 9_007_199_254_740_991}, "Report sequence number.")
+        ],
+        "ok",
+        [:not_available],
+        "herdr-live pane release-agent <pane_id> --source S --agent A [--seq N]"
+      ),
+      method(
         "pane.rename",
         g,
         "Name a pane; an absent or empty label clears the name.",
@@ -540,10 +595,17 @@ defmodule HerdrServer.Api.Spec do
       ),
       agent(
         "explain",
-        "Explain why detection reports the agent's state.",
-        [target()],
+        "Explain why detection reports the agent's state: for a pane (`target`), or for " <>
+          "supplied screen `text` under the `agent` manifest. Give exactly one of the two.",
+        [
+          opt("target", :string, "Agent target (pane id or agent name)."),
+          opt("agent", :string, "Agent label whose manifest evaluates `text`."),
+          opt("text", :string, "Screen text to evaluate (at most 1 MiB)."),
+          opt("verbose", :boolean, "Verbose explanation text.")
+        ],
         "agent_explain",
-        "herdr-live agent explain <target>"
+        "herdr-live agent explain <target> [--json] [--verbose] | " <>
+          "herdr-live agent explain --file PATH --agent LABEL [--json]"
       ),
       agent(
         "wait",
@@ -743,6 +805,20 @@ defmodule HerdrServer.Api.Spec do
         f("cols", :integer),
         f("rows", :integer)
       ],
+      "agent" => [
+        f("pane_id", :pane_id),
+        f("workspace_id", :workspace_id),
+        f("tab_id", :tab_id),
+        f("agent", :null_or_string),
+        f("agent_status", {:enum, @agent_states}),
+        f("title", :null_or_string),
+        f("terminal_title", :null_or_string),
+        f("terminal_title_stripped", :null_or_string),
+        f("focused", :boolean),
+        f("cwd", :null_or_string),
+        f("screen_detection_skipped", :boolean),
+        f("hook_source", :null_or_string)
+      ],
       "plugin" => [
         f("plugin_id", :string),
         f("name", :string),
@@ -817,6 +893,16 @@ defmodule HerdrServer.Api.Spec do
       ev("pane.closed", "A pane was closed.", pane),
       ev("pane.focused", "The focused pane changed.", pane_obj),
       ev("pane.updated", "A pane's title or size changed.", pane_obj),
+      ev(
+        "pane.agent_detected",
+        "A pane's detected agent changed.",
+        pane ++ [f("agent", :null_or_string)]
+      ),
+      ev(
+        "pane.agent_status_changed",
+        "A pane's agent status changed.",
+        pane ++ [f("agent", :null_or_string), f("agent_status", {:enum, @agent_states})]
+      ),
       ev("layout.updated", "A tab's split tree changed.", tab ++ [f("layout", {:ref, "layout"})]),
       ev(
         "notification.shown",
@@ -906,11 +992,12 @@ defmodule HerdrServer.Api.Spec do
       ],
       "output_matched" => [f("pane_id", :pane_id), f("line", :string)],
       "subscription_started" => [f("subscriptions", :integer)],
-      "agent_list" => [f("agents", {:list, :object})],
-      "agent_info" => [f("agent", :object)],
+      "agent_list" => [f("agents", {:list, {:ref, "agent"}})],
+      "agent_info" => [f("agent", {:ref, "agent"})],
       "agent_read" => [f("target", :string), f("text", :string)],
       "agent_explain" => [f("agent", :object), f("explanation", :string)],
-      "agent_wait" => [f("agent", :object)],
+      "agent_wait" => [f("agent", {:ref, "agent"})],
+      "agent_manifests" => [f("manifests", {:list, :object})],
       "pane_link_activated" => [f("url", :null_or_string), f("handled", :boolean)],
       "plugin_list" => [f("plugins", {:list, {:ref, "plugin"}})],
       "plugin_info" => [f("plugin", {:ref, "plugin"})],

@@ -318,6 +318,39 @@ defmodule HerdrCli.ArgvTest do
 
       assert p("agent explain p1") == {:call, "agent.explain", %{"target" => "p1"}, :json}
 
+      assert p("agent explain p1 --json --verbose") ==
+               {:call, "agent.explain", %{"target" => "p1", "verbose" => true}, :json}
+
+      assert p("agent explain --file f --agent claude") ==
+               {:call, "agent.explain", %{"agent" => "claude", "text" => {:file, "f"}}, :json}
+
+      assert {:usage, _} = p("agent explain")
+      assert {:usage, _} = p("agent explain --file f")
+      assert {:usage, _} = p("agent explain p1 --file f --agent claude")
+
+      assert p("server agent-manifests") == {:call, "server.agent_manifests", %{}, :json}
+
+      assert p("server reload-agent-manifests") ==
+               {:call, "server.reload_agent_manifests", %{}, :json}
+
+      assert p("pane report-agent p1 --source s --agent a --state idle --message hi --seq 3") ==
+               {:call, "pane.report_agent",
+                %{
+                  "pane_id" => "p1",
+                  "source" => "s",
+                  "agent" => "a",
+                  "state" => "idle",
+                  "message" => "hi",
+                  "seq" => 3
+                }, :json}
+
+      assert p("pane release-agent p1 --source s --agent a") ==
+               {:call, "pane.release_agent",
+                %{"pane_id" => "p1", "source" => "s", "agent" => "a"}, :json}
+
+      assert {:usage, _} = p("pane report-agent p1 --source s --agent a --state done")
+      assert {:usage, _} = p("pane release-agent p1 --source s")
+
       assert p("agent wait p1 --until idle --until done --timeout 100") ==
                {:call, "agent.wait",
                 %{"target" => "p1", "until" => ["idle", "done"], "timeout_ms" => 100}, :json}

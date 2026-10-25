@@ -1,5 +1,5 @@
 defmodule HerdrServer.Api.Handlers.Agents do
-  @moduledoc "Every `agent.*` method answers `not_available` until M11 detection lands."
+  @moduledoc "Every `agent.*` method, the agent manifest methods and `pane.report_agent`/`pane.release_agent` answer `not_available` until M11 detection lands."
 
   @spec handle(String.t(), map()) :: {:error, :not_available, String.t(), map()}
   def handle(_method, _params),

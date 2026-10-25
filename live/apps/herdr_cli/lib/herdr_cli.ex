@@ -76,7 +76,7 @@ defmodule HerdrCli do
         0
 
       {:call, method, params, out} ->
-        with_socket(env, fn s -> call(s, method, params, out) end)
+        run_call(read_files(params), method, out, env)
 
       {:subscribe, params} ->
         with_socket(env, fn s -> subscribe(s, params) end)
@@ -98,6 +98,30 @@ defmodule HerdrCli do
         err("herdr-live: cannot connect to #{path}: #{inspect(r)}\n")
         1
     end
+  end
+
+  defp run_call({:ok, params}, method, out, env),
+    do: with_socket(env, fn s -> call(s, method, params, out) end)
+
+  defp run_call({:error, msg}, _method, _out, _env), do: lost_text(msg)
+
+  # `{:file, path}` params (from `--file`) are replaced by the file's content
+  defp read_files(params) do
+    Enum.reduce_while(params, {:ok, params}, fn
+      {k, {:file, path}}, {:ok, acc} ->
+        case File.read(path) do
+          {:ok, text} -> {:cont, {:ok, Map.put(acc, k, text)}}
+          {:error, r} -> {:halt, {:error, "cannot read #{path}: #{:file.format_error(r)}"}}
+        end
+
+      _, acc ->
+        {:cont, acc}
+    end)
+  end
+
+  defp lost_text(msg) do
+    err(["herdr-live: ", msg, ?\n])
+    1
   end
 
   defp call(s, method, params, out) do

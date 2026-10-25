@@ -83,6 +83,30 @@ Result: `server_status` with `gen` (integer), `os_pid` (integer), `reload_enable
 
 Errors: `invalid_params`
 
+### `server.agent_manifests`
+
+The loaded agent detection manifests.
+
+CLI: `herdr-live server agent-manifests`
+
+Params: none.
+
+Result: `agent_manifests` with `manifests` (list of object).
+
+Errors: `invalid_params`, `not_available`
+
+### `server.reload_agent_manifests`
+
+Reload the agent detection manifests from disk.
+
+CLI: `herdr-live server reload-agent-manifests`
+
+Params: none.
+
+Result: `agent_manifests` with `manifests` (list of object).
+
+Errors: `invalid_params`, `not_available`
+
 ## Methods: session
 
 ### `session.list`
@@ -402,6 +426,45 @@ Result: `pane_split` with `pane` (`pane` object).
 
 Errors: `invalid_params`, `not_found`, `failed`
 
+### `pane.report_agent`
+
+Report an agent's state for a pane from an integration (hook).
+
+CLI: `herdr-live pane report-agent <pane_id> --source S --agent A --state S [--message T] [--seq N]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | yes | Target pane. |
+| `source` | string | yes | Reporting integration. |
+| `agent` | string | yes | Agent label. |
+| `state` | `idle`, `working`, `blocked` or `unknown` | yes | Reported state. |
+| `message` | string | no | Status message. |
+| `seq` | integer 0..9007199254740991 | no | Report sequence number. |
+| `agent_session_id` | string | no | Accepted and ignored (M17). |
+| `agent_session_path` | string | no | Accepted and ignored (M17). |
+| `resume_argv` | list of string | no | Accepted and ignored (M17). |
+
+Result: `ok` (no fields).
+
+Errors: `invalid_params`, `not_available`
+
+### `pane.release_agent`
+
+Release an integration's agent report for a pane.
+
+CLI: `herdr-live pane release-agent <pane_id> --source S --agent A [--seq N]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | yes | Target pane. |
+| `source` | string | yes | Reporting integration. |
+| `agent` | string | yes | Agent label. |
+| `seq` | integer 0..9007199254740991 | no | Report sequence number. |
+
+Result: `ok` (no fields).
+
+Errors: `invalid_params`, `not_available`
+
 ### `pane.rename`
 
 Name a pane; an absent or empty label clears the name.
@@ -584,7 +647,7 @@ CLI: `herdr-live events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] 
 
 | param | type | required | description |
 | --- | --- | --- | --- |
-| `subscriptions` | list of object {type: `workspace.created`, `workspace.closed`, `workspace.focused`, `workspace.renamed`, `tab.created`, `tab.closed`, `tab.focused`, `tab.renamed`, `pane.created`, `pane.closed`, `pane.focused`, `pane.updated`, `layout.updated` or `notification.shown`, pane_id?: pane id, tab_id?: tab id, workspace_id?: workspace id} (at least 1) | yes | Subscriptions. |
+| `subscriptions` | list of object {type: `workspace.created`, `workspace.closed`, `workspace.focused`, `workspace.renamed`, `tab.created`, `tab.closed`, `tab.focused`, `tab.renamed`, `pane.created`, `pane.closed`, `pane.focused`, `pane.updated`, `pane.agent_detected`, `pane.agent_status_changed`, `layout.updated` or `notification.shown`, pane_id?: pane id, tab_id?: tab id, workspace_id?: workspace id} (at least 1) | yes | Subscriptions. |
 
 Result: `subscription_started` with `subscriptions` (integer).
 
@@ -600,7 +663,7 @@ CLI: `herdr-live agent list`
 
 Params: none.
 
-Result: `agent_list` with `agents` (list of object).
+Result: `agent_list` with `agents` (list of `agent` object).
 
 Errors: `invalid_params`, `not_available`
 
@@ -614,7 +677,7 @@ CLI: `herdr-live agent get <target>`
 | --- | --- | --- | --- |
 | `target` | string | yes | Agent target (pane id or agent name). |
 
-Result: `agent_info` with `agent` (object).
+Result: `agent_info` with `agent` (`agent` object).
 
 Errors: `invalid_params`, `not_available`
 
@@ -636,13 +699,16 @@ Errors: `invalid_params`, `not_available`
 
 ### `agent.explain`
 
-Explain why detection reports the agent's state.
+Explain why detection reports the agent's state: for a pane (`target`), or for supplied screen `text` under the `agent` manifest. Give exactly one of the two.
 
-CLI: `herdr-live agent explain <target>`
+CLI: `herdr-live agent explain <target> [--json] [--verbose] | herdr-live agent explain --file PATH --agent LABEL [--json]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
-| `target` | string | yes | Agent target (pane id or agent name). |
+| `target` | string | no | Agent target (pane id or agent name). |
+| `agent` | string | no | Agent label whose manifest evaluates `text`. |
+| `text` | string | no | Screen text to evaluate (at most 1 MiB). |
+| `verbose` | boolean | no | Verbose explanation text. |
 
 Result: `agent_explain` with `agent` (object), `explanation` (string).
 
@@ -660,7 +726,7 @@ CLI: `herdr-live agent wait <target> [--until S]... [--timeout MS]`
 | `until` | list of `idle`, `working`, `blocked`, `done` or `unknown` | no | Agent states to wait for; default `idle`. |
 | `timeout_ms` | integer 1..3600000 | no | Give up after this many milliseconds. |
 
-Result: `agent_wait` with `agent` (object).
+Result: `agent_wait` with `agent` (`agent` object).
 
 Errors: `invalid_params`, `not_available`
 
@@ -898,6 +964,23 @@ Errors: `invalid_params`, `not_available`
 
 ## Objects
 
+### `agent`
+
+| field | type |
+| --- | --- |
+| `pane_id` | pane id |
+| `workspace_id` | workspace id |
+| `tab_id` | tab id |
+| `agent` | string or null |
+| `agent_status` | `idle`, `working`, `blocked`, `done` or `unknown` |
+| `title` | string or null |
+| `terminal_title` | string or null |
+| `terminal_title_stripped` | string or null |
+| `focused` | boolean |
+| `cwd` | string or null |
+| `screen_detection_skipped` | boolean |
+| `hook_source` | string or null |
+
 ### `client`
 
 | field | type |
@@ -1119,6 +1202,29 @@ A pane's title or size changed.
 | `tab_id` | tab id |
 | `workspace_id` | workspace id |
 | `pane` | `pane` object |
+
+### `pane.agent_detected`
+
+A pane's detected agent changed.
+
+| data field | type |
+| --- | --- |
+| `pane_id` | pane id |
+| `tab_id` | tab id |
+| `workspace_id` | workspace id |
+| `agent` | string or null |
+
+### `pane.agent_status_changed`
+
+A pane's agent status changed.
+
+| data field | type |
+| --- | --- |
+| `pane_id` | pane id |
+| `tab_id` | tab id |
+| `workspace_id` | workspace id |
+| `agent` | string or null |
+| `agent_status` | `idle`, `working`, `blocked`, `done` or `unknown` |
 
 ### `layout.updated`
 

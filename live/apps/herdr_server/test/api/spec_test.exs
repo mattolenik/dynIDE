@@ -8,7 +8,7 @@ defmodule HerdrServer.Api.SpecTest do
     methods = Spec.methods()
     names = Enum.map(methods, & &1.name)
     assert names == Enum.uniq(names)
-    assert length(names) == 57
+    assert length(names) == 61
 
     for m <- methods do
       assert Enum.all?(m.errors, &(&1 in Spec.error_codes())), m.name
@@ -121,6 +121,71 @@ defmodule HerdrServer.Api.SpecTest do
   test "api.md is generated from the spec" do
     assert File.read!(Doc.path()) == Doc.markdown(),
            "docs/herdr-live/api.md is stale: run `mix herdr.api.docs` from live/"
+  end
+
+  test "m11 agent detection contract" do
+    for n <-
+          ~w(server.agent_manifests server.reload_agent_manifests pane.report_agent pane.release_agent) do
+      assert {:ok, _} = Spec.fetch(n), n
+    end
+
+    assert {:ok, %{result: "agent_manifests", params: []}} = Spec.fetch("server.agent_manifests")
+
+    assert Spec.validate_params("agent.explain", %{"agent" => "claude", "text" => "x"}) ==
+             {:ok, %{agent: "claude", text: "x"}}
+
+    assert {:ok, %{pane_id: 1, state: "idle", seq: 0}} =
+             Spec.validate_params("pane.report_agent", %{
+               "pane_id" => "p1",
+               "source" => "s",
+               "agent" => "a",
+               "state" => "idle",
+               "seq" => 0,
+               "resume_argv" => ["x"]
+             })
+
+    assert {:error, _} =
+             Spec.validate_params("pane.report_agent", %{
+               "pane_id" => "p1",
+               "source" => "s",
+               "agent" => "a",
+               "state" => "done"
+             })
+
+    data = %{
+      "workspace_id" => "w1",
+      "tab_id" => "w1:t1",
+      "pane_id" => "p1",
+      "agent" => "claude",
+      "agent_status" => "working"
+    }
+
+    assert Spec.validate_event(%{"event" => "pane.agent_status_changed", "data" => data}) == :ok
+
+    assert Spec.validate_event(%{
+             "event" => "pane.agent_detected",
+             "data" => Map.delete(data, "agent_status")
+           }) == :ok
+
+    agent = %{
+      "pane_id" => "p1",
+      "workspace_id" => "w1",
+      "tab_id" => "w1:t1",
+      "agent" => nil,
+      "agent_status" => "unknown",
+      "title" => nil,
+      "terminal_title" => nil,
+      "terminal_title_stripped" => nil,
+      "focused" => false,
+      "cwd" => nil,
+      "screen_detection_skipped" => false,
+      "hook_source" => nil
+    }
+
+    assert Spec.validate_result("agent.get", %{"type" => "agent_info", "agent" => agent}) == :ok
+
+    assert {:error, _} =
+             Spec.validate_result("agent.get", %{"type" => "agent_info", "agent" => %{}})
   end
 
   test "m14 methods and their params" do

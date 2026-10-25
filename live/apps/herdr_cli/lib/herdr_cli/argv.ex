@@ -11,7 +11,7 @@ defmodule HerdrCli.Argv do
   omitted, `HERDR_PANE_ID` from env, else usage / left out); `{:keys, name}` (one or
   more); `{:opt_int, name}`; `{:opt_enum, name, values}`. Option kinds: `:string`,
   `:int`, `:number`, `:flag`, `{:const, value}` (a flag that sets `value`), `{:enum, values}`,
-  `{:many, values}` (repeatable), `{:kv_many}` (repeatable `KEY=VALUE`, collected into a map).
+  `{:many, values}` (repeatable), `:file` (a path; becomes `{:file, path}` for the caller to read into the param), `{:kv_many}` (repeatable `KEY=VALUE`, collected into a map).
   An atom key is consumed by `finish/3` (`:json` is accepted and dropped). A row with
   `alias: true` is another spelling of a command and has no Spec `cli` string of its own.
   `--opt value` and `--opt=value` are both accepted; `--` ends options.
@@ -71,6 +71,22 @@ defmodule HerdrCli.Argv do
         %{"kv" => {:kv, :flag}},
         :json,
         "server status [--kv]"
+      ),
+      cmd(
+        ["server", "agent-manifests"],
+        "server.agent_manifests",
+        [],
+        %{},
+        :json,
+        "server agent-manifests"
+      ),
+      cmd(
+        ["server", "reload-agent-manifests"],
+        "server.reload_agent_manifests",
+        [],
+        %{},
+        :json,
+        "server reload-agent-manifests"
       ),
       cmd(["rollback"], "reload.rollback", [{:opt_int, "n"}], %{}, :rollback, "rollback [<n>]"),
       cmd(
@@ -255,6 +271,32 @@ defmodule HerdrCli.Argv do
         "pane run <pane_id> <command>"
       ),
       cmd(
+        ~w(pane report-agent),
+        "pane.report_agent",
+        [id],
+        %{
+          "source" => {"source", :string},
+          "agent" => {"agent", :string},
+          "state" => {"state", {:enum, ~w(idle working blocked unknown)}},
+          "message" => {"message", :string},
+          "seq" => {"seq", :int}
+        },
+        :json,
+        "pane report-agent <pane_id> --source S --agent A --state S [--message T] [--seq N]"
+      ),
+      cmd(
+        ~w(pane release-agent),
+        "pane.release_agent",
+        [id],
+        %{
+          "source" => {"source", :string},
+          "agent" => {"agent", :string},
+          "seq" => {"seq", :int}
+        },
+        :json,
+        "pane release-agent <pane_id> --source S --agent A [--seq N]"
+      ),
+      cmd(
         ~w(pane read),
         "pane.read",
         [env_id],
@@ -288,7 +330,20 @@ defmodule HerdrCli.Argv do
         :text,
         "agent read <target> [--source visible|recent] [--lines N]"
       ),
-      cmd(~w(agent explain), "agent.explain", [t], %{}, :json, "agent explain <target>"),
+      cmd(
+        ~w(agent explain),
+        "agent.explain",
+        [{:opt, "target"}],
+        %{
+          "json" => {:json, :flag},
+          "verbose" => {"verbose", :flag},
+          "agent" => {"agent", :string},
+          "file" => {"text", :file}
+        },
+        :json,
+        "agent explain <target> [--json] [--verbose] | " <>
+          "herdr-live agent explain --file PATH --agent LABEL [--json]"
+      ),
       cmd(
         ~w(agent wait),
         "agent.wait",
@@ -597,6 +652,7 @@ defmodule HerdrCli.Argv do
   end
 
   defp convert(_name, :string, v), do: {:ok, v}
+  defp convert(_name, :file, v), do: {:ok, {:file, v}}
   defp convert(name, :int, v), do: int(v, "--#{name}")
   defp convert(name, {:enum, values}, v), do: enum(v, values, "--#{name}")
   defp convert(name, {:many, values}, v), do: enum(v, values, "--#{name}")
@@ -670,6 +726,19 @@ defmodule HerdrCli.Argv do
   defp check("pane.split", %{"direction" => _}), do: :ok
   defp check("pane.split", _), do: {:error, "--direction is required"}
 
+  # a pane target, or a label and a file of screen text; never both
+  defp check("agent.explain", params) do
+    case {Map.has_key?(params, "target"), Map.has_key?(params, "agent"),
+          Map.has_key?(params, "text")} do
+      {true, false, false} -> :ok
+      {false, true, true} -> :ok
+      _ -> {:error, "give either <target> or both --file and --agent"}
+    end
+  end
+
+  defp check("pane.report_agent", params), do: require_opts(params, ~w(source agent state))
+  defp check("pane.release_agent", params), do: require_opts(params, ~w(source agent))
+
   defp check("pane.wait_for_output", params) do
     case {Map.has_key?(params, "match"), Map.has_key?(params, "regex")} do
       {true, false} -> :ok
@@ -686,4 +755,11 @@ defmodule HerdrCli.Argv do
   end
 
   defp check(_method, _params), do: :ok
+
+  defp require_opts(params, names) do
+    case Enum.reject(names, &Map.has_key?(params, &1)) do
+      [] -> :ok
+      [n | _] -> {:error, "--#{n} is required"}
+    end
+  end
 end
