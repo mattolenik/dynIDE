@@ -80,4 +80,13 @@ defmodule HerdrTerm.Client.Term.RenderDesktopTest do
     send(render, {:host_colors, %{fg: "white"}})
     assert :sys.get_state(render).theme.host == %{fg: {255, 255, 255}, bg: nil}
   end
+
+  test "host colours survive a theme refresh (appearance change from caps)", %{render: render} do
+    send(render, {:scene, HerdrScene.Fixture.load("single_pane_80x24")})
+    send(render, {:host_colors, %{fg: {0, 0, 0}, bg: {255, 255, 255}}})
+    send(render, {:caps, %{scheme: :light, colors: %{bg: {255, 255, 255}}}})
+    state = :sys.get_state(render)
+    assert state.appearance == :light
+    assert state.theme.host == %{fg: {0, 0, 0}, bg: {255, 255, 255}}
+  end
 end
