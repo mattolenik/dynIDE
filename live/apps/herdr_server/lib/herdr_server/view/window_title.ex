@@ -32,10 +32,13 @@ defmodule HerdrServer.View.WindowTitle do
 
   def render(_template, _app, _pane_title, _hostname), do: nil
 
-  @doc "Strips controls, caps the length; an empty result is nil."
+  @doc "Replaces invalid UTF-8, strips controls, caps the length; an empty result is nil."
   @spec clean(binary) :: binary | nil
   def clean(text) do
-    case text |> String.replace(~r/[\x00-\x1f\x7f\x{80}-\x{9f}]/u, "") |> String.slice(0, @max) do
+    case text
+         |> String.replace_invalid()
+         |> String.replace(~r/[\x00-\x1f\x7f\x{80}-\x{9f}]/u, "")
+         |> String.slice(0, @max) do
       "" -> nil
       t -> t
     end

@@ -120,15 +120,19 @@ defmodule HerdrServer.View do
     }
   end
 
-  # the override wins over the template; nil (prop omitted) while it is empty
-  defp window_title(_app, %{window_title: o}) when is_binary(o), do: WindowTitle.clean(o)
-
-  # no hostname: not a real session (pure View callers), so no title
+  # a non-empty override wins over the template; no hostname: not a real session (pure
+  # View callers), so no title; nil (prop omitted) while empty
   defp window_title(_app, %{hostname: nil}), do: nil
 
   defp window_title(app, client) do
     title = get_in(app.session.panes, [app.focus.pane, :title])
-    WindowTitle.render(app.ui.window_title, app, title, client.hostname)
+
+    with o when is_binary(o) <- client.window_title,
+         t when is_binary(t) <- WindowTitle.clean(o) do
+      t
+    else
+      _ -> WindowTitle.render(app.ui.window_title, app, title, client.hostname)
+    end
   end
 
   defp divider_rect(%{direction: :horizontal, pos: pos, area: a}, area),

@@ -31,10 +31,19 @@ defmodule HerdrServer.View.WindowTitleTest do
     assert WindowTitle.render("{terminal_title}", app(), nil, nil) == nil
   end
 
+  test "the {pane} token and invalid utf-8 in a terminal title" do
+    a = put_in(app().session.panes[1][:name], "logs")
+    assert WindowTitle.render("{pane}", a, nil, nil) == "logs"
+    assert WindowTitle.render("{terminal_title}", a, <<"ab", 0xFF, "c">>, nil) == "ab\uFFFDc"
+  end
+
   test "the root prop: template, override wins" do
     c = %State{size: %{cols: 80, rows: 24}, transport: :ref, hostname: "box"}
     ws = hd(app().session.workspaces)
     assert View.compute(app(), c).chrome.props.window_title == "box: #{ws.name}"
     assert View.compute(app(), %{c | window_title: "mine\a"}).chrome.props.window_title == "mine"
+    # an override that cleans to empty falls back to the template
+    assert View.compute(app(), %{c | window_title: "\a"}).chrome.props.window_title ==
+             "box: #{ws.name}"
   end
 end

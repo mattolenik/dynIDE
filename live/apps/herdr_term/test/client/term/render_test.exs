@@ -59,6 +59,10 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     :sys.get_state(render)
     assert osc.() == 2
     assert Tty.written(tty) =~ "\e]0;b\a"
+    send(render, {:scene, titled.(nil)})
+    :sys.get_state(render)
+    assert osc.() == 3
+    assert Tty.written(tty) =~ "\e]0;\a"
   end
 
   test "a failing Compose drops the frame and keeps the render state", %{render: render} do

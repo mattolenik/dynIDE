@@ -8,7 +8,7 @@ defmodule HerdrServer.Api.Handlers.Client do
 
   @spec handle(binary, map) :: {:ok, map}
   def handle("client.window_title.set", params),
-    do: fan_out(WindowTitle.clean(params.title) || "")
+    do: fan_out(WindowTitle.clean(params.title))
 
   def handle("client.window_title.clear", _params), do: fan_out(nil)
 
