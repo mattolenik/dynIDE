@@ -107,7 +107,7 @@ defmodule HerdrIntegration.RealKernelTest do
     client = Driver.start_client({80, 24})
     assert Driver.wait_screen(client, &prompt?(Driver.scene(client), 1, &1), 5000)
     Driver.type(client, "cat > /dev/null\r")
-    Process.sleep(100)
+    assert wait_foreground(1, "cat"), "cat never became the pane's foreground job"
     line = String.duplicate("y", 63) <> "\n"
     paste = :binary.copy(line, div(2 * 1024 * 1024, 64))
 
@@ -132,7 +132,7 @@ defmodule HerdrIntegration.RealKernelTest do
     client = Driver.start_client({80, 24})
     assert Driver.wait_screen(client, &prompt?(Driver.scene(client), 1, &1), 5000)
     Driver.type(client, "exec cat\r")
-    Process.sleep(100)
+    assert wait_foreground(1, "cat"), "cat never became the pane's foreground job"
     move = {:mouse, %{kind: :move, button: :none, x: 0, y: 0, mods: [:hyper], px: nil}}
     assert Input.mouse(move, 1) == :ok
     # herdr does not forward hyper or meta chords: dropped, and the pane still types
@@ -150,6 +150,25 @@ defmodule HerdrIntegration.RealKernelTest do
   defp rows(scene, id, screen) do
     scene.panes |> Enum.find(&(&1.id == id)) |> Map.fetch!(:rect) |> Driver.region(screen)
   end
+
+  # the kernel's foreground job of pane `id` runs `name` (input now reaches it, not the
+  # shell); polled for at most 10 s
+  defp wait_foreground(id, name, deadline \\ System.monotonic_time(:millisecond) + 10_000) do
+    job =
+      with kid when kid != nil <- Rows.kernel_id(id),
+           {:ok, %{pty: pty}} <- HerdrServer.Native.Keeper.lookup(kid),
+           do: HerdrServer.Native.Pty.foreground_job(pty)
+
+    cond do
+      match?(%{processes: _}, job) and Enum.any?(job.processes, &argv0?(&1, name)) -> true
+      System.monotonic_time(:millisecond) > deadline -> false
+      true -> Process.sleep(20) && wait_foreground(id, name, deadline)
+    end
+  end
+
+  # by argv[0]: the process name can differ (Homebrew's coreutils cat is named gcat)
+  defp argv0?(%{argv: [a | _]}, name), do: Path.basename(a) == name
+  defp argv0?(_, _), do: false
 
   defp prompt?(scene, id, screen), do: Enum.any?(rows(scene, id, screen), &(&1 =~ ~r/^\$ /))
 
