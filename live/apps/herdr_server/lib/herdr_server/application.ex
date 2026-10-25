@@ -40,6 +40,8 @@ defmodule HerdrServer.Application do
           {Task.Supervisor, name: HerdrServer.App.Store.Tasks},
           HerdrServer.App.Store,
           HerdrServer.WorkspaceFacts,
+          # reads the app from the Mirror; harmless while it has none
+          HerdrServer.Detect.Poller,
           HerdrServer.Client.Supervisor,
           HerdrServer.Client.Endpoint,
           HerdrServer.ReloadNotices,

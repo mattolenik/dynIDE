@@ -4,6 +4,8 @@ defmodule HerdrServer.Pane.Facts do
   any process reads them without a call and a restarted `Pane.Server` gets them back.
 
   Keys: a pane id -> `t:facts/0`, written only by that pane's `Pane.Server`;
+  `{:agent, id}` -> pane `id`'s detected agent (`t:agent/0`), written only by
+  `Detect.Poller` and deleted when the pane leaves the app;
   `:host_colors` -> the foreground client's colour caps (`%{colors, scheme}`, either
   key optional), applied by every `Pane.Server` on init; `:foreground` -> the
   foreground client session pid (`Client.Foreground`); `{:graphics, id}` -> pane `id`'s
@@ -35,6 +37,20 @@ defmodule HerdrServer.Pane.Facts do
           title: binary | nil,
           stripped_title: binary | nil,
           progress: binary | nil
+        }
+
+  @typedoc """
+  `state` is the published (effective) state, `visible` the screen's visible
+  idle/blocker/working evidence, `skipped` herdr's `screen_detection_skipped`
+  (a hook holds the state), `updated_ms` the monotonic time of the last change.
+  """
+  @type agent :: %{
+          agent: binary | nil,
+          state: atom,
+          visible: map,
+          hook_source: binary | nil,
+          skipped: boolean,
+          updated_ms: integer
         }
 
   @spec get(pos_integer | atom | tuple) :: term | nil
@@ -80,6 +96,27 @@ defmodule HerdrServer.Pane.Facts do
 
   @spec put_graphics(pos_integer, [HerdrScene.Scene.Graphic.t()]) :: :ok
   def put_graphics(id, placements), do: put({:graphics, id}, placements)
+
+  @spec agent(pos_integer) :: agent | nil
+  def agent(id), do: get({:agent, id})
+
+  @spec put_agent(pos_integer, agent) :: :ok
+  def put_agent(id, agent), do: put({:agent, id}, agent)
+
+  @doc "Pane ids with an agent row."
+  @spec agent_ids() :: [pos_integer]
+  def agent_ids do
+    :ets.select(@table, [{{{:agent, :"$1"}, :_}, [], [:"$1"]}])
+  rescue
+    # no table yet (see moduledoc)
+    ArgumentError -> []
+  end
+
+  @spec delete_agent(pos_integer) :: :ok
+  def delete_agent(id) do
+    if :ets.whereis(@table) != :undefined, do: :ets.delete(@table, {:agent, id})
+    :ok
+  end
 
   @doc "Whether pane `id` is scrolled back (one ETS lookup; the input fast path uses it)."
   @spec scrolled?(pos_integer) :: boolean

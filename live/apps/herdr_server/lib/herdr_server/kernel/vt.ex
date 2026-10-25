@@ -62,6 +62,8 @@ defmodule HerdrServer.Kernel.Vt do
               viewport: non_neg_integer,
               offset: non_neg_integer
             }
+  @doc "`{cols, rows}` of the screen."
+  @callback size(vt) :: {pos_integer, pos_integer}
   @callback scroll_to(vt, non_neg_integer) :: :ok
   @callback mode(vt, atom) :: boolean | {:stale, boolean}
   @callback kitty_keyboard_flags(vt) :: non_neg_integer | {:stale, non_neg_integer}

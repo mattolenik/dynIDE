@@ -121,6 +121,9 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   def scrollbar(vt), do: GenServer.call(vt, :scrollbar)
 
   @impl HerdrServer.Kernel.Vt
+  def size(vt), do: GenServer.call(vt, :size)
+
+  @impl HerdrServer.Kernel.Vt
   def scroll_to(vt, offset) do
     with :raise <- GenServer.call(vt, {:scroll_to, offset}),
          do: :erlang.error({:ghostty, :scroll_to})
@@ -271,6 +274,11 @@ defmodule HerdrServer.Kernel.Fake.Vt do
       if first > last, do: [], else: Enum.map(first..last, &{&1, pack_line(state, &1), false})
 
     {:reply, rows, state}
+  end
+
+  def handle_call(:size, _from, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:reply, {state.cols, state.rows}, state}
   end
 
   def handle_call(:scrollbar, _from, state) do
