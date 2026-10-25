@@ -301,7 +301,12 @@ defmodule HerdrServer.Handoff.LinkTest do
 
   defmodule SlowCtl do
     alias HerdrServer.Handoff.Ctl
-    def handle({:sleep, ms}), do: Process.sleep(ms) && :slept
+
+    def handle({:sleep, ms}) do
+      send(:link_test_slow_ctl, :ctl_running)
+      Process.sleep(ms) && :slept
+    end
+
     def handle(req), do: Ctl.handle(req)
   end
 
@@ -328,8 +333,10 @@ defmodule HerdrServer.Handoff.LinkTest do
     {pid, peer} = start_link_with(<<2::32, 0x41, 0>>)
     assert Link.restored() == :ok
 
+    Process.register(self(), :link_test_slow_ctl)
     request(peer, 1, {:sleep, 400})
-    Process.sleep(50)
+    # PREPARE only once request 1 runs: a request still queued would wait for THAW
+    assert_receive :ctl_running, 10_000
     :ok = :gen_tcp.send(peer, <<2::32, 0x44, 0>>)
     request(peer, 2, :ping)
 
@@ -385,7 +392,7 @@ defmodule HerdrServer.Handoff.LinkTest do
 
     spec = %{
       cmd: "/bin/sh",
-      args: ["-c", "stty raw -echo; sleep 30"],
+      args: ["-c", "stty raw -echo; echo raw-ready; sleep 30"],
       env: [],
       cwd: nil,
       cols: 80,
@@ -395,8 +402,9 @@ defmodule HerdrServer.Handoff.LinkTest do
     }
 
     {:ok, id} = Keeper.open(spec)
-    {:ok, %{pty: pty}} = Keeper.lookup(id)
-    Process.sleep(200)
+    {:ok, %{pty: pty, vt: vt}} = Keeper.lookup(id)
+    # raw first: a cooked tty discards input past its line limit, so nothing would queue
+    assert wait_text(vt, "raw-ready"), "the child never put its tty in raw mode"
     # the child never reads: most of it stays in the writer queue
     :ok = Pty.write(pty, String.duplicate("a", 65_536))
     key = "pane/#{id}"
@@ -407,7 +415,8 @@ defmodule HerdrServer.Handoff.LinkTest do
     :ok = Keeper.close(id)
   end
 
-  defp wait_text(vt, s, deadline \\ System.monotonic_time(:millisecond) + 3000) do
+  # bounded at 10 s: a shell under host load starts slowly, a missing text still fails
+  defp wait_text(vt, s, deadline \\ System.monotonic_time(:millisecond) + 10_000) do
     cond do
       Vt.read_text(vt, :screen) =~ s -> true
       System.monotonic_time(:millisecond) > deadline -> false
