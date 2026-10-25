@@ -22,7 +22,9 @@ use crate::proc::Job;
 use crate::pty::{
     AdoptOptions, Event, EventSink, ExitStatus, Pty, SpawnOptions, ThawError, WriteError,
 };
-use crate::vt::{lock, Colors, LinkKind, Mode, RowBatch, Tail, TextRange, Vt};
+use crate::vt::{
+    lock, Colors, Direction, LinkKind, Mode, RowBatch, SearchOpts, Tail, TextRange, Vt,
+};
 use ghostty_vt::{ColorScheme, KittyImageFormat, RgbColor};
 
 mod atoms {
@@ -34,7 +36,8 @@ mod atoms {
         key, mods, event, kind, button, x, y, px, disabled, consumed, not_frozen, released,
         os_pid, adopted, hidden, exited, start_time, alt_screen,
         herdr_link, herdr_link_closed, eof, timeout, noproc, econnrefused, einval,
-        connect_failed, fg, bg, cursor, palette, dark, light, rgb, rgba, png,
+        connect_failed, fg, bg, cursor, palette, dark, light, rgb, rgba, png, done, forward,
+        backward,
     }
 }
 
@@ -389,6 +392,45 @@ fn vt_screen_rows(env: Env, vt: ResourceArc<VtRes>, first: u32, last: u32) -> Ni
         .map(|(y, packed, wrapped)| (*y, bin(env, packed), *wrapped).encode(env))
         .collect();
     Ok(rows.encode(env))
+}
+
+#[derive(NifMap)]
+struct SearchMap {
+    max_rows: u32,
+    max_matches: usize,
+    case_sensitive: bool,
+    from: u32,
+    direction: Atom,
+}
+
+/// `{:ok, [{row, col, len}], next_row | :done}`; see `Vt::search`. Bounded by `max_rows`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn vt_search<'a>(
+    env: Env<'a>,
+    vt: ResourceArc<VtRes>,
+    query: String,
+    o: SearchMap,
+) -> NifResult<Term<'a>> {
+    let direction = match o.direction {
+        d if d == atoms::forward() => Direction::Forward,
+        d if d == atoms::backward() => Direction::Backward,
+        _ => return Err(Error::BadArg),
+    };
+    let opts = SearchOpts {
+        max_rows: o.max_rows,
+        max_matches: o.max_matches,
+        case_sensitive: o.case_sensitive,
+        from: o.from,
+        direction,
+    };
+    let (matches, next) =
+        vt.0.search(&query, &opts)
+            .map_err(|e| raise(format!("{e:?}")))?;
+    let next = match next {
+        Some(r) => r.encode(env),
+        None => atoms::done().encode(env),
+    };
+    Ok((atoms::ok(), matches, next).encode(env))
 }
 
 fn rgb(t: Term) -> NifResult<Option<RgbColor>> {

@@ -178,6 +178,32 @@ defmodule HerdrServer.Native.Vt do
   def screen_rows(vt, first, last) when first >= 0 and last >= 0,
     do: Native.vt_screen_rows(vt, min(first, @max_y), min(last, @max_y))
 
+  @type search_opts :: %{
+          max_rows: pos_integer,
+          max_matches: pos_integer,
+          case_sensitive: boolean,
+          from: non_neg_integer,
+          direction: :forward | :backward
+        }
+  @type search_match :: {row :: non_neg_integer, col :: non_neg_integer, len :: pos_integer}
+
+  @doc """
+  Matches of `query` over at most `max_rows` screen rows (numbered as in `screen_rows/3`)
+  from `from` in `direction`, on each row's glyphs as `screen_rows/3` packs them (wide
+  tails skipped, an empty cell reads as a space; `col` and `len` in cells). Unless
+  `case_sensitive`, row and query are folded to lower case (the caller picks smart case).
+  Matches are non-overlapping, in row reading order and left to right within a row. Rows
+  are read whole: the call stops after the row on which `max_matches` was reached. Returns
+  the next unread row, or `:done` once the scan passed the first or last row. An empty
+  query matches nothing. Runs on a dirty CPU scheduler; `max_rows` bounds it.
+  """
+  @spec search(vt, binary, search_opts) :: {:ok, [search_match], non_neg_integer | :done}
+  def search(vt, query, %{max_rows: r, max_matches: m, from: f, direction: d} = opts)
+      when is_binary(query) and is_integer(r) and r > 0 and is_integer(m) and m > 0 and
+             is_integer(f) and f >= 0 and d in [:forward, :backward] and
+             is_boolean(:erlang.map_get(:case_sensitive, opts)),
+      do: Native.vt_search(vt, query, %{opts | from: min(f, @max_y), max_rows: min(r, @max_y)})
+
   @doc """
   Sets ghostty's default fg, bg and cursor colours (nil or missing unsets) and
   overlays `palette` entries on its built-in palette, so ghostty answers OSC

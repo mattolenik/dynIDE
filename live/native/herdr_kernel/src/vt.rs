@@ -183,6 +183,88 @@ pub const SCREEN_ROWS_MAX: u32 = 1000;
 /// `(screen_row, packed_row, soft_wraps_into_next)`.
 pub type ScreenRow = (u32, Vec<u8>, bool);
 
+/// Rows `search` reads per core lock, so the reader waits at most this many rows.
+const SEARCH_LOCK_ROWS: u32 = 256;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Forward,
+    Backward,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchOpts {
+    /// Rows read at most (one call's budget).
+    pub max_rows: u32,
+    /// Stop after the row on which this many matches were reached.
+    pub max_matches: usize,
+    pub case_sensitive: bool,
+    /// First screen row read; clamped to the last row going backward.
+    pub from: u32,
+    pub direction: Direction,
+}
+
+/// `(screen_row, first_col, cells)` of one match.
+pub type SearchMatch = (u32, u32, u32);
+
+/// One row's text with the cell each glyph came from: wide tails are skipped, an empty
+/// cell reads as a space (as `HerdrServer.Client.Words.text_cells`).
+#[derive(Default)]
+struct RowText {
+    text: String,
+    /// per glyph: (byte offset in `text`, first col, last col)
+    cells: Vec<(usize, u32, u32)>,
+    col: u32,
+}
+
+impl RowText {
+    fn clear(&mut self) {
+        self.text.clear();
+        self.cells.clear();
+        self.col = 0;
+    }
+
+    fn push(&mut self, wide: CellWide, cps: &[u32], fold: bool) {
+        let x = self.col;
+        self.col += 1;
+        let last = match wide {
+            CellWide::SpacerTail => return,
+            CellWide::Wide => x + 1,
+            CellWide::Narrow | CellWide::SpacerHead => x,
+        };
+        let at = self.text.len();
+        if matches!(wide, CellWide::Narrow | CellWide::Wide) {
+            for c in cps.iter().filter_map(|&c| char::from_u32(c)) {
+                match fold {
+                    true => self.text.extend(c.to_lowercase()),
+                    false => self.text.push(c),
+                }
+            }
+        }
+        if self.text.len() == at {
+            self.text.push(' ');
+        }
+        self.cells.push((at, x, last));
+    }
+
+    /// Non-overlapping matches of `needle` that start and end on glyph boundaries.
+    fn matches(&self, needle: &str, row: u32, out: &mut Vec<SearchMatch>) {
+        let cell = |off: usize| self.cells.binary_search_by_key(&off, |c| c.0).ok();
+        for (off, m) in self.text.match_indices(needle) {
+            let end = off + m.len();
+            let past = match end == self.text.len() {
+                true => Some(self.cells.len()),
+                false => cell(end),
+            };
+            let (Some(a), Some(b)) = (cell(off), past) else {
+                continue;
+            };
+            let (first, last) = (self.cells[a].1, self.cells[b - 1].2);
+            out.push((row, first, last - first + 1));
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkKind {
     Hyperlink,
@@ -743,6 +825,59 @@ impl Vt {
         Ok(out)
     }
 
+    /// Matches of `query` (case folded with `to_lowercase` unless `case_sensitive`) over at
+    /// most `o.max_rows` rows from `o.from` in `o.direction`, matched on each row's glyphs
+    /// (columns and lengths in cells). Rows are read whole: matches come in reading order of
+    /// rows and left to right within a row, and the call stops after the row on which
+    /// `o.max_matches` was reached (so it may return a few more). Returns the matches and
+    /// the next unread row, or `None` once the scan passed the first or last row.
+    pub fn search(
+        &self,
+        query: &str,
+        o: &SearchOpts,
+    ) -> Result<(Vec<SearchMatch>, Option<u32>), VtError> {
+        let needle = match o.case_sensitive {
+            true => query.to_string(),
+            false => query.to_lowercase(),
+        };
+        let mut out = Vec::new();
+        let mut line = RowText::default();
+        let mut row = o.from;
+        let mut left = o.max_rows;
+        if needle.is_empty() {
+            return Ok((out, None));
+        }
+        loop {
+            // one lock per SEARCH_LOCK_ROWS rows: the pty reader never waits on a whole call
+            let core = lock(&self.core);
+            let t = &core.terminal;
+            let total = u32::try_from(t.total_rows()?).unwrap_or(u32::MAX);
+            if total == 0 || (o.direction == Direction::Forward && row >= total) {
+                return Ok((out, None));
+            }
+            row = row.min(total - 1);
+            for _ in 0..SEARCH_LOCK_ROWS {
+                line.clear();
+                t.for_each_screen_row_cell(row, |wide, cps| {
+                    line.push(wide, cps, !o.case_sensitive)
+                })?;
+                line.matches(&needle, row, &mut out);
+                left = left.saturating_sub(1);
+                let next = match o.direction {
+                    Direction::Forward => row.checked_add(1).filter(|&r| r < total),
+                    Direction::Backward => row.checked_sub(1),
+                };
+                let Some(next) = next else {
+                    return Ok((out, None));
+                };
+                row = next;
+                if left == 0 || out.len() >= o.max_matches {
+                    return Ok((out, Some(row)));
+                }
+            }
+        }
+    }
+
     pub fn set_colors(&self, c: &Colors) -> Result<(), VtError> {
         let mut core = lock(&self.core);
         let t = &mut core.terminal;
@@ -1203,6 +1338,140 @@ mod tests {
         let rows = vt.screen_rows(0, 5000).expect("rows");
         assert_eq!(rows.len(), 1000);
         assert_eq!(rows[999].0, 999);
+    }
+
+    fn opts(from: u32, direction: Direction) -> SearchOpts {
+        SearchOpts {
+            max_rows: 20_000,
+            max_matches: 1000,
+            case_sensitive: true,
+            from,
+            direction,
+        }
+    }
+
+    // rows 0..=4 of a 20x5 screen
+    fn search_vt() -> Arc<Vt> {
+        let vt = vt();
+        vt.write(b"foo bar\r\nnone\r\nx bar bar\r\nFOO\r\nbarbar");
+        vt
+    }
+
+    #[test]
+    fn search_forward_and_backward() {
+        let vt = search_vt();
+        let fwd = vt
+            .search("bar", &opts(0, Direction::Forward))
+            .expect("search");
+        assert_eq!(
+            fwd,
+            (
+                vec![(0, 4, 3), (2, 2, 3), (2, 6, 3), (4, 0, 3), (4, 3, 3)],
+                None
+            )
+        );
+        let back = vt
+            .search("bar", &opts(2, Direction::Backward))
+            .expect("search");
+        assert_eq!(back, (vec![(2, 2, 3), (2, 6, 3), (0, 4, 3)], None));
+        // `from` past the end: forward is done, backward starts at the last row
+        let past = vt
+            .search("bar", &opts(99, Direction::Forward))
+            .expect("search");
+        assert_eq!(past, (vec![], None));
+        let back = vt
+            .search("bar", &opts(99, Direction::Backward))
+            .expect("search");
+        assert_eq!(back.0[0], (4, 0, 3));
+        assert_eq!(
+            vt.search("", &opts(0, Direction::Forward)).expect("search"),
+            (vec![], None)
+        );
+    }
+
+    #[test]
+    fn search_case_insensitive() {
+        let vt = search_vt();
+        let mut o = opts(0, Direction::Forward);
+        assert_eq!(vt.search("FOO", &o).expect("search").0, vec![(3, 0, 3)]);
+        o.case_sensitive = false;
+        assert_eq!(
+            vt.search("FOO", &o).expect("search").0,
+            vec![(0, 0, 3), (3, 0, 3)]
+        );
+    }
+
+    #[test]
+    fn search_max_matches_stops_after_the_row() {
+        let vt = search_vt();
+        let o = SearchOpts {
+            max_matches: 2,
+            ..opts(0, Direction::Forward)
+        };
+        // row 2 has the second and third match: the whole row comes back
+        assert_eq!(
+            vt.search("bar", &o).expect("search"),
+            (vec![(0, 4, 3), (2, 2, 3), (2, 6, 3)], Some(3))
+        );
+        let o = SearchOpts {
+            max_matches: 1,
+            ..opts(3, Direction::Backward)
+        };
+        assert_eq!(
+            vt.search("bar", &o).expect("search"),
+            (vec![(2, 2, 3), (2, 6, 3)], Some(1))
+        );
+    }
+
+    #[test]
+    fn search_max_rows_budget() {
+        let vt = Vt::new(10, 5, 1_000_000).expect("vt");
+        for i in 0..1100 {
+            vt.write(format!("{i}\r\n").as_bytes());
+        }
+        let o = SearchOpts {
+            max_rows: 600,
+            ..opts(0, Direction::Forward)
+        };
+        // 600 rows read across lock chunks of 256: rows 0..=599, next 600
+        assert_eq!(vt.search("1050", &o).expect("search"), (vec![], Some(600)));
+        // the rest reaches the end: done
+        let o = SearchOpts { from: 600, ..o };
+        assert_eq!(
+            vt.search("1050", &o).expect("search"),
+            (vec![(1050, 0, 4)], None)
+        );
+        let o = SearchOpts {
+            max_rows: 300,
+            ..opts(1050, Direction::Backward)
+        };
+        assert_eq!(
+            vt.search("999", &o).expect("search"),
+            (vec![(999, 0, 3)], Some(750))
+        );
+        let o = SearchOpts {
+            max_rows: 10,
+            ..opts(5, Direction::Backward)
+        };
+        assert_eq!(vt.search("3", &o).expect("search"), (vec![(3, 0, 1)], None));
+    }
+
+    #[test]
+    fn search_wide_chars_count_in_cells() {
+        let vt = vt();
+        vt.write("\u{4e2d}x \u{4e2d}\u{6587}\r\na\x1b[2;3Hb".as_bytes());
+        let o = opts(0, Direction::Forward);
+        assert_eq!(vt.search("x", &o).expect("search").0, vec![(0, 2, 1)]);
+        assert_eq!(
+            vt.search("\u{4e2d}\u{6587}", &o).expect("search").0,
+            vec![(0, 4, 4)]
+        );
+        assert_eq!(
+            vt.search("\u{4e2d}", &o).expect("search").0,
+            vec![(0, 0, 2), (0, 4, 2)]
+        );
+        // an empty cell reads as a space
+        assert_eq!(vt.search("a b", &o).expect("search").0, vec![(1, 0, 3)]);
     }
 
     #[test]

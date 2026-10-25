@@ -58,6 +58,10 @@ defmodule HerdrServer.Native do
   @spec vt_screen_rows(term, term, term) :: [{non_neg_integer, binary, boolean}]
   def vt_screen_rows(_vt, _first, _last), do: err()
   @doc false
+  @spec vt_search(term, term, term) ::
+          {:ok, [{non_neg_integer, non_neg_integer, pos_integer}], non_neg_integer | :done}
+  def vt_search(_vt, _query, _opts), do: err()
+  @doc false
   @spec vt_set_colors(term, term) :: :ok
   def vt_set_colors(_vt, _colors), do: err()
   @doc false
