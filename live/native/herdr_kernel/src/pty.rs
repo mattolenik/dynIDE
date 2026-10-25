@@ -466,12 +466,13 @@ impl Inner {
 
     fn feed(&self, sp: &mut Splitter, seqs: &mut Vec<Seq>, win: &mut Window, chunk: &[u8]) {
         self.check_injected_panic();
-        if !chunk.is_empty() {
-            self.activity.fetch_add(1, Ordering::Relaxed);
-        }
         sp.observe(chunk, seqs);
         // Clipboard and pwd effects are ignored: OSC 52 and OSC 7 arrive via the splitter.
         let fx = self.vt.write(chunk);
+        // After the write, so whoever sees the new count also sees the text.
+        if !chunk.is_empty() {
+            self.activity.fetch_add(1, Ordering::Release);
+        }
         for s in seqs.drain(..) {
             let ev = match s {
                 Seq::Osc {
@@ -977,13 +978,15 @@ impl Pty {
 
     /// Output chunks read so far, including while hidden.
     pub fn activity(&self) -> u64 {
-        self.inner.activity.load(Ordering::Relaxed)
+        self.inner.activity.load(Ordering::Acquire)
     }
 
-    /// The terminal's foreground process group (one ioctl), None once exited.
+    /// The terminal's foreground process group (one ioctl), None once exited. Never
+    /// blocks: a contended exit lock means the exit is being recorded, so None too.
     pub fn foreground_pgid(&self) -> Option<u32> {
-        if self.exit_status().is_some() {
-            return None;
+        match self.inner.exit.try_lock() {
+            Ok(exit) if exit.is_none() => {}
+            _ => return None,
         }
         // SAFETY: plain ioctl on our master fd.
         let pgid = unsafe { libc::tcgetpgrp(self.inner.fd.as_raw_fd()) };
@@ -1325,31 +1328,39 @@ mod tests {
 
     #[test]
     fn foreground_job_lists_a_running_command() {
+        /// Kills the last-seen job group and the shell, also when the test panics.
+        struct Reap(u32, std::cell::Cell<u32>);
+        impl Drop for Reap {
+            fn drop(&mut self) {
+                if self.1.get() > 0 {
+                    // SAFETY: plain syscall on the job's process group.
+                    unsafe { libc::killpg(self.1.get() as libc::pid_t, libc::SIGKILL) };
+                }
+                sigkill(self.0);
+            }
+        }
         let (_vt, pty, _rx) = spawn("/bin/sh", &["-i"]);
+        let reap = Reap(pty.os_pid(), std::cell::Cell::new(0));
         // a PATH with GNU coreutils first would run `gsleep`
         pty.write(b"PATH=/bin:/usr/bin; sleep 30\n").expect("write");
         let end = Instant::now() + Duration::from_secs(2);
         let job = loop {
-            if let Some(j) = pty.foreground_job().filter(|j| {
+            let job = pty.foreground_job();
+            if let Some(j) = job.as_ref().filter(|j| !j.shell) {
+                reap.1.set(j.pgid);
+            }
+            if let Some(j) = job.clone().filter(|j| {
                 j.processes
                     .iter()
                     .any(|p| p.name == "sleep" && p.argv == ["sleep", "30"])
             }) {
                 break j;
             }
-            assert!(
-                Instant::now() < end,
-                "no sleep job: {:?}",
-                pty.foreground_job()
-            );
+            assert!(Instant::now() < end, "no sleep job: {job:?}");
             std::thread::sleep(Duration::from_millis(20));
         };
         assert!(!job.shell);
         assert_ne!(job.pgid, pty.os_pid());
-        eprintln!("observed job: {job:?}");
-        // SAFETY: plain syscall on the job's process group.
-        unsafe { libc::killpg(job.pgid as libc::pid_t, libc::SIGKILL) };
-        sigkill(pty.os_pid());
     }
 
     #[test]

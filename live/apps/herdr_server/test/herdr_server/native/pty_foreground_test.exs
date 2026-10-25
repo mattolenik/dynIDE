@@ -37,10 +37,18 @@ defmodule HerdrServer.Native.PtyForegroundTest do
     {pty, os_pid} = spawn_sh(["-i"])
     # a PATH with GNU coreutils first would run `gsleep`
     :ok = Pty.write(pty, "PATH=/bin:/usr/bin; sleep 30\n")
+    # kills the last job group seen, also when an assertion fails
+    seen = :atomics.new(1, signed: false)
+
+    on_exit(fn ->
+      pgid = :atomics.get(seen, 1)
+      if pgid > 0, do: System.cmd("kill", ["-9", "-#{pgid}"], stderr_to_stdout: true)
+    end)
 
     job =
       wait(fn ->
         job = Pty.foreground_job(pty)
+        if job && not job.shell, do: :atomics.put(seen, 1, job.pgid)
 
         job && Enum.any?(job.processes, &(&1.name == "sleep" and &1.argv == ["sleep", "30"])) &&
           job
@@ -48,6 +56,5 @@ defmodule HerdrServer.Native.PtyForegroundTest do
 
     assert %{shell: false, pgid: pgid} = job
     assert pgid != os_pid and Pty.foreground_pgid(pty) == pgid
-    System.cmd("kill", ["-9", "-#{pgid}"], stderr_to_stdout: true)
   end
 end

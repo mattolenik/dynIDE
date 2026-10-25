@@ -200,14 +200,16 @@ defmodule HerdrServer.Kernel.Fake.Pty do
     {:reply, state.activity, state}
   end
 
-  def handle_call(:foreground, _from, %{foreground: :default} = state) do
-    state = Map.merge(%__MODULE__{}, state)
-    {:reply, %{pgid: state.os_pid, shell: true, processes: []}, state}
-  end
-
   def handle_call(:foreground, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:reply, state.foreground, state}
+
+    job =
+      case state.foreground do
+        :default -> %{pgid: state.os_pid, shell: true, processes: []}
+        job -> job
+      end
+
+    {:reply, job, state}
   end
 
   def handle_call({:set_foreground, job}, _from, state) do

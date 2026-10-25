@@ -146,14 +146,17 @@ fn procargs2_argv(buf: &[u8]) -> Vec<String> {
         return Vec::new();
     };
     let argc = usize::try_from(i32::from_ne_bytes(*argc)).unwrap_or(0);
-    // Skip the exec path, then its NUL padding.
+    // The exec path and its NUL are padded to 8 bytes (observed on macOS 26), so argv
+    // starts at a known offset even when argv[0] is "". Skipping "all NULs" instead
+    // would swallow an empty argv[0] and read the first env string as argv.
     let Some(exec_end) = rest.iter().position(|&b| b == 0) else {
         return Vec::new();
     };
-    let start = rest[exec_end..]
-        .iter()
-        .position(|&b| b != 0)
-        .map_or(rest.len(), |p| exec_end + p);
+    let start = (exec_end + 1).next_multiple_of(8);
+    match rest.get(exec_end..start) {
+        Some(pad) if pad.iter().all(|&b| b == 0) => {}
+        _ => return Vec::new(),
+    }
     rest[start..]
         .split(|&b| b == 0)
         .take(argc.min(MAX_ARGS))
@@ -161,6 +164,9 @@ fn procargs2_argv(buf: &[u8]) -> Vec<String> {
         .collect()
 }
 
+// ponytail: reads every host process's /proc stat per call, O(host processes); the poller
+// calls it only when the foreground pgid changes. Walk the pane's process tree if that
+// stops being enough.
 #[cfg(target_os = "linux")]
 fn group_processes(pgid: u32) -> Vec<Process> {
     let Ok(dir) = std::fs::read_dir("/proc") else {
@@ -210,9 +216,47 @@ mod tests {
     #[test]
     fn procargs2_skips_exec_path_and_padding() {
         let mut buf = 2i32.to_ne_bytes().to_vec();
-        buf.extend_from_slice(b"/bin/sleep\0\0\0sleep\x0030\0PATH=/bin\0");
+        buf.extend_from_slice(b"/bin/sleep\0\0\0\0\0\0sleep\x0030\0PATH=/bin\0");
         assert_eq!(procargs2_argv(&buf), ["sleep", "30"]);
         assert!(procargs2_argv(b"\x01").is_empty());
+        // unexpected layout (no padding): nothing rather than a guess
+        let mut bad = 2i32.to_ne_bytes().to_vec();
+        bad.extend_from_slice(b"/bin/sleep\0sleep\x0030\0");
+        assert!(procargs2_argv(&bad).is_empty());
+    }
+
+    #[test]
+    fn procargs2_empty_argv0_never_reads_env() {
+        let mut buf = 2i32.to_ne_bytes().to_vec();
+        buf.extend_from_slice(b"/bin/sleep\0\0\0\0\0\0\x0030\0SECRET=s\0");
+        assert_eq!(procargs2_argv(&buf), ["", "30"]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn real_empty_argv0_never_reads_env() {
+        use std::os::unix::process::CommandExt;
+        let mut child = std::process::Command::new("/bin/sleep")
+            .arg0("")
+            .arg("30")
+            .env_clear()
+            .env("SECRET", "s")
+            .spawn()
+            .expect("spawn");
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let argv = loop {
+            let argv = kern_procargs2(child.id())
+                .map(|b| procargs2_argv(&b))
+                .unwrap_or_default();
+            // before exec completes the buffer is the test binary's
+            if argv.last().map(String::as_str) == Some("30") || std::time::Instant::now() > end {
+                break argv;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(argv, ["", "30"]);
     }
 
     #[test]
