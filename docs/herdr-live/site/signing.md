@@ -25,7 +25,8 @@ Gatekeeper rejects it when it carries the quarantine flag.
 (`--options runtime`):
 
 - `com.apple.security.cs.allow-jit`: the BEAM JIT maps writable-then-executable
-  memory; without it `beam.smp` is killed at the first compiled module.
+  memory; without it `beam.smp` is expected to be killed under the hardened runtime when
+  the JIT first maps code (expected, not verified here).
 - `com.apple.security.cs.disable-library-validation` is **not** set. Library validation
   only requires that a loaded library be signed by Apple or by the same team id as the
   process. Every NIF (`herdr_kernel.so`, `herdr_term.so`, `crypto.so`, `asn1rt_nif.so`)
@@ -38,8 +39,8 @@ Run from `live/`. `V` is the version, `ID` the identity string, `TEAMID` as abov
 
 ```sh
 # 1. build with the real public key as the trusted update key
-HERDR_LIVE_UPDATE_PUBKEY=~/secure/herdr-live-update/dev-update.pub scripts/release/build.sh
-T=_build/release/herdr-live-$V-macos-aarch64.tar.gz
+HERDR_LIVE_UPDATE_PUBKEY=~/secure/herdr-live-update/dev-update.pub T=$(scripts/release/build.sh | tail -n 1)
+V=$(basename $T | sed 's/^herdr-live-\(.*\)-macos-aarch64\.tar\.gz$/\1/')
 
 # 2. unpack, sign every Mach-O (dry run first: add --dry-run)
 rm -rf _build/signing && mkdir _build/signing && tar -xzf $T -C _build/signing
@@ -49,22 +50,25 @@ scripts/release/sign_macos.sh --identity "$ID" _build/signing/herdr-live-$V
 COPYFILE_DISABLE=1 tar --no-xattrs -C _build/signing -czf $T herdr-live-$V
 (cd _build/release && shasum -a 256 "$(basename $T)" > "$(basename $T).sha256")
 
-# 4. notarize (uploads to Apple, waits for the verdict; dry run first)
-scripts/release/notarize_macos.sh --keychain-profile herdr-live-notary $T
-
-# 5. verify the signed tree
+# 4. verify the signed tree and smoke-run it, so hardened-runtime launch failures
+#    show before a notarization round trip
 codesign --verify --strict --verbose=2 _build/signing/herdr-live-$V/erts-*/bin/beam.smp
 codesign -dv --verbose=4 _build/signing/herdr-live-$V/bin/herdr_broker   # flags=0x10000(runtime), TeamIdentifier
 spctl --assess --type execute --verbose _build/signing/herdr-live-$V/bin/herdr_broker
+scripts/release/release_smoke.sh $T
 
-# 6. sign the update manifest with the real key (after building the Linux tarball too)
+# 5. notarize (uploads to Apple, waits for the verdict; dry run first)
+scripts/release/notarize_macos.sh --keychain-profile herdr-live-notary $T
+
+# 6. sign the update manifest with the real key (after building the Linux tarball too).
+#    manifest.json and manifest.json.sig land beside the first tarball unless --out DIR
 scripts/release/sign_manifest.sh --key ~/secure/herdr-live-update/dev-update.key \
   --url-base https://YOUR.HOST/stable $T [linux tarball ...]
 ```
 
 Notes:
 
-- Step 3 must come after step 2 and before step 4, so the notarized bytes are the shipped
+- Step 3 must come after step 2 and before step 5, so the notarized bytes are the shipped
   bytes. The `.sha256` and the manifest are computed from the final tarball.
 - A bare executable or tarball **cannot be stapled** (stapling only covers app bundles,
   disk images and installer packages). Gatekeeper looks the ticket up online on first

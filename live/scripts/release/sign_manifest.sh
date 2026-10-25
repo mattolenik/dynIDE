@@ -2,7 +2,8 @@
 # Signs an update manifest (M18 R5): a thin wrapper over make_manifest.exs, the one
 # signing implementation, so the real key and the dev key take the same path.
 # Usage: sign_manifest.sh --key KEY --url-base URL [--dry-run] [make_manifest.exs options] TARBALL...
-# KEY is a keygen.sh-format private key file. Writes manifest.json and manifest.json.sig.
+# KEY is a keygen.sh-format private key file. Writes manifest.json and manifest.json.sig
+# beside the first TARBALL unless --out DIR is given.
 # --dry-run checks KEY exists and prints the command; it reads no key and writes nothing.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
