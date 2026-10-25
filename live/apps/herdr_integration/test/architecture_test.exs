@@ -313,7 +313,7 @@ defmodule HerdrIntegration.ArchitectureTest do
       for {n, open} <- opens, do: {"scene modal #{n}", {:scene, View.compute(open.(app), st)}}
 
     {_, {:scene, popup}} = List.last(scenes)
-    true = Enum.map(popup.panes, & &1.layer) |> Enum.uniq() |> Enum.sort() == Pane.layers()
+    true = Enum.map(popup.panes, & &1.layer) |> Enum.uniq() |> Enum.sort() == ScenePane.layers()
     scenes
   end
 
