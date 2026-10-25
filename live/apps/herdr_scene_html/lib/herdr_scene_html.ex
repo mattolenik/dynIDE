@@ -34,7 +34,7 @@ defmodule HerdrSceneHtml do
       css(theme),
       "</style></head><body><div class=\"scene\" style=\"width:#{cols}ch;height:#{em(rows)}\">",
       Enum.map(scene.panes, &pane(&1, scene.focus)),
-      chrome_node(scene.chrome),
+      chrome_node(scene.chrome, {0, 0}),
       "</div></body></html>"
     ]
   end
@@ -70,10 +70,10 @@ defmodule HerdrSceneHtml do
   # panes
 
   defp pane(%Pane{id: id, rect: rect, rows: rows}, focus) do
-    cls = if focus[:pane] == id, do: "pane focused", else: "pane"
+    cls = if Map.get(focus, :pane) == id, do: "pane focused", else: "pane"
 
     [
-      "<div class=\"#{cls}\" data-pane=\"#{id}\" style=\"#{box(rect)}\"><b>pane #{id}</b>\n",
+      "<div class=\"#{cls}\" data-pane=\"#{esc(id)}\" style=\"#{box(rect)}\"><b>pane #{id}</b>\n",
       esc(inline_text(rows)),
       "</div>"
     ]
@@ -89,26 +89,30 @@ defmodule HerdrSceneHtml do
 
   # chrome
 
-  defp chrome_node(nil), do: []
+  # rects are scene cells; an element is placed against its nearest rect ancestor
+  # (`origin`, the positioned box it sits in), so a nested rect lands where the scene says
+  defp chrome_node(nil, _origin), do: []
 
-  defp chrome_node(%Node{role: role} = n) do
+  defp chrome_node(%Node{role: role} = n, origin) do
     {tag, extra} = widget(n)
-    attrs = ~s( data-role="#{role}" data-id="#{esc(inspect(n.id))}" class="#{classes(n)}")
-    attrs = if n.rect, do: attrs <> ~s( data-rect style="#{box(n.rect)}"), else: attrs
+    attrs = ~s( data-role="#{esc(role)}" data-id="#{esc(inspect(n.id))}" class="#{classes(n)}")
+    attrs = if n.rect, do: attrs <> ~s( data-rect style="#{box(n.rect, origin)}"), else: attrs
+    inner = if n.rect, do: {n.rect.x, n.rect.y}, else: origin
 
     case tag do
       "input" -> ["<input", attrs, ~s( value="#{esc(n.text || "")}">)]
-      _ -> ["<#{tag}", attrs, extra, ">", body(n), "</#{tag}>"]
+      _ -> ["<#{tag}", attrs, extra, ">", body(n, inner), "</#{tag}>"]
     end
   end
 
-  defp body(%Node{role: :badge, props: props}),
+  defp body(%Node{role: :badge, props: props}, _origin),
     do: [~s(<span class="dot" title="#{esc(inspect(props[:state]))}"></span>)]
 
-  defp body(%Node{role: :list, children: kids}), do: Enum.map(kids, &chrome_node/1)
+  defp body(%Node{role: :list, children: kids}, origin),
+    do: Enum.map(kids, &chrome_node(&1, origin))
 
-  defp body(%Node{text: text, children: kids}),
-    do: [esc(text || ""), Enum.map(kids, &chrome_node/1)]
+  defp body(%Node{text: text, children: kids}, origin),
+    do: [esc(text || ""), Enum.map(kids, &chrome_node(&1, origin))]
 
   defp widget(%Node{role: :button}), do: {"button", ~s( type="button")}
   defp widget(%Node{role: :input}), do: {"input", ""}
@@ -129,8 +133,10 @@ defmodule HerdrSceneHtml do
     |> Enum.join(" ")
   end
 
-  defp box(%{x: x, y: y, w: w, h: h}),
-    do: "left:#{x}ch;top:#{em(y)};width:#{w}ch;height:#{em(h)}"
+  defp box(rect, origin \\ {0, 0})
+
+  defp box(%{x: x, y: y, w: w, h: h}, {ox, oy}),
+    do: "left:#{x - ox}ch;top:#{em(y - oy)};width:#{w}ch;height:#{em(h)}"
 
   defp em(rows), do: "#{Float.round(rows * @row_em, 2)}em"
 

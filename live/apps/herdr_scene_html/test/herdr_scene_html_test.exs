@@ -43,4 +43,26 @@ defmodule HerdrSceneHtmlTest do
     assert out =~ "&lt;b&gt;&amp;&#39;&quot;"
     assert out =~ ~s(data-pane="7")
   end
+
+  test "a nested rect is placed in scene cells, not offset by its parent's origin" do
+    inner = %Node{role: :divider, id: :split, rect: %{x: 12, y: 7, w: 5, h: 1}}
+
+    outer = %Node{
+      role: :sidebar,
+      id: :sidebar,
+      rect: %{x: 10, y: 4, w: 20, h: 10},
+      children: [inner]
+    }
+
+    scene = %Scene{
+      size: %{cols: 40, rows: 20},
+      focus: %{pane: nil, chrome: nil},
+      chrome: %Node{role: :root, id: :root, children: [outer]}
+    }
+
+    out = scene |> HerdrSceneHtml.render() |> IO.iodata_to_binary()
+    # the sidebar box at its scene cell; the divider 2 cols, 3 rows inside it
+    assert out =~ ~s(data-id=":sidebar" class="tok-default" data-rect style="left:10ch;top:6.0em;)
+    assert out =~ ~s(data-id=":split" class="tok-default" data-rect style="left:2ch;top:4.5em;)
+  end
 end
