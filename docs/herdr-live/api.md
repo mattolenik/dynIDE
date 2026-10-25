@@ -749,9 +749,9 @@ CLI: `herdr-live pane run <pane_id> <command>`
 
 Result: `ok` (no fields).
 
-Errors: `invalid_params`, `not_found`
+Errors: `invalid_params`, `not_found`, `backpressure`, `failed`
 
-The command and its Enter join the pane's input queue, which retries until the pane takes them: `ok` means queued, not yet read by the program.
+The command joins the pane's input queue, which retries until the pane takes it. The Enter is written directly when the queue has drained, so it can answer `backpressure` (also on a truncated write) or `failed`; otherwise it queues and `ok` means queued, not yet read by the program.
 
 ### `pane.read`
 
@@ -954,7 +954,7 @@ CLI: `herdr-live agent prompt <target> <text>`
 
 Result: `ok` (no fields).
 
-Errors: `invalid_params`, `not_found`
+Errors: `invalid_params`, `not_found`, `backpressure`, `failed`
 
 ### `agent.send_keys`
 
