@@ -64,6 +64,9 @@ defmodule HerdrServer.Application do
     )
 
     with {:ok, pid} <- Supervisor.start_link(children, opts) do
+      # before RESTORED (which drops unclaimed entries); not in Client.Socket.init, which
+      # THAW reruns from inside the Link
+      :ok = HerdrServer.Client.Remote.Supervisor.adopt_all()
       :ok = Handoff.Link.restored()
       # held back in a VM that could have been a standby (config/runtime.exs)
       :ok = HerdrReload.Application.start_deferred()

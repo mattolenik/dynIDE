@@ -18,7 +18,7 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
   import HerdrServer.Test.WireClient
 
   alias HerdrScene.{Event, Protocol, Wire}
-  alias HerdrServer.Client.Remote
+  alias HerdrServer.Client.{Remote, Socket}
   alias HerdrServer.Handoff.Link
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Native.Link, as: NLink
@@ -91,6 +91,7 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
     b = carried_blob(id, attach_info(client_id: id), opts)
     :ok = Link.put_adopted_for_test([{"client/" <> id, b, [fd]}])
     ctx = setup_listener()
+    :ok = Remote.Supervisor.adopt_all()
     assert :closed = recv_closed(c)
     assert :sys.get_state(Link).rejected == ["client/" <> id]
     attached!(attach(ctx, client_id: id), true)
@@ -168,6 +169,28 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
     assert :sys.get_state(conn("stuck1")).socket == nil
   end
 
+  test "thaw restarts the client socket without calling back into the Link" do
+    :ok = Link.put_adopted_for_test([])
+    dir = Path.join(System.tmp_dir!(), "hlt#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    path = Path.join(dir, "c.sock")
+    opts = [path: path, token_path: Path.join(dir, "c.token")]
+    {:ok, _} = Supervisor.start_child(HerdrServer.Supervisor, {Socket, opts})
+
+    on_exit(fn ->
+      _ = Supervisor.terminate_child(HerdrServer.Supervisor, Socket)
+      _ = Supervisor.delete_child(HerdrServer.Supervisor, Socket)
+      File.rm_rf!(dir)
+    end)
+
+    # as PREPARE leaves it
+    :ok = Supervisor.terminate_child(HerdrServer.Supervisor, Socket)
+    send(Link, {:herdr_link, nil, NLink.kind(:thaw), "", []})
+    # a Link blocked in restart_child (Socket.init calling it back) never answers
+    assert %Link{frozen: false} = :sys.get_state(Link, 5000)
+    assert Socket.path() == path
+  end
+
   test "attach holds client/<id>" do
     ctx = setup_listener()
     attached!(attach(ctx, client_id: "held1"), false)
@@ -213,6 +236,7 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
 
     :ok = Link.put_adopted_for_test([{"client/abc", b, [fd]}])
     _ctx = setup_listener()
+    :ok = Remote.Supervisor.adopt_all()
 
     assert {:attached, %{resumed: :handoff}} = recv_frame(c)
     assert {:scene, _} = recv_until(c, &match?({:scene, _}, &1))
@@ -237,6 +261,7 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
     {c, fd} = socket_pair()
     :ok = Link.put_adopted_for_test([{"client/bad", "not a term", [fd]}])
     _ctx = setup_listener()
+    :ok = Remote.Supervisor.adopt_all()
     assert :closed = recv_closed(c)
     assert :sys.get_state(Link).rejected == ["client/bad"]
   end

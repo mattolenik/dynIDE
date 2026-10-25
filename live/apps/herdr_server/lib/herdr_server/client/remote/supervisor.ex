@@ -2,6 +2,8 @@ defmodule HerdrServer.Client.Remote.Supervisor do
   @moduledoc "One `Client.Remote` conn per socket client."
   use DynamicSupervisor
 
+  alias HerdrServer.Handoff.Link
+
   def start_link(_), do: DynamicSupervisor.start_link(__MODULE__, :ok, name: __MODULE__)
 
   @impl true
@@ -10,6 +12,17 @@ defmodule HerdrServer.Client.Remote.Supervisor do
   @spec start_conn(map) :: DynamicSupervisor.on_start_child()
   def start_conn(info),
     do: DynamicSupervisor.start_child(__MODULE__, {HerdrServer.Client.Remote, info})
+
+  @doc """
+  Claims this VM's adopted `client/` entries and starts a conn for each. Called once by
+  `HerdrServer.Application` after the supervisor is up and before `Handoff.Link.restored/0`
+  (unclaimed entries are dropped at RESTORED); never from a Link callback.
+  """
+  @spec adopt_all() :: :ok
+  def adopt_all do
+    for entry <- Link.take_adopted("client/"), do: start_adopted(entry)
+    :ok
+  end
 
   @doc "A conn for a `client/<id>` entry a new VM adopted (R11)."
   @spec start_adopted({binary, binary, list}) :: DynamicSupervisor.on_start_child()

@@ -14,11 +14,12 @@ defmodule HerdrServer.Client.Socket do
   `client_id` (a resume) or a new one under `Client.Remote.Supervisor`. Pane targets are
   refused until pane mode exists.
 
-  Handoff (R11): `init` first claims the broker's `client/` entries
-  (`Handoff.Link.take_adopted/1`, before `restored/0`) and starts one adopted conn per
-  entry. During a handoff (`Client.Remote.handoff?/0`) a handshake closes its socket
-  instead of serving it, so no conn starts or resumes after the freeze; the client
-  reconnects to the next VM.
+  Handoff (R11): adopted `client/` entries are claimed by
+  `Client.Remote.Supervisor.adopt_all/0` at application start, not here: THAW restarts
+  this child from inside a `Handoff.Link` callback, so `init` must never call the Link.
+  During a handoff (`Client.Remote.handoff?/0`) a handshake closes its socket instead of
+  serving it, so no conn starts or resumes after the freeze; the client reconnects to the
+  next VM.
 
   Options: `path`, `token_path` (defaults from `Wire.paths/2` of the environment).
   """
@@ -29,7 +30,6 @@ defmodule HerdrServer.Client.Socket do
   alias HerdrScene.Wire
   alias HerdrServer.Api.{Listener, SocketPath}
   alias HerdrServer.Client.Remote
-  alias HerdrServer.Handoff.Link
   alias HerdrServer.Persist.{Disk, Schema}
 
   @handshake_ms 5000
@@ -89,7 +89,6 @@ defmodule HerdrServer.Client.Socket do
 
   @impl true
   def init(opts) do
-    for entry <- Link.take_adopted("client/"), do: Remote.Supervisor.start_adopted(entry)
     paths = Wire.paths(System.get_env(), System.user_home!())
     path = Keyword.get(opts, :path, paths.socket)
     token_path = Keyword.get(opts, :token_path, paths.token)
