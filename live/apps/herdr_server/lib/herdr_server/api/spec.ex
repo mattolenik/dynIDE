@@ -93,8 +93,9 @@ defmodule HerdrServer.Api.Spec do
   @spec methods() :: [map()]
   def methods do
     server() ++
-      session() ++ reload() ++
-        workspace() ++ tab() ++ pane() ++ event_methods() ++ agents() ++ plugins()
+      session() ++
+      reload() ++
+      workspace() ++ tab() ++ pane() ++ event_methods() ++ agents() ++ plugins()
   end
 
   defp server do
