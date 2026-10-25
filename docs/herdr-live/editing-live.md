@@ -335,7 +335,8 @@ restarts (a `broker_start` with no `broker_stop` since the previous `broker_star
 the broker died and its children with it). `store_restarts` (`crash proc=store
 action=restored`: the Store restarted from the mirror and kept the layout) are reported
 separately and are not losses. Neither are operator kills: `operator_kills` counts
-`broker_killed` lines (the operator SIGKILLed the broker, e.g. checklist F7); the next
+`broker_killed signal=9` lines (the operator SIGKILLed the broker, e.g. checklist F7; any
+other signal is a broker crash and counts as a loss); the next
 `broker_start` is not an unclean restart, and a `session_lost` from 2 s before to 5 s
 after the kill is part of it and not counted.
 

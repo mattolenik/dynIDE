@@ -3,8 +3,9 @@
 # With no argument it builds native/herdr_broker and execs `herdr_broker run`,
 # which supervises the VMs (warm standby, fd holding, handoff on kill -9 or
 # kernel-restart) and restores the host tty at exit; attached, scripts/tty_guard.sh
-# runs it and restores the tty when the broker itself is killed (kill -9). The VMs never touch stdio: stdin is /dev/null
-# and stdout/stderr (broker log lines, first-compile output) go to the log.
+# runs it and restores the tty when the broker itself is killed (kill -9).
+# The VMs never touch stdio: stdin is /dev/null and stdout/stderr (broker log
+# lines, first-compile output) go to the log.
 # HERDR_LIVE_HEADLESS=1 (inherited by the VMs) starts no terminal client.
 # HERDR_LIVE_RUNTIME_DIR picks the broker socket dir (read by the broker).
 # kernel-restart and status talk to the running broker on this terminal.

@@ -115,6 +115,13 @@ class LogSummaryTest(unittest.TestCase):
         self.assertEqual(got["session_losses"], 0)
         self.assertEqual(got["operator_kills"], 1)
 
+    def test_crash_signal_is_a_loss(self):
+        got = self.summary("herdr-event broker_start ts=100000 pid=1\n"
+                           "herdr-event broker_killed ts=110000 signal=11\n"
+                           "herdr-event broker_start ts=120000 pid=2\n")
+        self.assertEqual(got["session_losses"], 1)
+        self.assertEqual(got["operator_kills"], 0)
+
     def test_kill_far_from_loss_still_counts(self):
         got = self.summary("herdr-event broker_start ts=100000 pid=1\n"
                            "herdr-event session_lost ts=110000 reason=fallback_restore\n"

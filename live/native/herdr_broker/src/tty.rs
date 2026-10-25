@@ -1,6 +1,7 @@
-//! Host tty guard (absorbs `live/scripts/tty_guard.sh` for `bin/herdr-live`):
-//! save the termios at start, put it back at exit, and write the restore
-//! sequence only when the last primary VM did not exit 0.
+//! Host tty guard: save the termios at start, put it back at exit, and write
+//! the restore sequence only when the last primary VM did not exit 0. Attached
+//! launches also run behind `live/scripts/tty_guard.sh`, which backs up this
+//! restore when the broker itself is killed.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;

@@ -780,6 +780,12 @@ def wait_exit(h, label):
             return st
 
 
+def describe_status(st):
+    if os.WIFEXITED(st):
+        return f"exit {os.WEXITSTATUS(st)}"
+    return f"signal {os.WTERMSIG(st)}" if os.WIFSIGNALED(st) else f"status {st}"
+
+
 def broker_kill():
     with tempfile.TemporaryDirectory() as tmp:
         compile_then_start_clock(tmp)
@@ -793,7 +799,7 @@ def broker_kill():
         st = wait_exit(h, "kill -9 of the broker")
         tail = bytes(transcript[at:])
         ok(os.WIFEXITED(st) and os.WEXITSTATUS(st) == 137,
-           f"broker-kill: the launcher exits with the broker's status 137 (got {st})")
+           f"broker-kill: the launcher exits with the broker's status 137 (got {describe_status(st)})")
         ok(config(h.master) == h.before, "broker-kill: tty settings unchanged after kill -9 of the broker")
         ok(ALT_OFF in tail and b"\x1b[?1000l" in tail,
            "broker-kill: restore sequence written (mouse off, alt screen left)")
@@ -804,7 +810,7 @@ def broker_kill():
         os.kill(h2.pid, signal.SIGTERM)
         st = wait_exit(h2, "SIGTERM")
         ok(os.WIFEXITED(st) and os.WEXITSTATUS(st) == 0,
-           f"broker-kill: SIGTERM to the launcher exits 0 (got {st})")
+           f"broker-kill: SIGTERM to the launcher exits 0 (got {describe_status(st)})")
         ok(config(h2.master) == h2.before, "broker-kill: tty settings unchanged after SIGTERM")
         ok("broker_killed" not in open(h2.log).read(), "broker-kill: no broker_killed after SIGTERM")
 

@@ -86,9 +86,10 @@ def summarize(events, unparsed=0):
     detaches, refused, reconnect_ms = Counter(), Counter(), []
     syncs = 0
     broker_up = False
-    # an operator kill (broker_killed, from tty_guard.sh) ends the session on purpose:
-    # the session_lost lines it causes, just before or after it, are not losses
-    kills = [ts for kind, ts, _f in events if kind == "broker_killed"]
+    # an operator kill (broker_killed signal=9, from tty_guard.sh) ends the session on
+    # purpose: the session_lost lines it causes, just before or after it, are not losses.
+    # Any other signal (SEGV, ABRT, ...) is a broker crash and counts as one.
+    kills = [ts for kind, ts, f in events if kind == "broker_killed" and f.get("signal") == "9"]
     for kind, ts, f in events:
         if kind == "vm_start":
             c["vm_starts"] += 1
@@ -129,8 +130,9 @@ def summarize(events, unparsed=0):
             if not any(k - 2000 <= ts <= k + 5000 for k in kills):
                 c["session_losses"] += 1
         elif kind == "broker_killed":
-            c["operator_kills"] += 1
-            broker_up = False
+            if f.get("signal") == "9":
+                c["operator_kills"] += 1
+                broker_up = False
         elif kind == "broker_start":
             # a start with no broker_stop since the last start: the broker died, and its
             # children with it (reason broker_died)
