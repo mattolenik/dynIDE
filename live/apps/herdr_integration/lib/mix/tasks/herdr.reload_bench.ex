@@ -332,9 +332,11 @@ if Mix.env() == :test do
     # scene at 97 columns, and -> a frame 97 cells wide.
     defp view_loop(client, cfg) do
       head =
-        "def compute(app, %State{size: %{cols: cols, rows: rows} = size, transport: transport} = client) do\n"
+        "def compute(app, %State{size: %{cols: cols, rows: rows} = size} = client) do\n"
 
-      pane = "  defp pane(%{id: id, rect: rect, border: border}, app, transport) do\n"
+      pane =
+        "  defp pane(%{id: id, rect: rect, border: border}, app, %State{transport: transport} = client) do\n"
+
       {cols, rows} = @size
 
       samples =
