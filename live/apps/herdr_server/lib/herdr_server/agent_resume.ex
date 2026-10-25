@@ -8,7 +8,8 @@ defmodule HerdrServer.AgentResume do
   `session.resume_agents_on_restore` types `shell(argv) <> "\\r"` into the pane's new
   shell (`Persist.RestorePlan.resumes/2`). An id or path session is taken only from the
   agent's official source (`herdr:<agent>`, `herdr:antigravity_cli` for `agy`), as in
-  herdr; a reported `resume_argv` is taken from any source and wins over an id or path.
+  herdr. A reported `resume_argv` is refused until the reporter can hold the pane (M11's
+  claim); the `:argv` kind stays in the schema for then.
   """
 
   @max_args 64
@@ -70,7 +71,8 @@ defmodule HerdrServer.AgentResume do
 
   @doc """
   A reported `resume_argv`: 1..#{@max_args} args, at most #{@max_argv_bytes} bytes in all,
-  no control characters, no `'`, and a first element of `[A-Za-z0-9._+-]`.
+  no control characters, no `'` or `\\` (POSIX and fish single quotes stay literal), and
+  a first element of `[A-Za-z0-9_.-]` not starting with `-` (herdr's rules).
   """
   @spec validate([binary]) :: :ok | {:error, binary}
   def validate(argv) when is_list(argv) do
@@ -90,10 +92,10 @@ defmodule HerdrServer.AgentResume do
       Enum.any?(argv, &control?/1) ->
         {:error, "resume_argv must not contain control characters"}
 
-      Enum.any?(argv, &String.contains?(&1, "'")) ->
-        {:error, "resume_argv must not contain apostrophes"}
+      Enum.any?(argv, &String.contains?(&1, ["'", "\\"])) ->
+        {:error, "resume_argv must not contain apostrophes or backslashes"}
 
-      not Regex.match?(~r/^[A-Za-z0-9._+-]+$/, hd(argv)) ->
+      not Regex.match?(~r/^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/, hd(argv)) ->
         {:error, "resume_argv must start with a plain command name, not a path"}
 
       true ->
@@ -124,9 +126,12 @@ defmodule HerdrServer.AgentResume do
       agent == "" ->
         {:error, "agent must not be empty"}
 
+      # ponytail: herdr records resume_argv only from the source holding the pane
+      # (pane.report_agent); refused until M11 serves that claim, then validate/1 and kind :argv
       is_list(p[:resume_argv]) ->
-        with :ok <- validate(p.resume_argv),
-             do: {:ok, %{agent: agent, kind: :argv, value: p.resume_argv}}
+        {:error,
+         "resume_argv requires the reporter to hold the pane; " <>
+           "report its state with pane.report_agent first"}
 
       true ->
         {:ok, ref(String.trim(source), agent, p[:agent_session_id], p[:agent_session_path])}

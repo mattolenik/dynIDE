@@ -63,43 +63,55 @@ defmodule HerdrServer.Persist.RestorePlanTest do
       app
     end
 
-    defp on(app, delay),
+    # what the restored ui says; never read (`[session]` is file-only)
+    defp persisted_on(app),
       do:
         put_in(app.ui.session, %{
           resume_agents_on_restore: true,
-          startup_per_agent_delay_ms: delay
+          startup_per_agent_delay_ms: 9
         })
 
-    test "off (the default) emits no write" do
-      assert RestorePlan.resumes(with_sessions(app()), nil) == []
+    defp cfg(toml) do
+      path = Path.join(System.tmp_dir!(), "rp#{System.unique_integer([:positive])}.toml")
+      File.write!(path, toml)
+      on_exit(fn -> File.rm(path) end)
+      Config.load(path)
+    end
+
+    @on "[session]\nresume_agents_on_restore = true\n"
+
+    test "off: no config, a config without the key, or only a persisted true" do
+      app = with_sessions(app())
+      assert RestorePlan.resumes(app, nil) == []
+      assert RestorePlan.resumes(persisted_on(app), nil) == []
+      assert RestorePlan.resumes(persisted_on(app), cfg("[session]\n")) == []
+      assert RestorePlan.resumes(persisted_on(app), cfg("[ui]\n")) == []
     end
 
     test "on: one raw write per resumable pane, n * delay apart" do
-      assert RestorePlan.resumes(app() |> with_sessions() |> on(250), nil) == [
+      cfg = cfg(@on <> "startup_per_agent_delay_ms = 250\n")
+
+      assert RestorePlan.resumes(with_sessions(app()), cfg) == [
                {250, {:paste_raw, 1, "'claude' '--resume' 's 1'\r"}},
                {500, {:paste_raw, 3, "'x' '--go'\r"}}
              ]
+
+      # the default delay, not the persisted one
+      assert [{500, _}, {1000, _}] =
+               RestorePlan.resumes(persisted_on(with_sessions(app())), cfg(@on))
+
+      assert [{0, _}, {0, _}] =
+               RestorePlan.resumes(
+                 with_sessions(app()),
+                 cfg(@on <> "startup_per_agent_delay_ms = 0\n")
+               )
     end
 
-    test "the config file's [session] wins over the app's" do
-      path = Path.join(System.tmp_dir!(), "rp#{System.unique_integer([:positive])}.toml")
-
-      File.write!(
-        path,
-        "[session]\nresume_agents_on_restore = true\nstartup_per_agent_delay_ms = 0\n"
-      )
-
-      on_exit(fn -> File.rm(path) end)
-      cfg = Config.load(path)
-
-      assert [{0, {:paste_raw, 1, _}}, {0, {:paste_raw, 3, _}}] =
-               RestorePlan.resumes(with_sessions(app()), cfg)
-
-      File.write!(path, "[session]\nstartup_per_agent_delay_ms = 60001\n")
-      cfg = Config.load(path)
+    test "an out-of-range delay keeps the default with a diagnostic" do
+      cfg = cfg(@on <> "startup_per_agent_delay_ms = 60001\n")
       {_, ui, [diag]} = Config.apply(cfg, app().ui.keybinds, app().ui)
       assert ui.session.startup_per_agent_delay_ms == 500 and diag =~ "startup_per_agent_delay_ms"
-      assert RestorePlan.resumes(app() |> with_sessions() |> on(9), cfg) |> hd() |> elem(0) == 9
+      assert [{500, _}, {1000, _}] = RestorePlan.resumes(with_sessions(app()), cfg)
     end
   end
 end

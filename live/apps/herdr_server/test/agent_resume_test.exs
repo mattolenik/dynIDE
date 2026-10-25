@@ -28,7 +28,7 @@ defmodule HerdrServer.AgentResumeTest do
 
   test "validate: limits" do
     assert AgentResume.validate(["prime-agent", "--model", "gpt 6"]) == :ok
-    assert AgentResume.validate(["c++.v_1-x"]) == :ok
+    assert AgentResume.validate(["c_1.v-x", "--a=b"]) == :ok
     assert AgentResume.validate(List.duplicate("a", 64)) == :ok
     assert AgentResume.validate(["a", String.duplicate("x", 8191)]) == :ok
 
@@ -36,6 +36,9 @@ defmodule HerdrServer.AgentResumeTest do
           [],
           [""],
           ["/usr/bin/x"],
+          ["-x"],
+          ["c++"],
+          ["x", "a\\b"],
           ["prime agent"],
           ["x", "bad\nline"],
           ["x", "c1\u0085"],
@@ -82,12 +85,9 @@ defmodule HerdrServer.AgentResumeTest do
       assert {:ok, nil} = report(%{source: "herdr:agy", agent: "agy", agent_session_id: "i"})
     end
 
-    test "a resume_argv from any source wins; an invalid one is an error" do
-      assert report(%{source: "hook", agent_session_id: "i", resume_argv: ~w(x --go)}) ==
-               {:ok, %{agent: "claude", kind: :argv, value: ~w(x --go)}}
-
-      assert {:error, "resume_argv must not contain apostrophes"} =
-               report(%{resume_argv: ["x", "'"]})
+    test "a resume_argv is refused until M11's pane claim" do
+      assert {:error, "resume_argv requires the reporter to hold the pane; " <> _} =
+               report(%{agent_session_id: "i", resume_argv: ~w(x --go)})
     end
   end
 end

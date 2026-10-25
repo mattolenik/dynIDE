@@ -110,8 +110,8 @@ defmodule HerdrServer.Persist.StoreRestoreTest do
 
     File.write!(toml, "[session]\nstartup_per_agent_delay_ms = 0\n")
     restart_store()
-    Process.sleep(50)
-    assert Enum.all?([1, 2, 3], &(written.(&1) == ""))
+    # a write due at 0 ms would show within this bounded poll
+    refute eventually(fn -> Enum.any?([1, 2, 3], &(written.(&1) != "")) end, 10)
 
     File.write!(
       toml,
@@ -124,6 +124,38 @@ defmodule HerdrServer.Persist.StoreRestoreTest do
     assert written.(3) == ""
     assert eventually(fn -> written.(3) == "'x' 'a b'\r" end)
     assert written.(2) == ""
+  end
+
+  test "a pane closed before its resume fires drops the write; the Store carries on", %{
+    cfg: cfg,
+    tmp: tmp
+  } do
+    toml = Path.join(tmp, "config.toml")
+    old = Application.get_env(:herdr_server, :config_path)
+    Application.put_env(:herdr_server, :config_path, toml)
+    on_exit(fn -> Application.put_env(:herdr_server, :config_path, old) end)
+
+    {app, []} = AgentResume.put(app(), 1, %{agent: "claude", kind: :id, value: "s1"})
+    {app, []} = AgentResume.put(app, 3, %{agent: "codex", kind: :id, value: "s3"})
+    write!(cfg, app, %{})
+
+    File.write!(
+      toml,
+      "[session]\nresume_agents_on_restore = true\nstartup_per_agent_delay_ms = 150\n"
+    )
+
+    restart_store()
+    store = Process.whereis(Store)
+    pty3 = res(3).pty
+    {:ok, _, aft} = Store.request({HerdrServer.App.Commands, :close_pane, [1]})
+    refute Map.has_key?(aft.session.panes, 1)
+
+    assert eventually(fn ->
+             IO.iodata_to_binary(Fake.Pty.writes(pty3)) == "'codex' 'resume' 's3'\r"
+           end)
+
+    assert Process.whereis(Store) == store
+    assert Map.keys(Store.snapshot().session.panes) == [2, 3]
   end
 
   test "no file: an empty Store, initialised lazily by the first event", %{cfg: cfg} do

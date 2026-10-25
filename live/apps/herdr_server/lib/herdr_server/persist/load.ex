@@ -12,6 +12,8 @@ defmodule HerdrServer.Persist.Load do
   crash-loop the Store. The spawns run through the Store's own effect handler;
   each resume write of a pane that spawned goes to the Store (`self()`) with
   `Process.send_after/3`, which writes it to the pane's queue when it fires.
+  A pane closed before then drops its write; a Store crash inside the delay window loses
+  the resumes still pending.
 
   Telemetry: `persist_restore source=disk reason=.. panes=N scrollback=K ms=T` after a
   restore (N and K count the panes that actually spawned), `persist_restore source=none

@@ -370,13 +370,13 @@ defmodule HerdrServer.Api.TopologyTest do
 
     assert %{"type" => "ok"} = rep.(%{"agent_session_id" => "abc", "seq" => 1})
     assert sess.() == %{agent: "claude", kind: :id, value: "abc"}
-    rep.(%{"resume_argv" => ["claude", "-c"]})
-    assert sess.() == %{agent: "claude", kind: :argv, value: ["claude", "-c"]}
+    # refused until M11's pane claim; the recorded session stays
+    assert {"invalid_params", "resume_argv requires the reporter to hold the pane" <> _} =
+             err(s, "pane.report_agent_session", Map.put(base, "resume_argv", ["claude", "-c"]))
+
+    assert sess.() == %{agent: "claude", kind: :id, value: "abc"}
     rep.(%{})
     assert sess.() == nil
-
-    assert {"invalid_params", "resume_argv must not contain apostrophes"} =
-             err(s, "pane.report_agent_session", Map.put(base, "resume_argv", ["x", "'"]))
 
     assert {"not_found", _} =
              err(s, "pane.report_agent_session", %{base | "pane_id" => "p9"})

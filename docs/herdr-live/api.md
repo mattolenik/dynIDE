@@ -555,11 +555,11 @@ CLI: `herdr-live pane report-agent-session <pane_id> --source S --agent A [--seq
 | `pane_id` | pane id | yes | Target pane. |
 | `source` | string | yes | Reporting integration; an id or path counts only from `herdr:<agent>`. |
 | `agent` | string | yes | Agent label. |
-| `seq` | integer 0..9007199254740991 | no | Report sequence number; accepted and ignored. |
+| `seq` | integer 0..9007199254740991 | no | Report sequence number; ignored until M11 detection. |
 | `agent_session_id` | string | no | Agent session id, at most 512 bytes. |
 | `agent_session_path` | string | no | Absolute session path (pi, omp), at most 4096 bytes. |
-| `session_start_source` | string | no | How the session started; accepted and ignored. |
-| `resume_argv` | list of string | no | Command that resumes the session; starts with a plain command name. Wins over an id or path. |
+| `session_start_source` | string | no | How the session started; ignored until M11. |
+| `resume_argv` | list of string | no | Command that resumes the session; refused (`invalid_params`) until the reporter can hold the pane with `pane.report_agent` (M11). |
 
 Result: `ok` (no fields).
 

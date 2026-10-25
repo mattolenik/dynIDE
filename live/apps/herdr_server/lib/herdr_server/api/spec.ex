@@ -599,7 +599,7 @@ defmodule HerdrServer.Api.Spec do
           opt(
             "seq",
             {:integer, 0, 9_007_199_254_740_991},
-            "Report sequence number; accepted and ignored."
+            "Report sequence number; ignored until M11 detection."
           ),
           opt("agent_session_id", :string, "Agent session id, at most 512 bytes."),
           opt(
@@ -607,11 +607,12 @@ defmodule HerdrServer.Api.Spec do
             :string,
             "Absolute session path (pi, omp), at most 4096 bytes."
           ),
-          opt("session_start_source", :string, "How the session started; accepted and ignored."),
+          opt("session_start_source", :string, "How the session started; ignored until M11."),
           opt(
             "resume_argv",
             {:list, :string},
-            "Command that resumes the session; starts with a plain command name. Wins over an id or path."
+            "Command that resumes the session; refused (`invalid_params`) until the reporter can " <>
+              "hold the pane with `pane.report_agent` (M11)."
           )
         ],
         "ok",

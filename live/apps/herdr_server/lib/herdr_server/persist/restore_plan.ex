@@ -43,15 +43,18 @@ defmodule HerdrServer.Persist.RestorePlan do
   @type resume :: {non_neg_integer, {:paste_raw, pos_integer, binary}}
 
   @doc """
-  The resume writes for `app`, its `ui.session` overlaid with `cfg` (the config file as
-  `Config.load/1` reads it, or nil to use `app.ui` as is).
+  The resume writes for `app`. `[session]` is file-only: `cfg` (the config file as
+  `Config.load/1` reads it) over the default `App.Ui` session, never the persisted one, so
+  a missing key, a failed load or nil means off. The delay is clamped to 0..60000.
   """
   @spec resumes(map, Config.t() | nil) :: [resume]
   def resumes(app, cfg) do
-    ui = if cfg, do: elem(Config.apply(cfg, app.ui.keybinds, app.ui), 1), else: app.ui
+    ui = %{app.ui | session: struct(HerdrServer.App.Ui).session}
+    ui = if cfg, do: elem(Config.apply(cfg, ui.keybinds, ui), 1), else: ui
     %{resume_agents_on_restore: on?, startup_per_agent_delay_ms: delay} = ui.session
+    delay = if is_integer(delay), do: min(max(delay, 0), 60_000), else: 500
 
-    if on? do
+    if on? == true do
       for(
         ws <- app.session.workspaces,
         tab <- ws.tabs,
