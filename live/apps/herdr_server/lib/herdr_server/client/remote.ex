@@ -57,7 +57,9 @@ defmodule HerdrServer.Client.Remote do
 
   require Logger
 
+  alias HerdrReload.Guard
   alias HerdrScene.{Protocol, Wire}
+  alias HerdrServer.App.Store
   alias HerdrServer.Client.{Outbox, Socket}
   alias HerdrServer.Client.Remote.{Carry, Out, Pane}
   alias HerdrServer.Persist.Schema
@@ -384,9 +386,10 @@ defmodule HerdrServer.Client.Remote do
   def handle_info({:pane_damage, id, _}, %{pane: id} = state) when id != nil do
     state = Map.merge(%__MODULE__{}, state)
 
-    case Pane.scene(id, state.info.size) do
-      nil -> pane_closed(state)
-      scene -> {:noreply, Out.schedule(Out.put(state, scene))}
+    case pane_scene(state) do
+      {:ok, nil} -> pane_closed(state)
+      {:ok, scene} -> {:noreply, Out.schedule(Out.put(state, scene))}
+      {:failed, f} -> {:noreply, Out.failed(state, f)}
     end
   end
 
@@ -587,11 +590,20 @@ defmodule HerdrServer.Client.Remote do
   end
 
   defp repaint(state) do
-    case Pane.scene(state.pane, state.info.size) do
-      nil -> state
-      scene -> Out.put(state, scene)
+    case pane_scene(state) do
+      {:ok, nil} -> state
+      {:ok, scene} -> Out.put(state, scene)
+      {:failed, f} -> Out.failed(state, f)
     end
   end
+
+  # PaneScene is editable code
+  defp pane_scene(state),
+    do:
+      Guard.run_twice(Pane, :scene, [state.pane, state.info.size],
+        scan: false,
+        server: Store.reload_server()
+      )
 
   defp meta(info, connected),
     do: %{

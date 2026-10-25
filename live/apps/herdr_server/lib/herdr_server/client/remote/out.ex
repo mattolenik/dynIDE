@@ -5,9 +5,17 @@ defmodule HerdrServer.Client.Remote.Out do
   `frame_ms` old and the driver queue is empty (`send_pend == 0`); a reader that has not
   drained for `stuck_ms` is dropped like a lost socket. Other messages flush what is
   pending, then go at once. A dropped socket arms the grace timer.
+
+  `Client.Outbox` is editable code: every call into it goes through `HerdrReload.Guard`
+  (a failed reload rolls back and runs again on the old code). A call that still fails
+  keeps the previous outbox and sends an error notice: a failed `put` sends that message
+  unbatched and forgets what the client has (the next flush resends every row), a failed
+  flush sends nothing until the next frame.
   """
 
+  alias HerdrReload.Guard
   alias HerdrScene.Wire
+  alias HerdrServer.App.Store
   alias HerdrServer.Client.Outbox
   alias HerdrServer.Client.Remote.Carry
   alias HerdrServer.Native.Link, as: NLink
@@ -16,14 +24,37 @@ defmodule HerdrServer.Client.Remote.Out do
 
   @doc "Queues a scene or rows in the outbox."
   @spec put(map, tuple) :: map
-  def put(state, msg), do: %{state | outbox: Outbox.put(state.outbox, msg)}
+  def put(state, msg) do
+    case outbox(:put, [state.outbox, msg]) do
+      {:ok, outbox} ->
+        %{state | outbox: outbox}
+
+      {:failed, f} ->
+        state = state |> failed(f) |> write(msg)
+        %{state | outbox: %{state.outbox | sent: %{}}}
+    end
+  end
 
   @doc "Writes the last scene with every row (an attach or resume)."
   @spec full(map) :: map
   def full(state) do
-    {msgs, outbox} = Outbox.full(state.outbox)
-    write_all(%{state | outbox: outbox, last_flush: now()}, msgs)
+    case outbox(:full, [state.outbox]) do
+      {:ok, {msgs, outbox}} -> write_all(%{state | outbox: outbox, last_flush: now()}, msgs)
+      {:failed, f} -> failed(state, f)
+    end
   end
+
+  @doc "A guarded call into editable code failed: an error notice to the client."
+  @spec failed(map, Guard.failure()) :: map
+  def failed(state, f),
+    do:
+      write(state, {:notice, %{level: :error, text: "client output failed: #{Guard.message(f)}"}})
+
+  defp outbox(fun, args),
+    do: Guard.run_twice(Outbox, fun, args, scan: false, server: Store.reload_server())
+
+  # a failing pending? still tries the (guarded) flush
+  defp pending?(state), do: outbox(:pending?, [state.outbox]) != {:ok, false}
 
   @spec schedule(map) :: map
   def schedule(%{socket: nil} = state), do: state
@@ -34,7 +65,7 @@ defmodule HerdrServer.Client.Remote.Out do
     wait = state.last_flush + state.frame_ms - now()
 
     cond do
-      not Outbox.pending?(state.outbox) -> state
+      not pending?(state) -> state
       wait > 0 -> later(state, wait)
       drained?(state.socket) -> flush(%{state | pend_since: nil})
       stuck?(state) -> drop(state)
@@ -55,9 +86,10 @@ defmodule HerdrServer.Client.Remote.Out do
 
   # an empty flush (before an ack, say) starts no frame: the echo behind it goes at once
   defp flush(state) do
-    case Outbox.flush(state.outbox) do
-      {[], outbox} -> %{state | outbox: outbox}
-      {msgs, outbox} -> write_all(%{state | outbox: outbox, last_flush: now()}, msgs)
+    case outbox(:flush, [state.outbox]) do
+      {:ok, {[], outbox}} -> %{state | outbox: outbox}
+      {:ok, {msgs, outbox}} -> write_all(%{state | outbox: outbox, last_flush: now()}, msgs)
+      {:failed, f} -> failed(state, f)
     end
   end
 

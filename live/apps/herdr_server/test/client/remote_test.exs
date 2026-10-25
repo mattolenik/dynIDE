@@ -97,6 +97,35 @@ defmodule HerdrServer.Client.RemoteTest do
     assert System.monotonic_time(:millisecond) - t0 < 150
   end
 
+  test "a failing outbox keeps the conn: rows go unbatched with an error notice", ctx do
+    s = attached!(attach(ctx, client_id: "badoutbox"))
+    scene!(s)
+    pid = conn("badoutbox")
+    # stands in for a bad live edit to Client.Outbox: every call into it raises
+    :sys.replace_state(pid, &%{&1 | outbox: %{&1.outbox | rows: :broken}})
+    :ok = send_frame(s, {:input, 1, Event.key("x")})
+    seen = seen(s, %{notice: false, ack: false, echo: false})
+    assert seen == %{notice: true, ack: true, echo: true}
+    assert Process.alive?(pid)
+  end
+
+  defp seen(s, acc) do
+    if Enum.all?(acc, &elem(&1, 1)) do
+      acc
+    else
+      f = recv_frame(s)
+
+      acc =
+        if match?({:notice, %{level: :error, text: "client output failed: " <> _}}, f),
+          do: Map.put(acc, :notice, true),
+          else: acc
+
+      acc = if f == {:ack, 1}, do: Map.put(acc, :ack, true), else: acc
+      acc = if shows?(f, "x"), do: Map.put(acc, :echo, true), else: acc
+      seen(s, acc)
+    end
+  end
+
   test "list shows the conn", ctx do
     s = attached!(attach(ctx, client_id: "listme12345"))
     scene!(s)
