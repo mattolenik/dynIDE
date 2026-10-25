@@ -15,11 +15,19 @@ defmodule HandoffDriver do
 
   def live_dir, do: @live
 
+  @doc "The launcher under test: $HERDR_LIVE_BIN (an installed release) else live/bin/herdr-live."
+  def bin do
+    case System.get_env("HERDR_LIVE_BIN") do
+      b when b in [nil, ""] -> Path.join(@live, "bin/herdr-live")
+      b -> Path.expand(b)
+    end
+  end
+
   @doc "PATH for the VMs and panes: the caller's plus Homebrew (htop on macOS)."
   def path, do: System.get_env("PATH", "/usr/bin:/bin") <> ":/opt/homebrew/bin:/usr/local/bin"
 
   @doc """
-  Boots `bin/herdr-live` headless under `/tmp/hl-<tag>-<our os pid>` (runtime and log
+  Boots the launcher (`bin/0`) headless under `/tmp/hl-<tag>-<our os pid>` (runtime and log
   dir unique per run, so concurrent runs never share a socket) and waits for a primary.
   """
   def start_broker(tag) do
@@ -49,7 +57,7 @@ defmodule HandoffDriver do
     ]
 
     port =
-      Port.open({:spawn_executable, Path.join(@live, "bin/herdr-live")}, [
+      Port.open({:spawn_executable, bin()}, [
         :binary,
         :exit_status,
         env: env

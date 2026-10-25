@@ -60,7 +60,7 @@ defmodule RemoteBench do
 
   def cli(b, args) do
     {out, st} =
-      System.cmd(Path.join(@live, "bin/herdr-live"), args,
+      System.cmd(D.bin(), args,
         env: [
           {"HERDR_LIVE_API", Path.join(b.root, "ctl.sock")},
           {"HERDR_LIVE_STATE_DIR", Path.join(b.root, "state")},
@@ -97,7 +97,7 @@ defmodule RemoteBench do
 
   def connect(b, "relay") do
     D.wait(fn -> File.exists?(Path.join(b.root, "client.token")) end, 60_000)
-    open_ssh(b, Path.join(__DIR__, "fake_ssh.sh"), "fakehost", Path.join(@live, "bin/herdr-live"))
+    open_ssh(b, Path.join(__DIR__, "fake_ssh.sh"), "fakehost", D.bin())
   end
 
   def connect(b, "ssh=" <> target) do
