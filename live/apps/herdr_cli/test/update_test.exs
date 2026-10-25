@@ -145,6 +145,36 @@ defmodule HerdrCli.UpdateTest do
     assert %{"code" => "no_trusted_keys"} = JSON.decode!(err)
   end
 
+  test "a managed install refuses update and --check, naming the package manager", c do
+    flat = Path.join(c.tmp, "libexec")
+    fake_release(flat, "0.1.0", c.pub)
+    File.write!(Path.join(flat, "releases/managed-by"), "homebrew\n")
+    ctx = %{c.ctx | root: flat}
+    url = write_manifest(c.tmp, c.tarball, c.priv)
+
+    for flags <- [["--yes"], ["--check"]] do
+      {code, _out, err} = update(["--manifest", url | flags], ctx)
+      assert code == 1
+
+      assert %{
+               "code" => "managed_install",
+               "message" => "managed by homebrew; update with your package manager"
+             } =
+               JSON.decode!(err)
+    end
+  end
+
+  test "a flat install without the marker is not an install.sh layout", c do
+    flat = Path.join(c.tmp, "libexec")
+    fake_release(flat, "0.1.0", c.pub)
+    url = write_manifest(c.tmp, c.tarball, c.priv)
+    {code, _out, err} = update(["--manifest", url, "--yes"], %{c.ctx | root: flat})
+    assert code == 1
+    assert %{"code" => "not_installed", "message" => msg} = JSON.decode!(err)
+    assert msg =~ "not an install.sh layout"
+    refute msg =~ "install it with install.sh"
+  end
+
   test "--check prints update available, and up to date when not newer", c do
     url = write_manifest(c.tmp, c.tarball, c.priv)
     assert {0, "update available 0.1.1\n", ""} = update(["--manifest", url, "--check"], c.ctx)

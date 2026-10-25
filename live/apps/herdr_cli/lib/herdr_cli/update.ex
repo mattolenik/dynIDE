@@ -99,7 +99,8 @@ defmodule HerdrCli.Update do
   end
 
   defp update(opts, env, ctx) do
-    with {:ok, cur} <- running_version(ctx),
+    with :ok <- unmanaged(ctx),
+         {:ok, cur} <- running_version(ctx),
          {:ok, keys} <- keys(ctx, cur, env),
          {:ok, url} <- manifest_url(opts, ctx, cur, env),
          :ok <- start_http(url),
@@ -132,6 +133,19 @@ defmodule HerdrCli.Update do
         else
           _ -> {:error, :not_a_release, "#{root} is neither a release nor a source tree"}
         end
+    end
+  end
+
+  # a package manager (releases/managed-by: "homebrew", "nix") owns the install
+  defp unmanaged(%{root: root}) do
+    case File.read(Path.join(root, "releases/managed-by")) do
+      {:ok, data} ->
+        pm = data |> String.split("\n") |> hd() |> String.trim()
+        pm = if pm == "", do: "a package manager", else: pm
+        {:error, :managed_install, "managed by #{pm}; update with your package manager"}
+
+      {:error, _} ->
+        :ok
     end
   end
 
@@ -529,7 +543,7 @@ defmodule HerdrCli.Update do
 
       _ ->
         {:error, :not_installed,
-         "#{root} is not an installed release (<prefix>/lib/herdr-live/current -> releases/<V>); install it with install.sh"}
+         "#{root} is not an install.sh layout (<prefix>/lib/herdr-live/current -> releases/<V>), so it cannot update itself"}
     end
   end
 
