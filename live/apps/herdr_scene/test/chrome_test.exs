@@ -45,6 +45,45 @@ defmodule HerdrScene.ChromeTest do
         do: assert(Chrome.required_props(r) == [])
   end
 
+  test "optional props are known atoms and type-checked" do
+    assert Chrome.optional_props(:root) == [:window_title]
+    assert Chrome.optional_props(:tab) == [:zoomed, :drop_marker]
+    assert Chrome.optional_props(:item) == [:drop_marker, :detail]
+    assert Chrome.optional_props(:button) == []
+    assert Chrome.drop_markers() == [:before, :after]
+
+    tab = %Node{role: :tab, id: {:tab, 1}, text: "1", props: %{index: 1, active: true}}
+    item = %Node{role: :item, id: {:ws, 1}, props: %{}}
+    root = %{HerdrScene.SceneSample.build().chrome | props: %{}}
+
+    good = [
+      {tab, %{zoomed: true, drop_marker: :before}},
+      {tab, %{zoomed: false, drop_marker: nil}},
+      {item, %{drop_marker: :after, detail: "main"}},
+      {root, %{window_title: "herdr"}},
+      {root, %{window_title: nil}}
+    ]
+
+    for {n, extra} <- good do
+      assert Chrome.errors("x", %{n | props: Map.merge(n.props, extra)}) == []
+      assert Chrome.errors("x", n) == []
+    end
+
+    bad = [
+      {tab, %{zoomed: 1}},
+      {tab, %{drop_marker: :middle}},
+      {item, %{drop_marker: "before"}},
+      {item, %{detail: :atom}},
+      {root, %{window_title: 5}},
+      {root, %{window_title: String.duplicate("a", 201)}}
+    ]
+
+    for {n, extra} <- bad do
+      assert [msg] = Chrome.errors("x", %{n | props: Map.merge(n.props, extra)})
+      assert msg =~ "x.props.#{hd(Map.keys(extra))}: bad value"
+    end
+  end
+
   test "a tab without :index is rejected" do
     tab = %Node{role: :tab, id: {:tab, 1}, text: "1", props: %{active: true}}
 

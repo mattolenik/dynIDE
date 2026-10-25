@@ -30,6 +30,14 @@ defmodule HerdrScene.Chrome do
     * `:divider` `[:direction, :path]` (pane split) or
       `[:direction, :target]` (named chrome split)
     * every other role: none
+
+  Optional props (validated when present; hover is client-only, never a prop):
+
+    * `:root` `:window_title`, a binary or nil, already sanitised by the
+      server, at most 200 chars
+    * `:tab` `:zoomed`, a boolean; `:drop_marker`, `:before | :after | nil`
+    * `:item` `:drop_marker`, as for `:tab`; `:detail`, a binary (branch and
+      metadata text under a workspace row)
   """
 
   alias HerdrScene.Scene.Node
@@ -51,6 +59,17 @@ defmodule HerdrScene.Chrome do
     divider: [:direction, :path]
   }
 
+  @optional %{
+    root: [:window_title],
+    tab: [:zoomed, :drop_marker],
+    item: [:drop_marker, :detail]
+  }
+
+  @drop_markers [:before, :after]
+
+  @spec drop_markers() :: [atom]
+  def drop_markers, do: @drop_markers
+
   @spec region_roles() :: [atom]
   def region_roles, do: @regions
 
@@ -63,6 +82,10 @@ defmodule HerdrScene.Chrome do
   @doc "Props a node of `role` must carry. A divider may carry `:target` instead of `:path`."
   @spec required_props(atom) :: [atom]
   def required_props(role), do: Map.get(@required, role, [])
+
+  @doc "Props a node of `role` may carry; each is type-checked when present."
+  @spec optional_props(atom) :: [atom]
+  def optional_props(role), do: Map.get(@optional, role, [])
 
   @doc """
   Chrome-vocabulary errors for one node (not its children), named under `path`.
@@ -85,7 +108,7 @@ defmodule HerdrScene.Chrome do
 
   defp props_errors(path, role, props, n) do
     case missing(role, props) do
-      [] -> value_errors(path, role, props, n)
+      [] -> value_errors(path, role, props, n) ++ optional_errors(path, role, props)
       missing -> ["#{path}.props: #{inspect(role)} needs #{inspect(missing)}"]
     end
   end
@@ -98,6 +121,18 @@ defmodule HerdrScene.Chrome do
 
     Enum.reject(need, &Map.has_key?(props, &1))
   end
+
+  defp optional_errors(path, role, props) do
+    for key <- optional_props(role),
+        Map.has_key?(props, key),
+        not optional_ok?(key, props[key]),
+        do: "#{path}.props.#{key}: bad value #{inspect(props[key])}"
+  end
+
+  defp optional_ok?(:window_title, v), do: is_nil(v) or (is_binary(v) and String.length(v) <= 200)
+  defp optional_ok?(:zoomed, v), do: is_boolean(v)
+  defp optional_ok?(:drop_marker, v), do: is_nil(v) or v in @drop_markers
+  defp optional_ok?(:detail, v), do: is_binary(v)
 
   defp value_errors(path, :badge, %{kind: :agent_state, state: s}, _) do
     if s in @badge_states,
