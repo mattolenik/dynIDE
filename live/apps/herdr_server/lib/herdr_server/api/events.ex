@@ -116,7 +116,7 @@ defmodule HerdrServer.Api.Events do
   end
 
   # an agent alert (the Store's `{:alert, a}`), placed in the last app
-  def handle_info({:alert, a}, state) do
+  def handle_info({:alert, %{kind: :notification} = a}, state) do
     state = Map.merge(%__MODULE__{}, state)
 
     with %{} <- state.last,

@@ -103,6 +103,13 @@ defmodule HerdrServer.Api.EventsTest do
     assert ApiClient.recv_line(s, 300) == {:error, :timeout}
   end
 
+  test "an alert that is not a notification is not published", %{path: path} do
+    s = subscribe!(path, [%{"type" => "notification.shown"}])
+    a = %{kind: :bell, pane: 1, level: :info, title: "t", body: "b", sound: nil}
+    send(HerdrServer.Api.Events, {:alert, a})
+    assert ApiClient.recv_line(s, 300) == {:error, :timeout}
+  end
+
   test "request lines on a subscription are ignored", %{path: path, ctl: ctl} do
     s = subscribe!(path, [%{"type" => "tab.created"}])
     ApiClient.send_line(s, ~s({"id":"x","method":"ping"}))
