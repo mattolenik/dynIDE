@@ -154,6 +154,7 @@ defmodule HerdrServer.Plugins.InstallTest do
     assert {:error, "plugin_manifest_not_found", _} = Install.link(base <> "/none", true)
   end
 
+  @tag :examples
   test "install from a local copy without yes previews the build and registers nothing" do
     src = Path.join(PluginDirs.examples(), "rust-release-check")
 
@@ -166,6 +167,7 @@ defmodule HerdrServer.Plugins.InstallTest do
     refute File.exists?(Paths.installations_dir("examples.rust-release-check") <> "/1")
   end
 
+  @tag :examples
   test "install from GitHub shorthand clones, registers with a github source", %{base: base} do
     bare_repo(base, Path.join(PluginDirs.examples(), "dev-layout-bootstrap"))
 

@@ -77,6 +77,7 @@ defmodule HerdrServer.Api.PluginsTest do
              err(s, "plugin.install", %{"source" => "owner"})
   end
 
+  @tag :examples
   test "install without yes answers the preview", %{s: s} do
     src = Path.join(PluginDirs.examples(), "rust-release-check")
 

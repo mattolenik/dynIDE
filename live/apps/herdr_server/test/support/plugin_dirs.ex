@@ -3,10 +3,26 @@ defmodule HerdrServer.Test.PluginDirs do
 
   import ExUnit.Callbacks, only: [on_exit: 1]
 
-  @examples Path.expand("../../../../../vendor/herdr-plugin-examples", __DIR__)
+  @script Path.expand("../../../../scripts/plugin_examples.sh", __DIR__)
+
+  @doc """
+  herdr's example plugins at the pinned commit, fetched into a cache (ruling R7: no upstream
+  licence, so never vendored). Tests using them are tagged `:examples`; `test_helper.exs`
+  excludes that tag when this returns `:skip` (no cache and no network, or HERDR_LIVE_OFFLINE=1).
+  """
+  @spec fetch_examples() :: {:ok, Path.t()} | :skip
+  def fetch_examples do
+    case System.cmd(@script, [], stderr_to_stdout: false) do
+      {out, 0} -> {:ok, String.trim(out)}
+      _ -> :skip
+    end
+  end
 
   @spec examples() :: Path.t()
-  def examples, do: @examples
+  def examples do
+    {:ok, dir} = fetch_examples()
+    dir
+  end
 
   @doc "Sets `:plugins` config/state dirs (plus `extra`) under a new tmp base; returns the base."
   @spec use_tmp(keyword()) :: Path.t()

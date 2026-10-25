@@ -1,3 +1,8 @@
+if HerdrServer.Test.PluginDirs.fetch_examples() == :skip do
+  IO.puts("SKIP: plugin examples unavailable (no cache, no network): excluding :examples tests")
+  ExUnit.configure(exclude: [:examples])
+end
+
 ExUnit.start()
 
 defmodule HerdrServer.ViewHelpers do

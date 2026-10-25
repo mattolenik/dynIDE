@@ -4,7 +4,7 @@ Run this in a real terminal against a daily-driver `bin/herdr-live` (`just live-
 
 ## A. Install and list
 
-1. Run `$HERDR_LIVE_BIN plugin install <repo>/vendor/herdr-plugin-examples/dev-layout-bootstrap`, without `--yes`.
+1. Run `$HERDR_LIVE_BIN plugin install $(live/scripts/plugin_examples.sh)/dev-layout-bootstrap`, without `--yes`.
    - The preview lists the `setup` action and `lua setup.lua`.
    - The exit status is 1, and the output asks you to re-run with `--yes`.
 2. Run the same command with `--yes`, then the same for `github-link-preview`.

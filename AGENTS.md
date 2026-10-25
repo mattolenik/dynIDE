@@ -68,8 +68,11 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   driven through the manifest, the pane env (`HERDR_PANE_ID`,
   `HERDR_LIVE_BIN`/`HERDR_BIN_PATH`, `HERDR_LIVE_API`/`HERDR_SOCKET_PATH`)
   and the API. No plugin code is ever loaded into the VM (human ruling).
-  `vendor/herdr-plugin-examples/` holds two upstream examples for the
-  install smoke; they have no upstream licence and must go before any publish.
+  The upstream examples have no licence, so they are not in the tree:
+  `live/scripts/plugin_examples.sh` fetches pinned commit `18709cd` into
+  `${XDG_CACHE_HOME:-~/.cache}/herdr-live/plugin-examples/18709cd` for the install
+  smoke and the `:examples` tests (`HERDR_LIVE_OFFLINE=1` forbids fetching;
+  no cache and no network skips them).
 - Kitty graphics (M10): ghostty computes placements in the kernel; the
   server publishes them through `Pane.Facts` into `Scene.Pane.graphics`; the
   pure `Render.Graphics` pass runs after Compose (never inside `Overlays`),
@@ -129,7 +132,7 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   (manifest, registry, runtime, panes, link handlers) under herdr's paths re-rooted
   at `herdr-live/`; no plugin code ever loads into the VM.
 - The `plugins` tty harness mode (two herdr example plugins from
-  `vendor/herdr-plugin-examples`, unmodified) is in `just live-check`.
+  the cached upstream checkout, unmodified) is in `just live-check`.
 - Persistence (M8, ADR 0002): under the broker the session saves to
   `<state dir>/session.<name>.etf` (schema v2, atomic, 0600) and scrollback
   (last 1000 rows as VT) to `session.<name>.scrollback/<pane id>.etf`. State dir:

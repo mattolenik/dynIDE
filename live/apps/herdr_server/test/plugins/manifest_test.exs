@@ -2,8 +2,7 @@ defmodule HerdrServer.Plugins.ManifestTest do
   use ExUnit.Case, async: true
 
   alias HerdrServer.Plugins.Manifest
-
-  @examples Path.expand("../../../../../vendor/herdr-plugin-examples", __DIR__)
+  alias HerdrServer.Test.PluginDirs
 
   @base ~s(id = "t.p"\nname = "T"\nversion = "1"\nmin_herdr_version = "0.7.0"\nplatforms = ["linux"]\n)
 
@@ -12,12 +11,15 @@ defmodule HerdrServer.Plugins.ManifestTest do
     Manifest.load(dir)
   end
 
-  test "vendored examples load" do
+  @tag :examples
+  test "upstream examples load" do
+    examples = PluginDirs.examples()
+
     for d <- ~w(agent-telegram-notify dev-layout-bootstrap github-link-preview rust-release-check) do
-      assert {:ok, %{"plugin_id" => "examples." <> _}} = Manifest.load(Path.join(@examples, d))
+      assert {:ok, %{"plugin_id" => "examples." <> _}} = Manifest.load(Path.join(examples, d))
     end
 
-    {:ok, m} = Manifest.load(Path.join(@examples, "dev-layout-bootstrap"))
+    {:ok, m} = Manifest.load(Path.join(examples, "dev-layout-bootstrap"))
     assert m["plugin_id"] == "examples.dev-layout-bootstrap"
 
     assert [%{"id" => "setup", "qualified_id" => "examples.dev-layout-bootstrap.setup"}] =
@@ -25,15 +27,15 @@ defmodule HerdrServer.Plugins.ManifestTest do
 
     assert m["warnings"] == []
 
-    {:ok, g} = Manifest.load(Path.join(@examples, "github-link-preview/herdr-plugin.toml"))
+    {:ok, g} = Manifest.load(Path.join(examples, "github-link-preview/herdr-plugin.toml"))
     assert [%{"id" => "github-issue-or-pr", "action" => "open"}] = g["link_handlers"]
     assert [%{"id" => "preview", "placement" => "split"}] = g["panes"]
-    assert g["plugin_root"] == Path.join(@examples, "github-link-preview")
+    assert g["plugin_root"] == Path.join(examples, "github-link-preview")
 
-    {:ok, t} = Manifest.load(Path.join(@examples, "agent-telegram-notify"))
+    {:ok, t} = Manifest.load(Path.join(examples, "agent-telegram-notify"))
     refute Enum.any?(t["warnings"], &(&1 =~ "pane.agent_status_changed"))
 
-    {:ok, r} = Manifest.load(Path.join(@examples, "rust-release-check"))
+    {:ok, r} = Manifest.load(Path.join(examples, "rust-release-check"))
     assert [%{"command" => ["cargo", "build", "--release"]}] = r["build"]
   end
 

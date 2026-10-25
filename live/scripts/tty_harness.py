@@ -66,7 +66,8 @@ shell (failed: no detected agent), server agent-manifests (at least 20) and
 connects >= 5 and session_losses 0.
 
 plugins: M14's exit criterion, two of herdr's example plugins
-(vendor/herdr-plugin-examples, unmodified) end to end. The same launch with its own
+(fetched at pinned commit 18709cd by plugin_examples.sh into the XDG cache, unmodified; SKIP,
+exit 0, when neither cache nor network, HERDR_LIVE_OFFLINE=1 forbids fetching) end to end. The same launch with its own
 XDG_CONFIG_HOME and XDG_STATE_HOME (plugin registry, checkouts, config and state dirs
 under the temp dir) and a temp bin/ first on PATH with two stubs, so the plugins run
 unmodified and offline: `gh` prints `stub-gh <args>` (github-link-preview's preview.sh
@@ -1266,6 +1267,14 @@ def remote():
 def plugins():
     """Two of herdr's example plugins, unmodified, end to end (M14's exit criterion)."""
     global DEADLINE
+    got = subprocess.run([os.path.join(LIVE, "scripts", "plugin_examples.sh")],
+                         capture_output=True, text=True)
+    if got.returncode == 3:
+        print(got.stderr.strip() or "SKIP: plugin examples unavailable")
+        return
+    if got.returncode != 0:
+        fail(f"plugins: plugin_examples.sh exits {got.returncode} ({got.stderr.strip()[-300:]})")
+    examples = got.stdout.strip()
     with tempfile.TemporaryDirectory() as tmp:
         compile_then_start_clock(tmp)
         # about 25 sequential waits, each a CLI round trip or more: 300 s, not 120 (a loaded
@@ -1285,7 +1294,6 @@ def plugins():
         h = Herdr(tmp, 120, 40, extra_env={"PATH": path, "XDG_CONFIG_HOME": t("xdg-config"),
                                            "XDG_STATE_HOME": t("xdg-state")})
         h.start()
-        examples = os.path.join(os.path.dirname(LIVE), "vendor", "herdr-plugin-examples")
         layout, preview = "examples.dev-layout-bootstrap", "examples.github-link-preview"
         bin_ = '"$HERDR_LIVE_BIN"'
 

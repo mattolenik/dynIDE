@@ -52,6 +52,7 @@ defmodule HerdrServer.Plugins.LinksTest do
     end
   end
 
+  @tag :examples
   test "find picks github-link-preview's handler for issues and pulls only" do
     {:ok, _} = Install.link(Path.join(PluginDirs.examples(), "github-link-preview"), true)
     plugins = Registry.plugins()
