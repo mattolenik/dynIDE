@@ -637,6 +637,24 @@ Result: `output_matched` with `pane_id` (pane id), `line` (string).
 
 Errors: `invalid_params`, `not_found`, `timeout`
 
+## Methods: notification
+
+### `notification.show`
+
+Raise a toast on every attached client.
+
+CLI: `herdr-live notification show <title> [--body <text>] [--pane <pane_id>]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `title` | string | yes | Toast title. |
+| `body` | string | no | Toast body; default empty. |
+| `pane_id` | pane id | no | Pane the toast is about; default none. |
+
+Result: `ok` (no fields).
+
+Errors: `invalid_params`
+
 ## Methods: events
 
 ### `events.subscribe`

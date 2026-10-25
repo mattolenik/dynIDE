@@ -99,7 +99,13 @@ defmodule HerdrServer.Api.Spec do
     server() ++
       session() ++
       reload() ++
-      workspace() ++ tab() ++ pane() ++ event_methods() ++ agents() ++ plugins()
+      workspace() ++
+      tab() ++
+      pane() ++
+      notification() ++
+      event_methods() ++
+      agents() ++
+      plugins()
   end
 
   defp server do
@@ -541,6 +547,24 @@ defmodule HerdrServer.Api.Spec do
         "output_matched",
         [:not_found, :timeout],
         "herdr-live pane wait-output [<pane_id>] (--match S | --regex R) [--source visible|recent] [--lines N] [--timeout MS]"
+      )
+    ]
+  end
+
+  defp notification do
+    [
+      method(
+        "notification.show",
+        "notification",
+        "Raise a toast on every attached client.",
+        [
+          req("title", :string, "Toast title."),
+          opt("body", :string, "Toast body; default empty."),
+          opt_pane("Pane the toast is about; default none.")
+        ],
+        "ok",
+        [],
+        "herdr-live notification show <title> [--body <text>] [--pane <pane_id>]"
       )
     ]
   end

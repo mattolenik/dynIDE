@@ -83,6 +83,23 @@ defmodule HerdrServer.Api.EventsTest do
     assert %{"event" => "pane.focused", "data" => %{"pane_id" => "p1"}} = event!(s)
   end
 
+  test "notification.show reaches the Store's subscribers and notification.shown", %{
+    path: path,
+    ctl: ctl
+  } do
+    Store.subscribe(self())
+    s = subscribe!(path, [%{"type" => "notification.shown"}])
+
+    assert %{"result" => %{"type" => "ok"}} =
+             ApiClient.call(ctl, "notification.show", %{"title" => "t", "pane_id" => "p1"})
+
+    assert_receive {:alert, %{title: "t", body: "", pane: 1, sound: :request}}
+    assert %{"event" => "notification.shown", "data" => %{"title" => "t"}} = event!(s)
+
+    assert %{"result" => _} = ApiClient.call(ctl, "notification.show", %{"title" => "u"})
+    assert_receive {:alert, %{title: "u", pane: nil}}
+  end
+
   test "an agent notification is published as notification.shown", %{path: path} do
     s = subscribe!(path, [%{"type" => "notification.shown", "pane_id" => "p1"}])
     Store.event_async({:agent_state, 1, :working})

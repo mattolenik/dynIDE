@@ -52,4 +52,25 @@ defmodule HerdrServer.App.AlertsTest do
     assert a.session.panes[1].agent_state == :blocked
     assert {^a, []} = Actions.apply(a, {:agent_state, 9, :blocked})
   end
+
+  test "notify is an attention request alert; body defaults to empty and pane may be nil" do
+    a = app()
+
+    assert {^a,
+            [
+              {:alert,
+               %{
+                 kind: :notification,
+                 level: :attention,
+                 title: "t",
+                 body: "",
+                 pane: nil,
+                 sound: :request
+               } = alert}
+            ]} =
+             Alerts.notify(a, "t", nil, nil)
+
+    assert Protocol.validate_server_msg({:alert, alert}) == :ok
+    assert {_, [{:alert, %{body: "b", pane: 1}}]} = Alerts.notify(a, "t", "b", 1)
+  end
 end

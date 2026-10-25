@@ -7,6 +7,9 @@ defmodule HerdrServer.App.Alerts do
   `"<workspace> · <n>"` (n the workspace's 1-based position), plus `" · <tab>"` when the
   workspace has several tabs. The agent is the pane's `agent`, else `"agent"`.
 
+  `notify/4` is the API's `notification.show`: an `:attention`, `:request` alert with a
+  caller-given title, body and (optional) pane.
+
   Whom an alert reaches (active-tab suppression, toasts) is per client:
   `Client.Toasts`.
   """
@@ -18,9 +21,25 @@ defmodule HerdrServer.App.Alerts do
           level: :attention | :done,
           title: binary,
           body: binary,
-          pane: pos_integer,
+          pane: pos_integer | nil,
           sound: :request | :done
         }
+
+  @spec notify(map, binary, binary | nil, pos_integer | nil) :: {map, [{:alert, alert}]}
+  def notify(app, title, body, pane) do
+    {app,
+     [
+       {:alert,
+        %{
+          kind: :notification,
+          level: :attention,
+          title: title,
+          body: body || "",
+          pane: pane,
+          sound: :request
+        }}
+     ]}
+  end
 
   @spec from_agent(map, pos_integer, atom | nil, atom) :: [alert]
   def from_agent(app, id, old, new) do

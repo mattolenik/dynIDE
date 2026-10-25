@@ -47,6 +47,8 @@ defmodule HerdrServer.Api.Router do
       when method in ~w(pane.send_text pane.send_keys pane.run pane.read),
       do: Handlers.PaneIo.handle(method, params)
 
+  def handle("notification.show", params, _ctx), do: Handlers.Notification.show(params)
+
   def handle("events.subscribe", params, ctx), do: Events.request(params, ctx.conn)
 
   def handle("agent." <> _ = method, params, _ctx), do: Handlers.Agents.handle(method, params)

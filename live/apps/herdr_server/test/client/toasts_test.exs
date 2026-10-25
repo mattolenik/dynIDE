@@ -54,4 +54,9 @@ defmodule HerdrServer.Client.ToastsTest do
     assert Toasts.ttl(:attention, done: 10) == 8000
     assert Toasts.ttl(:info, done: 10) == 10
   end
+
+  test "a paneless alert is queued and never suppressed" do
+    a = alert(nil)
+    assert {^a, [%{pane: nil, title: "pi"}]} = Toasts.alert([], a, app(), nil, 1)
+  end
 end

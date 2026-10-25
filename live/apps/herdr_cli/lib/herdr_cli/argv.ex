@@ -42,7 +42,15 @@ defmodule HerdrCli.Argv do
   @doc "Every command row; `usage` is the CLI form without the `herdr-live ` prefix."
   @spec commands() :: [map()]
   def commands do
-    server() ++ session() ++ workspace() ++ tab() ++ pane() ++ agent() ++ events() ++ plugin()
+    server() ++
+      session() ++
+      workspace() ++
+      tab() ++
+      pane() ++
+      notification() ++
+      agent() ++
+      events() ++
+      plugin()
   end
 
   defp session do
@@ -317,6 +325,19 @@ defmodule HerdrCli.Argv do
         :json,
         "pane wait-output [<pane_id>] (--match S | --regex R) [--source visible|recent] " <>
           "[--lines N] [--timeout MS]"
+      )
+    ]
+  end
+
+  defp notification do
+    [
+      cmd(
+        ~w(notification show),
+        "notification.show",
+        [{:req, "title"}],
+        %{"body" => {"body", :string}, "pane" => {"pane_id", :string}},
+        :json,
+        "notification show <title> [--body <text>] [--pane <pane_id>]"
       )
     ]
   end
