@@ -16,7 +16,7 @@ defmodule HerdrServer.WorkspaceFactsTest do
     def git(cwd), do: Agent.get(agent(), &Map.get(&1.git, cwd))
 
     def slow_git("/slow") do
-      send(Agent.get(agent(), & &1.test), {:called, "/slow"})
+      send(Agent.get(agent(), & &1.test), {:called, "/slow", self()})
       Process.sleep(:infinity)
     end
 
@@ -82,13 +82,25 @@ defmodule HerdrServer.WorkspaceFactsTest do
     agent = git_facts(app, %{"/fast" => fast}, :slow_git)
 
     assert_receive {:notify, {:workspace_git, 2, ^fast}}, 1000
-    assert_receive {:called, "/slow"}, 1000
+    assert_receive {:called, "/slow", _}, 1000
     Agent.update(agent, &put_in(&1.git["/fast"], %{fast | behind: 0}))
     assert_receive {:notify, {:workspace_git, 2, %{behind: 0}}}, 1000
     # dozens of 10 ms ticks later: no second call for the hung cwd, and it stays nil
     Process.sleep(300)
-    refute_received {:called, "/slow"}
+    refute_received {:called, "/slow", _}
     refute_received {:notify, {:workspace_git, 1, _}}
+  end
+
+  test "git: a call process killed without answering is polled again" do
+    {app, _} = Actions.new_workspace(elem(Actions.init(%{cols: 80, rows: 24}), 0))
+    app = with_cwds(app, [{1, "/slow"}])
+    git_facts(app, %{}, :slow_git)
+
+    assert_receive {:called, "/slow", pid}, 1000
+    Process.exit(pid, :kill)
+    assert_receive {:called, "/slow", pid2}, 1000
+    assert pid2 != pid
+    refute_received {:notify, _}
   end
 
   test "sends one event per root-pane cwd change" do

@@ -84,12 +84,18 @@ defmodule HerdrServer.WorkspaceFacts do
       {:ok, wss} ->
         now = System.monotonic_time(:millisecond)
         cwds = wss |> Map.values() |> Enum.reject(&is_nil/1) |> Enum.uniq()
-        Enum.each(cwds -- Map.keys(state.git_inflight), &start_git(&1, state.git))
-        inflight = Map.new(cwds, &{&1, Map.get(state.git_inflight, &1, now)})
-        stale = for {cwd, t} <- inflight, now - t >= @git_timeout_ms, into: %{}, do: {cwd, nil}
+        new = cwds -- Map.keys(state.git_inflight)
+        # a call for a cwd no workspace has any more still finishes: it stays in flight
+        inflight =
+          Map.merge(state.git_inflight, Map.new(new, &{&1, start_git(&1, state.git, now)}))
+
+        stale =
+          for {cwd, {t, _ref}} <- Map.take(inflight, cwds),
+              now - t >= @git_timeout_ms,
+              into: %{},
+              do: {cwd, nil}
+
         by_cwd = state.git_by_cwd |> Map.take(cwds) |> Map.merge(stale)
-        # a call for a cwd no workspace has any more still finishes: keep it in flight
-        inflight = Map.merge(state.git_inflight, inflight)
 
         {:noreply, emit_git(%{state | git_wss: wss, git_inflight: inflight, git_by_cwd: by_cwd})}
 
@@ -100,11 +106,23 @@ defmodule HerdrServer.WorkspaceFacts do
 
   def handle_info({:git_result, cwd, info}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    state = %{state | git_inflight: Map.delete(state.git_inflight, cwd)}
+    {entry, inflight} = Map.pop(state.git_inflight, cwd)
+    with {_t, ref} <- entry, do: Process.demonitor(ref, [:flush])
+    {:noreply, git_answer(%{state | git_inflight: inflight}, cwd, info)}
+  end
 
-    if cwd in Map.values(state.git_wss),
-      do: {:noreply, emit_git(%{state | git_by_cwd: Map.put(state.git_by_cwd, cwd, info)})},
-      else: {:noreply, state}
+  # a call process that died without answering (killed): its cwd is nil and polled again
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+
+    case Enum.find(state.git_inflight, fn {_cwd, {_t, r}} -> r == ref end) do
+      {cwd, _} ->
+        state = %{state | git_inflight: Map.delete(state.git_inflight, cwd)}
+        {:noreply, git_answer(state, cwd, nil)}
+
+      nil ->
+        {:noreply, state}
+    end
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -146,19 +164,30 @@ defmodule HerdrServer.WorkspaceFacts do
     end
   end
 
-  # unlinked: the reply is the only tie; a failing runner (bad edit) answers nil
-  defp start_git(cwd, {m, f}) do
+  # only for a cwd some workspace still has
+  defp git_answer(state, cwd, info) do
+    if cwd in Map.values(state.git_wss),
+      do: emit_git(%{state | git_by_cwd: Map.put(state.git_by_cwd, cwd, info)}),
+      else: state
+  end
+
+  # `{started_ms, monitor ref}`; unlinked, so a call can't take this process down; a
+  # failing runner (bad edit) answers nil, a killed one is caught by its :DOWN
+  defp start_git(cwd, {m, f}, now) do
     parent = self()
 
-    spawn(fn ->
-      info =
-        case Guard.run_twice(m, f, [cwd], server: Store.reload_server()) do
-          {:ok, info} -> info
-          {:failed, _} -> nil
-        end
+    {_pid, ref} =
+      spawn_monitor(fn ->
+        info =
+          case Guard.run_twice(m, f, [cwd], server: Store.reload_server()) do
+            {:ok, info} -> info
+            {:failed, _} -> nil
+          end
 
-      send(parent, {:git_result, cwd, info})
-    end)
+        send(parent, {:git_result, cwd, info})
+      end)
+
+    {now, ref}
   end
 
   # `{:workspace_git, ws_id, info}` for each workspace whose info differs from the last sent
