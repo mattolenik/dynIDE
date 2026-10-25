@@ -1,7 +1,7 @@
 # Installs a herdr-live release tarball. Usage (see flake.nix):
 #   pkgs.callPackage ./default.nix { src = /abs/herdr-live-0.1.0-linux-aarch64.tar.gz; version = "0.1.0"; }
 # Or give url + sha256 instead of src. Untested: nix was not installed when this was written.
-{ lib, stdenv, fetchurl, autoPatchelfHook, makeWrapper, openssl_3, ncurses, glibc
+{ lib, stdenv, fetchurl, autoPatchelfHook, openssl_3, ncurses
 , version ? "0.1.0"
 , src ? null
 , url ? null
@@ -37,7 +37,11 @@ stdenv.mkDerivation {
     $out/bin/herdr-live --version | grep -F "herdr-live ${version}"
   '';
 
+  # Updates come from the package manager (nix flake update / rebuild); `herdr-live update`
+  # only works for installs made with install.sh.
   meta = {
+    homepage = "https://github.com/mattolenik/herdr"; # the human confirms this at publish
+    license = lib.licenses.asl20;
     description = "Terminal multiplexer for AI agents that you can edit while it runs";
     platforms = [ "aarch64-darwin" "aarch64-linux" ];
     mainProgram = "herdr-live";
