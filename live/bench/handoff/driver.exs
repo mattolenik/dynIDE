@@ -27,6 +27,9 @@ defmodule HandoffDriver do
     File.rm_rf!(dir)
     File.mkdir_p!(dir)
     log = Path.join(dir, "herdr-live.log")
+    # M13: a fresh config opens the first-run onboarding modal, which takes every key
+    config = Path.join(dir, "config.toml")
+    File.write!(config, "onboarding = false\n")
 
     env = [
       {~c"HERDR_LIVE_HEADLESS", ~c"1"},
@@ -37,6 +40,7 @@ defmodule HandoffDriver do
       {~c"HERDR_LIVE_SESSION", false},
       {~c"HERDR_LIVE_PERSIST", false},
       {~c"HERDR_LIVE_API", String.to_charlist(Path.join(dir, "ctl.sock"))},
+      {~c"HERDR_LIVE_CONFIG", String.to_charlist(config)},
       {~c"PATH", String.to_charlist(path())},
       {~c"HERDR_SOCKET_PATH", false},
       {~c"HERDR_CLIENT_SOCKET_PATH", false},
