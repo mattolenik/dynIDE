@@ -8,7 +8,8 @@ defmodule HerdrServer.Api.Events do
   `{:api_event, event}` to each subscriber with a matching filter, at most once per event.
   The Store's `{:alert, a}` becomes `notification.shown`, placed in the last app. The
   Store's `{:api_event, ev}` (a move, `EventDiff.moved/2`) arrives ahead of its app: it
-  waits in `pending` and goes out after that app's diff, placed in it.
+  waits in `pending` and goes out after that app's diff, placed in it; a Store restart
+  or the last unsubscribe drops it.
   The hub monitors the Store: after a Store restart it subscribes again (retrying every
   100 ms until the Store is registered) and diffs from the new Store's snapshot, so
   changes during the restart give no events. When the last subscriber goes, the hub
@@ -166,7 +167,7 @@ defmodule HerdrServer.Api.Events do
   # the Store restarted: it forgot this subscription; subscribe again once it is back
   def handle_info({:DOWN, ref, :process, _, _}, %{store?: ref} = state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, watch_store(%{state | store?: false, last: nil})}
+    {:noreply, watch_store(%{state | store?: false, last: nil, pending: []})}
   end
 
   def handle_info({:DOWN, ref, :process, pid, _}, state) do
@@ -227,7 +228,7 @@ defmodule HerdrServer.Api.Events do
   defp unwatch_store(%{subs: subs, store?: ref} = state) when subs == %{} and is_reference(ref) do
     Process.demonitor(ref, [:flush])
     _ = store_unsubscribe()
-    %{state | store?: false, last: nil}
+    %{state | store?: false, last: nil, pending: []}
   end
 
   defp unwatch_store(state), do: state

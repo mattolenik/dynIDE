@@ -180,6 +180,26 @@ defmodule HerdrServer.Api.EventsTest do
     assert %{"event" => "pane.created", "data" => %{"pane_id" => "p2"}} = event!(s)
   end
 
+  test "a move pending at a Store restart is dropped, never published later", %{
+    path: path,
+    ctl: ctl
+  } do
+    s = subscribe!(path, [%{"type" => "workspace.moved"}, %{"type" => "pane.created"}])
+    hub = Process.whereis(Events)
+    # a move effect whose app never arrives (the Store goes down first)
+    send(hub, {:api_event, {:workspace_moved, 1, 0}})
+    wait_until(fn -> :sys.get_state(hub).pending != [] end)
+    Process.sleep(100)
+    :ok = Supervisor.terminate_child(HerdrServer.Supervisor, Store)
+    {:ok, _} = Supervisor.restart_child(HerdrServer.Supervisor, Store)
+    wait_until(fn -> store_subscriber?(hub) end)
+    assert :sys.get_state(hub).pending == []
+
+    ApiClient.call(ctl, "pane.split", %{"pane_id" => "p1", "direction" => "right"})
+    assert %{"event" => "pane.created"} = event!(s)
+    assert ApiClient.recv_line(s, 300) == {:error, :timeout}
+  end
+
   test "a hub that stops ends each stream with events_lost", %{path: path} do
     s = subscribe!(path, [%{"type" => "pane.created"}])
     Process.exit(Process.whereis(Events), :kill)
