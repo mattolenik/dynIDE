@@ -1363,6 +1363,28 @@ defmodule HerdrServer.ServerTest do
     refute_receive {^c, {:alert, _}}, 1500
   end
 
+  @tag :tmp_dir
+  test "an active-tab agent that finished while the terminal is unfocused toasts after the delay",
+       %{tmp_dir: dir} do
+    saved = Application.get_env(:herdr_server, :config_path)
+    path = Path.join(dir, "config.toml")
+    File.write!(path, "onboarding = false\n[ui.toast]\ndelay_seconds = 1\n")
+    Application.put_env(:herdr_server, :config_path, path)
+    on_exit(fn -> Application.put_env(:herdr_server, :config_path, saved) end)
+    {c, s} = client()
+    scene(c)
+    input(s, c, 1, {:focus, false})
+    assert_receive {^c, {:ack, 1}}
+    Store.event_async({:agent_state, 1, :working})
+    # the active tab's pane is seen: :idle, not :done
+    Store.event_async({:agent_state, 1, :idle})
+    assert Store.snapshot().session.panes[1].agent_state == :idle
+    refute_receive {^c, {:alert, _}}, 500
+    assert_receive {^c, {:alert, %{level: :done, pane: 1, sound: :done, title: t}}}, 1500
+    assert t =~ "finished"
+    assert %{props: %{pane: 1}} = c |> scene_until(&toast/1) |> toast()
+  end
+
   test "a toast expires" do
     Application.put_env(:herdr_server, :toast_ms, attention: 100, done: 100)
     on_exit(fn -> Application.delete_env(:herdr_server, :toast_ms) end)

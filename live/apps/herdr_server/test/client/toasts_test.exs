@@ -47,16 +47,17 @@ defmodule HerdrServer.Client.ToastsTest do
     assert {nil, ^rest} = Toasts.drop(rest, 5)
   end
 
-  test "recheck: a done alert holds while its pane is :done, an attention one while :blocked" do
+  test "recheck: a done alert holds while its pane is finished, an attention one while :blocked" do
     app = app()
     put = &put_in(app.session.panes[1], %{agent_state: &1})
 
-    for {level, keep} <- [done: :done, attention: :blocked],
+    for {level, keep} <- [done: [:idle, :done], attention: [:blocked]],
         state <- [:idle, :working, :blocked, :done, :unknown] do
-      assert Toasts.recheck(alert(1, level), put.(state)) == (state == keep)
+      assert Toasts.recheck(alert(1, level), put.(state)) == state in keep
     end
 
     refute Toasts.recheck(alert(1, :done), app)
+    refute Toasts.recheck(alert(99, :done), app)
     assert Toasts.recheck(alert(nil), app)
   end
 
