@@ -41,6 +41,31 @@ defmodule HerdrServer.Plugins.InstallTest do
       assert System.monotonic_time(:millisecond) - t0 < 1300
     end
 
+    test "a timeout kills the whole process group and closes the port", %{base: base} do
+      mine = fn ->
+        Enum.filter(Port.list(), &(Port.info(&1, :connected) == {:connected, self()}))
+      end
+
+      before = mine.()
+      t0 = System.monotonic_time(:millisecond)
+
+      assert %{error: "timed out"} =
+               Command.run(["sh", "-c", "sleep 61 & sleep 62"], base, [], timeout_ms: 500)
+
+      assert System.monotonic_time(:millisecond) - t0 < 3000
+      assert mine.() == before
+      refute_received {_, {:data, _}}
+      {ps, 0} = System.cmd("ps", ["-ax", "-o", "command"])
+      refute ps =~ ~r/^sleep 6[12]$/m
+    end
+
+    test "the stderr file lives in a private dir under tmp_dir, removed after", %{base: base} do
+      tmp = base <> "/t"
+      assert %{stderr: "e\n"} = Command.run(["sh", "-c", "echo e >&2"], base, [], tmp_dir: tmp)
+      assert File.stat!(tmp).mode |> Bitwise.band(0o777) == 0o700
+      assert File.ls!(tmp) == []
+    end
+
     test "a missing executable is an error, ./x resolves against cwd", %{base: base} do
       assert %{exit_code: nil, error: "command not found: nope-xyz"} =
                Command.run(["nope-xyz"], base, [], [])
@@ -179,6 +204,31 @@ defmodule HerdrServer.Plugins.InstallTest do
     dir = PluginDirs.plugin(base <> "/p", "t.p")
     {:ok, _} = Install.link(dir, true)
     assert {:error, "plugin_install_over_link", _} = Install.install(dir, nil, true)
+  end
+
+  test "a GitHub subdir that is a symlink out of the checkout is refused", %{base: base} do
+    src = PluginDirs.plugin(base <> "/src", "t.s")
+    File.mkdir_p!(base <> "/outside")
+    PluginDirs.plugin(base <> "/outside", "t.out")
+    File.ln_s!(base <> "/outside", src <> "/sub")
+    bare_repo(base, src)
+
+    Application.put_env(
+      :herdr_server,
+      :plugins,
+      Application.get_env(:herdr_server, :plugins) ++ [git_base: "file://#{base}/git/"]
+    )
+
+    assert {:error, "invalid_plugin_source", _} = Install.install("owner/repo/sub", nil, false)
+    assert {:ok, %{"plugin_id" => "t.s"}} = Install.install("owner/repo", nil, true)
+  end
+
+  test "relative local paths and option-like refs are refused" do
+    assert {:error, "invalid_plugin_path", _} = Install.link("rel/dir", true)
+    assert {:error, "invalid_plugin_source", _} = Install.install("./x", nil, false)
+
+    assert {:error, "invalid_plugin_source", _} =
+             Install.install("owner/repo", "--upload-pack=x", false)
   end
 
   test "bad GitHub shorthand is refused" do

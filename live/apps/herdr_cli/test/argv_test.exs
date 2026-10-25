@@ -229,6 +229,24 @@ defmodule HerdrCli.ArgvTest do
       assert {:usage, _} = p("pane link activate p2 --col 3 --row 4 --modifier meta")
     end
 
+    test "plugin link and local install sources go absolute against PWD and HOME" do
+      env = %{"PWD" => "/w/d", "HOME" => "/h"}
+      link = &{:call, "plugin.link", %{"path" => &1}, :json}
+      inst = &{:call, "plugin.install", %{"source" => &1}, :json}
+
+      assert p("plugin link .", env) == link.("/w/d")
+      assert p("plugin link ./x", env) == link.("/w/d/x")
+      assert p("plugin link ../x", env) == link.("/w/x")
+      assert p("plugin link x", env) == link.("/w/d/x")
+      assert p("plugin link ~/x", env) == link.("/h/x")
+      assert p("plugin link /abs", env) == link.("/abs")
+
+      assert p("plugin install ./x", env) == inst.("/w/d/x")
+      assert p("plugin install ../x", env) == inst.("/w/x")
+      assert p("plugin install ~/x", env) == inst.("/h/x")
+      assert p("plugin install owner/repo/sub", env) == inst.("owner/repo/sub")
+    end
+
     test "plugin pane open: env pairs, focus flags" do
       assert p("plugin pane open --plugin a --entrypoint b --env A=1 --env B=x=y --focus") ==
                {:call, "plugin.pane.open",

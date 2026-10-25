@@ -20,8 +20,9 @@ defmodule HerdrServer.Plugins.Install do
 
   @spec link(Path.t(), boolean()) :: {:ok, Registry.plugin()} | error()
   def link(path, enabled?) do
-    # ponytail: a relative path resolves against the server's cwd; the CLI should send it absolute
-    with {:ok, m} <- Manifest.load(Path.expand(path)),
+    # the CLI makes relative paths absolute against the user's cwd; never guess here
+    with :ok <- absolute(path, "invalid_plugin_path"),
+         {:ok, m} <- Manifest.load(path),
          :ok <- user_dirs(m["plugin_id"]),
          :ok <- register(m, enabled?, %{"kind" => "local"}),
          do: found(m["plugin_id"])
@@ -73,6 +74,7 @@ defmodule HerdrServer.Plugins.Install do
 
   defp staged(src, ref, yes?, stage) do
     with {:ok, source} <- fetch(src, ref, stage),
+         :ok <- contained(stage, src),
          {:ok, m} <- Manifest.load(root(stage, src)),
          :ok <- not_linked(m["plugin_id"]) do
       if yes?,
@@ -85,21 +87,45 @@ defmodule HerdrServer.Plugins.Install do
   end
 
   defp place(id, src, source, stage) do
-    dest = next_installation(id)
+    case claim(id, stage) do
+      {:ok, dest} ->
+        with {:ok, m} <- Manifest.load(root(dest, src)),
+             :ok <- user_dirs(id),
+             :ok <- build(m),
+             {:ok, ^m} <- Manifest.load(root(dest, src)),
+             :ok <- register(m, true, Map.put(source, "managed_path", dest)) do
+          found(id)
+        else
+          e ->
+            # only the dir this install renamed into place
+            File.rm_rf(dest)
+            place_error(e, dest)
+        end
 
-    with :ok <- File.mkdir_p(Path.dirname(dest)),
-         :ok <- File.rename(stage, dest),
-         {:ok, m} <- Manifest.load(root(dest, src)),
-         :ok <- build(m),
-         {:ok, ^m} <- Manifest.load(root(dest, src)),
-         :ok <- user_dirs(id),
-         :ok <- register(m, true, Map.put(source, "managed_path", dest)) do
-      found(id)
-    else
-      e ->
-        File.rm_rf(dest)
-        place_error(e, dest)
+      {:error, e, dest} ->
+        place_error({:error, e}, dest)
     end
+  end
+
+  # picks the next installation dir and renames the stage onto it, one install per id at a time
+  defp claim(id, stage) do
+    :global.trans({{__MODULE__, id}, self()}, fn ->
+      dest = next_installation(id)
+
+      with :ok <- File.mkdir_p(Path.dirname(dest)),
+           :ok <- File.rename(stage, dest),
+           do: {:ok, dest},
+           else: ({:error, e} -> {:error, e, dest})
+    end)
+  end
+
+  # the manifest (and a GitHub subdir) must stay inside the checkout once symlinks resolve
+  defp contained(stage, src) do
+    rel = root(stage, src) |> Path.join("herdr-plugin.toml") |> Path.relative_to(stage)
+
+    if :filelib.safe_relative_path(rel, stage) == :unsafe,
+      do: {:error, "invalid_plugin_source", "#{rel} resolves outside the plugin checkout"},
+      else: :ok
   end
 
   defp place_error({:ok, _changed}, dest),
@@ -127,7 +153,7 @@ defmodule HerdrServer.Plugins.Install do
 
   defp fetch({:github, owner, repo, subdir}, ref, stage) do
     base = Application.get_env(:herdr_server, :plugins, [])[:git_base] || "https://github.com/"
-    branch = if ref, do: ["--branch", ref], else: []
+    branch = if ref, do: ["--branch=" <> ref], else: []
     File.mkdir_p!(Path.dirname(stage))
 
     with :ok <-
@@ -221,7 +247,9 @@ defmodule HerdrServer.Plugins.Install do
     cmds
     |> Enum.with_index(1)
     |> Enum.reduce_while(:ok, fn {argv, i}, :ok ->
-      case Command.run(argv, m["plugin_root"], env, timeout_ms: @build_timeout_ms) do
+      opts = [timeout_ms: @build_timeout_ms, tmp_dir: Paths.plugin_state_dir(m["plugin_id"])]
+
+      case Command.run(argv, m["plugin_root"], env, opts) do
         %{exit_code: 0} -> {:cont, :ok}
         r -> {:halt, {:error, "plugin_build_failed", build_failure(m, i, length(cmds), argv, r)}}
       end
@@ -269,10 +297,20 @@ defmodule HerdrServer.Plugins.Install do
 
   defp parse(source, ref) do
     cond do
+      ref != nil and String.starts_with?(ref, "-") ->
+        {:error, "invalid_plugin_source", "invalid ref #{inspect(ref)}"}
+
       String.starts_with?(source, ["/", "./", "../", "~"]) ->
-        if ref,
-          do: {:error, "invalid_plugin_source", "--ref applies to GitHub sources only"},
-          else: {:ok, {:local, Path.expand(source)}}
+        cond do
+          ref ->
+            {:error, "invalid_plugin_source", "--ref applies to GitHub sources only"}
+
+          absolute(source, "invalid_plugin_source") != :ok ->
+            absolute(source, "invalid_plugin_source")
+
+          true ->
+            {:ok, {:local, source}}
+        end
 
       String.contains?(source, ":") ->
         {:error, "invalid_plugin_source",
@@ -332,6 +370,12 @@ defmodule HerdrServer.Plugins.Install do
   end
 
   defp not_found, do: {:error, "plugin_not_found", "plugin not found"}
+
+  defp absolute(path, reason) do
+    if Path.type(path) == :absolute,
+      do: :ok,
+      else: {:error, reason, "local plugin paths must be absolute: #{path}"}
+  end
 
   defp valid_id(id) do
     if id =~ @id_re and id not in [".", ".."],

@@ -592,7 +592,27 @@ defmodule HerdrCli.Argv do
     {:call, c.method, params, if(kv, do: :lines, else: :json)}
   end
 
-  defp finish(c, params, _env), do: {:call, c.method, Map.delete(params, :json), c.out}
+  # herdr's normalize_plugin_path_arg: local paths go absolute against the caller's cwd
+  defp finish(%{method: "plugin.link"} = c, params, env),
+    do: plain(c, Map.update!(params, "path", &abs_path(&1, env)))
+
+  defp finish(%{method: "plugin.install"} = c, %{"source" => s} = params, env),
+    do: plain(c, if(local?(s), do: %{params | "source" => abs_path(s, env)}, else: params))
+
+  defp finish(c, params, _env), do: plain(c, params)
+
+  defp plain(c, params), do: {:call, c.method, Map.delete(params, :json), c.out}
+
+  defp local?(s), do: s in [".", "..", "~"] or String.starts_with?(s, ["./", "../", "~/"])
+
+  defp abs_path("~", env), do: Map.get(env, "HOME", "~")
+  defp abs_path("~/" <> rest, %{"HOME" => home}), do: Path.join(home, rest)
+
+  defp abs_path(p, %{"PWD" => cwd}) do
+    if Path.type(p) == :relative, do: Path.expand(p, cwd), else: p
+  end
+
+  defp abs_path(p, _env), do: p
 
   # --- options ---------------------------------------------------------------
 

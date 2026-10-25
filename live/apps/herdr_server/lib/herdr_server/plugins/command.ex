@@ -4,10 +4,16 @@ defmodule HerdrServer.Plugins.Command do
   stdout and stderr captured apart and capped. Blocking; callers run it in their own process.
   """
 
+  alias HerdrServer.Plugins.Paths
+
   @cap 65_536
-  # ponytail: a sh wrapper sends stderr to a tmp file (ports have one output stream);
-  # a NIF if Windows ever matters
-  @wrapper ~S(f=$HERDR_LIVE_STDERR_FILE; unset HERDR_LIVE_STDERR_FILE; exec "$0" "$@" </dev/null 2>"$f")
+  # ponytail: a sh wrapper sends stderr to a file (ports have one output stream) and, with
+  # job control, starts the command as its own process group so a timeout kills the whole
+  # tree; a NIF if Windows ever matters. The stderr file grows with the command's stderr
+  # until it exits (only the first `cap` bytes are read): bounded by the timeout, if any.
+  # The wrapper's own stderr (job notices) goes to /dev/null.
+  @wrapper ~S(d=$HERDR_LIVE_CMD_DIR; unset HERDR_LIVE_CMD_DIR; exec 2>/dev/null; set -m; ) <>
+             ~S("$0" "$@" </dev/null 2>"$d/err" & echo $! >"$d/pid"; wait $!)
 
   @type result :: %{
           exit_code: integer() | nil,
@@ -18,7 +24,9 @@ defmodule HerdrServer.Plugins.Command do
 
   @doc """
   `env` is `[{name, value | nil}]` (nil unsets). Options: `:cap` bytes per stream (64 KiB),
-  `:timeout_ms` (none) after which the OS process is killed, `:tmp_dir` for the stderr file.
+  `:timeout_ms` (none) after which the OS process is killed, `:tmp_dir`, a private
+  (0700) dir under which each run gets its own fresh dir for the stderr file (default
+  `<state>/tmp`; plugin callers pass the plugin state dir).
   """
   @spec run([String.t()], Path.t(), [{String.t(), String.t() | nil}], keyword()) :: result()
   def run([cmd | args], cwd, env, opts) do
@@ -40,14 +48,30 @@ defmodule HerdrServer.Plugins.Command do
   defp spawn_port(exe, args, cwd, env, opts) do
     cap = opts[:cap] || @cap
 
-    err_file =
-      Path.join(
-        opts[:tmp_dir] || System.tmp_dir!(),
-        "hlcmd-#{System.unique_integer([:positive])}.err"
-      )
+    case run_dir(opts[:tmp_dir] || Path.join(Paths.state_dir(), "tmp")) do
+      {:ok, dir} ->
+        try do
+          port_run(exe, args, cwd, [{"HERDR_LIVE_CMD_DIR", dir} | env], dir, cap, opts)
+        after
+          File.rm_rf(dir)
+        end
 
-    env = [{"HERDR_LIVE_STDERR_FILE", err_file} | env]
+      {:error, e} ->
+        %{exit_code: nil, stdout: "", stderr: "", error: "command dir: #{:file.format_error(e)}"}
+    end
+  end
 
+  # a fresh dir (mkdir never follows a planted symlink) inside a 0700 base
+  defp run_dir(base) do
+    dir = Path.join(base, "cmd-" <> Base.url_encode64(:crypto.strong_rand_bytes(9)))
+
+    with :ok <- File.mkdir_p(base),
+         :ok <- File.chmod(base, 0o700),
+         :ok <- File.mkdir(dir),
+         do: {:ok, dir}
+  end
+
+  defp port_run(exe, args, cwd, env, dir, cap, opts) do
     port =
       Port.open({:spawn_executable, "/bin/sh"}, [
         :binary,
@@ -60,42 +84,61 @@ defmodule HerdrServer.Plugins.Command do
 
     {:os_pid, pid} = Port.info(port, :os_pid)
     deadline = opts[:timeout_ms] && System.monotonic_time(:millisecond) + opts[:timeout_ms]
-    {code, out, error} = collect(port, pid, {[], 0}, cap, deadline)
-    stderr = head(err_file, cap)
-    File.rm(err_file)
-    %{exit_code: code, stdout: out, stderr: stderr, error: error}
+    {code, out, error} = collect(port, {pid, dir}, {[], 0}, cap, deadline)
+    %{exit_code: code, stdout: out, stderr: head(Path.join(dir, "err"), cap), error: error}
   end
 
-  defp collect(port, pid, {acc, n} = buf, cap, deadline) do
+  defp collect(port, who, {acc, n} = buf, cap, deadline) do
     left =
       if deadline, do: max(deadline - System.monotonic_time(:millisecond), 0), else: :infinity
 
     receive do
       {^port, {:data, _}} when n >= cap ->
-        collect(port, pid, buf, cap, deadline)
+        collect(port, who, buf, cap, deadline)
 
       {^port, {:data, d}} ->
         d = binary_part(d, 0, min(byte_size(d), cap - n))
-        collect(port, pid, {[acc, d], n + byte_size(d)}, cap, deadline)
+        collect(port, who, {[acc, d], n + byte_size(d)}, cap, deadline)
 
       {^port, {:exit_status, s}} ->
         {s, IO.iodata_to_binary(acc), nil}
     after
       left ->
-        # exactly the pid we started (sh exec'd into the command), never by name
-        System.cmd("kill", ["-9", Integer.to_string(pid)], stderr_to_stdout: true)
+        kill(who)
         drain(port)
         {nil, IO.iodata_to_binary(acc), "timed out"}
     end
   end
 
-  # the port closes itself on the exit status; drop what it sent meanwhile
+  # the command's process group (its pid, written by the wrapper) and the wrapper itself:
+  # exactly what we started, never by name
+  defp kill({sh, dir}) do
+    targets =
+      case File.read(Path.join(dir, "pid")) do
+        {:ok, pid} -> ["--", "-" <> String.trim(pid), Integer.to_string(sh)]
+        {:error, _} -> [Integer.to_string(sh)]
+      end
+
+    System.cmd("kill", ["-9" | targets], stderr_to_stdout: true)
+  end
+
+  # wait briefly for the exit status, then close the port and drop what it sent meanwhile
   defp drain(port) do
     receive do
-      {^port, {:data, _}} -> drain(port)
       {^port, {:exit_status, _}} -> :ok
     after
       2_000 -> :ok
+    end
+
+    if Port.info(port), do: Port.close(port)
+    flush(port)
+  end
+
+  defp flush(port) do
+    receive do
+      {^port, _} -> flush(port)
+    after
+      0 -> :ok
     end
   end
 

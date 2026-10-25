@@ -27,7 +27,9 @@ defmodule HerdrCli do
   def chars(list, :utf8), do: List.to_string(list)
   def chars(list, :latin1), do: :erlang.list_to_binary(list)
 
-  defp env, do: Map.new(:os.env(), fn {k, v} -> {chars(k), chars(v)} end)
+  # PWD is the real cwd (a shell's PWD can be stale): plugin paths resolve against it
+  defp env,
+    do: Map.new(:os.env(), fn {k, v} -> {chars(k), chars(v)} end) |> Map.put("PWD", File.cwd!())
 
   @doc "Runs argv and halts the VM with the exit code."
   @spec main([String.t()]) :: no_return()

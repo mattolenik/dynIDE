@@ -115,10 +115,17 @@ defmodule HerdrServer.Plugins.Registry do
 
     with :ok <- File.mkdir_p(dir),
          :ok <- File.chmod(dir, 0o700),
-         :ok <- File.write(tmp, JSON.encode!(entries)),
+         :ok <- ok_if_absent(File.rm(tmp)),
+         # exclusive: a fresh file (never a planted link), 0600 before any byte is written
+         {:ok, f} <- File.open(tmp, [:write, :exclusive, :binary]),
          :ok <- File.chmod(tmp, 0o600),
+         :ok <- IO.binwrite(f, JSON.encode!(entries)),
+         :ok <- File.close(f),
          do: File.rename(tmp, Paths.registry())
   end
+
+  defp ok_if_absent({:error, :enoent}), do: :ok
+  defp ok_if_absent(r), do: r
 
   defp merge(entry) do
     case Manifest.load(entry["manifest_path"]) do
