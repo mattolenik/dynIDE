@@ -11,7 +11,7 @@ defmodule HerdrServer.Client.OutboxTest do
     panes =
       base.panes
       |> Enum.zip(rows_by_pane)
-      |> Enum.map(fn {p, rows} -> %Pane{p | rows: {:inline, rows}} end)
+      |> Enum.map(fn {%Pane{} = p, rows} -> %Pane{p | rows: {:inline, rows}} end)
 
     %{base | panes: panes}
   end
