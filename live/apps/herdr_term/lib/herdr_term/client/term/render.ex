@@ -274,6 +274,8 @@ defmodule HerdrTerm.Client.Term.Render do
 
   # An equal key is stored anyway: it holds the scene's own terms, so later per-frame
   # compares are pointer-equal instead of deep.
+  defp chrome(%{scene: nil} = state), do: state
+
   defp chrome(%{scene: scene, theme: theme} = state) do
     key = {scene.chrome, scene.size, theme}
 

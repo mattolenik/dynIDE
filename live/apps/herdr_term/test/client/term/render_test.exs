@@ -141,6 +141,15 @@ defmodule HerdrTerm.Client.Term.RenderTest do
       assert Theme.style(st.theme, :accent).fg == {:rgb, 30, 102, 245}
     end
 
+    test "caps before the first scene are kept and applied", %{render: render} do
+      send(render, {:caps, %{scheme: :light}})
+      assert %{appearance: :light, scene: nil} = :sys.get_state(render)
+      auto = %{name: "nord", auto_switch: true, light: "catppuccin-latte", dark: "dracula"}
+      send(render, {:scene, with_theme(Fixture.load("single_pane_80x24"), auto)})
+      assert_receive {:frame, _, _}
+      assert Theme.style(:sys.get_state(render).theme, :accent).fg == {:rgb, 30, 102, 245}
+    end
+
     test "an unchanged theme and appearance keep the theme term", %{render: render} do
       send(render, {:scene, with_theme(Fixture.load("single_pane_80x24"), @latte)})
       assert_receive {:frame, _, _}
