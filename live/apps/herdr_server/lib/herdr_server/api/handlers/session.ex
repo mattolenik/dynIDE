@@ -38,23 +38,34 @@ defmodule HerdrServer.Api.Handlers.Session do
     {:ok, %{type: "client_list", clients: clients}}
   end
 
+  @doc false
+  # what has focus; a key is left out when there is none (no workspace, no tab, no pane)
+  @spec focused(map()) :: map()
+  def focused(app) do
+    ws = app.session.active_workspace && View.find_workspace(app, app.session.active_workspace)
+    tab = ws && ws.active_tab
+
+    [
+      workspace_id: ws && Ids.workspace(ws.id),
+      tab_id: tab && Ids.tab(ws.id, tab),
+      pane_id: app.focus.pane && Ids.pane(app.focus.pane)
+    ]
+    |> Enum.reject(fn {_, v} -> v in [nil, false] end)
+    |> Map.new()
+  end
+
   @spec snapshot() :: {:ok, map()}
   def snapshot do
     app = Topology.app!()
     wss = app.session.workspaces
     tabs = for ws <- wss, tab <- ws.tabs, do: {ws, tab}
-    ws = View.find_workspace(app, app.session.active_workspace)
 
     {:ok,
      %{
        type: "session_snapshot",
        version: Server.version(),
        session: info(),
-       focused: %{
-         workspace_id: Ids.workspace(app.session.active_workspace),
-         tab_id: Ids.tab(ws.id, ws.active_tab),
-         pane_id: Ids.pane(app.focus.pane)
-       },
+       focused: focused(app),
        workspaces: Enum.map(wss, &View.workspace(app, &1)),
        tabs: for({w, t} <- tabs, do: View.tab(app, w, t)),
        panes: for({w, t} <- tabs, p <- View.panes(app, w, t), do: p),

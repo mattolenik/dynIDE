@@ -772,9 +772,9 @@ defmodule HerdrServer.Api.Spec do
         f("connected", :boolean)
       ],
       "focus" => [
-        f("workspace_id", :workspace_id),
-        f("tab_id", :tab_id),
-        f("pane_id", :pane_id)
+        f("workspace_id", :workspace_id, false),
+        f("tab_id", :tab_id, false),
+        f("pane_id", :pane_id, false)
       ],
       "layout" => [
         f("tab_id", :tab_id),

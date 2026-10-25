@@ -38,6 +38,21 @@ defmodule HerdrServer.Api.SessionTest do
              ApiClient.call(s, "session.get", %{"name" => "other"})
   end
 
+  test "snapshot focus leaves out what has no focus" do
+    alias HerdrServer.Api.Handlers.Session
+
+    app = fn ws, wss, pane ->
+      %{session: %{active_workspace: ws, workspaces: wss}, focus: %{pane: pane}}
+    end
+
+    assert Session.focused(app.(nil, [], nil)) == %{}
+    assert Session.focused(app.(2, [%{id: 1, active_tab: 1}], nil)) == %{}
+    assert Session.focused(app.(1, [%{id: 1, active_tab: nil}], nil)) == %{workspace_id: "w1"}
+
+    assert Session.focused(app.(1, [%{id: 1, active_tab: 2}], 3)) ==
+             %{workspace_id: "w1", tab_id: "w1:t2", pane_id: "p3"}
+  end
+
   test "snapshot ids match the list methods", %{s: s} do
     ok!(s, "workspace.create", %{"label" => "b"})
     ok!(s, "tab.create", %{"workspace_id" => "w1"})
