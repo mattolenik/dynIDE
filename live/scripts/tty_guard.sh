@@ -19,6 +19,8 @@
 # and the script waits for it. Exits with the command's status; with -s, a
 # signal that reached this script turns a zero status into 1 (live-demo).
 # Without a controlling terminal it just runs the command.
+# With HERDR_GUARD_EVENT_LOG set (herdr-live), a command killed by a signal this
+# script did not forward appends `herdr-event broker_killed ts=<ms> signal=<n>` to it.
 set -u
 signal_fails=0
 [ "${1:-}" = -s ] && { signal_fails=1; shift; }
@@ -38,6 +40,10 @@ while [ -z "$status" ]; do
   kill -0 "$child" 2>/dev/null || status=$st
 done
 vm_status=$status
+# the child was killed by a signal we did not forward (kill -9 of the broker):
+# herdr-live records it so log_summary.py counts an operator kill, not a loss
+[ -n "${HERDR_GUARD_EVENT_LOG:-}" ] && [ "$status" -gt 128 ] && [ "$sig" = 0 ] &&
+  echo "herdr-event broker_killed ts=$(date +%s)000 signal=$((status - 128))" >>"$HERDR_GUARD_EVENT_LOG"
 [ "$signal_fails" = 1 ] && [ "$sig" = 1 ] && [ "$status" = 0 ] && status=1
 # shellcheck disable=SC2046 # word-splits the two numbers on purpose
 foreground() { set -- $(ps -o tpgid= -o pgid= -p $$ 2>/dev/null); [ "$#" = 2 ] && [ "$1" = "$2" ]; }

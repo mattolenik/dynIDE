@@ -2,8 +2,8 @@
 # herdr-live launcher (dev build). Usage: herdr-live [kernel-restart | status | <verb> ...]
 # With no argument it builds native/herdr_broker and execs `herdr_broker run`,
 # which supervises the VMs (warm standby, fd holding, handoff on kill -9 or
-# kernel-restart) and restores the host tty at exit (it replaces
-# scripts/tty_guard.sh here). The VMs never touch stdio: stdin is /dev/null
+# kernel-restart) and restores the host tty at exit; attached, scripts/tty_guard.sh
+# runs it and restores the tty when the broker itself is killed (kill -9). The VMs never touch stdio: stdin is /dev/null
 # and stdout/stderr (broker log lines, first-compile output) go to the log.
 # HERDR_LIVE_HEADLESS=1 (inherited by the VMs) starts no terminal client.
 # HERDR_LIVE_RUNTIME_DIR picks the broker socket dir (read by the broker).
@@ -167,4 +167,9 @@ exec </dev/null >>"$log" 2>&1
 build || exit 1
 # +Bi: the VMs share the broker's process group, so a terminal ^C must not
 # open the BEAM break menu (the broker turns SIGINT into a clean stop).
-exec "$broker" run -- elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt
+[ "${HERDR_LIVE_HEADLESS:-}" = 1 ] &&
+  exec "$broker" run -- elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt
+# attached: tty_guard.sh is the backstop for a broker that cannot run its own
+# restore (kill -9); it logs that as broker_killed (an operator kill, not a loss)
+export HERDR_GUARD_EVENT_LOG="$log"
+exec "$root/scripts/tty_guard.sh" "$broker" run -- elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt

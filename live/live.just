@@ -33,6 +33,7 @@ live-check:
     python3 '{{live_dir}}/scripts/tty_harness.py' agent
     python3 '{{live_dir}}/scripts/tty_harness.py' plugins
     python3 '{{live_dir}}/scripts/tty_harness.py' remote
+    python3 '{{live_dir}}/scripts/tty_harness.py' broker-kill
 
 # Summarise a herdr-live log (reloads, rollbacks, handoffs, restores, session losses); args: [LOG ...] [--since ISO] [--json]
 live-log-summary *args:

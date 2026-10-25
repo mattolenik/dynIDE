@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end host tty checks for HerdrTerm.Native.Tty under a real pty.
 
-Usage: tty_harness.py destructor|demo|herdr|herdr-stress|selfhost|persist|agent|plugins|remote [-v]
+Usage: tty_harness.py destructor|demo|herdr|herdr-stress|selfhost|persist|agent|plugins|remote|broker-kill [-v]
 
 destructor: runs scripts/tty_destructor.exs in the BEAM as the pty's session
 leader. Answers each kitty/DA1 probe, then checks: the destructor of a killed
@@ -93,7 +93,13 @@ echo still reaches A; prefix q ends only B (exit 0, tty restored), A answers, A
 quits; log_summary.py reports clients attaches >= 2 and session_losses 0. On a
 failure the client and server log tails are printed.
 
-herdr, herdr-stress, selfhost, persist, agent, plugins and remote launch bin/herdr-live and compile into the
+broker-kill: the same launch (120x40), then kill -9 of the broker (its pid from
+`bin/herdr-live status`): tty_guard.sh restores the tty (settings unchanged, mouse
+off, alt screen left), the launcher exits 137 and the log has broker_killed. A
+second launch gets SIGTERM on the launcher pid: the guard forwards TERM to the
+broker, a clean stop (exit 0, settings unchanged, no broker_killed).
+
+herdr, herdr-stress, selfhost, persist, agent, plugins, remote and broker-kill launch bin/herdr-live and compile into the
 shared _build/dev, so they skip (print SKIP, exit 0) inside a herdr-live pane:
 pane shells inherit the VM's HERDR_BROKER_SOCK. Run them outside the dogfood
 instance (another terminal or worktree).
@@ -761,6 +767,48 @@ def herdr():
         print("--- screen", h.screen.text(), sep="\n")
 
 
+def wait_exit(h, label):
+    """Pumps the pty until the launcher pid exits; returns its wait status."""
+    while True:
+        if time.monotonic() > DEADLINE:
+            fail(f"timed out waiting for herdr-live to exit after {label}")
+        h.pump()
+        pid, st = os.waitpid(h.pid, os.WNOHANG)
+        if pid:
+            pgroups.discard(h.pid)
+            h.pump(0.1)
+            return st
+
+
+def broker_kill():
+    with tempfile.TemporaryDirectory() as tmp:
+        compile_then_start_clock(tmp)
+        h = Herdr(tmp, 120, 40)
+        h.start()
+        rc, out = h.cli("status")
+        m = re.search(r"^broker_pid=(\d+)$", out, re.M)
+        ok(rc == 0 and m, f"broker-kill: status prints broker_pid ({out!r})")
+        at = len(transcript)
+        os.kill(int(m.group(1)), signal.SIGKILL)
+        st = wait_exit(h, "kill -9 of the broker")
+        tail = bytes(transcript[at:])
+        ok(os.WIFEXITED(st) and os.WEXITSTATUS(st) == 137,
+           f"broker-kill: the launcher exits with the broker's status 137 (got {st})")
+        ok(config(h.master) == h.before, "broker-kill: tty settings unchanged after kill -9 of the broker")
+        ok(ALT_OFF in tail and b"\x1b[?1000l" in tail,
+           "broker-kill: restore sequence written (mouse off, alt screen left)")
+        ok("broker_killed" in open(h.log).read(), "broker-kill: log has broker_killed")
+        # SIGTERM to the launcher reaches the broker as TERM through the guard: a clean stop
+        h2 = Herdr(tmp, 120, 40, run="-term")
+        h2.start()
+        os.kill(h2.pid, signal.SIGTERM)
+        st = wait_exit(h2, "SIGTERM")
+        ok(os.WIFEXITED(st) and os.WEXITSTATUS(st) == 0,
+           f"broker-kill: SIGTERM to the launcher exits 0 (got {st})")
+        ok(config(h2.master) == h2.before, "broker-kill: tty settings unchanged after SIGTERM")
+        ok("broker_killed" not in open(h2.log).read(), "broker-kill: no broker_killed after SIGTERM")
+
+
 def herdr_stress():
     global DEADLINE
     with tempfile.TemporaryDirectory() as tmp:
@@ -1354,13 +1402,14 @@ def plugins():
 if __name__ == "__main__":
     modes = {"destructor": destructor, "demo": demo, "herdr": herdr, "herdr-stress": herdr_stress,
              "selfhost": selfhost, "persist": persist, "agent": agent, "remote": remote,
-             "plugins": plugins}
+             "plugins": plugins,
+             "broker-kill": broker_kill}
     args = [a for a in sys.argv[1:] if a != "-v"]
     if len(args) != 1 or args[0] not in modes:
         sys.exit(__doc__)
     # a pane of a running herdr-live inherits the VM's env: these modes would compile into
     # and reload that instance's own _build
-    if args[0] in ("herdr", "herdr-stress", "selfhost", "persist", "agent", "remote", "plugins") and os.environ.get("HERDR_BROKER_SOCK"):
+    if args[0] in ("herdr", "herdr-stress", "selfhost", "persist", "agent", "remote", "plugins", "broker-kill") and os.environ.get("HERDR_BROKER_SOCK"):
         print(f"SKIP: {args[0]}: running inside herdr-live (run live-check outside it, see editing-live.md)")
         sys.exit(0)
     # CI cancellation: let `finally` kill the process groups.
