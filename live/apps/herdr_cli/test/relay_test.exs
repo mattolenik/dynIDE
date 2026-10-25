@@ -87,6 +87,12 @@ defmodule HerdrCli.RelayTest do
     assert out =~ "no client token at"
   end
 
+  test "an empty token file is no token", %{dir: dir, env: env} do
+    File.write!(Path.join(dir, "client.token"), " \n")
+    {1, out} = collect(start_relay(env))
+    assert out =~ "no client token at"
+  end
+
   test "attach-relay --help prints usage without connecting", %{env: env} do
     port = start_relay(env, ["--help"])
     assert {0, "usage: herdr-live attach-relay" <> _} = collect(port)

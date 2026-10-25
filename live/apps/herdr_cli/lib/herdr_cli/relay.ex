@@ -44,14 +44,19 @@ defmodule HerdrCli.Relay do
   end
 
   defp token(path) do
-    case File.read(path) do
-      {:ok, token} -> {:ok, String.trim(token)}
-      {:error, _} -> {:error, "no client token at #{path} (is herdr-live running?)"}
+    with {:ok, t} <- File.read(path),
+         t when t != "" <- String.trim(t) do
+      {:ok, t}
+    else
+      _ -> {:error, "no client token at #{path} (is herdr-live running?)"}
     end
   end
 
   defp connect(path) do
-    case :gen_tcp.connect({:local, path}, 0, [:binary, packet: :raw, active: :once]) do
+    # a wedged server must not block the relay forever
+    opts = [:binary, packet: :raw, active: :once, send_timeout: 30_000, send_timeout_close: true]
+
+    case :gen_tcp.connect({:local, path}, 0, opts) do
       {:ok, socket} -> {:ok, socket}
       {:error, r} -> {:error, "cannot connect to #{path}: #{inspect(r)}"}
     end
