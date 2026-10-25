@@ -193,11 +193,14 @@ Open items of M18 itself ([m18](../results/m18.md)):
   fails with `fetch_failed` until a manifest is hosted; `--manifest URL` works today.
 - Signing and notarization have only been dry-run. A locally built tarball is ad-hoc
   signed, and a quarantined download is refused by Gatekeeper.
-- A local build trusts the dev update key from `keygen.sh`. A real build must set
+- A local build trusts the dev update key from `keygen.sh` only with `build.sh --dev-key`;
+  without it and without `HERDR_LIVE_UPDATE_PUBKEY` it trusts no key. A real build must set
   `HERDR_LIVE_UPDATE_PUBKEY` (see [signing.md](signing.md)).
 - The Homebrew formula is macOS arm64 only and was tested in a throwaway brew. The Nix flake
   is untested (no nix on the build host). Both install a flat tree, and `herdr-live update`
-  refuses there (`managed_install`).
+  refuses there (`managed_install`). Run `herdr-live kernel-restart` after `brew upgrade`
+  or a nix switch: the running instance is pinned to the old path, which the upgrade (or
+  nix garbage collection) deletes.
 - Linux needs the OS's `libcrypto.so.3`, `libtinfo.so.6` and glibc 2.39 or newer (Ubuntu
   24.04 has them).
 - A killed update leaves `<lib>/.update.lock`; the next run takes it over once its pid is

@@ -110,12 +110,33 @@ replaced; a full stop and start picks up a new one.
 ## Exit codes and errors
 
 0 updated, up to date, or `--check`; 1 refused; 2 usage. A refusal prints one JSON object
-on stderr, `{"code": "...", "message": "..."}`, with `code` one of `no_trusted_keys`,
-`no_manifest_url`, `fetch_failed`, `bad_signature`, `bad_schema`, `unsupported_schema`,
-`not_installed`, `no_artifact`, `locked`, `size_mismatch`, `sha256_mismatch`,
-`bad_tarball`, `install_failed`, `broker_unreachable`, `foreign_broker`, `restart_failed`,
-`restart_did_not_switch`. Every refusal
-leaves `current` as it was.
+on stderr, `{"code": "...", "message": "..."}`. Every refusal leaves `current` as it was.
+
+| code | meaning |
+|---|---|
+| `managed_install` | Homebrew or Nix owns this install (`releases/managed-by`); update with that package manager |
+| `not_a_release` | the CLI runs from neither a release nor a source tree |
+| `not_installed` | a source checkout (only `--check` works), or not the `install.sh` layout |
+| `no_trusted_keys` | the release was built with no update key |
+| `no_manifest_url` | no `--manifest`, `HERDR_LIVE_UPDATE_URL` or `releases/<V>/update.url` |
+| `fetch_failed` | the manifest, its `.sig` or the artifact could not be fetched (or a refused redirect) |
+| `bad_signature`, `bad_schema`, `unsupported_schema` | the manifest does not verify or is not schema 1 |
+| `no_artifact` | the manifest has no artifact for this OS and arch |
+| `locked` | another update holds `.update.lock` |
+| `size_mismatch`, `sha256_mismatch` | the download is not the manifest's artifact |
+| `bad_tarball` | the tarball has entries outside `herdr-live-<v>/`, links, or is not release `<v>` |
+| `install_failed` | a filesystem step failed, or `releases/<v>` exists and is not that release |
+| `broker_unreachable` | a broker exists but did not answer `status`; `releases/<v>` is installed |
+| `foreign_broker` | the broker on this runtime dir runs a source checkout or another prefix's release; nothing restarted, `releases/<v>` installed |
+| `restart_failed` | kernel-restart into `<v>` failed; the old VM thawed, `releases/<v>` kept |
+| `restart_did_not_switch` | kernel-restart reported ok but `ping` does not answer `<v>` |
+
+After `restart_failed`, `broker_unreachable` or `foreign_broker`, fix the cause and re-run
+`herdr-live update --yes`: the installed `releases/<v>` is reused. After
+`restart_did_not_switch` the broker's VM argv already names `releases/<v>` while `current`
+still names the old release. Re-running `herdr-live update --yes` completes the switch
+(restart into `<v>`, ping, flip). A plain `herdr-live kernel-restart` resolves `current`
+instead and returns the instance to the old release.
 
 ## Making a manifest
 

@@ -22,6 +22,10 @@ class HerdrLive < Formula
     <<~EOS
       Updates come from Homebrew (brew upgrade herdr-live); `herdr-live update`
       only works for installs made with install.sh.
+
+      A running instance stays pinned to the keg it started from, which brew upgrade
+      removes. After brew upgrade herdr-live, run `herdr-live kernel-restart` to move
+      the running sessions to the new version.
     EOS
   end
 

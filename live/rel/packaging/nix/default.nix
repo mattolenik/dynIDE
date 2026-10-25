@@ -38,8 +38,15 @@ stdenv.mkDerivation {
   '';
 
   # Updates come from the package manager (nix flake update / rebuild); `herdr-live update`
-  # only works for installs made with install.sh.
+  # only works for installs made with install.sh. A running instance stays pinned to its
+  # store path, which garbage collection removes: run `herdr-live kernel-restart` after a
+  # switch to a new version (longDescription says so to users).
   meta = {
+    longDescription = ''
+      A running instance stays pinned to the store path it started from. After switching
+      to a new version (and before garbage collection), run `herdr-live kernel-restart`
+      to move the running sessions onto it.
+    '';
     homepage = "https://github.com/mattolenik/herdr"; # the human confirms this at publish
     license = lib.licenses.asl20;
     description = "Terminal multiplexer for AI agents that you can edit while it runs";

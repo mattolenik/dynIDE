@@ -39,6 +39,11 @@ herdr-live             # start an instance in this terminal
 herdr-live attach      # join the running instance (a second `herdr-live` refuses, exit 2)
 ```
 
+Homebrew and Nix installs update through the package manager. A running instance stays
+pinned to the path it started from, and `brew upgrade` (or a nix switch followed by
+garbage collection) deletes that path: run `herdr-live kernel-restart` after `brew
+upgrade` or a nix switch, so the running sessions move to the new version.
+
 The release is a production build: hot reload is off, and there is no Erlang
 distribution or remote shell. To edit herdr-live while it runs, use a source checkout
 ([editing-live.md](editing-live.md)).
