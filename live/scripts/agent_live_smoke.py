@@ -230,6 +230,8 @@ def main():
     for k in [k for k in os.environ if k.startswith(("HERDR_", "CLAUDE")) or k == "TERM_PROGRAM"]:
         del os.environ[k]
     os.environ["HERDR_LIVE_PERSIST"] = "0"
+    # th.Herdr sets its own HERDR_LIVE_STATE_DIR per run; this default keeps any other launch isolated too
+    os.environ["HERDR_LIVE_STATE_DIR"] = os.path.join(tmp, "state")
     th.compile_then_start_clock(tmp)
     th.DEADLINE = time.monotonic() + 3600
     h = th.Herdr(tmp, 120, 40)
