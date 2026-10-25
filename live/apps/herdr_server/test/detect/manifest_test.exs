@@ -136,4 +136,11 @@ defmodule HerdrServer.Detect.ManifestTest do
     assert {:match, _} = :re.run(~S"\u2800", mp)
     assert {:error, _} = Manifest.compile_regex("(")
   end
+
+  test "compile_regex: $ matches only at the end of the text unless (?m), as in Rust" do
+    assert {:ok, mp} = Manifest.compile_regex("a$")
+    assert :nomatch = :re.run("a\n", mp)
+    assert {:ok, mp} = Manifest.compile_regex("(?m)a$")
+    assert {:match, _} = :re.run("a\nb", mp)
+  end
 end

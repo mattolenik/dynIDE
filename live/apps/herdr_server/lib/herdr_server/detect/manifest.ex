@@ -4,7 +4,7 @@ defmodule HerdrServer.Detect.Manifest do
 
   Pure. Ports herdr's `parse_manifest`, `validate_manifest` and `compile_gate`
   (src/detect/manifest.rs): unknown keys are rejected, limits and messages
-  match herdr, and regexes compile under `:re` (PCRE2) with `[:unicode, :ucp]`.
+  match herdr, and regexes compile under `:re` (PCRE2) with `[:unicode, :ucp, :dollar_endonly]`.
   """
 
   defmodule Gate do
@@ -110,7 +110,7 @@ defmodule HerdrServer.Detect.Manifest do
   # `\\` pairs are consumed first so an escaped backslash before `u` is kept.
   @spec compile_regex(binary) :: {:ok, :re.mp()} | {:error, binary}
   def compile_regex(src) do
-    case :re.compile(pcre(src), [:unicode, :ucp]) do
+    case :re.compile(pcre(src), [:unicode, :ucp, :dollar_endonly]) do
       {:ok, mp} -> {:ok, mp}
       {:error, {msg, pos}} -> {:error, "#{msg} at position #{pos}"}
     end
