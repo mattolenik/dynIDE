@@ -18,7 +18,8 @@ draw pane (prefix x, confirm). After each step the visible placements of each pa
 rect relative to the pane's content rect, source size, image pixel size) are compared,
 herdr against herdr-live, plus checks of each on its own (counts, nothing outside a pane,
 scroll moved the draw pane's placements, nothing of the draw pane left after close).
-Prints a PASS or FAIL line per step; exit 1 on any FAIL. -v dumps the models and screens.
+herdr-live's placements are clipped to herdr's scrollbar gutter (pane width - 1, M9 ruling
+2) before the compare. Prints a PASS or FAIL line per step; exit 1 on any FAIL. -v dumps the models and screens.
 
 Usage: graphics.py [-v] [--only herdr|herdr-live]
 """
@@ -211,7 +212,7 @@ def view(k):
     boxed = bool(rects)
     rects = rects or [(0, 0, 10_000, 10_000)]
     snap = {"per": [[] for _ in rects], "ids": [set() for _ in rects], "bottom": [{} for _ in rects],
-            "images": set(k.images), "problems": []}
+            "images": set(k.images), "problems": [], "widths": [w for _, _, w, _ in rects] if boxed else None}
     for (iid, pid), p in sorted(k.placements.items()):
         img = k.images.get(iid)
         if img is None:
@@ -327,6 +328,24 @@ def scenario(d, tmp, png):
     return out
 
 
+def gutter(snap):
+    """`snap["per"]` clipped to herdr's pane width: herdr narrows each pane's pty by one
+    column for its scrollbar gutter, herdr-live keeps the full width and covers the column
+    only while the scrollbar shows (M9 ruling 2), so its placements may use one more column.
+    The source width is scaled by the same clip (floored, as herdr)."""
+    if snap["widths"] is None:
+        return snap["per"]
+    out = []
+    for pane, width in zip(snap["per"], snap["widths"]):
+        clipped = []
+        for x, y, cols, rows, sw, sh, iw, ih in pane:
+            keep = min(cols, width - 1 - x)
+            if keep > 0:
+                clipped.append((x, y, keep, rows, sw * keep // cols, sh, iw, ih))
+        out.append(sorted(clipped))
+    return out
+
+
 def own_checks(name, steps):
     """{step: [problem]} for one multiplexer on its own."""
     by = dict(steps)
@@ -412,11 +431,15 @@ def main():
                 pass
         shutil.rmtree(tmp, ignore_errors=True)
     checks = {name: own_checks(name, steps) for name, steps in results.items()}
+    if len(results) == 2:
+        print("NOTE herdr-live placements are clipped to pane width - 1 before the compare (herdr's "
+              "scrollbar gutter, M9 ruling 2), source widths scaled alike")
     for i, step in enumerate(s for s, _ in next(iter(results.values()), [])):
         problems = [p for c in checks.values() for p in c.get(step, [])]
         views = {name: steps[i][1] for name, steps in results.items() if i < len(steps)}
-        if len(views) == 2 and views["herdr"]["per"] != views["herdr-live"]["per"]:
-            problems.append(f"herdr {views['herdr']['per']} != herdr-live {views['herdr-live']['per']}")
+        if len(views) == 2 and views["herdr"]["per"] != gutter(views["herdr-live"]):
+            problems.append(f"herdr {views['herdr']['per']} != herdr-live (gutter-clipped) "
+                            f"{gutter(views['herdr-live'])}")
         counts = "; ".join(f"{n} {[len(p) for p in v['per']]} ({[len(ids) for ids in v['ids']]} images)"
                            for n, v in views.items())
         if problems:
