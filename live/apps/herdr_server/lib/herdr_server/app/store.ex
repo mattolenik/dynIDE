@@ -593,16 +593,6 @@ defmodule HerdrServer.App.Store do
     state
   end
 
-  defp sweep(state, now) do
-    case Guard.run_twice(Metadata, :expire, [state.app, now], server: reload_server()) do
-      {:ok, {app, fx}} when app == state.app ->
-        Enum.reduce(fx, state, &effect(&2, &1, nil))
-
-      _changed_or_failed ->
-        state |> handle_event({:metadata_expire, now}, nil, nil) |> Mirror.dirty()
-    end
-  end
-
   # one timer, for the earliest pending expiry: an earlier one replaces it
   defp effect(%{expiry: {ref, armed}} = state, {:expire_at, ms}, origin) do
     if ms < armed do
@@ -629,6 +619,16 @@ defmodule HerdrServer.App.Store do
   defp effect(state, other, origin) do
     io(other, origin)
     state
+  end
+
+  defp sweep(state, now) do
+    case Guard.run_twice(Metadata, :expire, [state.app, now], server: reload_server()) do
+      {:ok, {app, fx}} when app == state.app ->
+        Enum.reduce(fx, state, &effect(&2, &1, nil))
+
+      _changed_or_failed ->
+        state |> handle_event({:metadata_expire, now}, nil, nil) |> Mirror.dirty()
+    end
   end
 
   # a restored pane whose recorded cwd cannot be used gets one retry in the Store's cwd
