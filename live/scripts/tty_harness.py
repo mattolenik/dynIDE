@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end host tty checks for HerdrTerm.Native.Tty under a real pty.
 
-Usage: tty_harness.py destructor|demo|herdr|herdr-stress|selfhost|persist|agent|remote [-v]
+Usage: tty_harness.py destructor|demo|herdr|herdr-stress|selfhost|persist|agent|plugins|remote [-v]
 
 destructor: runs scripts/tty_destructor.exs in the BEAM as the pty's session
 leader. Answers each kitty/DA1 probe, then checks: the destructor of a killed
@@ -64,6 +64,25 @@ among them), agent list (stderr has code not_available) and 10 timed pings
 (mean latency printed). Prefix q exits 0 and log_summary.py reports api
 connects >= 5 and session_losses 0.
 
+plugins: M14's exit criterion, two of herdr's example plugins
+(vendor/herdr-plugin-examples, unmodified) end to end. The same launch with its own
+XDG_CONFIG_HOME and XDG_STATE_HOME (plugin registry, checkouts, config and state dirs
+under the temp dir) and a temp bin/ first on PATH with two stubs, so the plugins run
+unmodified and offline: `gh` prints `stub-gh <args>` (github-link-preview's preview.sh
+calls gh) and `nvim` prints stub-nvim (dev-layout-bootstrap runs `nvim .` in the first
+pane). `lua` must be on PATH (setup.lua): the mode fails without it, never skips. From the
+first pane's shell: plugin install of both (--yes), both listed enabled without error;
+plugin action invoke examples.dev-layout-bootstrap.setup succeeds (plugin log list) with
+three panes labelled editor, files, tasks, `ready.` in files and stub-nvim in the editor;
+an OSC 8 link to a GitHub issue printed in the editor, ctrl+clicked through the pty (SGR
+press with the ctrl bit) opens a pane labelled `GitHub preview` showing `github issues #1`
+and the stub gh output; pane link activate --modifier ctrl over the API does the same;
+plugin link of a manifest without version fails with invalid_plugin_version; a linked
+plugin whose manifest is then corrupted lists with its error, cannot run, the examples
+still list clean and run, and the log has its `plugin:` warning line; plugin disable makes
+invoke fail with plugin_disabled, enable, uninstall drops it from plugin list; prefix q
+exits 0 and log_summary.py reports session_losses 0.
+
 remote: M16's remote attach. A (120x40) runs the instance; B (80x24) runs
 `bin/herdr-live attach fakehost` with HERDR_LIVE_SSH=bench/remote/fake_ssh.sh (the
 relay runs locally) and its own transcript: B shows TERMINAL on row 24, an echo
@@ -74,7 +93,7 @@ echo still reaches A; prefix q ends only B (exit 0, tty restored), A answers, A
 quits; log_summary.py reports clients attaches >= 2 and session_losses 0. On a
 failure the client and server log tails are printed.
 
-herdr, herdr-stress, selfhost, persist, agent and remote launch bin/herdr-live and compile into the
+herdr, herdr-stress, selfhost, persist, agent, plugins and remote launch bin/herdr-live and compile into the
 shared _build/dev, so they skip (print SKIP, exit 0) inside a herdr-live pane:
 pane shells inherit the VM's HERDR_BROKER_SOCK. Run them outside the dogfood
 instance (another terminal or worktree).
@@ -96,6 +115,7 @@ import pty
 import re
 import struct
 import select
+import shutil
 import signal
 import subprocess
 import sys
@@ -1172,15 +1192,166 @@ def remote():
         print("--- B screen", b.screen.text(), sep="\n")
 
 
+def plugins():
+    """Two of herdr's example plugins, unmodified, end to end (M14's exit criterion)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        compile_then_start_clock(tmp)
+        t = lambda *name: os.path.join(tmp, *name)
+        # offline stubs first on the PATH: github-link-preview's preview.sh calls gh (network),
+        # dev-layout-bootstrap's setup.lua runs `nvim .` in the first pane
+        os.makedirs(t("bin"))
+        for name, body in (("gh", 'echo "stub-gh $*"'), ("nvim", "echo stub-nvim")):
+            with open(t("bin", name), "w") as f:
+                f.write(f"#!/bin/sh\n{body}\n")
+            os.chmod(t("bin", name), 0o755)
+        path = t("bin") + os.pathsep + os.environ.get("PATH", "")
+        if not shutil.which("lua", path=path):
+            fail("plugins: dev-layout-bootstrap runs `lua setup.lua`: no lua on PATH (brew install lua, apt install lua5.4)")
+        h = Herdr(tmp, 120, 40, extra_env={"PATH": path, "XDG_CONFIG_HOME": t("xdg-config"),
+                                           "XDG_STATE_HOME": t("xdg-state")})
+        h.start()
+        examples = os.path.join(os.path.dirname(LIVE), "vendor", "herdr-plugin-examples")
+        layout, preview = "examples.dev-layout-bootstrap", "examples.github-link-preview"
+        bin_ = '"$HERDR_LIVE_BIN"'
+
+        def shell(cmd, done, label, timeout=60):
+            """Types `cmd` into the focused (first) pane, then waits for `touch done`."""
+            h.send(f"{cmd}; touch {t(done)}\r".encode())
+            h.until(lambda: os.path.exists(t(done)), label, timeout=timeout)
+
+        def cli_json(*args):
+            code, out = h.cli(*args)
+            if code != 0:
+                fail(f"plugins: herdr-live {' '.join(args)} exits {code} ({out.strip()[-300:]})")
+            return json.loads(out)
+
+        def listed():
+            return {p["plugin_id"]: p for p in cli_json("plugin", "list", "--json")["plugins"]}
+
+        def panes():
+            return cli_json("pane", "list")["panes"]
+
+        def logs(plugin):
+            return cli_json("plugin", "log", "list", "--plugin", plugin)["logs"]
+
+        def ended(plugin, n):
+            """The newest record once `plugin` has more than `n` finished ones."""
+            done = [r for r in logs(plugin) if r.get("status") != "running"]
+            return done[0] if len(done) > n else None
+
+        # 1. install both from the first pane's shell
+        shell(f"{bin_} plugin install {examples}/dev-layout-bootstrap --yes > {t('i1.json')} 2>&1"
+              f"; {bin_} plugin install {examples}/github-link-preview --yes > {t('i2.json')} 2>&1",
+              "s1", "plugin install of both examples")
+        got = listed()
+        ok(all(got.get(i, {}).get("enabled") and not got[i].get("error") for i in (layout, preview)),
+           "plugins: install of dev-layout-bootstrap and github-link-preview, both listed enabled without error"
+           + ("" if all(i in got for i in (layout, preview))
+              else f" ({read_text(t('i1.json'))[-300:]} {read_text(t('i2.json'))[-300:]})"))
+
+        # 2. dev layout: three named panes
+        shell(f"echo \"$HERDR_PANE_ID\" > {t('me.txt')}; {bin_} plugin action invoke {layout}.setup"
+              f" > {t('inv.json')} 2>&1", "s2", "plugin action invoke setup")
+        h.until(lambda: ended(layout, 0), "the setup run to end", timeout=60)
+        run = ended(layout, 0)
+        ok(run.get("status") == "succeeded", f"plugins: plugin log has the setup run succeeded"
+           f" (exit {run.get('exit_code')}, stdout {run.get('stdout', '')[:40]!r})")
+        names = {p.get("label"): p["pane_id"] for p in panes()}
+        ok(len(names) == 3 and {"editor", "files", "tasks"} <= set(names),
+           f"plugins: dev-layout-bootstrap made 3 panes named editor, files, tasks ({names})")
+        editor = read_text(t("me.txt")).strip()
+        ok(names["editor"] == editor, f"plugins: the editor is the invoking pane {editor}")
+        h.until(lambda: "ready." in h.cli("pane", "read", names["files"])[1], "ready. in the files pane", timeout=30)
+        h.until(lambda: "stub-nvim" in h.cli("pane", "read", editor)[1], "stub-nvim in the editor pane", timeout=30)
+        ok(True, "plugins: files pane shows ready., editor ran the stub nvim")
+
+        # 3. an OSC 8 link in the editor, ctrl+clicked through the pty
+        url = "https://github.com/ogulcancelik/herdr/issues/1"
+        with open(t("link.sh"), "w") as f:
+            f.write(f"printf '\\033]8;;{url}\\033\\\\issue-link\\033]8;;\\033\\\\\\n'\n")
+        shell(f"clear; sh {t('link.sh')}", "s3", "the OSC 8 link printed")
+        h.until(lambda: h.shows("issue-link"), "issue-link on the screen", timeout=30)
+        y, x = next((y, r.index("issue-link")) for y, r in enumerate(h.screen.rows()) if "issue-link" in r)
+
+        def previews():
+            return [p["pane_id"] for p in panes() if p.get("label") == "GitHub preview"]
+
+        def preview_text(pane):
+            text = h.cli("pane", "read", pane)[1]
+            return text if "github issues #1" in text and "stub-gh issue view 1" in text else None
+
+        at = f"{x + 3};{y + 1}".encode()
+        h.send(b"\x1b[<16;" + at + b"M\x1b[<16;" + at + b"m")
+        first = h.until(lambda: previews(), "a GitHub preview pane after the ctrl+click", timeout=60)[0]
+        text = h.until(lambda: preview_text(first), "github issues #1 and stub-gh in the preview", timeout=30)
+        ok(True, f"plugins: ctrl+click at screen ({x + 2},{y}) opened GitHub preview {first} with github issues #1"
+                 " and the stub gh output")
+        cli_json("pane", "close", first)
+        h.until(lambda: not previews(), "the preview closed", timeout=30)
+        # `clear` before the link: it sits at the editor's viewport row 0, col 0
+        act = cli_json("pane", "link", "activate", editor, "--col", "2", "--row", "0", "--modifier", "ctrl")
+        ok(act.get("url") == url and act.get("handled") is True, f"plugins: pane link activate handled {act}")
+        second = h.until(lambda: previews(), "a GitHub preview pane after pane link activate", timeout=60)[0]
+        h.until(lambda: preview_text(second), "the second preview's text", timeout=30)
+        ok(True, f"plugins: pane link activate over the API opened GitHub preview {second}")
+        cli_json("pane", "close", second)
+
+        # 4. a manifest without version, then a linked plugin whose manifest breaks
+        os.makedirs(t("broken"))
+        with open(t("broken", "herdr-plugin.toml"), "w") as f:
+            f.write('id = "smoke.broken"\nname = "Broken"\nmin_herdr_version = "0.7.0"\n')
+        code, out = h.cli("plugin", "link", t("broken"))
+        ok(code != 0 and "invalid_plugin_version" in out, f"plugins: link without version fails ({out.strip()})")
+        os.makedirs(t("good"))
+        manifest = t("good", "herdr-plugin.toml")
+        with open(manifest, "w") as f:
+            f.write('id = "smoke.good"\nname = "Good"\nversion = "0.1.0"\nmin_herdr_version = "0.7.0"\n'
+                    '[[actions]]\nid = "hi"\ntitle = "Hi"\ncommand = ["echo", "hi"]\n')
+        cli_json("plugin", "link", t("good"))
+        with open(manifest, "w") as f:
+            f.write("id = [\n")
+        got = listed()
+        err = got.get("smoke.good", {}).get("error")
+        ok(err, f"plugins: a corrupted manifest lists with error ({err})")
+        ok(all(not got[i].get("error") for i in (layout, preview)), "plugins: the two examples list without error")
+        for plugin, action in ((preview, "open"), ("smoke.good", "hi")):
+            code, out = h.cli("plugin", "action", "invoke", f"{plugin}.{action}")
+            if plugin == "smoke.good":
+                ok(code != 0, f"plugins: the broken plugin cannot run ({out.strip()})")
+            else:
+                if code != 0:
+                    fail(f"plugins: {plugin}.{action} invoke failed ({out.strip()})")
+                h.until(lambda: ended(preview, 2), f"{preview}.open to end", timeout=30)
+                ok(ended(preview, 2)["status"] == "succeeded", f"plugins: {preview}.open still runs (succeeded)")
+        h.until(lambda: "plugin: smoke.good:" in read_text(h.log), "the plugin warning line", timeout=30)
+        ok(True, "plugins: the log has a plugin warning line for smoke.good")
+
+        # 5. disable, enable, uninstall
+        cli_json("plugin", "disable", preview)
+        code, out = h.cli("plugin", "action", "invoke", f"{preview}.open")
+        ok(code != 0 and "plugin_disabled" in out, f"plugins: invoke of a disabled plugin fails ({out.strip()})")
+        cli_json("plugin", "enable", preview)
+        ok(listed()[preview].get("enabled"), "plugins: plugin enable")
+        cli_json("plugin", "uninstall", preview)
+        got = listed()
+        ok(preview not in got and layout in got, f"plugins: uninstall lists without it ({sorted(got)})")
+        h.quit()
+        s = log_json(h.log)
+        ok(s["session_losses"] == 0, f"plugins: log summary session_losses 0 ({s['session_losses']})")
+    if verbose:
+        print("--- screen", h.screen.text(), sep="\n")
+
+
 if __name__ == "__main__":
     modes = {"destructor": destructor, "demo": demo, "herdr": herdr, "herdr-stress": herdr_stress,
-             "selfhost": selfhost, "persist": persist, "agent": agent, "remote": remote}
+             "selfhost": selfhost, "persist": persist, "agent": agent, "remote": remote,
+             "plugins": plugins}
     args = [a for a in sys.argv[1:] if a != "-v"]
     if len(args) != 1 or args[0] not in modes:
         sys.exit(__doc__)
     # a pane of a running herdr-live inherits the VM's env: these modes would compile into
     # and reload that instance's own _build
-    if args[0] in ("herdr", "herdr-stress", "selfhost", "persist", "agent", "remote") and os.environ.get("HERDR_BROKER_SOCK"):
+    if args[0] in ("herdr", "herdr-stress", "selfhost", "persist", "agent", "remote", "plugins") and os.environ.get("HERDR_BROKER_SOCK"):
         print(f"SKIP: {args[0]}: running inside herdr-live (run live-check outside it, see editing-live.md)")
         sys.exit(0)
     # CI cancellation: let `finally` kill the process groups.
