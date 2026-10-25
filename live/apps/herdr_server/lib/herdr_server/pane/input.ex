@@ -30,14 +30,15 @@ defmodule HerdrServer.Pane.Input do
   @doc """
   Encodes and writes a key. Plain page up/down scroll the host scrollback instead where
   herdr does (`host_scroll?/1`); a pane scrolled back snaps to the bottom first (not
-  on releases); `KeyFallback` applies herdr's legacy key fallbacks.
+  on releases); `KeyFallback` applies herdr's legacy key fallbacks. `host_scroll: false`
+  (API keys) always sends page keys to the child.
   """
-  @spec key(tuple, pos_integer) :: :ok | {:error, term}
-  def key({:key, k}, id) do
+  @spec key(tuple, pos_integer, keyword) :: :ok | {:error, term}
+  def key({:key, k}, id, opts \\ []) do
     with {:ok, vt, pty} <- resolve(id) do
       {scrolled?, pending?, alt?} = Facts.input(id)
 
-      if page_key?(k) and host_scroll?(vt, alt?),
+      if Keyword.get(opts, :host_scroll, true) and page_key?(k) and host_scroll?(vt, alt?),
         do: page(k, id, vt),
         else: send_key(fallback(k, vt), id, vt, pty, scrolled?, pending?)
     end
@@ -50,8 +51,9 @@ defmodule HerdrServer.Pane.Input do
     send_input(id, vt, pty, pending?, &Kernel.vt().encode_key(&1, kernel_mods(k)))
   end
 
-  defp page_key?(%{key: key, mods: []}), do: is_map_key(@page, key)
-  defp page_key?(_k), do: false
+  # lock modifiers are not chords (as in `KeyFallback`)
+  defp page_key?(%{key: key, mods: mods}),
+    do: is_map_key(@page, key) and mods -- [:caps_lock, :num_lock] == []
 
   defp page(%{event: :release}, _id, _vt), do: :ok
 
@@ -98,7 +100,7 @@ defmodule HerdrServer.Pane.Input do
   `origin` (a pid) is told if the queue drops the paste before it is all written.
   """
   @spec paste(binary, pos_integer, pid | nil) ::
-          :ok | {:error, {:too_large, non_neg_integer, non_neg_integer}}
+          :ok | {:error, {:too_large, non_neg_integer, non_neg_integer} | :closed}
   def paste(bin, id, origin \\ nil) do
     max = Application.get_env(:herdr_server, :paste_max_bytes, 16_777_216)
 
@@ -116,9 +118,9 @@ defmodule HerdrServer.Pane.Input do
   defp queue_paste(id, bin, origin, false), do: Server.write(id, bin, origin)
 
   defp queue_paste(id, bin, origin, true) do
-    Server.write(id, "\e[200~")
-    Server.write(id, strip_end_marker(bin), origin)
-    Server.write(id, "\e[201~")
+    with :ok <- Server.write(id, "\e[200~"),
+         :ok <- Server.write(id, strip_end_marker(bin), origin),
+         do: Server.write(id, "\e[201~")
   end
 
   # repeated: removing one marker can join the halves of another

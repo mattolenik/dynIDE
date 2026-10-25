@@ -279,6 +279,23 @@ defmodule HerdrServer.Pane.InputM9Test do
       end
     end
 
+    test "caps lock and num lock do not stop page keys scrolling the host", %{rows: rows} do
+      before = written(1)
+      %{offset: bottom} = Fake.Vt.scrollbar(vt(1))
+      assert Input.key(Event.key(:page_up, [:caps_lock, :num_lock]), 1) == :ok
+      sync(1)
+      assert Fake.Vt.scrollbar(vt(1)).offset == bottom - rows
+      assert written(1) == before
+    end
+
+    test "host_scroll: false sends page keys to the child" do
+      before = written(1)
+      %{offset: bottom} = Fake.Vt.scrollbar(vt(1))
+      assert Input.key(Event.key(:page_up), 1, host_scroll: false) == :ok
+      assert written(1) == before <> "\e[5~"
+      assert Fake.Vt.scrollbar(vt(1)).offset == bottom
+    end
+
     test "page up with a modifier goes to the child" do
       before = written(1)
       Input.key(Event.key(:page_up, [:shift]), 1)

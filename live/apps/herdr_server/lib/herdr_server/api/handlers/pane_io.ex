@@ -8,21 +8,26 @@ defmodule HerdrServer.Api.Handlers.PaneIo do
   alias HerdrServer.Api.{Ids, Keys}
   alias HerdrServer.App.Store
   alias HerdrServer.Kernel
-  alias HerdrServer.Pane.{Input, Rows}
+  alias HerdrServer.Pane.{Facts, Input, Rows, Server}
 
   @chunk 65_536
   @recent_default 80
 
   @spec handle(String.t(), map()) ::
           {:ok, map()} | {:error, atom(), String.t()} | {:error, atom(), String.t(), map()}
+  # behind a queued paste (`pane.run`) the text queues too, so it cannot overtake it
   def handle("pane.send_text", %{pane_id: id, text: text}) do
-    with {:ok, %{pty: pty}} <- lookup(id), do: write_chunks(pty, text, 0)
+    with {:ok, %{pty: pty}} <- lookup(id) do
+      if Facts.pending?(id),
+        do: Server.write(id, text) |> send_err() |> ok(),
+        else: write_chunks(pty, text, 0)
+    end
   end
 
   def handle("pane.send_keys", %{pane_id: id, keys: keys}) do
     with {:ok, _} <- lookup(id),
          {:ok, events} <- parse_all(keys) do
-      events |> Enum.find_value(&send_err(Input.key(&1, id))) |> ok()
+      events |> Enum.find_value(&send_err(Input.key(&1, id, host_scroll: false))) |> ok()
     end
   end
 

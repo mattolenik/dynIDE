@@ -104,6 +104,23 @@ defmodule HerdrServer.Api.PaneIoTest do
     wait_until(fn -> writes(pty) == "cmd\r" end, 80)
   end
 
+  test "send_text behind a queued run keeps its order", %{s: s, pty: pty} do
+    Fake.Pty.set_backpressure(pty, true)
+    ok!(s, "pane.run", Map.put(@p, "command", "cmd"))
+    # the run is still queued: the text queues behind it instead of overtaking it
+    ok!(s, "pane.send_text", Map.put(@p, "text", "X"))
+    Fake.Pty.set_backpressure(pty, false)
+    wait_until(fn -> writes(pty) == "cmd\rX" end, 80)
+  end
+
+  test "send_keys page up reaches the child at a shell prompt", %{s: s, pty: pty, vt: vt} do
+    :ok = Fake.Vt.set_history(vt, for(i <- 1..60, do: "h#{i}"))
+    %{offset: bottom} = Fake.Vt.scrollbar(vt)
+    ok!(s, "pane.send_keys", Map.put(@p, "keys", ["pageup"]))
+    assert writes(pty) == "\e[5~"
+    assert Fake.Vt.scrollbar(vt).offset == bottom
+  end
+
   test "send_keys writes nothing when any key is bad", %{s: s, pty: pty} do
     {code, e} = err(s, "pane.send_keys", Map.put(@p, "keys", ["a", "bogus"]))
     assert code == "invalid_params"
