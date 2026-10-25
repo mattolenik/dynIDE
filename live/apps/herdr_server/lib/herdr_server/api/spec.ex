@@ -112,12 +112,8 @@ defmodule HerdrServer.Api.Spec do
     }
   end
 
-  # Final lists (M11 task 0 contract): list [], get/read/explain/prompt/send_keys
-  # [:not_found], wait [:not_found, :timeout], explain also :failed. The conformance
-  # test needs every declared code producible and the stub only answers not_available,
-  # so `:not_available` stays declared until the M11 handler task narrows each list.
-  defp agent(name, summary, params, result, cli),
-    do: method("agent." <> name, "agent", summary, params, result, [:not_available], cli)
+  defp agent(name, summary, params, result, errors, cli),
+    do: method("agent." <> name, "agent", summary, params, result, errors, cli)
 
   # --- methods ---------------------------------------------------------------
 
@@ -236,7 +232,7 @@ defmodule HerdrServer.Api.Spec do
         "The loaded agent detection manifests.",
         [],
         "agent_manifests",
-        [:not_available],
+        [],
         "herdr-live server agent-manifests"
       ),
       method(
@@ -245,7 +241,7 @@ defmodule HerdrServer.Api.Spec do
         "Reload the agent detection manifests from disk.",
         [],
         "agent_manifests",
-        [:not_available],
+        [],
         "herdr-live server reload-agent-manifests"
       )
     ]
@@ -582,7 +578,7 @@ defmodule HerdrServer.Api.Spec do
           opt("resume_argv", {:list, :string}, "Accepted and ignored (M17).")
         ],
         "ok",
-        [:not_available],
+        [:not_found],
         "herdr-live pane report-agent <pane_id> --source S --agent A --state S [--message T] [--seq N]"
       ),
       method(
@@ -644,7 +640,7 @@ defmodule HerdrServer.Api.Spec do
           opt("seq", {:integer, 0, 9_007_199_254_740_991}, "Report sequence number.")
         ],
         "ok",
-        [:not_available],
+        [:not_found],
         "herdr-live pane release-agent <pane_id> --source S --agent A [--seq N]"
       ),
       method(
@@ -866,12 +862,13 @@ defmodule HerdrServer.Api.Spec do
       opt("until", {:list, {:enum, @agent_states}}, "Agent states to wait for; default `idle`.")
 
     [
-      agent("list", "List detected agents.", [], "agent_list", "herdr-live agent list"),
+      agent("list", "List detected agents.", [], "agent_list", [], "herdr-live agent list"),
       agent(
         "get",
         "Describe an agent.",
         [target()],
         "agent_info",
+        [:not_found],
         "herdr-live agent get <target>"
       ),
       agent(
@@ -879,6 +876,7 @@ defmodule HerdrServer.Api.Spec do
         "Read an agent's terminal text.",
         [target(), source(), lines()],
         "agent_read",
+        [:not_found],
         "herdr-live agent read <target> [--source visible|recent] [--lines N]"
       ),
       agent(
@@ -892,6 +890,7 @@ defmodule HerdrServer.Api.Spec do
           opt("verbose", :boolean, "Verbose explanation text.")
         ],
         "agent_explain",
+        [:not_found, :failed],
         "herdr-live agent explain <target> [--json] [--verbose] | " <>
           "herdr-live agent explain --file PATH --agent LABEL [--json]"
       ),
@@ -900,6 +899,7 @@ defmodule HerdrServer.Api.Spec do
         "Wait until an agent reaches one of the given states.",
         [target(), until, timeout_ms()],
         "agent_wait",
+        [:not_found, :timeout],
         "herdr-live agent wait <target> [--until S]... [--timeout MS]"
       ),
       agent(
@@ -907,6 +907,7 @@ defmodule HerdrServer.Api.Spec do
         "Send a prompt to an agent.",
         [target(), req("text", :string, "Prompt text.")],
         "ok",
+        [:not_found],
         "herdr-live agent prompt <target> <text>"
       ),
       agent(
@@ -914,6 +915,7 @@ defmodule HerdrServer.Api.Spec do
         "Send named keys to an agent.",
         [target(), Map.put(req("keys", {:list, :string}, "Key names."), :min_items, 1)],
         "ok",
+        [:not_found],
         "herdr-live agent send-keys <target> <key>..."
       )
     ]

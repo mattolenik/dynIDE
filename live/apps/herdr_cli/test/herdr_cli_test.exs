@@ -28,6 +28,19 @@ defmodule HerdrCliTest do
     assert err =~ "cannot read /nonexistent/x"
   end
 
+  test "a --file over 1 MiB exits 1 before reaching the socket" do
+    path = Path.join(System.tmp_dir!(), "hcli-big-#{System.unique_integer([:positive])}")
+    File.write!(path, :binary.copy("x", 1_048_577))
+    on_exit(fn -> File.rm(path) end)
+
+    err =
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        assert HerdrCli.run(["agent", "explain", "--file", path, "--agent", "a"], %{}) == 1
+      end)
+
+    assert err =~ "is 1048577 bytes, over the 1048576 byte limit"
+  end
+
   test "a usage error exits 2 without touching the socket" do
     assert ExUnit.CaptureIO.capture_io(:stderr, fn ->
              assert HerdrCli.run(["pane", "split", "--direction", "left"], %{}) == 2

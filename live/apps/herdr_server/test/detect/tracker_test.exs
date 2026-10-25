@@ -119,6 +119,11 @@ defmodule HerdrServer.Detect.TrackerTest do
     assert {^t, []} = Tracker.report(t, hook(:idle, 4))
     {t, [{:state, :idle}]} = Tracker.report(t, hook(:idle, 6))
     assert t.hook.seq == 6
+    assert {^t, []} = Tracker.report(t, hook(:working, nil))
+    # unnumbered reports keep counting until a numbered one arrives
+    {t, _} = Tracker.report(acquired(), hook(:working, nil))
+    {t, [{:state, :idle}]} = Tracker.report(t, hook(:idle, nil))
+    {_t, [{:state, :working}]} = Tracker.report(t, hook(:working, 1))
   end
 
   test "hook for another agent is ignored" do

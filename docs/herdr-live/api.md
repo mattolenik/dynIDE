@@ -94,7 +94,7 @@ Params: none.
 
 Result: `agent_manifests` with `manifests` (list of object).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`
 
 ### `server.reload_agent_manifests`
 
@@ -106,7 +106,7 @@ Params: none.
 
 Result: `agent_manifests` with `manifests` (list of object).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`
 
 ## Methods: session
 
@@ -543,7 +543,7 @@ CLI: `herdr-live pane report-agent <pane_id> --source S --agent A --state S [--m
 
 Result: `ok` (no fields).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`
 
 ### `pane.report_agent_session`
 
@@ -599,7 +599,7 @@ CLI: `herdr-live pane release-agent <pane_id> --source S --agent A [--seq N]`
 
 Result: `ok` (no fields).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`
 
 ### `pane.rename`
 
@@ -876,7 +876,7 @@ Params: none.
 
 Result: `agent_list` with `agents` (list of `agent` object).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`
 
 ### `agent.get`
 
@@ -890,7 +890,7 @@ CLI: `herdr-live agent get <target>`
 
 Result: `agent_info` with `agent` (`agent` object).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`
 
 ### `agent.read`
 
@@ -906,7 +906,7 @@ CLI: `herdr-live agent read <target> [--source visible|recent] [--lines N]`
 
 Result: `agent_read` with `target` (string), `text` (string).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`
 
 ### `agent.explain`
 
@@ -923,7 +923,7 @@ CLI: `herdr-live agent explain <target> [--json] [--verbose] | herdr-live agent 
 
 Result: `agent_explain` with `agent` (object), `explanation` (string).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`, `failed`
 
 ### `agent.wait`
 
@@ -939,7 +939,7 @@ CLI: `herdr-live agent wait <target> [--until S]... [--timeout MS]`
 
 Result: `agent_wait` with `agent` (`agent` object).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`, `timeout`
 
 ### `agent.prompt`
 
@@ -954,7 +954,7 @@ CLI: `herdr-live agent prompt <target> <text>`
 
 Result: `ok` (no fields).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`
 
 ### `agent.send_keys`
 
@@ -969,7 +969,7 @@ CLI: `herdr-live agent send-keys <target> <key>...`
 
 Result: `ok` (no fields).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`
 
 ## Methods: plugin
 

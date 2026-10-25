@@ -46,7 +46,7 @@ defmodule HerdrServer.Detect.Tracker do
   @type state :: :idle | :working | :blocked | :unknown
   @type effect :: {:agent, binary | nil} | {:state, state}
   @type osc :: {binary, binary}
-  @type hook :: %{source: binary, agent: binary, state: state, seq: integer}
+  @type hook :: %{source: binary, agent: binary, state: state, seq: integer | nil}
   @type t :: %__MODULE__{}
 
   @spec new(keyword) :: t
@@ -221,8 +221,10 @@ defmodule HerdrServer.Detect.Tracker do
   def report(%__MODULE__{agent: a} = t, %{agent: agent}) when a != nil and a != agent,
     do: {t, []}
 
+  # herdr's `hook_report_is_newer`: after a numbered report from a source, only a
+  # higher number from it counts (an unnumbered one is stale)
   def report(%__MODULE__{hook: %{source: s, seq: last}} = t, %{source: s, seq: seq})
-      when seq <= last,
+      when is_integer(last) and (is_nil(seq) or seq <= last),
       do: {t, []}
 
   def report(t, %{agent: agent} = hook) do

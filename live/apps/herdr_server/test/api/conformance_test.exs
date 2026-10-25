@@ -102,12 +102,21 @@ defmodule HerdrServer.Api.ConformanceTest do
     call(listen(ctx, reload_server: hung, rollback_timeout_ms: 50), "reload.rollback")
   end
 
-  defp produce("agent." <> _ = method, :not_available, ctx), do: call(listen(ctx), method)
+  # p1 runs a plain shell: no agent to explain, and its status never becomes idle
+  defp produce("agent.explain", :failed, ctx) do
+    s = listen(ctx)
 
-  defp produce(method, :not_available, ctx)
-       when method in ~w(server.agent_manifests server.reload_agent_manifests
-                         pane.report_agent pane.release_agent),
-       do: call(listen(ctx), method)
+    # the poller sees p1 once the Mirror has it (a 20 ms debounce behind the Store)
+    Enum.find_value(1..100, fn _ ->
+      case call(s, "agent.explain", %{"target" => "p1"}) do
+        %{"error" => %{"code" => "not_found"}} -> Process.sleep(10) && nil
+        reply -> reply
+      end
+    end)
+  end
+
+  defp produce("agent.wait", :timeout, ctx),
+    do: call(listen(ctx), "agent.wait", %{"target" => "p1", "timeout_ms" => 100})
 
   defp produce(method, :failed, ctx) when method in ~w(plugin.install plugin.link) do
     base = PluginDirs.use_tmp()
@@ -295,6 +304,7 @@ defmodule HerdrServer.Api.ConformanceTest do
 
     cond do
       "pane_id" in names -> %{"pane_id" => "p99"}
+      "target" in names -> %{"target" => "p99"}
       "caller_pane_id" in names -> %{"caller_pane_id" => "p99"}
       "tab_id" in names -> %{"tab_id" => "w1:t9"}
       "workspace_id" in names -> %{"workspace_id" => "w9"}

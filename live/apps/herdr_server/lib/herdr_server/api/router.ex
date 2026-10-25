@@ -58,6 +58,7 @@ defmodule HerdrServer.Api.Router do
 
   def handle("events.subscribe", params, ctx), do: Events.request(params, ctx.conn)
 
+  def handle("agent.wait", params, ctx), do: Handlers.Agents.wait(params, ctx)
   def handle("agent." <> _ = method, params, _ctx), do: Handlers.Agents.handle(method, params)
 
   def handle(method, params, _ctx)

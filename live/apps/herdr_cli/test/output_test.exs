@@ -15,6 +15,11 @@ defmodule HerdrCli.OutputTest do
              {0, ~s({"a":"é","b":[{"a":null,"z":1}],"type":"x"}\n)}
   end
 
+  test "explain prints the explanation text as is" do
+    reply = ok(%{"type" => "agent_explain", "agent" => %{}, "explanation" => "agent: x\n"})
+    assert Output.render(:explain, reply) == {0, "agent: x\n"}
+  end
+
   test "path prints the path plus a newline" do
     assert Output.render(:path, ok(%{"type" => "plugin_dir", "path" => "/c/p"})) == {0, "/c/p\n"}
   end

@@ -17,7 +17,7 @@ defmodule HerdrCli.Argv do
   `--opt value` and `--opt=value` are both accepted; `--` ends options.
   """
 
-  @type out :: :json | :text | :path | :lines | :rollback | :gate
+  @type out :: :json | :text | :path | :lines | :rollback | :gate | :explain
   @type result ::
           {:call, String.t(), map(), out()}
           | {:subscribe, map()}
@@ -799,6 +799,12 @@ defmodule HerdrCli.Argv do
   defp finish(%{method: "server.status"} = c, params, _env) do
     {kv, params} = Map.pop(params, :kv)
     {:call, c.method, params, if(kv, do: :lines, else: :json)}
+  end
+
+  # herdr prints the explanation text; `--json` prints the reply
+  defp finish(%{method: "agent.explain"} = c, params, _env) do
+    {json, params} = Map.pop(params, :json)
+    {:call, c.method, params, if(json, do: :json, else: :explain)}
   end
 
   # herdr's normalize_plugin_path_arg: local paths go absolute against the caller's cwd

@@ -356,13 +356,13 @@ defmodule HerdrCli.ArgvTest do
                {:call, "agent.read", %{"target" => "claude", "source" => "recent", "lines" => 5},
                 :text}
 
-      assert p("agent explain p1") == {:call, "agent.explain", %{"target" => "p1"}, :json}
+      assert p("agent explain p1") == {:call, "agent.explain", %{"target" => "p1"}, :explain}
 
       assert p("agent explain p1 --json --verbose") ==
                {:call, "agent.explain", %{"target" => "p1", "verbose" => true}, :json}
 
       assert p("agent explain --file f --agent claude") ==
-               {:call, "agent.explain", %{"agent" => "claude", "text" => {:file, "f"}}, :json}
+               {:call, "agent.explain", %{"agent" => "claude", "text" => {:file, "f"}}, :explain}
 
       assert {:usage, _} = p("agent explain")
       assert {:usage, _} = p("agent explain --file f")

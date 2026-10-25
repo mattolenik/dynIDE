@@ -111,18 +111,33 @@ defmodule HerdrCli do
 
   defp run_call({:error, msg}, _method, _out, _env), do: lost_text(msg)
 
+  # one request line is at most 1 MiB, so a larger file could never be sent
+  @max_file 1_048_576
+
   # `{:file, path}` params (from `--file`) are replaced by the file's content
   defp read_files(params) do
     Enum.reduce_while(params, {:ok, params}, fn
       {k, {:file, path}}, {:ok, acc} ->
-        case File.read(path) do
+        case read_file(path) do
           {:ok, text} -> {:cont, {:ok, Map.put(acc, k, text)}}
-          {:error, r} -> {:halt, {:error, "cannot read #{path}: #{:file.format_error(r)}"}}
+          err -> {:halt, err}
         end
 
       _, acc ->
         {:cont, acc}
     end)
+  end
+
+  # stat first, so an oversized file is never read into memory
+  defp read_file(path) do
+    case File.stat(path) do
+      {:ok, %{size: n}} when n > @max_file ->
+        {:error, "#{path} is #{n} bytes, over the #{@max_file} byte limit"}
+
+      _ ->
+        with {:error, r} <- File.read(path),
+             do: {:error, "cannot read #{path}: #{:file.format_error(r)}"}
+    end
   end
 
   defp lost_text(msg) do

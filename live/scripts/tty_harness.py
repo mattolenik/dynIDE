@@ -60,8 +60,9 @@ launcher, as is HERDR_LIVE_API) with output into the run's temp dir: pane split
 --direction right (split.json has pane.pane_id, two prompts), pane run <id>
 'echo agent-""marker', pane wait-output <id> --match agent-marker, pane read
 <id> (contains agent-marker), pane list (2 panes, the caller's HERDR_PANE_ID
-among them), agent list (stderr has code not_available) and 10 timed pings
-(mean latency printed). Prefix q exits 0 and log_summary.py reports api
+among them), agent list (no agents), agent explain of the caller's plain
+shell (failed: no detected agent), server agent-manifests (at least 20) and
+10 timed pings (mean latency printed). Prefix q exits 0 and log_summary.py reports api
 connects >= 5 and session_losses 0.
 
 plugins: M14's exit criterion, two of herdr's example plugins
@@ -1127,8 +1128,10 @@ def agent():
               f"; {bin_} pane read {new} > {t('read.txt')}", "s2", "pane run, wait-output and read")
         read = open(t("read.txt")).read()
         ok("agent-marker" in read, "agent: pane read of the new pane contains agent-marker")
-        shell(f"{bin_} pane list > {t('list.json')}; {bin_} agent list 2> {t('agent.err')}", "s3",
-              "pane list and agent list")
+        shell(f"{bin_} pane list > {t('list.json')}; {bin_} agent list > {t('agents.json')}"
+              f"; {bin_} agent explain \"$HERDR_PANE_ID\" 2> {t('explain.err')}"
+              f"; {bin_} server agent-manifests > {t('manifests.json')}", "s3",
+              "pane list, agent list, agent explain and server agent-manifests")
         me = open(t("me.txt")).read().strip()
         try:
             ids = [p["pane_id"] for p in json.load(open(t("list.json")))["panes"]]
@@ -1136,8 +1139,20 @@ def agent():
             fail(f"agent: pane list output unreadable ({e})")
         ok(len(ids) == 2 and me in ids and new in ids,
            f"agent: pane list has 2 panes with the caller's HERDR_PANE_ID {me} ({ids})")
-        err = open(t("agent.err")).read()
-        ok('"code":"not_available"' in err, f"agent: agent list answers not_available ({err.strip()})")
+        agents = open(t("agents.json")).read()
+        try:
+            ok(json.loads(agents)["agents"] == [], f"agent: agent list answers no agents ({agents.strip()})")
+        except (ValueError, KeyError, TypeError) as e:
+            fail(f"agent: agent list output unreadable ({e}: {agents!r})")
+        err = open(t("explain.err")).read()
+        ok('"code":"failed"' in err and "pane has no detected agent" in err,
+           f"agent: agent explain of a plain shell answers failed ({err.strip()})")
+        manifests = open(t("manifests.json")).read()
+        try:
+            n = len(json.loads(manifests)["manifests"])
+        except (ValueError, KeyError, TypeError) as e:
+            fail(f"agent: server agent-manifests output unreadable ({e}: {manifests!r})")
+        ok(n >= 20, f"agent: server agent-manifests lists {n} manifests (>= 20)")
         shell(f"a=$(date +%s%N); i=0; while [ $i -lt 10 ]; do {bin_} ping > /dev/null || echo x >> {t('pingfail')};"
               f" i=$((i + 1)); done; b=$(date +%s%N); echo $(((b - a) / 10000000)) > {t('lat.txt')}",
               "s4", "10 timed pings", timeout=90)

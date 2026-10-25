@@ -310,16 +310,4 @@ three"
       assert {"not_found", _} = err(s, m, Map.put(extra, "pane_id", "p99"))
     end
   end
-
-  test "agent methods are not available until M11", %{s: s} do
-    for m <- Spec.methods(), m.group == "agent" do
-      params =
-        for p <- m.params, p.required, into: %{} do
-          {p.name, if(p.type == {:list, :string}, do: ["a"], else: "x")}
-        end
-
-      assert {"not_available", e} = err(s, m.name, params)
-      assert e["data"]["requires"] == "M11 detection"
-    end
-  end
 end

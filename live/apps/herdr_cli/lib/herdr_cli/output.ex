@@ -31,6 +31,7 @@ defmodule HerdrCli.Output do
 
   defp body(:json, r), do: {:ok, [encode(r), ?\n]}
   defp body(:text, %{"text" => t}) when is_binary(t), do: {:ok, [t, ?\n]}
+  defp body(:explain, %{"explanation" => t}) when is_binary(t), do: {:ok, t}
   defp body(:path, %{"path" => p}) when is_binary(p), do: {:ok, [p, ?\n]}
   defp body(:rollback, %{"batches" => []}), do: {:ok, "ok none\n"}
 
