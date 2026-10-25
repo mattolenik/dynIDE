@@ -2,10 +2,9 @@ defmodule HerdrServer.ConfigTest do
   # path/0 reads the application env and the OS env
   use ExUnit.Case, async: false
 
-  alias HerdrServer.App.{Actions, Keybinds, Ui}
+  alias HerdrServer.App.{Actions, CustomCommands, Keybinds, Ui}
   alias HerdrServer.App.Modal.Prompt
   alias HerdrServer.Config
-  alias HerdrServer.Plugins.Keybind
 
   @moduletag :tmp_dir
 
@@ -83,8 +82,7 @@ defmodule HerdrServer.ConfigTest do
     assert Keybinds.to_config(kb)["prefix"] == ["ctrl+a"]
   end
 
-  # M14 stopgap: M17's [[keys.command]] parser replaces this test with its own
-  test "[[keys.command]] plugin_action binds Plugins.Keybind; other types are diagnosed",
+  test "[[keys.command]] plugin_action runs Plugins.Keybind; other types bind too",
        %{tmp_dir: dir} do
     toml = """
     [[keys.command]]
@@ -98,7 +96,7 @@ defmodule HerdrServer.ConfigTest do
     command = "demo.other"
 
     [[keys.command]]
-    key = ["alt+h"]
+    key = ["alt+h", "alt+j"]
     type = "plugin_action"
     command = "demo.hello"
 
@@ -110,18 +108,39 @@ defmodule HerdrServer.ConfigTest do
     [[keys.command]]
     key = "prefix+u"
     command = "make"
+
+    [[keys.command]]
+    key = "prefix+y"
+    type = "nope"
+    command = "x"
     """
 
-    {kb, _ui, diags} = apply_cfg(load(dir, toml))
-    assert Keybinds.lookup(kb, :prefix, {"g", []}) == Keybind.mfa("demo.hello")
-    assert Keybinds.lookup(kb, :terminal, {"g", [:alt]}) == Keybind.mfa("demo.other")
-    assert Keybinds.lookup(kb, :prefix, {"t", []}) == Keybinds.default().prefix_binds[{"t", []}]
-    # one command, two entries: both keys stay bound
-    assert Keybinds.lookup(kb, :terminal, {"h", [:alt]}) == Keybind.mfa("demo.hello")
+    {kb, ui, diags} = apply_cfg(load(dir, toml))
+    app = %{ui: ui}
+
+    invoke = fn k ->
+      {m, f, a} = Keybinds.lookup(kb, elem(k, 0), elem(k, 1))
+      {_app, fx} = apply(m, f, [app | a])
+      fx
+    end
+
+    hello = [{:plugin, {:invoke, "demo.hello", %{source: "keybinding"}}}]
+    assert invoke.({:prefix, {"g", []}}) == hello
+
+    assert invoke.({:terminal, {"g", [:alt]}}) == [
+             {:plugin, {:invoke, "demo.other", %{source: "keybinding"}}}
+           ]
+
+    # an array key binds every spec
+    assert invoke.({:terminal, {"h", [:alt]}}) == hello
+    assert invoke.({:terminal, {"j", [:alt]}}) == hello
+    assert Keybinds.lookup(kb, :prefix, {"t", []}) == {CustomCommands, :run, [3]}
+    assert Keybinds.lookup(kb, :prefix, {"u", []}) == {CustomCommands, :run, [4]}
+    assert Keybinds.lookup(kb, :prefix, {"y", []}) == nil
 
     assert diags == [
-             "config: keys.command type popup is not supported yet",
-             "config: keys.command type shell is not supported yet"
+             "config: keys.command[0].key: prefix+g replaces keys.goto",
+             "config: keys.command[5]: unknown type \"nope\""
            ]
   end
 

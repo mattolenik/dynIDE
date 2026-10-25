@@ -61,7 +61,7 @@ defmodule HerdrServer.App.CustomCommands do
   alias HerdrServer.Plugins.Keybind
 
   @type entry :: %{
-          key: binary,
+          key: binary | [binary],
           command: binary,
           type: binary,
           description: binary | nil,

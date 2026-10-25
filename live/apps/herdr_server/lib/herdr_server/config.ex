@@ -33,7 +33,7 @@ defmodule HerdrServer.Config do
   (default false) and `startup_per_agent_delay_ms` (0..60000, default 500), read by a
   disk restore (`Persist.RestorePlan.resumes/2`); top-level `onboarding`.
 
-  `[[keys.command]]` (herdr's custom commands): `key` (a spec), `command`, `type`
+  `[[keys.command]]` (herdr's custom commands): `key` (a spec or an array), `command`, `type`
   (`shell`, the default, | `pane` | `popup` | `plugin_action`), optional `description`,
   and `width` / `height` for popups. Each valid entry lands in `ui.custom_commands` (plain
   maps, replaced on every apply) and binds its key to `{App.CustomCommands, :run, [index]}`.
@@ -45,7 +45,6 @@ defmodule HerdrServer.Config do
   alias HerdrServer.App.{CustomCommands, Keybinds, Ui}
   alias HerdrServer.App.Keybinds.Catalog
   alias HerdrServer.Config.Keys, as: Spec
-  alias HerdrServer.Plugins.Keybind
 
   @type t :: %{
           keys: map,
@@ -238,17 +237,13 @@ defmodule HerdrServer.Config do
 
     with {:cmd, true} <- {:cmd, is_binary(cmd) and String.trim(cmd) != ""},
          {:type, true} <- {:type, type in @types},
-         {:ok, %{prefix: p, key: k, mods: m}} <- Spec.parse(key),
-         {:prefix, false} <- {:prefix, Keybinds.prefix?(kb, {k, m})},
-         held = Keybinds.lookup(kb, if(p, do: :prefix, else: :terminal), {k, m}),
-         {:dup, false} <- {:dup, match?({CustomCommands, :run, _}, held)},
-         {:ok, kb} <- Keybinds.bind_mfa(kb, {CustomCommands, :run, [length(cmds)]}, [key]) do
-      {kb, [entry(t, key, cmd, type) | cmds], d ++ warnings(t, name, key, type, held)}
+         {:ok, [_ | _] = specs} <- specs(key) |> needs_key(),
+         {:ok, held} <- claim(kb, specs),
+         {:ok, kb} <- Keybinds.bind_mfa(kb, {CustomCommands, :run, [length(cmds)]}, specs) do
+      {kb, [entry(t, key, cmd, type) | cmds], d ++ warnings(t, name, type, held)}
     else
       {:cmd, _} -> {kb, cmds, d ++ ["config: #{name}: empty command"]}
       {:type, _} -> {kb, cmds, d ++ ["config: #{name}: unknown type #{inspect(type)}"]}
-      {:prefix, _} -> {kb, cmds, d ++ ["config: #{name}.key: #{key} is the prefix"]}
-      {:dup, _} -> {kb, cmds, d ++ ["config: #{name}.key: #{key} is another command's key"]}
       {:error, why} -> {kb, cmds, d ++ ["config: #{name}.key: #{why}"]}
     end
   end
@@ -270,13 +265,41 @@ defmodule HerdrServer.Config do
     }
   end
 
-  defp warnings(t, name, key, type, held) do
+  defp needs_key({:ok, []}), do: {:error, "needs a key"}
+  defp needs_key(other), do: other
+
+  # every spec parses, is not the prefix and no earlier command holds it: `{:ok, [{spec,
+  # the action it takes over}]}`
+  defp claim(kb, specs) do
+    Enum.reduce_while(specs, {:ok, []}, fn s, {:ok, held} ->
+      case Spec.parse(s) do
+        {:ok, %{prefix: p, key: k, mods: m}} -> step(claim(kb, s, {k, m}, p, held))
+        err -> {:halt, err}
+      end
+    end)
+  end
+
+  defp step({:ok, _} = ok), do: {:cont, ok}
+  defp step(err), do: {:halt, err}
+
+  defp claim(kb, s, key, p, held) do
+    h = Keybinds.lookup(kb, if(p, do: :prefix, else: :terminal), key)
+
+    cond do
+      Keybinds.prefix?(kb, key) -> {:error, "#{s} is the prefix"}
+      match?({CustomCommands, :run, _}, h) -> {:error, "#{s} is another command's key"}
+      h -> {:ok, held ++ [{s, h}]}
+      true -> {:ok, held}
+    end
+  end
+
+  defp warnings(t, name, type, held) do
     sized = type != "popup" and (Map.has_key?(t, "width") or Map.has_key?(t, "height"))
 
     if(sized,
       do: ["config: #{name}: width and height apply only to popup commands; ignored"],
       else: []
-    ) ++ if(held, do: ["config: #{name}.key: #{key} replaces #{action(held)}"], else: [])
+    ) ++ for({s, h} <- held, do: "config: #{name}.key: #{s} replaces #{action(h)}")
   end
 
   defp action(mfa) do
@@ -290,67 +313,15 @@ defmodule HerdrServer.Config do
   defp keys(table, kb) do
     table
     |> Enum.sort_by(fn {k, _} -> {k != "prefix", k} end)
-    |> Enum.reduce({kb, []}, fn
-      # M14 stopgap: M17's [[keys.command]] parser replaces this clause
-      {"command", v}, {kb, d} ->
-        commands(v, kb, d)
-
-      {action, v}, {kb, d} ->
-        with {:ok, specs} <- specs(v),
-             {:ok, kb} <- Keybinds.bind(kb, action, specs) do
-          {kb, d}
-        else
-          {:error, why} -> {kb, d ++ ["config: keys.#{action}: #{why}"]}
-        end
-    end)
-  end
-
-  # M14 stopgap: M17's [[keys.command]] parser replaces this clause. Only
-  # `type = "plugin_action"` binds (to `Plugins.Keybind.mfa(command)`, each command once
-  # with all its keys); other types (herdr's default is "shell") get one diagnostic each.
-  defp commands(entries, kb, d) when is_list(entries) do
-    {binds, d} =
-      Enum.reduce(entries, {[], d}, fn e, {binds, d} ->
-        case command(e) do
-          {:ok, cmd, specs} -> {[{cmd, specs} | binds], d}
-          {:error, why} -> {binds, d ++ ["config: keys.command#{why}"]}
-        end
-      end)
-
-    binds
-    |> Enum.reverse()
-    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
-    |> Enum.reduce({kb, d}, fn {cmd, specs}, {kb, d} ->
-      case Keybinds.bind_mfa(kb, Keybind.mfa(cmd), Enum.concat(specs)) do
-        {:ok, kb} -> {kb, d}
-        {:error, why} -> {kb, d ++ ["config: keys.command #{cmd}: #{why}"]}
+    |> Enum.reduce({kb, []}, fn {action, v}, {kb, d} ->
+      with {:ok, specs} <- specs(v),
+           {:ok, kb} <- Keybinds.bind(kb, action, specs) do
+        {kb, d}
+      else
+        {:error, why} -> {kb, d ++ ["config: keys.#{action}: #{why}"]}
       end
     end)
   end
-
-  defp commands(v, kb, d),
-    do: {kb, d ++ ["config: keys.command: expected an array of tables, got #{inspect(v)}"]}
-
-  defp command(%{} = e) do
-    case Map.get(e, "type", "shell") do
-      "plugin_action" ->
-        with {:ok, specs} <- specs(e["key"]),
-             cmd when is_binary(cmd) and cmd != "" <- e["command"] do
-          {:ok, cmd, specs}
-        else
-          {:error, why} -> {:error, ": #{why}"}
-          _ -> {:error, ": a plugin_action needs a command"}
-        end
-
-      t ->
-        {:error, " type #{inspect_type(t)} is not supported yet"}
-    end
-  end
-
-  defp command(e), do: {:error, ": invalid entry #{inspect(e)}"}
-
-  defp inspect_type(t) when is_binary(t), do: t
-  defp inspect_type(t), do: inspect(t)
 
   defp specs(v) when is_binary(v), do: {:ok, [v]}
 
