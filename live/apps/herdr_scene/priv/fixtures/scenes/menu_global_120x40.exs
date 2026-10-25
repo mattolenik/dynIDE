@@ -276,7 +276,7 @@
       },
       %HerdrScene.Scene.Node{
         role: :menu,
-        id: {:menu, 0},
+        id: {:menu, 1},
         rect: %{x: 20, y: 34, h: 6, w: 17},
         text: nil,
         token: nil,

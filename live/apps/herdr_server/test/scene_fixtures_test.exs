@@ -28,7 +28,7 @@ defmodule HerdrServer.SceneFixturesTest do
     {"modal_onboarding_80x24", {80, 24}, [:onboarding]},
     {"modal_keybinds_120x40", {120, 40}, [{:open, KeybindsModal}, {:key, "j"}]},
     {"modal_keybind_capture_120x40", {120, 40},
-     [{:open, KeybindsModal}, {:click, [{:modal, 0}, :list, {:action, "rename_tab"}], 0, 0}]},
+     [{:open, KeybindsModal}, {:click, [{:modal, 1}, :list, {:action, "rename_tab"}], 0, 0}]},
     {"toast_120x40", {120, 40}, [:c, :toast]}
   ]
 

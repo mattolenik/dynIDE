@@ -149,7 +149,7 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
   test "with chrome focus (an open prompt), the scene cursor wins over the pane's" do
     sc = Fixture.load("modal_prompt_80x24")
     c = %{x: 2, y: 1, shape: :underline, visible: true}
-    assert sc.focus.chrome == [{:modal, 0}, :input]
+    assert sc.focus.chrome == [{:modal, 1}, :input]
     assert Compose.cursor(sc, %{sc.focus.pane => c}) == {{sc.cursor.x, sc.cursor.y}, :bar}
     # chrome focus without a scene cursor (a tiny prompt) keeps the pane's
     assert {{_, _}, :underline} = Compose.cursor(%{sc | cursor: nil}, %{sc.focus.pane => c})

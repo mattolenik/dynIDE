@@ -12,7 +12,11 @@ defmodule HerdrServer.App.Modal.PromptTest do
   defp tab_names(app), do: Enum.map(ws(app).tabs, & &1.name)
 
   defp click(app, id),
-    do: Actions.apply(app, {:chrome, [{:modal, 0}, :actions, id], {:click, %{x: 0, y: 0}}})
+    do:
+      Actions.apply(
+        app,
+        {:chrome, [{:modal, Modal.top(app).id}, :actions, id], {:click, %{x: 0, y: 0}}}
+      )
 
   test "typing abc, backspace, ctrl+c clears, then Enter renames the tab to ab" do
     {app, []} = Prompt.rename_tab(fresh())
@@ -93,7 +97,7 @@ defmodule HerdrServer.App.Modal.PromptTest do
   test "node: title, input with cursor, save/clear/cancel buttons with keys; dims" do
     {app, []} = Prompt.rename_tab(fresh())
     node = Modal.view(app, %{cols: 80, rows: 24})
-    assert %Node{role: :modal, id: {:modal, 0}, rect: %{x: 12, y: 8, w: 56, h: 7}} = node
+    assert %Node{role: :modal, id: {:modal, 1}, rect: %{x: 12, y: 8, w: 56, h: 7}} = node
     assert node.props == %{kind: :prompt, tone: :default, dim: true}
     assert %Node{text: "rename tab"} = Node.find(node, [:title])
     assert %Node{role: :input, text: "1", props: %{cursor: 1}} = Node.find(node, [:input])

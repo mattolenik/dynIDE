@@ -30,9 +30,9 @@ defmodule HerdrServer.App.Modal.ConfirmTest do
     assert app.focus.modal == [] and app.session == fresh().session
 
     click = {:click, %{x: 0, y: 0}}
-    {app, []} = Actions.apply(app0, {:chrome, [{:modal, 0}, :actions, :cancel], click})
+    {app, []} = Actions.apply(app0, {:chrome, [{:modal, 1}, :actions, :cancel], click})
     assert app.focus.modal == [] and app.session == fresh().session
-    {_app, effects} = Actions.apply(app0, {:chrome, [{:modal, 0}, :actions, :confirm], click})
+    {_app, effects} = Actions.apply(app0, {:chrome, [{:modal, 1}, :actions, :confirm], click})
     assert {:close, 1} in effects
   end
 

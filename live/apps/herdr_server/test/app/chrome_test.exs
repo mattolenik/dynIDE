@@ -155,7 +155,7 @@ defmodule HerdrServer.App.ChromeTest do
   test "modal, menu and unknown paths are no-ops" do
     app = fresh()
 
-    for path <- [[{:modal, 0}, :actions, :ok], [{:menu, 0}, {:entry, :x}], [:status], [:nope]],
+    for path <- [[{:modal, 1}, :actions, :ok], [{:menu, 1}, {:entry, :x}], [:status], [:nope]],
         kind <- [:click, :drag, :scroll_up],
         do: assert(chrome(app, path, kind) == {app, []})
   end

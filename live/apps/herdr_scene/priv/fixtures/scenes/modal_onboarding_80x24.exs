@@ -276,7 +276,7 @@
       },
       %HerdrScene.Scene.Node{
         role: :modal,
-        id: {:modal, 0},
+        id: {:modal, 1},
         rect: %{x: 8, y: 4, h: 16, w: 64},
         text: nil,
         token: nil,

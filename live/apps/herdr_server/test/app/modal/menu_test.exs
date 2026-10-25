@@ -37,9 +37,9 @@ defmodule HerdrServer.App.Modal.MenuTest do
     {app, []} = chrome(fresh(), [:tabs, {:tab, 1}], :right_click)
     assert Modal.top(press(app, :up)).selected == 2
     assert press(app, :escape).focus.modal == []
-    assert elem(chrome(app, [{:menu, 0}, :backdrop], :click), 0).focus.modal == []
+    assert elem(chrome(app, [{:menu, 1}, :backdrop], :click), 0).focus.modal == []
 
-    {app, []} = chrome(app, [{:menu, 0}, {:entry, :rename}], :click)
+    {app, []} = chrome(app, [{:menu, 1}, {:entry, :rename}], :click)
     assert [%{kind: :prompt, title: "rename tab"}] = app.focus.modal
   end
 
@@ -62,7 +62,7 @@ defmodule HerdrServer.App.Modal.MenuTest do
              "Close pane"
            ]
 
-    {app, []} = chrome(app, [{:menu, 0}, {:entry, :clear_name}], :click)
+    {app, []} = chrome(app, [{:menu, 1}, {:entry, :clear_name}], :click)
     refute app.session.panes[1][:name]
   end
 
@@ -71,7 +71,7 @@ defmodule HerdrServer.App.Modal.MenuTest do
     app = pfx(app, "v")
     {app, _} = Actions.switch_workspace(app, 1)
     {app, []} = chrome(app, [:sidebar, :agents, :list, {:pane, 3}], :right_click)
-    {app, [{:close, 3}]} = chrome(app, [{:menu, 0}, {:entry, :close}], :click)
+    {app, [{:close, 3}]} = chrome(app, [{:menu, 1}, {:entry, :close}], :click)
     refute Map.has_key?(app.session.panes, 3)
     assert app.session.active_workspace == 1
   end
@@ -85,9 +85,9 @@ defmodule HerdrServer.App.Modal.MenuTest do
     app = pfx(fresh(), "v")
     assert Layout.pane_ids(layout(app)) == [1, 2] and app.focus.pane == 2
     {app, []} = chrome(app, [:sidebar, :agents, :list, {:pane, 1}], :right_click)
-    {swapped, []} = chrome(app, [{:menu, 0}, {:entry, :swap}], :click)
+    {swapped, []} = chrome(app, [{:menu, 1}, {:entry, :swap}], :click)
     assert Layout.pane_ids(layout(swapped)) == [2, 1]
-    {split, [{:spawn, 3, _}]} = chrome(app, [{:menu, 0}, {:entry, :split_down}], :click)
+    {split, [{:spawn, 3, _}]} = chrome(app, [{:menu, 1}, {:entry, :split_down}], :click)
     assert Layout.pane_ids(layout(split)) == [1, 3, 2]
   end
 
@@ -95,17 +95,17 @@ defmodule HerdrServer.App.Modal.MenuTest do
     {app, []} = chrome(fresh(), [:sidebar, :spaces, :menu], :click, 20, 10)
     assert %{menu: :global, at: %{x: 20, y: 10}} = Modal.top(app)
     assert labels(app) == ["settings", "keybinds", "reload config", "detach"]
-    assert {_, [{:detach}]} = chrome(app, [{:menu, 0}, {:entry, :detach}], :click)
+    assert {_, [{:detach}]} = chrome(app, [{:menu, 1}, {:entry, :detach}], :click)
     {opened, []} = Actions.apply(app, Event.key(:enter))
     assert [%{kind: :settings}] = opened.focus.modal
-    {opened, []} = chrome(app, [{:menu, 0}, {:entry, :keybinds}], :click)
+    {opened, []} = chrome(app, [{:menu, 1}, {:entry, :keybinds}], :click)
     assert [%{kind: :keybinds}] = opened.focus.modal
   end
 
   test "node: a menu region at the click, clamped on screen, entries with a selection" do
     {app, []} = chrome(fresh(), [:tabs, {:tab, 1}], :right_click, 75, 22)
     node = Modal.view(app, %{cols: 80, rows: 24})
-    assert %Node{role: :menu, id: {:menu, 0}, rect: %{x: 66, y: 19, w: 14, h: 5}} = node
+    assert %Node{role: :menu, id: {:menu, 1}, rect: %{x: 66, y: 19, w: 14, h: 5}} = node
     assert node.props == %{kind: :tab, selected: 0}
 
     assert [{{:entry, :new_tab}, "New tab", true}, {{:entry, :rename}, "Rename", false}, _] =

@@ -17,7 +17,7 @@ defmodule HerdrServer.App.Modal.KeybindsTest do
   defp items(app), do: Enum.filter(list(app), &(&1.role == :item))
 
   defp click(app, path),
-    do: Actions.apply(app, {:chrome, [{:modal, 0} | path], {:click, %{x: 0, y: 0}}})
+    do: Actions.apply(app, {:chrome, [{:modal, 1} | path], {:click, %{x: 0, y: 0}}})
 
   # filter down to one action and start capturing it
   defp capture(app, action) do

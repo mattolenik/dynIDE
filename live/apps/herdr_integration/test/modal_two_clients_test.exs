@@ -37,8 +37,8 @@ defmodule HerdrIntegration.ModalTwoClientsTest do
     Driver.type(b, "x")
     assert wait(fn -> input_text(a) == "1ax" end)
     Driver.type(b, "\r")
-    assert wait(fn -> Node.find(Driver.scene(a).chrome, [{:modal, 0}]) == nil end)
-    assert wait(fn -> Node.find(Driver.scene(b).chrome, [{:modal, 0}]) == nil end)
+    assert wait(fn -> Node.find(Driver.scene(a).chrome, [{:modal, 1}]) == nil end)
+    assert wait(fn -> Node.find(Driver.scene(b).chrome, [{:modal, 1}]) == nil end)
 
     [ws] = Store.snapshot().session.workspaces
     assert Enum.map(ws.tabs, & &1.name) == ["1ax"]
@@ -73,7 +73,7 @@ defmodule HerdrIntegration.ModalTwoClientsTest do
   end
 
   defp input_text(client) do
-    case Node.find(Driver.scene(client).chrome, [{:modal, 0}, :input]) do
+    case Node.find(Driver.scene(client).chrome, [{:modal, 1}, :input]) do
       %Node{text: t} -> t
       nil -> nil
     end

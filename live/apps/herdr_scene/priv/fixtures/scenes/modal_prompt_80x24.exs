@@ -276,7 +276,7 @@
       },
       %HerdrScene.Scene.Node{
         role: :modal,
-        id: {:modal, 0},
+        id: {:modal, 1},
         rect: %{x: 12, y: 8, h: 7, w: 56},
         text: nil,
         token: nil,
@@ -363,5 +363,5 @@
       graphics: []
     }
   ],
-  focus: %{pane: 1, chrome: [{:modal, 0}, :input]}
+  focus: %{pane: 1, chrome: [{:modal, 1}, :input]}
 }

@@ -29,7 +29,7 @@ defmodule HerdrServer.App.Modal.OnboardingTest do
     {app, effects} =
       Actions.apply(
         open(),
-        {:chrome, [{:modal, 0}, :actions, :continue], {:click, %{x: 0, y: 0}}}
+        {:chrome, [{:modal, 1}, :actions, :continue], {:click, %{x: 0, y: 0}}}
       )
 
     assert app.focus.modal == [] and effects == @done
@@ -41,7 +41,7 @@ defmodule HerdrServer.App.Modal.OnboardingTest do
     assert {^app, []} = key(app, "x")
 
     assert {^app, []} =
-             Actions.apply(app, {:chrome, [{:modal, 0}, :backdrop], {:click, %{x: 0, y: 0}}})
+             Actions.apply(app, {:chrome, [{:modal, 1}, :backdrop], {:click, %{x: 0, y: 0}}})
   end
 
   test "lines: herdr-live title, herdr's text, the prefix from the keybinds" do

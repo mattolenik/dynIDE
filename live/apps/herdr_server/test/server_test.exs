@@ -1008,7 +1008,7 @@ defmodule HerdrServer.ServerTest do
     {c, s} = client()
     scene(c)
     :ok = Store.run({HerdrServer.ServerTest.Capture, :open, []}, %{cols: 80, rows: 24})
-    scene_until(c, &Scene.Node.find(&1.chrome, [{:modal, 0}]))
+    scene_until(c, &Scene.Node.find(&1.chrome, [{:modal, 1}]))
     input(s, c, 1, Event.key("b", [:ctrl]))
     input(s, c, 2, Event.key("x"))
     assert_receive {^c, {:ack, 2}}
@@ -1030,8 +1030,8 @@ defmodule HerdrServer.ServerTest do
     scene(c)
     refute MapSet.member?(fast().intercept, {"t", [:ctrl]})
     :ok = Store.run({HerdrServer.App.Modal.Keybinds, :open, []}, %{cols: 80, rows: 24})
-    scene_until(c, &Scene.Node.find(&1.chrome, [{:modal, 0}]))
-    path = [{:modal, 0}, :list, {:action, "rename_tab"}]
+    scene_until(c, &Scene.Node.find(&1.chrome, [{:modal, 1}]))
+    path = [{:modal, 1}, :list, {:action, "rename_tab"}]
     input(s, c, 1, {:chrome, path, {:click, %{x: 0, y: 0}}})
     assert_receive {^c, {:ack, 1}}
     assert eventually(fn -> :sys.get_state(s).capture end)
@@ -1046,7 +1046,7 @@ defmodule HerdrServer.ServerTest do
     {c, s} = client()
     scene(c)
     :ok = Store.run({HerdrServer.App.Modal.Prompt, :rename_tab, []}, %{cols: 80, rows: 24})
-    scene_until(c, &Scene.Node.find(&1.chrome, [{:modal, 0}]))
+    scene_until(c, &Scene.Node.find(&1.chrome, [{:modal, 1}]))
     input(s, c, 1, Event.key("b", [:ctrl]))
     input(s, c, 2, Event.key("v"))
     input(s, c, 3, Event.key("q"))

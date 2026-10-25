@@ -250,8 +250,8 @@ defmodule HerdrServer.ViewTest do
     {app, []} = Prompt.rename_tab(fresh(80, 24))
     s = View.compute(app, client(80, 24))
     assert :ok = Scene.validate(s)
-    assert %Node{role: :modal, id: {:modal, 0}} = List.last(s.chrome.children)
-    assert s.focus == %{pane: 1, chrome: [{:modal, 0}, :input]}
+    assert %Node{role: :modal, id: {:modal, 1}} = List.last(s.chrome.children)
+    assert s.focus == %{pane: 1, chrome: [{:modal, 1}, :input]}
     # panel x 12, y 8; input row y + 3, text from x + 2, cursor after "1"
     assert s.cursor == %{x: 15, y: 11, shape: :bar}
 
@@ -263,7 +263,7 @@ defmodule HerdrServer.ViewTest do
 
     s = View.compute(app, client(80, 24))
     assert :ok = Scene.validate(s)
-    assert Node.find(s.chrome, [{:modal, 0}, :input]).props.offset == 64 - 52
+    assert Node.find(s.chrome, [{:modal, 1}, :input]).props.offset == 64 - 52
     assert s.cursor.x == 12 + 2 + 52
 
     # no modal: no chrome focus, no scene cursor

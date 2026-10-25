@@ -43,11 +43,13 @@ defmodule HerdrServer.App.Modal do
     * `key/2`: releases are dropped; Esc closes the top modal (unless its kind
       `ignores_escape?`), every other key goes to the kind.
     * `paste/2`: a top `:prompt`'s field gets the text; other kinds ignore it.
-    * `chrome/3`: `[{:modal | :menu, depth} | rest]` for the top's depth only (a stale
-      depth is a no-op); `[_, :backdrop]` clicks close like Esc; other paths go to the
-      kind's `chrome/4` with `rest`.
-    * `view/2`: the top modal's node (ids `{:modal, depth}` / `{:menu, depth}` with
-      `depth = length(stack) - 1`), or nil.
+    * `chrome/3`: `[{:modal | :menu, id} | rest]` for the top's id only (a stale id is a
+      no-op); `[_, :backdrop]` clicks close like Esc; other paths go to the kind's
+      `chrome/4` with `rest`.
+    * `view/2`: the top modal's node (ids `{:modal, id}` / `{:menu, id}`), or nil.
+
+  Ids come from `App.Focus.next_modal_id` and are never reused while the app lives, so a
+  click from another client's stale scene cannot land on a later modal at the same depth.
 
   Keys never reach a pane while the stack is non-empty: `App.Actions` routes them here,
   and the Store's fast path needs `modal == []`.
@@ -67,11 +69,12 @@ defmodule HerdrServer.App.Modal do
 
   @type modal :: HerdrServer.App.Modal.Kind.modal()
 
-  @doc "Pushes `modal` on top with a fresh id."
+  @doc "Pushes `modal` on top with a fresh id (above the stack's, for an upgraded focus)."
   @spec push(map, map) :: map
-  def push(app, modal) do
-    id = (top_id(app.focus.modal) || 0) + 1
-    update_in(app.focus.modal, &[Map.put(modal, :id, id) | &1])
+  def push(%{focus: focus} = app, modal) do
+    id = max(Map.get(focus, :next_modal_id, 1), (top_id(focus.modal) || 0) + 1)
+    focus = Map.put(focus, :next_modal_id, id + 1)
+    %{app | focus: %{focus | modal: [Map.put(modal, :id, id) | focus.modal]}}
   end
 
   @spec pop(map) :: map
@@ -104,10 +107,10 @@ defmodule HerdrServer.App.Modal do
   def paste(app, _bin), do: {app, []}
 
   @spec chrome(map, [term], {atom, map}) :: {map, [tuple]}
-  def chrome(%{focus: %{modal: [m | _] = stack}} = app, [{tag, d} | rest], action)
+  def chrome(%{focus: %{modal: [m | _]}} = app, [{tag, id} | rest], action)
       when tag in [:modal, :menu] do
     cond do
-      d != length(stack) - 1 -> {app, []}
+      id != m.id -> {app, []}
       rest == [:backdrop] -> backdrop(app, m, action)
       rest == [] -> {app, []}
       true -> run(app, &mod(m).chrome(m, rest, action, &1))
@@ -117,10 +120,10 @@ defmodule HerdrServer.App.Modal do
   def chrome(app, _path, _action), do: {app, []}
 
   @spec view(map, %{cols: pos_integer, rows: pos_integer}) :: Node.t() | nil
-  def view(%{focus: %{modal: [m | _] = stack}} = app, size) do
+  def view(%{focus: %{modal: [m | _]}} = app, size) do
     node = mod(m).node(m, app, size)
     tag = if node.role == :menu, do: :menu, else: :modal
-    %{node | id: {tag, length(stack) - 1}}
+    %{node | id: {tag, m.id}}
   end
 
   def view(_app, _size), do: nil

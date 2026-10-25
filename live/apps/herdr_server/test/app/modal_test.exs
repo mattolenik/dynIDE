@@ -75,7 +75,7 @@ defmodule HerdrServer.App.ModalTest do
     app = stub(fresh())
     {app, []} = press(app, :escape)
     assert [%{kind: Stubborn}] = app.focus.modal
-    {app, []} = Actions.apply(app, {:chrome, [{:modal, 0}, :backdrop], {:click, %{x: 0, y: 0}}})
+    {app, []} = Actions.apply(app, {:chrome, [{:modal, 1}, :backdrop], {:click, %{x: 0, y: 0}}})
     assert [%{kind: Stubborn}] = app.focus.modal
     assert {%{focus: %{modal: []}}, [{:notice, 1}]} = press(app, :enter)
   end
@@ -84,8 +84,8 @@ defmodule HerdrServer.App.ModalTest do
     app = prompt(fresh())
     click = {:click, %{x: 0, y: 0}}
     assert {^app, []} = Actions.apply(app, {:chrome, [{:modal, 3}, :backdrop], click})
-    assert {^app, []} = Actions.apply(app, {:chrome, [{:modal, 0}], click})
-    {app, []} = Actions.apply(app, {:chrome, [{:modal, 0}, :backdrop], click})
+    assert {^app, []} = Actions.apply(app, {:chrome, [{:modal, 1}], click})
+    {app, []} = Actions.apply(app, {:chrome, [{:modal, 1}, :backdrop], click})
     assert app.focus.modal == []
   end
 
@@ -124,12 +124,30 @@ defmodule HerdrServer.App.ModalTest do
     refute Modal.capturing?(prompt(app).focus)
   end
 
-  test "view draws the top modal only, with its depth in the id" do
+  test "view draws the top modal only, with its id in the node id" do
     assert Modal.view(fresh(), %{cols: 80, rows: 24}) == nil
     app = fresh() |> prompt() |> stub()
 
-    assert %Node{role: :modal, id: {:modal, 1}, props: %{kind: :stub}} =
+    assert %Node{role: :modal, id: {:modal, 2}, props: %{kind: :stub}} =
              Modal.view(app, %{cols: 80, rows: 24})
+  end
+
+  test "modal ids are monotonic: a stale click never lands on a later modal at its depth" do
+    click = {:click, %{x: 0, y: 0}}
+    app = prompt(fresh())
+    stale = Modal.view(app, %{cols: 80, rows: 24}).id
+    # closed and another opened at the same depth (another client's menu, say)
+    app = app |> Modal.pop() |> prompt()
+    assert [%{id: 2}] = app.focus.modal
+    assert {^app, []} = Actions.apply(app, {:chrome, [stale, :backdrop], click})
+    fresh_id = Modal.view(app, %{cols: 80, rows: 24}).id
+
+    assert {%{focus: %{modal: []}}, []} =
+             Actions.apply(app, {:chrome, [fresh_id, :backdrop], click})
+
+    # the counter survives an upgrade of an old focus with a stack
+    old = %{app | focus: Map.from_struct(app.focus) |> Map.delete(:next_modal_id)}
+    assert [%{id: 3}, _] = HerdrServer.App.Upgrade.app(old) |> stub() |> then(& &1.focus.modal)
   end
 
   test "modal state is plain data" do

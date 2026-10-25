@@ -37,14 +37,14 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.ModalTest do
     assert String.slice(Enum.at(t, 8), 0, 12) ==
              String.slice(Enum.at(texts(%{sc | chrome: base(sc)}), 8), 0, 12)
 
-    assert hit(l, [{:modal, 0}, :actions, :save]).rect == %{x: 23, y: 12, w: 8, h: 1}
-    assert hit(l, [{:modal, 0}, :actions, :clear]).rect == %{x: 33, y: 12, w: 10, h: 1}
-    assert hit(l, [{:modal, 0}, :actions, :cancel]).rect == %{x: 45, y: 12, w: 12, h: 1}
-    assert hit(l, [{:modal, 0}]).rect == %{x: 12, y: 8, w: 56, h: 7}
-    assert hit(l, [{:modal, 0}, :backdrop]).rect == %{x: 0, y: 0, w: 80, h: 24}
+    assert hit(l, [{:modal, 1}, :actions, :save]).rect == %{x: 23, y: 12, w: 8, h: 1}
+    assert hit(l, [{:modal, 1}, :actions, :clear]).rect == %{x: 33, y: 12, w: 10, h: 1}
+    assert hit(l, [{:modal, 1}, :actions, :cancel]).rect == %{x: 45, y: 12, w: 12, h: 1}
+    assert hit(l, [{:modal, 1}]).rect == %{x: 12, y: 8, w: 56, h: 7}
+    assert hit(l, [{:modal, 1}, :backdrop]).rect == %{x: 0, y: 0, w: 80, h: 24}
     # topmost first: buttons, the panel, then the backdrop before any base hit
     paths = Enum.map(l.hits, & &1.path)
-    assert Enum.find_index(paths, &(&1 == [{:modal, 0}, :backdrop])) == 4
+    assert Enum.find_index(paths, &(&1 == [{:modal, 1}, :backdrop])) == 4
 
     # border accent, panel and input on the surface, save primary, dim outside the box
     row = cells(sc, 12)
@@ -71,7 +71,7 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.ModalTest do
     sc = Fixture.load("menu_tab_80x24")
     l = layout(sc)
     refute l.dim
-    %Node{rect: r} = Node.find(sc.chrome, [{:menu, 0}])
+    %Node{rect: r} = Node.find(sc.chrome, [{:menu, 1}])
     assert r == %{x: 36, y: 0, w: 14, h: 5}
     t = texts(sc)
     assert String.slice(Enum.at(t, 0), 36, 14) == "┌" <> String.duplicate("─", 12) <> "┐"
@@ -79,8 +79,8 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.ModalTest do
     assert String.slice(Enum.at(t, 3), 36, 14) == "│ Close      │"
     assert Enum.at(cells(sc, 1), 38).bg == Theme.style(@theme, :selected).bg
     assert Enum.at(cells(sc, 2), 38).bg == Theme.style(@theme, :surface).bg
-    assert hit(l, [{:menu, 0}, {:entry, :close}]).rect == %{x: 37, y: 3, w: 12, h: 1}
-    assert hit(l, [{:menu, 0}, :backdrop]).rect == %{x: 0, y: 0, w: 80, h: 24}
+    assert hit(l, [{:menu, 1}, {:entry, :close}]).rect == %{x: 37, y: 3, w: 12, h: 1}
+    assert hit(l, [{:menu, 1}, :backdrop]).rect == %{x: 0, y: 0, w: 80, h: 24}
   end
 
   test "menu_global_120x40 lists detach" do
@@ -134,11 +134,11 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.ModalTest do
     assert Enum.at(cells(sc, 17), 30).bg == Theme.style(@theme, :selected).bg
     assert Enum.at(cells(sc, 18), 30).bg == Theme.style(@theme, :surface).bg
 
-    assert hit(l, [{:modal, 0}, :sections, {:section, :indicators}]).rect ==
+    assert hit(l, [{:modal, 1}, :sections, {:section, :indicators}]).rect ==
              %{x: 31, y: 11, w: 12, h: 1}
 
-    assert hit(l, [{:modal, 0}, :list, {:choice, 1}]).rect == %{x: 23, y: 18, w: 74, h: 1}
-    assert hit(l, [{:modal, 0}, :actions, :apply])
+    assert hit(l, [{:modal, 1}, :list, {:choice, 1}]).rect == %{x: 23, y: 18, w: 74, h: 1}
+    assert hit(l, [{:modal, 1}, :actions, :apply])
   end
 
   test "modal_onboarding_80x24: herdr-live lines, prefix keycaps in the accent, continue" do
@@ -152,7 +152,7 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.ModalTest do
     assert Enum.at(box, 14) =~ "↵ continue"
     assert Enum.at(cells(sc, 12), 10).fg == Theme.style(@theme, :accent).fg
     assert :bold in Enum.at(cells(sc, 12), 10).attrs
-    assert hit(layout(sc), [{:modal, 0}, :actions, :continue]).rect.y == 18
+    assert hit(layout(sc), [{:modal, 1}, :actions, :continue]).rect.y == 18
   end
 
   test "modal_keybinds_120x40: group headings, shortcut column, rows as hits" do
@@ -168,7 +168,7 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.ModalTest do
     assert Enum.at(cells(sc, 15), 30).bg == Theme.style(@theme, :selected).bg
     assert Enum.at(cells(sc, 14), 24).fg == Theme.style(@theme, :accent).fg
 
-    assert hit(layout(sc), [{:modal, 0}, :list, {:action, "detach"}]).rect ==
+    assert hit(layout(sc), [{:modal, 1}, :list, {:action, "detach"}]).rect ==
              %{x: 23, y: 16, w: 74, h: 1}
   end
 

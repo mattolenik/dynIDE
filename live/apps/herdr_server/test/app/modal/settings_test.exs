@@ -12,7 +12,7 @@ defmodule HerdrServer.App.Modal.SettingsTest do
   defp press(app, k, mods \\ []), do: elem(key(app, k, mods), 0)
 
   defp click(app, path),
-    do: Actions.apply(app, {:chrome, [{:modal, 0} | path], {:click, %{x: 0, y: 0}}})
+    do: Actions.apply(app, {:chrome, [{:modal, 1} | path], {:click, %{x: 0, y: 0}}})
 
   defp view(app), do: Modal.view(app, app.session.size)
 
@@ -133,7 +133,7 @@ defmodule HerdrServer.App.Modal.SettingsTest do
 
   test "a backdrop click closes and restores the previewed theme" do
     app = press(open(), :down)
-    {app, []} = Actions.apply(app, {:chrome, [{:modal, 0}, :backdrop], {:click, %{x: 0, y: 0}}})
+    {app, []} = Actions.apply(app, {:chrome, [{:modal, 1}, :backdrop], {:click, %{x: 0, y: 0}}})
     assert app.focus.modal == [] and app.ui.theme.name == "catppuccin"
   end
 
