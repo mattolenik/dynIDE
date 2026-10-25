@@ -76,6 +76,98 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
     {c, fd}
   end
 
+  defp carried_blob(id, info, opts) do
+    :erlang.term_to_binary(
+      Map.merge(
+        %{v: 1, client_id: id, info: info, acked: -1, buffer: "", prepared: true},
+        Map.new(opts)
+      )
+    )
+  end
+
+  # a blob the adopting VM must not carry: the client sees EOF, reconnects and resumes
+  defp grace_resume!(id, opts) do
+    {c, fd} = socket_pair()
+    b = carried_blob(id, attach_info(client_id: id), opts)
+    :ok = Link.put_adopted_for_test([{"client/" <> id, b, [fd]}])
+    ctx = setup_listener()
+    assert :closed = recv_closed(c)
+    assert :sys.get_state(Link).rejected == ["client/" <> id]
+    attached!(attach(ctx, client_id: id), true)
+  end
+
+  test "a blob not prepared for this handoff resumes in grace" do
+    grace_resume!("crashed", prepared: false)
+  end
+
+  test "a carried buffer over 1 MiB resumes in grace" do
+    grace_resume!("bigbuf", buffer: :binary.copy("x", 1_048_577))
+  end
+
+  test "an adopted entry whose attach fails is unclaimed and closed" do
+    ctx = setup_listener()
+    attached!(attach(ctx, client_id: "twice"), false)
+    {c, fd} = socket_pair()
+    b = carried_blob("twice", attach_info(client_id: "twice"), [])
+    :ok = Link.put_adopted_for_test([{"client/twice", b, [fd]}])
+    # the id is taken: registering the adopted conn fails
+    assert :ignore = Remote.Supervisor.start_adopted(hd(Link.take_adopted("client/")))
+    assert :closed = recv_closed(c)
+    assert :sys.get_state(Link).rejected == ["client/twice"]
+  end
+
+  test "a crashed or stopped conn drops its hold" do
+    ctx = setup_listener()
+    attached!(attach(ctx, client_id: "crash1"), false)
+    assert_receive {:hold, "client/crash1", _, 1}, 2000
+    catch_exit(GenServer.call(conn("crash1"), :no_such_call))
+    assert_receive {:drop, "client/crash1"}, 2000
+
+    attached!(attach(ctx, client_id: "stop1"), false)
+    assert_receive {:hold, "client/stop1", _, 1}, 2000
+    :ok = DynamicSupervisor.terminate_child(Remote.Supervisor, conn("stop1"))
+    assert_receive {:drop, "client/stop1"}, 2000
+  end
+
+  test "a conn that does not answer prepare is dropped" do
+    ctx = setup_listener()
+    attached!(attach(ctx, client_id: "slow1"), false)
+    assert_receive {:hold, "client/slow1", _, 1}, 2000
+    pid = conn("slow1")
+    :ok = :sys.suspend(pid)
+    :ok = Remote.prepare_all()
+    assert_receive {:drop, "client/slow1"}, 2000
+    :ok = :sys.resume(pid)
+  end
+
+  test "an undrained socket is dropped at prepare, not carried" do
+    ctx = setup_listener()
+    _s = attached!(attach(ctx, client_id: "stuck1"), false)
+    assert_receive {:hold, "client/stuck1", _, 1}, 2000
+    {:ok, %{pty: pty}} = Fake.Keeper.lookup(Rows.kernel_id(1))
+
+    flood =
+      spawn(fn ->
+        Stream.iterate(0, &(&1 + 1))
+        |> Enum.each(fn i ->
+          Fake.Pty.output(pty, "\e[5;1H" <> String.pad_leading("#{i}", 40, "f"))
+          Process.sleep(1)
+        end)
+      end)
+
+    on_exit(fn -> Process.exit(flood, :kill) end)
+
+    wait_until(fn ->
+      sock = :sys.get_state(conn("stuck1")).socket
+      sock != nil and match?({:ok, [send_pend: n]} when n > 0, :inet.getstat(sock, [:send_pend]))
+    end)
+
+    :ok = Remote.prepare_all()
+    assert_receive {:drop, "client/stuck1"}, 2000
+    refute_received {:update, "client/stuck1", _}
+    assert :sys.get_state(conn("stuck1")).socket == nil
+  end
+
   test "attach holds client/<id>" do
     ctx = setup_listener()
     attached!(attach(ctx, client_id: "held1"), false)
@@ -93,7 +185,7 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
 
     :ok = Remote.prepare_all()
     assert_receive {:update, "client/frz", b}, 2000
-    assert %{buffer: ^head, acked: -1} = blob(b)
+    assert %{buffer: ^head, acked: -1, prepared: true} = blob(b)
 
     # neither read nor written while frozen
     :ok = :gen_tcp.send(s, tail)
@@ -102,6 +194,8 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
     assert typed(1) == ""
 
     :ok = Remote.thaw_all()
+    assert_receive {:update, "client/frz", b}, 2000
+    assert %{prepared: false} = blob(b)
     assert {:notice, %{text: "held"}} = recv_until(s, &match?({:notice, _}, &1))
     assert {:ack, 1} = recv_until(s, &match?({:ack, _}, &1))
     assert typed(1) == "q"
@@ -115,14 +209,7 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
     next = IO.iodata_to_binary(Wire.encode({:input, 5, Event.key("y")}))
     {head, tail} = :erlang.split_binary(next, 5)
 
-    b =
-      :erlang.term_to_binary(%{
-        v: 1,
-        client_id: "abc",
-        info: info,
-        acked: 3,
-        buffer: carried <> head
-      })
+    b = carried_blob("abc", info, acked: 3, buffer: carried <> head)
 
     :ok = Link.put_adopted_for_test([{"client/abc", b, [fd]}])
     _ctx = setup_listener()
@@ -130,7 +217,7 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
     assert {:attached, %{resumed: :handoff}} = recv_frame(c)
     assert {:scene, _} = recv_until(c, &match?({:scene, _}, &1))
     assert_receive {:update, "client/abc", b2}, 2000
-    assert %{buffer: "", acked: 3} = blob(b2)
+    assert %{buffer: "", acked: 3, prepared: false} = blob(b2)
 
     :ok = :gen_tcp.send(c, tail)
     # resent after the handoff: 3 is acked already (re-acked, not applied), 4 was carried
