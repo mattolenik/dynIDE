@@ -20,9 +20,9 @@ defmodule HerdrTerm.Remote.Conn do
   Every other server frame goes to Render; the last scene is kept with its inline rows
   dropped, to show a client-local notice (`HerdrTerm.Remote.Notice`): while
   disconnected (R14, backoff `{min_ms, max_ms}` doubling, reset on attach), and when a
-  frame cannot be decoded (R7; the socket is closed, a reconnect resyncs). `{:refused,
-  why}` and `{:detached, _}` stop reconnecting; a refusal ends the VM
-  (`HerdrTerm.Client.local_exit/1`), a detach does through `Tty.Owner`.
+  frame cannot be decoded (R7; the socket is closed, a reconnect after the longest
+  delay resyncs). `{:refused, why}` and `{:detached, _}` stop reconnecting; a refusal
+  ends the VM (`HerdrTerm.Client.local_exit/1`), a detach does through `Tty.Owner`.
   """
 
   use GenServer
@@ -262,7 +262,9 @@ defmodule HerdrTerm.Remote.Conn do
 
       {:error, :bad_term} ->
         Logger.error("remote: #{@decode_text}")
-        lost(state, @decode_text)
+        # the resync's full scene likely fails again, and attach resets the backoff:
+        # wait the longest delay so a term this client lacks is no reconnect loop
+        lost(%{state | delay: elem(state.backoff, 1)}, @decode_text)
 
       {:error, :too_large} ->
         lost(state, "server frame over the size limit")

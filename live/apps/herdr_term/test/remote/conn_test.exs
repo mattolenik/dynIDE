@@ -197,17 +197,23 @@ defmodule HerdrTerm.Remote.ConnTest do
     assert {:error, :timeout} = :gen_tcp.accept(ctx.l, 500)
   end
 
-  test "undecodable frame gives a notice and reconnects", ctx do
-    start(ctx)
+  test "undecodable frame gives a notice and reconnects after the longest delay", ctx do
+    start(ctx, backoff: {10, 1_000})
     {s, _} = handshake(ctx.l)
     push(s, {:scene, scene()})
     assert_receive {:scene, _}, @wait
     atom = "herdr_term_remote_no_such_atom_#{System.unique_integer([:positive])}"
     etf = <<131, 119, byte_size(atom), atom::binary>>
-    :ok = :gen_tcp.send(s, <<byte_size(etf)::32-big, etf::binary>>)
-    assert_receive {:scene, sc}, @wait
-    assert notice(sc).text =~ "cannot decode"
-    handshake(ctx.l, true)
+
+    # twice: the attach in between resets the backoff, a bad term must not
+    Enum.reduce(1..2, s, fn _, s ->
+      :ok = :gen_tcp.send(s, <<byte_size(etf)::32-big, etf::binary>>)
+      assert_receive {:scene, sc}, @wait
+      assert notice(sc).text =~ "cannot decode"
+      assert {:error, :timeout} = :gen_tcp.accept(ctx.l, 500)
+      {s, _} = handshake(ctx.l, true)
+      s
+    end)
   end
 
   test "pane mode handles the detach keys itself", ctx do
