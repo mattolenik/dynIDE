@@ -75,5 +75,6 @@ dark_name = "catppuccin"
 # swap_pane_left = ["prefix+shift+h"]
 # swap_pane_right = ["prefix+shift+l"]
 # swap_pane_up = ["prefix+shift+k"]
+# copy_mode = ["prefix+["]
 # toggle_sidebar = ["prefix+b"]
 # zoom = ["prefix+z"]
