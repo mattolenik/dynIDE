@@ -1,6 +1,6 @@
 #!/bin/sh
 # Smoke test of the self-contained release (M18 task 1). Usage: release_smoke.sh [tarball]
-# Without a tarball it runs build.sh first. It installs the tarball with install.sh (R4 layout)
+# Without a tarball it runs keygen.sh and build.sh --dev-key first (and checks update-keys/). It installs the tarball with install.sh (R4 layout)
 # under a prefix with a space (<prefix>/lib/herdr-live/releases/<V>, current -> releases/<V>,
 # <prefix>/bin/herdr-live -> ../lib/herdr-live/current/bin/herdr-live) and runs every
 # command through that symlink in a clean env (env -i: temp HOME, XDG dirs, runtime dir,
@@ -37,13 +37,21 @@ fail() {
 if [ $# -ge 1 ]; then
   tarball=$1
 else
-  built=$("$here/build.sh") || fail "build.sh failed"
+  pub=$("$here/keygen.sh") || fail "keygen.sh"
+  built=$("$here/build.sh" --dev-key) || fail "build.sh failed"
   tarball=$(printf '%s\n' "$built" | tail -n 1)
 fi
 [ -f "$tarball" ] || fail "no tarball $tarball"
 
 top=$(tar -tzf "$tarball" | head -n 1 | cut -d/ -f1)
 v=${top#herdr-live-}
+if [ -n "${pub:-}" ]; then # built here with --dev-key: it trusts exactly the dev key
+  keys=$(tar -tzf "$tarball" | grep "^$top/releases/$v/update-keys/.")
+  [ "$keys" = "$top/releases/$v/update-keys/dev-update.pub" ] || fail "update-keys: $keys (wanted dev-update.pub only)"
+  [ "$(tar -xzOf "$tarball" "$top/releases/$v/update-keys/dev-update.pub")" = "$(cat "$pub")" ] ||
+    fail "update-keys/dev-update.pub is not $pub"
+  echo "PASS: build.sh --dev-key: the release trusts exactly the dev key"
+fi
 
 # install.sh refuses a tarball whose top dir names a bad version (.., ., a space)
 for bad in .. . 'a b'; do

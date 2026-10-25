@@ -126,7 +126,7 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   release templates (`env.sh.eex`: `RELEASE_DISTRIBUTION=none`; `vm.args.eex`),
   `rel/macos/entitlements.plist` and `rel/packaging/` (Homebrew formula
   template, Nix flake). `live/scripts/release/`: `build.sh` (tarball +
-  `.sha256`, path printed last), `install.sh`, `keygen.sh` (dev update key into
+  `.sha256`, path printed last; `--dev-key` embeds the dev update key, local checks only), `install.sh`, `keygen.sh` (dev update key into
   `live/_build/release/keys/`, never committed), `make_manifest.exs` /
   `sign_manifest.sh`, `sign_macos.sh` / `notarize_macos.sh` (dry-run capable),
   and the checks `release_smoke.sh`, `fresh_install_check.sh`,

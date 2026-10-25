@@ -43,8 +43,10 @@ export HERDR_LIVE_UPDATE_PUBKEY=~/secure/herdr-live-update/dev-update.pub
 T=$(scripts/release/build.sh | tail -n 1)
 V=$(basename $T | sed 's/^herdr-live-\(.*\)-macos-aarch64\.tar\.gz$/\1/')
 
-# 2. unpack, sign every Mach-O (dry run first: add --dry-run)
+# 2. unpack, check the release trusts exactly the real key (no dev key; the line must
+#    print "update key ok"), then sign every Mach-O (dry run first: add --dry-run)
 rm -rf _build/signing && mkdir _build/signing && tar -xzf $T -C _build/signing
+[ "$(cat _build/signing/herdr-live-$V/releases/$V/update-keys/*.pub)" = "$(cat "$HERDR_LIVE_UPDATE_PUBKEY")" ] && echo "update key ok"
 scripts/release/sign_macos.sh --identity "$ID" _build/signing/herdr-live-$V
 
 # 3. repack the signed tree over the tarball and refresh its checksum

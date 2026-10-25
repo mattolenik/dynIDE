@@ -54,8 +54,9 @@ Unknown fields are ignored and covered by the signature like the rest. `agent_ma
 
 The signature is checked before the JSON is parsed. Trusted keys ship inside the
 release: `releases/<V>/update-keys/*.pub`, each the base64 of a raw 32-byte ed25519
-public key. `build.sh` copies `HERDR_LIVE_UPDATE_PUBKEY` (a `.pub` file) there, else the
-dev key from `live/scripts/release/keygen.sh` when it exists. A release built with no key
+public key. `build.sh` copies `HERDR_LIVE_UPDATE_PUBKEY` (a `.pub` file) there, else, only
+with `--dev-key` (or `HERDR_LIVE_DEV_KEY=1`), the dev key from
+`live/scripts/release/keygen.sh`. A release built with no key
 refuses every update (`no_trusted_keys`); there is no trust on first use. In a source
 checkout, `herdr-live update --check` trusts only `HERDR_LIVE_UPDATE_PUBKEY`.
 
@@ -112,7 +113,7 @@ leaves `current` as it was.
 
 ```sh
 live/scripts/release/keygen.sh                       # dev pair in live/_build/release/keys/
-live/scripts/release/build.sh --version 0.1.1        # tarball, built trusting that key
+live/scripts/release/build.sh --dev-key --version 0.1.1   # tarball trusting that key
 elixir live/scripts/release/make_manifest.exs --key live/_build/release/keys/dev-update.key \
   --url-base https://host/path live/_build/release/herdr-live-0.1.1-*.tar.gz
 ```

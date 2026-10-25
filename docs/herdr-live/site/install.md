@@ -6,8 +6,12 @@ you build the tarball locally.
 ## Build
 
 ```sh
-live/scripts/release/build.sh [--version V] [--out DIR]
+live/scripts/release/build.sh [--version V] [--out DIR] [--dev-key]
 ```
+
+The release trusts the update key in `HERDR_LIVE_UPDATE_PUBKEY`; `--dev-key` embeds the
+local dev key from `keygen.sh` instead (local checks only). With neither it trusts no key
+and refuses every update.
 
 Produces `live/_build/release/herdr-live-<V>-<os>-<arch>.tar.gz` (or under `--out DIR`) and
 a `.sha256` next to it, and prints the tarball path as its last line (`os` is `macos` or

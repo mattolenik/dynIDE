@@ -60,8 +60,9 @@ defmodule Live.MixProject do
   end
 
   # `herdr-live update` (R5): the trusted key ($HERDR_LIVE_UPDATE_PUBKEY, else the dev key
-  # from scripts/release/keygen.sh when present) and the default manifest URL (a placeholder:
-  # no channel is published). No key: update-keys/ is empty and every update is refused.
+  # from scripts/release/keygen.sh only with HERDR_LIVE_DEV_KEY=1, i.e. `build.sh --dev-key`)
+  # and the default manifest URL (a placeholder: no channel is published). No key:
+  # update-keys/ is empty and every update is refused.
   @update_url "https://updates.herdr-live.invalid/stable/manifest.json"
   defp update_files(dir) do
     keys = Path.join(dir, "update-keys")
@@ -70,23 +71,28 @@ defmodule Live.MixProject do
     File.write!(Path.join(dir, "update.url"), @update_url <> "\n")
 
     env = System.get_env("HERDR_LIVE_UPDATE_PUBKEY", "")
+    dev? = System.get_env("HERDR_LIVE_DEV_KEY") == "1"
     pub = if env == "", do: "_build/release/keys/dev-update.pub", else: env
 
-    if env == "" and not File.regular?(pub) do
-      Mix.shell().info("no update key (HERDR_LIVE_UPDATE_PUBKEY, #{pub}): updates refused")
-    else
-      b64 = File.read!(pub) |> String.trim()
+    cond do
+      env == "" and not dev? ->
+        Mix.shell().info(
+          "no update key (HERDR_LIVE_UPDATE_PUBKEY unset, no --dev-key): updates refused"
+        )
 
-      match?({:ok, <<_::binary-size(32)>>}, Base.decode64(b64)) ||
-        Mix.raise("#{pub}: not a base64 raw 32-byte ed25519 public key")
+      env == "" and not File.regular?(pub) ->
+        Mix.raise("--dev-key: no #{pub} (run scripts/release/keygen.sh)")
 
-      File.write!(Path.join(keys, Path.basename(pub)), b64 <> "\n")
+      true ->
+        b64 = File.read!(pub) |> String.trim()
 
-      if env == "",
-        do:
-          Mix.shell().info(
-            "release trusts the DEV update key #{pub} (set HERDR_LIVE_UPDATE_PUBKEY for a real one)"
-          )
+        match?({:ok, <<_::binary-size(32)>>}, Base.decode64(b64)) ||
+          Mix.raise("#{pub}: not a base64 raw 32-byte ed25519 public key")
+
+        File.write!(Path.join(keys, Path.basename(pub)), b64 <> "\n")
+
+        if env == "",
+          do: Mix.shell().info("release trusts the DEV update key #{pub} (--dev-key)")
     end
   end
 

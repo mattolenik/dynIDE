@@ -1,6 +1,6 @@
 #!/bin/sh
 # In-place update exit criterion (M18 task 3). Usage: update_check.sh [V1 V2 V3 tarballs]
-# Without tarballs it runs keygen.sh and builds 0.1.0, 0.1.1 and 0.1.2 with build.sh (the
+# Without tarballs it runs keygen.sh and builds 0.1.0, 0.1.1 and 0.1.2 with build.sh --dev-key (the
 # dev key is their trusted update key). It installs 0.1.0 with install.sh under a prefix
 # with a space, starts a headless instance in a clean env (like release_smoke.sh) with its
 # own log, opens 3 panes (`seq 1 3000`, a `date` loop, idle) and records pane ids and
@@ -47,7 +47,7 @@ if [ $# -ge 3 ]; then
   t1=$1 t2=$2 t3=$3
 else
   for v in 0.1.0 0.1.1 0.1.2; do
-    t=$("$here/build.sh" --version "$v" --out "$tmp/build" | tail -n 1) || fail "build.sh --version $v"
+    t=$("$here/build.sh" --dev-key --version "$v" --out "$tmp/build" | tail -n 1) || fail "build.sh --version $v"
     eval "t_$(echo "$v" | tr . _)=\$t"
   done
   # shellcheck disable=SC2154 # set by the eval above
