@@ -631,9 +631,7 @@ defmodule HerdrServer.Api.Spec do
     ]
   end
 
-  # M14 publishes every plugin method now; until its task lands each answers
-  # not_available, and that task narrows the error list
-  defp plugin(name, summary, params, result, cli, errors \\ [:not_available]),
+  defp plugin(name, summary, params, result, cli, errors),
     do: method("plugin." <> name, "plugin", summary, params, result, errors, cli)
 
   defp plugins do
@@ -765,21 +763,33 @@ defmodule HerdrServer.Api.Spec do
         "pane_info",
         "herdr-live plugin pane open --plugin ID --entrypoint ID [--placement P] [--width S] " <>
           "[--height S] [--workspace ID] [--target-pane PANE] [--direction right|down] " <>
-          "[--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus]"
+          "[--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus]",
+        [:not_found, :failed, :not_available]
+      )
+      |> Map.put(
+        :notes,
+        "Runs the entry's command (argv, no shell) as the pane's program, in the plugin root " <>
+          "unless `cwd` is given. `split` splits the target pane (`direction` default `right`); " <>
+          "`tab`, `overlay` and `zoomed` open a new tab in the workspace (herdr-live has no " <>
+          "overlay or zoom). `popup` answers `not_available` until M17. The pane is named " <>
+          "after the entry's title. `data.reason` carries herdr's code (`plugin_not_found`, " <>
+          "`plugin_pane_not_found`, `plugin_disabled`, `invalid_env`, ...)."
       ),
       plugin(
         "pane.focus",
         "Focus a plugin pane.",
         [pid],
         "ok",
-        "herdr-live plugin pane focus <pane_id>"
+        "herdr-live plugin pane focus <pane_id>",
+        [:not_found]
       ),
       plugin(
         "pane.close",
         "Close a plugin pane.",
         [pid],
         "ok",
-        "herdr-live plugin pane close <pane_id>"
+        "herdr-live plugin pane close <pane_id>",
+        [:not_found]
       )
     ]
   end

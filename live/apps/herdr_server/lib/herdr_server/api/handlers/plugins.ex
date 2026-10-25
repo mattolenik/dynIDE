@@ -2,14 +2,14 @@ defmodule HerdrServer.Api.Handlers.Plugins do
   @moduledoc """
   The `plugin.*` methods and `pane.link.activate`. Registry methods go to `Plugins.Install`
   and `Plugins.Registry`, actions and logs to `Plugins.Runtime` (`not_available` when it
-  is not running); herdr's specific error code is `data.reason`. The rest answer
-  `not_available` naming the M14 task that serves them.
+  is not running), panes to `Plugins.Panes`; herdr's specific error code is `data.reason`.
+  The rest answer `not_available` naming the M14 task that serves them.
   """
 
-  alias HerdrServer.Api.Spec
-  alias HerdrServer.Plugins.{Install, Registry, Runtime}
+  alias HerdrServer.Api.{Spec, View}
+  alias HerdrServer.App.{Commands, Store}
+  alias HerdrServer.Plugins.{Install, Panes, Registry, Runtime}
 
-  @task5 ~w(plugin.pane.open plugin.pane.focus plugin.pane.close)
   @invalid ~w(invalid_plugin_id invalid_plugin_source invalid_plugin_path ambiguous_plugin_action)
 
   @spec handle(String.t(), map()) :: {:ok, map()} | {:error, atom(), String.t(), map()}
@@ -54,13 +54,50 @@ defmodule HerdrServer.Api.Handlers.Plugins do
          do: {:ok, %{type: "plugin_log_list", logs: Runtime.logs(p[:plugin_id], p[:limit] || 50)}}
   end
 
+  def handle("plugin.pane.open", p) do
+    {:ok, _, app} = Store.request({Commands, :noop, []})
+
+    with {:ok, spec} <- Panes.spec(p, app) do
+      {:ok, before, aft} = Store.request({Panes, :open, [spec]})
+      warnings = for {:notice, %{level: :warning, text: t}} <- drain(), do: t
+
+      case {Map.keys(aft.session.panes) -- Map.keys(before.session.panes), warnings} do
+        {[id | _], []} ->
+          {:ok, %{type: "pane_info", pane: View.pane(aft, id)}}
+
+        {_, [text | _]} ->
+          {:error, :failed, text, %{reason: "plugin_pane_open_failed"}}
+
+        {[], []} ->
+          {:error, :not_found, "the target vanished", %{reason: "pane_not_found"}}
+      end
+    end
+  end
+
+  def handle("plugin.pane." <> op, %{pane_id: id}) when op in ~w(focus close) do
+    if Panes.plugin_pane?(Store.snapshot(), id) do
+      Store.request({Commands, String.to_existing_atom(op <> "_pane"), [id]})
+      {:ok, %{type: "ok"}}
+    else
+      {:error, :not_found, "plugin pane not found", %{reason: "plugin_pane_not_found"}}
+    end
+  end
+
   def handle(method, _params),
     do:
       {:error, :not_available, "#{method} is not served yet",
        %{requires: "M14 task #{task(method)}"}}
 
-  defp task(m) when m in @task5, do: 5
   defp task("pane.link.activate"), do: 6
+
+  # the Store's notices to this request's origin (a spawn failure, a pane too small)
+  defp drain do
+    receive do
+      {:notice, _} = n -> [n | drain()]
+    after
+      0 -> []
+    end
+  end
 
   defp running,
     do:

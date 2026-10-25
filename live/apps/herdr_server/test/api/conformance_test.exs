@@ -149,7 +149,30 @@ defmodule HerdrServer.Api.ConformanceTest do
     call(listen(ctx), "plugin.action.invoke", %{"action_id" => "go"})
   end
 
-  # without a plugin runtime; the plugin pane methods are published ahead of their task
+  defp produce("plugin.pane.open", :not_available, ctx) do
+    base = PluginDirs.use_tmp()
+    toml = "[[panes]]\nid = \"p\"\ntitle = \"P\"\nplacement = \"popup\"\ncommand = [\"sh\"]\n"
+    {:ok, _} = Install.link(PluginDirs.plugin(base <> "/p", "x", toml), true)
+    call(listen(ctx), "plugin.pane.open", %{"plugin_id" => "x", "entrypoint" => "p"})
+  end
+
+  defp produce("plugin.pane.open", :not_found, ctx) do
+    PluginDirs.use_tmp()
+    call(listen(ctx), "plugin.pane.open")
+  end
+
+  defp produce("plugin.pane.open", :failed, ctx) do
+    base = PluginDirs.use_tmp()
+    toml = "[[panes]]\nid = \"p\"\ntitle = \"P\"\ncommand = [\"sh\"]\n"
+    {:ok, _} = Install.link(PluginDirs.plugin(base <> "/p", "x", toml), false)
+    call(listen(ctx), "plugin.pane.open", %{"plugin_id" => "x", "entrypoint" => "p"})
+  end
+
+  # p1 is not a plugin pane
+  defp produce(method, :not_found, ctx) when method in ~w(plugin.pane.focus plugin.pane.close),
+    do: call(listen(ctx), method)
+
+  # without a plugin runtime
   defp produce("plugin." <> _ = method, :not_available, ctx), do: call(listen(ctx), method)
 
   defp produce("pane.link.activate", :not_available, ctx),

@@ -934,7 +934,9 @@ CLI: `herdr-live plugin pane open --plugin ID --entrypoint ID [--placement P] [-
 
 Result: `pane_info` with `pane` (`pane` object).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`, `failed`, `not_available`
+
+Runs the entry's command (argv, no shell) as the pane's program, in the plugin root unless `cwd` is given. `split` splits the target pane (`direction` default `right`); `tab`, `overlay` and `zoomed` open a new tab in the workspace (herdr-live has no overlay or zoom). `popup` answers `not_available` until M17. The pane is named after the entry's title. `data.reason` carries herdr's code (`plugin_not_found`, `plugin_pane_not_found`, `plugin_disabled`, `invalid_env`, ...).
 
 ### `plugin.pane.focus`
 
@@ -948,7 +950,7 @@ CLI: `herdr-live plugin pane focus <pane_id>`
 
 Result: `ok` (no fields).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`
 
 ### `plugin.pane.close`
 
@@ -962,7 +964,7 @@ CLI: `herdr-live plugin pane close <pane_id>`
 
 Result: `ok` (no fields).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`
 
 ## Objects
 

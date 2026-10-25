@@ -36,7 +36,9 @@ defmodule HerdrServer.Plugins.Command do
     end
   end
 
-  defp resolve(cmd, cwd) do
+  @doc "`cmd` as an executable: a path containing `/` against `cwd`, a bare name via PATH."
+  @spec resolve(String.t(), Path.t()) :: Path.t() | nil
+  def resolve(cmd, cwd) do
     if String.contains?(cmd, "/") do
       path = Path.expand(cmd, cwd)
       if File.regular?(path), do: path
