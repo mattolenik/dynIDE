@@ -777,6 +777,8 @@ def wait_exit(h, label):
         if pid:
             pgroups.discard(h.pid)
             h.pump(0.1)
+            # a later pump_all must not answer probes on this dead pty (EIO)
+            Herdr.running.remove(h)
             return st
 
 
