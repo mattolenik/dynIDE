@@ -15,10 +15,13 @@ here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 tmp=$(cd "$tmp" && pwd -P)
 
-ours() { pgrep -f -- "$tmp"; } # every process of this run has $tmp in its argv
+# leftover detection only (a FAIL, never a kill): every process of this run has $tmp in its argv
+ours() { pgrep -f -- "$tmp"; }
+pid='' spid=''
+vm_pids() { sed -n 's/.*herdr-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$tmp/state/herdr-live/herdr-live.log" 2>/dev/null; }
 # shellcheck disable=SC2329 # invoked via trap
-cleanup() {
-  for p in $(ours); do kill -KILL "$p" 2>/dev/null; done
+cleanup() { # only pids this run holds: broker, attach wrapper and launcher, the broker's VMs
+  for p in $pid $spid $(cat "$tmp/attach.pid" 2>/dev/null) $(vm_pids); do kill -KILL "$p" 2>/dev/null; done
   rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -33,7 +36,8 @@ fail() {
 if [ $# -ge 1 ]; then
   tarball=$1
 else
-  tarball=$("$here/build.sh" | tail -n 1) || fail "build.sh failed"
+  built=$("$here/build.sh") || fail "build.sh failed"
+  tarball=$(printf '%s\n' "$built" | tail -n 1)
 fi
 [ -f "$tarball" ] || fail "no tarball $tarball"
 top=$(tar -tzf "$tarball" | head -n 1 | cut -d/ -f1)
@@ -58,7 +62,6 @@ exec env -i HOME="$tmp/home" PATH=/usr/bin:/bin TERM=xterm-256color SHELL=/bin/s
 X
 chmod +x "$tmp/x.sh"
 x="$tmp/x.sh"
-log="$tmp/state/herdr-live/herdr-live.log"
 
 ! "$x" sh -c 'command -v erl || command -v elixir || command -v mix || command -v cargo' >/dev/null ||
   fail "erl, elixir, mix or cargo on the smoke PATH"
@@ -94,12 +97,13 @@ echo "PASS: one pane ($id)"
 
 # the marker is split so the echoed command line never matches it
 # shellcheck disable=SC2016 # expanded by the pane shell
-"$x" "$bin" pane run "$id" 'echo "cw""d=$(pwd -P) rel=${RELEASE_ROOT:-none}${RELEASE_VSN:-}"' >/dev/null ||
+"$x" "$bin" pane run "$id" 'echo "cw""d=$(pwd -P) rel=${RELEASE_ROOT:-none}${RELEASE_VSN:-}${ROOTDIR:-}${BINDIR:-} erl=$(command -v erl) path=$PATH"' >/dev/null ||
   fail "pane run"
 "$x" "$bin" pane wait-output "$id" --match "cwd=" --timeout 10000 >/dev/null || fail "pane wait-output"
 line=$("$x" "$bin" pane read "$id" --source recent | grep 'cwd=' | tail -n 1)
-[ "$line" = "cwd=$tmp/home rel=none" ] || fail "pane shell: $line (wanted cwd=$tmp/home rel=none)"
-echo "PASS: pane shell starts in \$HOME (cwd / at launch), no RELEASE_* env"
+want="cwd=$tmp/home rel=none erl= path=/usr/bin:/bin"
+[ "$line" = "$want" ] || fail "pane shell: $line (wanted $want)"
+echo "PASS: pane shell starts in \$HOME (cwd / at launch), no RELEASE_*/ROOTDIR/BINDIR env, the caller's PATH (no erl)"
 
 "$x" "$bin" kernel-restart >"$tmp/kr" 2>&1 || fail "kernel-restart: $(cat "$tmp/kr")"
 "$x" "$bin" ping >/dev/null 2>&1 || fail "no ping after kernel-restart"
@@ -144,7 +148,7 @@ while kill -0 "$spid" 2>/dev/null; do
 done
 echo "PASS: attach reaches the client socket, SIGTERM stops it"
 
-vms=$(sed -n 's/.*herdr-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$log")
+vms=$(vm_pids)
 kill -TERM "$pid"
 i=0
 while kill -0 "$pid" 2>/dev/null; do

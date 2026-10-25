@@ -25,6 +25,7 @@ while [ $# -gt 0 ]; do
   esac
   shift 2
 done
+case $v in '' | *[!0-9A-Za-z._+-]*) echo "build.sh: bad version '$v' (want [0-9A-Za-z._+-]+)" >&2 && exit 2 ;; esac
 case $(uname -s) in Darwin) os=macos ;; Linux) os=linux ;; *) echo "build.sh: unsupported OS" >&2 && exit 1 ;; esac
 case $(uname -m) in arm64 | aarch64) arch=aarch64 ;; x86_64 | amd64) arch=x86_64 ;; *) echo "build.sh: unsupported arch" >&2 && exit 1 ;; esac
 name=herdr-live-$v
@@ -60,11 +61,11 @@ if [ "$os" = macos ]; then
       if [ ! -f "$dir/$lib" ]; then
         cp "$dep" "$dir/$lib"
         chmod u+w "$dir/$lib"
-        install_name_tool -id "@loader_path/$lib" "$dir/$lib" 2>/dev/null
-        codesign -f -s - "$dir/$lib" 2>/dev/null
+        install_name_tool -id "@loader_path/$lib" "$dir/$lib" >&2 || exit 1
+        codesign -f -s - "$dir/$lib" >&2 || exit 1
       fi
-      install_name_tool -change "$dep" "@loader_path/$lib" "$f" 2>/dev/null
-      codesign -f -s - "$f" 2>/dev/null
+      install_name_tool -change "$dep" "@loader_path/$lib" "$f" >&2 || exit 1
+      codesign -f -s - "$f" >&2 || exit 1
       echo "bundled $lib for ${f#"$root"/}" >&2
     done
   done
@@ -75,7 +76,8 @@ if [ "$os" = macos ]; then
 fi
 
 rm -f "$tarball" "$tarball.sha256"
-tar -C "$stage" -czf "$tarball" "$name"
+# no AppleDouble (._*) entries or xattrs: the updater extracts with :erl_tar
+COPYFILE_DISABLE=1 tar --no-xattrs -C "$stage" -czf "$tarball" "$name"
 rm -rf "$stage"
 cd "$out"
 if command -v sha256sum >/dev/null 2>&1; then

@@ -33,6 +33,7 @@ defmodule Live.MixProject do
           public_key: :load
         ],
         include_erts: true,
+        include_executables_for: [:unix],
         version: System.get_env("HERDR_LIVE_VERSION", @version),
         steps: [:assemble, &copy_extras/1]
       ]

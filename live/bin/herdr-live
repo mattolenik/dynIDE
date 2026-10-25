@@ -129,6 +129,7 @@ client() { # attach | terminal: the remote client VM, stdio to its log (R18)
   if [ -n "$rel" ]; then # eval boots no app (Remote.main starts herdr_term); argv as given
     set -- "$root/bin/herdr_live" eval 'HerdrTerm.Remote.main(System.argv())' "$@"
   else
+    export MIX_ENV=dev
     command -v elixir >/dev/null 2>&1 || {
       echo "herdr-live: elixir not found on PATH (the attach client runs under mix)" >&2
       exit 1
@@ -142,7 +143,7 @@ client() { # attach | terminal: the remote client VM, stdio to its log (R18)
   # background + wait so TERM/HUP/INT reach the VM (a foreground child would not see them while
   # sh waits). A non-interactive sh has no job control: the job stays in this process group, so
   # the VM keeps the foreground tty (it opens /dev/tty itself) and gets no SIGTTIN/SIGTTOU.
-  MIX_ENV=dev HERDR_LIVE_HEADLESS=1 HERDR_LIVE_CLIENT_REASON=$reason "$@" </dev/null >>"$clog" 2>&1 &
+  HERDR_LIVE_HEADLESS=1 HERDR_LIVE_CLIENT_REASON=$reason "$@" </dev/null >>"$clog" 2>&1 &
   pid=$!
   trap 'kill -TERM $pid 2>/dev/null' TERM HUP INT
   wait $pid
@@ -216,6 +217,9 @@ exec </dev/null >>"$log" 2>&1
 # process group, so a terminal ^C must not open the BEAM break menu (the broker
 # turns SIGINT into a clean stop).
 if [ -n "$rel" ]; then
+  # erlexec puts the bundled erts bin and the release's bin first on the VM's PATH:
+  # pane shells get the caller's PATH back (config/runtime.exs :pane_env)
+  export HERDR_LIVE_PANE_PATH="$PATH"
   set -- "$root/bin/herdr_live" start
 else
   export MIX_ENV="${MIX_ENV:-dev}"
