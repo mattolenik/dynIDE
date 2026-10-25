@@ -189,11 +189,11 @@ defmodule HerdrServer.RuntimeStatus do
     node(:handoff, text, :accent, Map.take(h, [:gen, :panes]))
   end
 
+  # props stay small integers (or nil): a remote client decodes the scene with
+  # `[:safe]` and knows no server atoms (states, kinds, module names, R7)
   defp node(id, text, token, props),
     do: %Node{role: :text, id: id, text: text, token: token, props: props}
 
-  # props stay small integers (or nil): a remote client decodes the scene with
-  # `[:safe]` and knows no server atoms (states, kinds, module names, R7)
   # the longest prefix (by priority) whose cells fit
   defp fit([], _free, acc), do: Enum.reverse(acc)
 
