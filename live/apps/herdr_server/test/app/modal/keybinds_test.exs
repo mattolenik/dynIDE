@@ -55,6 +55,14 @@ defmodule HerdrServer.App.Modal.KeybindsTest do
     assert [%Node{role: :text, text: "unset", token: :muted}] = next.children
   end
 
+  test "copy mode is listed under panes with its prefix+[ keycap" do
+    app = open() |> press("/") |> type("copy") |> press(:enter)
+    assert [%{id: {:action, "copy_mode"}, text: "copy mode"} = item] = items(app)
+
+    assert [%Node{role: :keycap, text: "prefix+[", props: %{key: "[", prefix: true}}] =
+             item.children
+  end
+
   test "j/k, arrows and pgup/pgdn move the selection; the list scrolls" do
     app = open()
     assert [%{props: %{selected: true}} | _] = items(app)

@@ -56,6 +56,8 @@ defmodule HerdrServer.App.KeybindsTest do
     assert by["split_horizontal"].default == ["prefix+minus"]
     assert by["new_tab"].mfa == {Prompt, :new_tab, []}
     assert by["next_tab"].mfa == {Actions, :next_tab, []}
+    assert by["copy_mode"].mfa == {HerdrServer.Client.Keys, :enter_mode, [:copy]}
+    assert by["copy_mode"].default == ["prefix+["]
   end
 
   test "to_config lists each action's specs and the prefix" do

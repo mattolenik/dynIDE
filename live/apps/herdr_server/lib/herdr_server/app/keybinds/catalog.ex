@@ -52,6 +52,7 @@ defmodule HerdrServer.App.Keybinds.Catalog do
       {"panes", "swap_pane_up", a(:swap_dir, [:up]), "prefix+shift+k"},
       {"panes", "swap_pane_right", a(:swap_dir, [:right]), "prefix+shift+l"},
       {"panes", "resize_mode", {Keys, :enter_mode, [:resize]}, "prefix+r"},
+      {"panes", "copy_mode", {Keys, :enter_mode, [:copy]}, "prefix+["},
       {"panes", "toggle_sidebar", a(:toggle_sidebar), "prefix+b"}
     ]
     |> Enum.map(fn {g, action, mfa, spec} ->
