@@ -27,6 +27,10 @@ defmodule HerdrServer.View.Sidebar do
 
   @prio %{unknown: 0, idle: 1, working: 2, done: 3, blocked: 4}
 
+  @doc "Attention priority of an `agent_state`: blocked > done > working > idle > other."
+  @spec priority(term) :: 0..4
+  def priority(state), do: Map.get(@prio, state, 0)
+
   @spec node(map, HerdrScene.Scene.rect(), map | nil, map | nil) :: Node.t()
   def node(app, rect, drag \\ nil, navigate \\ nil) do
     collapsed = app.ui.sidebar.collapsed
