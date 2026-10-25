@@ -12,6 +12,7 @@ defmodule HerdrIntegration.RealKernelTest do
 
   alias HerdrIntegration.Driver
   alias HerdrScene.Event
+  alias HerdrServer.Native.{Keeper, Pty}
   alias HerdrServer.Pane.{Input, Rows}
 
   # SHELL is read in the VM (System.get_env); the rest must reach the child via :pane_env
@@ -156,8 +157,8 @@ defmodule HerdrIntegration.RealKernelTest do
   defp wait_foreground(id, name, deadline \\ System.monotonic_time(:millisecond) + 10_000) do
     job =
       with kid when kid != nil <- Rows.kernel_id(id),
-           {:ok, %{pty: pty}} <- HerdrServer.Native.Keeper.lookup(kid),
-           do: HerdrServer.Native.Pty.foreground_job(pty)
+           {:ok, %{pty: pty}} <- Keeper.lookup(kid),
+           do: Pty.foreground_job(pty)
 
     cond do
       match?(%{processes: _}, job) and Enum.any?(job.processes, &argv0?(&1, name)) -> true
