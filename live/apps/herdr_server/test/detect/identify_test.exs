@@ -58,9 +58,16 @@ defmodule HerdrServer.Detect.IdentifyTest do
     assert Identify.agent(job([wrapped, native])) == {"codex", 13}
   end
 
-  test "a shell job and an empty job are not agents" do
-    assert Identify.agent(job([proc(10, "claude", ["claude"])], 10, true)) == nil
+  test "a plain shell job and an empty job are not agents" do
+    assert Identify.agent(job([proc(10, "zsh", ["-zsh"])], 10, true)) == nil
+    assert Identify.agent(job([proc(10, "bash", ["bash"])], 10, true)) == nil
     assert Identify.agent(job([])) == nil
+  end
+
+  # herdr identify_agent_process_in_job: no shell short-circuit, so `exec claude` (or a
+  # pane spawned with an agent as its command) is identified as the pane's root process
+  test "an agent that is the pane's root process is identified" do
+    assert Identify.agent(job([proc(10, "claude", ["claude"])], 10, true)) == {"claude", 10}
   end
 
   # Captured on this host with the binary under a pty (python pty.fork + execv, no prompt

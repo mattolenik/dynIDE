@@ -116,6 +116,7 @@ defmodule HerdrServer.Detect.Engine do
       ] ++
         rule_lines(ex, rule) ++
         opt("fallback_reason", ex["fallback_reason"]) ++
+        opt("screen_detection_skip_reason", ex["screen_detection_skip_reason"]) ++
         opt("skipped_update_reason", ex["skipped_update_reason"]) ++
         opt("warning", ex["warning"])
 

@@ -274,4 +274,18 @@ defmodule HerdrServer.Detect.EngineTest do
     assert Engine.explain_text(ex, false) ==
              "agent: nope\nstate: unknown\nmanifest: none unknown\nrule: none\nfallback_reason: unknown_agent\n"
   end
+
+  test "explain_text prints the screen detection skip reason after the fallback reason" do
+    ex = %{
+      "agent" => "claude",
+      "state" => "working",
+      "matched_rule" => nil,
+      "fallback_reason" => "x",
+      "screen_detection_skip_reason" => "full_lifecycle_hook_authority"
+    }
+
+    assert Engine.explain_text(ex, false) ==
+             "agent: claude\nstate: working\nmanifest: none unknown\nrule: none\n" <>
+               "fallback_reason: x\nscreen_detection_skip_reason: full_lifecycle_hook_authority\n"
+  end
 end

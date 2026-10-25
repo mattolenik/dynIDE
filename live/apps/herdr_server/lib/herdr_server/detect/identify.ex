@@ -86,8 +86,6 @@ defmodule HerdrServer.Detect.Identify do
 
   @doc "The agent running in a foreground job, as `{label, pid}`, or nil."
   @spec agent(map) :: {binary, pos_integer} | nil
-  def agent(%{shell: true}), do: nil
-
   def agent(%{pgid: pgid, processes: processes}) do
     cands =
       for p <- processes, c = candidate(p), l = label(c), interactive?(l, p), do: {p, c, l}
