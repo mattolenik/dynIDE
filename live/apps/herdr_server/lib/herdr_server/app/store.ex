@@ -56,7 +56,18 @@ defmodule HerdrServer.App.Store do
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
   alias HerdrServer.Api.Ids
-  alias HerdrServer.App.{Actions, Commands, Keybinds, Reconcile, Restore, Upgrade, Worktrees}
+
+  alias HerdrServer.App.{
+    Actions,
+    Commands,
+    CustomCommands,
+    Keybinds,
+    Reconcile,
+    Restore,
+    Upgrade,
+    Worktrees
+  }
+
   alias HerdrServer.App.Store.{Carry, Mirror}
   alias HerdrServer.App.Store.Config, as: StoreConfig
   alias HerdrServer.Handoff.Link
@@ -619,24 +630,15 @@ defmodule HerdrServer.App.Store do
     end)
   end
 
-  # `[[keys.command]]` type shell (App.CustomCommands); nothing here is editable code
-  # ponytail: a long-running command keeps one Task alive until it exits; no timeout or
-  # kill, add one (Port + os_pid) if commands that never exit show up
-  defp io({:custom_command, cmd, env, cwd}, _origin) do
-    Task.Supervisor.start_child(tasks(), fn ->
-      opts = [env: env, stderr_to_stdout: true]
-      opts = if is_binary(cwd) and File.dir?(cwd), do: [cd: cwd] ++ opts, else: opts
+  # `[[keys.command]]` type shell: App.CustomCommands.exec/3 reads the cwd and runs it
+  # ponytail: a long-running command keeps one Task alive until it exits, and the sh child
+  # is not killed when the Task or the VM goes away (no timeout; add a Port + os_pid kill if
+  # commands that never exit show up). Its memory is bounded by the output Excerpt.
+  defp io({:custom_command, cmd, env, pane}, _origin) do
+    run = fn -> Guard.run(CustomCommands, :exec, [cmd, env, pane], server: reload_server()) end
 
-      case System.cmd("/bin/sh", ["-c", cmd], opts) do
-        {_, 0} ->
-          :ok
-
-        {out, code} ->
-          Logger.warning(
-            "custom command exited #{code}: #{inspect(cmd)}: #{binary_part(out, 0, min(byte_size(out), 200))}"
-          )
-      end
-    end)
+    with {:error, why} <- Task.Supervisor.start_child(tasks(), run),
+         do: Logger.error("custom command not started: #{inspect(why)}")
   end
 
   defp io(other, _), do: Logger.warning("unknown effect #{inspect(other)}")

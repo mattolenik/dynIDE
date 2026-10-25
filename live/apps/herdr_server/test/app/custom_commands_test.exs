@@ -63,10 +63,14 @@ defmodule HerdrServer.App.CustomCommandsTest do
     command = "x"
 
     [[keys.command]]
-    key = "prefix+p"
+    key = "prefix+q"
     command = "x"
     type = "popup"
     width = "50%"
+
+    [[keys.command]]
+    key = "prefix+g"
+    command = "again"
     """
 
     {kb, ui, diags} = apply_cfg(load(dir, toml))
@@ -74,19 +78,21 @@ defmodule HerdrServer.App.CustomCommandsTest do
     assert [
              %{key: "prefix+g", command: "lazygit", type: "pane", description: "git"},
              %{key: "alt+e", type: "shell", description: nil, width: nil},
-             %{key: "prefix+p", type: "popup", width: "50%", height: nil}
+             %{key: "prefix+q", type: "popup", width: "50%", height: nil}
            ] = ui.custom_commands
 
     assert Keybinds.lookup(kb, :prefix, {"g", []}) == {CustomCommands, :run, [0]}
     assert Keybinds.lookup(kb, :terminal, {"e", [:alt]}) == {CustomCommands, :run, [1]}
-    assert Keybinds.lookup(kb, :prefix, {"p", []}) == {CustomCommands, :run, [2]}
+    assert Keybinds.lookup(kb, :prefix, {"q", []}) == {CustomCommands, :run, [2]}
 
     assert diags == [
              "config: keys.command[1]: width and height apply only to popup commands; ignored",
              "config: keys.command[2]: empty command",
              "config: keys.command[3]: unknown type \"nope\"",
              "config: keys.command[4].key: ctrl+a is the prefix",
-             "config: keys.command[5].key: prefix+ctrl+a is the prefix"
+             "config: keys.command[5].key: prefix+ctrl+a is the prefix",
+             "config: keys.command[6].key: prefix+q replaces keys.detach",
+             "config: keys.command[7].key: prefix+g is another command's key"
            ]
 
     # a file without commands clears them
@@ -123,7 +129,7 @@ defmodule HerdrServer.App.CustomCommandsTest do
 
   test "shell: the effect carries the command env", %{tmp_dir: dir} do
     {app, []} = app_with(dir, "[[keys.command]]\nkey = \"prefix+g\"\ncommand = \"echo hi\"\n")
-    assert {^app, [{:custom_command, "echo hi", env, nil}]} = CustomCommands.run(app, 0)
+    assert {^app, [{:custom_command, "echo hi", env, 1}]} = CustomCommands.run(app, 0)
     env = Map.new(env)
     assert env["HERDR_ACTIVE_WORKSPACE_ID"] == "w1"
     assert env["HERDR_ACTIVE_TAB_ID"] == Ids.tab(1, 1)
@@ -190,6 +196,16 @@ defmodule HerdrServer.App.CustomCommandsTest do
 
     :ok = Store.run({CustomCommands, :run, [0]}, @size)
     ran = Path.join(work, "ran")
-    assert Enum.any?(1..50, fn _ -> File.exists?(ran) or (Process.sleep(20) && false) end)
+    assert Enum.any?(1..250, fn _ -> File.exists?(ran) or (Process.sleep(20) && false) end)
+  end
+
+  test "exec logs only a bounded, valid UTF-8 excerpt of a failing command's output" do
+    # 199 ASCII bytes, then a 2-byte é cut at byte 200, then far more output
+    cmd = "printf '%0199d' 0; printf 'é'; head -c 100000 /dev/zero | tr '\\0' y; exit 3"
+
+    log = ExUnit.CaptureLog.capture_log(fn -> assert CustomCommands.exec(cmd, [], nil) == :ok end)
+    [_, excerpt] = String.split(log, "custom command exited 3: #{inspect(cmd)}: ")
+    excerpt = String.trim_trailing(excerpt)
+    assert excerpt == String.duplicate("0", 199)
   end
 end

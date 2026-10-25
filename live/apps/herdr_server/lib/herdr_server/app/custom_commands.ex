@@ -5,8 +5,9 @@ defmodule HerdrServer.App.CustomCommands do
 
   `run/2` by type:
 
-    * `"shell"`: `{:custom_command, cmd, env, cwd}`; the Store runs `/bin/sh -c cmd` in a
-      task (output logged on a non-zero exit).
+    * `"shell"`: `{:custom_command, cmd, env, pane}`; the Store runs `exec/3` in a task,
+      off the Store: it reads the pane's cwd, runs `/bin/sh -c cmd` there and logs the
+      first 200 bytes of output on a non-zero exit (the rest is dropped as it arrives).
     * `"pane"`: splits the focused pane side by side; the new pane runs `/bin/sh -c cmd`
       in the focused pane's cwd.
     * `"plugin_action"`: the plugin keybind `HerdrServer.Plugins.Keybind.mfa/1` names.
@@ -14,13 +15,45 @@ defmodule HerdrServer.App.CustomCommands do
 
   `env` is `HERDR_LIVE_BIN` (when the VM has it), `HERDR_LIVE_API` (the API socket),
   `HERDR_ACTIVE_WORKSPACE_ID`, `HERDR_ACTIVE_TAB_ID`, `HERDR_ACTIVE_PANE_ID` (`p<n>`) and
-  `HERDR_ACTIVE_PANE_CWD` (when known), as `{name, value}`. `cwd` is the focused pane's
-  cwd or nil. The pane cwd is read from the pty (`Persist.Facts.cwd/1`: an ETS lookup and
-  one bounded NIF call), once per run.
+  `HERDR_ACTIVE_PANE_CWD` (when known), as `{name, value}`. The pane cwd is read from
+  the pty (`Persist.Facts.cwd/1`: an ETS lookup and one bounded NIF call).
   """
+
+  require Logger
+
+  defmodule Excerpt do
+    @moduledoc "A `Collectable` that keeps the first 200 bytes and drops the rest."
+    defstruct bin: ""
+    @type t :: %__MODULE__{bin: binary}
+
+    @doc "The kept bytes cut to a valid UTF-8 prefix."
+    @spec text(t) :: binary
+    def text(%__MODULE__{bin: bin}), do: valid(bin, 3)
+
+    defp valid(bin, n) do
+      cond do
+        String.valid?(bin) -> bin
+        n == 0 -> String.replace_invalid(bin)
+        true -> valid(binary_part(bin, 0, byte_size(bin) - 1), n - 1)
+      end
+    end
+
+    defimpl Collectable do
+      @max 200
+      def into(e), do: {e, &collect/2}
+
+      defp collect(%{bin: b} = e, {:cont, x}) when byte_size(b) < @max,
+        do: %{e | bin: b <> binary_part(x, 0, min(byte_size(x), @max - byte_size(b)))}
+
+      defp collect(e, {:cont, _}), do: e
+      defp collect(e, :done), do: e
+      defp collect(_e, :halt), do: :ok
+    end
+  end
 
   alias HerdrServer.Api.{Ids, SocketPath}
   alias HerdrServer.App.{Actions, Commands}
+  alias HerdrServer.App.CustomCommands.Excerpt
   alias HerdrServer.Persist.Facts
   alias HerdrServer.Plugins.Keybind
 
@@ -41,13 +74,11 @@ defmodule HerdrServer.App.CustomCommands do
     end
   end
 
-  defp run(app, "shell", cmd) do
-    {env, cwd} = env(app)
-    {app, [{:custom_command, cmd, env, cwd}]}
-  end
+  defp run(app, "shell", cmd), do: {app, [{:custom_command, cmd, env(app), app.focus.pane}]}
 
   defp run(app, "pane", cmd) do
-    {env, cwd} = env(app)
+    # the one impure read in the Store: the spawn needs the cwd now
+    {env, cwd} = with_cwd(env(app), app.focus.pane)
 
     case Actions.split(app, :horizontal) do
       {app, [{:spawn, id, size}]} ->
@@ -69,11 +100,10 @@ defmodule HerdrServer.App.CustomCommands do
 
   defp run(app, "popup", _cmd), do: notice(app, "popup commands are not supported yet")
 
-  @doc "The command environment and cwd for `app`'s focused pane (see moduledoc)."
-  @spec env(map) :: {[{binary, binary}], binary | nil}
+  @doc "The command environment for `app`'s focused pane, without its cwd (see moduledoc)."
+  @spec env(map) :: [{binary, binary}]
   def env(app) do
     pane = app.focus.pane
-    cwd = pane && Facts.cwd(pane)
     bin = System.get_env("HERDR_LIVE_BIN")
 
     place =
@@ -89,12 +119,34 @@ defmodule HerdrServer.App.CustomCommands do
           []
       end
 
-    env =
-      if(bin in [nil, ""], do: [], else: [{"HERDR_LIVE_BIN", bin}]) ++
-        [{"HERDR_LIVE_API", SocketPath.path()}] ++
-        place ++ if(cwd, do: [{"HERDR_ACTIVE_PANE_CWD", cwd}], else: [])
+    if(bin in [nil, ""], do: [], else: [{"HERDR_LIVE_BIN", bin}]) ++
+      [{"HERDR_LIVE_API", SocketPath.path()}] ++ place
+  end
 
-    {env, cwd}
+  defp with_cwd(env, pane) do
+    case pane && Facts.cwd(pane) do
+      nil -> {env, nil}
+      cwd -> {env ++ [{"HERDR_ACTIVE_PANE_CWD", cwd}], cwd}
+    end
+  end
+
+  @doc """
+  Off the Store: runs a shell command for pane `pane` (nil: none) and waits for it. The
+  output is collected into an `Excerpt` (bounded), logged on a non-zero exit.
+  """
+  @spec exec(binary, [{binary, binary}], pos_integer | nil) :: :ok
+  def exec(cmd, env, pane) do
+    {env, cwd} = with_cwd(env, pane)
+    opts = [env: env, stderr_to_stdout: true, into: %Excerpt{}]
+    opts = if cwd && File.dir?(cwd), do: [cd: cwd] ++ opts, else: opts
+
+    case System.cmd("/bin/sh", ["-c", cmd], opts) do
+      {_, 0} ->
+        :ok
+
+      {out, code} ->
+        Logger.warning("custom command exited #{code}: #{inspect(cmd)}: #{Excerpt.text(out)}")
+    end
   end
 
   defp notice(app, text), do: {app, [{:notice, %{level: :warning, text: text}}]}

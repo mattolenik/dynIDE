@@ -31,11 +31,13 @@ defmodule HerdrServer.Config do
   (`shell`, the default, | `pane` | `popup` | `plugin_action`), optional `description`,
   and `width` / `height` for popups. Each valid entry lands in `ui.custom_commands` (plain
   maps, replaced on every apply) and binds its key to `{App.CustomCommands, :run, [index]}`.
-  An empty command, an unknown type, a bad key or the prefix key drops the entry with one
-  diagnostic; width or height on another type is ignored with one.
+  An empty command, an unknown type, a bad key, the prefix key or a key an earlier command
+  holds drops the entry with one diagnostic; a key that takes over a `[keys]` action's
+  bind, and width or height on another type, keep it with one.
   """
 
   alias HerdrServer.App.{CustomCommands, Keybinds, Ui}
+  alias HerdrServer.App.Keybinds.Catalog
   alias HerdrServer.Config.Keys, as: Spec
   alias HerdrServer.Plugins.Keybind
 
@@ -191,38 +193,53 @@ defmodule HerdrServer.Config do
 
     with {:cmd, true} <- {:cmd, is_binary(cmd) and String.trim(cmd) != ""},
          {:type, true} <- {:type, type in @types},
-         {:ok, %{key: k, mods: m}} <- Spec.parse(key),
+         {:ok, %{prefix: p, key: k, mods: m}} <- Spec.parse(key),
          {:prefix, false} <- {:prefix, Keybinds.prefix?(kb, {k, m})},
+         held = Keybinds.lookup(kb, if(p, do: :prefix, else: :terminal), {k, m}),
+         {:dup, false} <- {:dup, match?({CustomCommands, :run, _}, held)},
          {:ok, kb} <- Keybinds.bind_mfa(kb, {CustomCommands, :run, [length(cmds)]}, [key]) do
-      sized = Map.has_key?(t, "width") or Map.has_key?(t, "height")
-      popup = type == "popup"
-      desc = t["description"]
-
-      entry = %{
-        key: key,
-        command: cmd,
-        type: type,
-        description: if(is_binary(desc) and desc != "", do: desc),
-        width: if(popup, do: t["width"]),
-        height: if(popup, do: t["height"])
-      }
-
-      d =
-        if sized and not popup,
-          do: d ++ ["config: #{name}: width and height apply only to popup commands; ignored"],
-          else: d
-
-      {kb, [entry | cmds], d}
+      {kb, [entry(t, key, cmd, type) | cmds], d ++ warnings(t, name, key, type, held)}
     else
       {:cmd, _} -> {kb, cmds, d ++ ["config: #{name}: empty command"]}
       {:type, _} -> {kb, cmds, d ++ ["config: #{name}: unknown type #{inspect(type)}"]}
       {:prefix, _} -> {kb, cmds, d ++ ["config: #{name}.key: #{key} is the prefix"]}
+      {:dup, _} -> {kb, cmds, d ++ ["config: #{name}.key: #{key} is another command's key"]}
       {:error, why} -> {kb, cmds, d ++ ["config: #{name}.key: #{why}"]}
     end
   end
 
+  defp entry(t, key, cmd, type) do
+    popup = type == "popup"
+    desc = t["description"]
+
+    %{
+      key: key,
+      command: cmd,
+      type: type,
+      description: if(is_binary(desc) and desc != "", do: desc),
+      width: if(popup, do: t["width"]),
+      height: if(popup, do: t["height"])
+    }
+  end
+
+  defp warnings(t, name, key, type, held) do
+    sized = type != "popup" and (Map.has_key?(t, "width") or Map.has_key?(t, "height"))
+
+    if(sized,
+      do: ["config: #{name}: width and height apply only to popup commands; ignored"],
+      else: []
+    ) ++ if(held, do: ["config: #{name}.key: #{key} replaces #{action(held)}"], else: [])
+  end
+
   defp command(_other, name, {kb, cmds, d}),
     do: {kb, cmds, d ++ ["config: #{name}: expected a table"]}
+
+  defp action(mfa) do
+    case Enum.find(Catalog.entries(), &(&1.mfa == mfa)) do
+      %{action: a} -> "keys.#{a}"
+      nil -> inspect(mfa)
+    end
+  end
 
   # prefix first: direct binds are checked against it
   defp keys(table, kb) do
