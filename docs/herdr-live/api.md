@@ -263,18 +263,18 @@ Errors: `invalid_params`, `not_found`
 
 ### `workspace.move`
 
-Move a workspace to a 0-based position (clamped); the focused one stays focused.
+Move a workspace before the one at `insert_index` (its count appends); the focused one stays focused. Answers the new order.
 
-CLI: `herdr-live workspace move <workspace_id> <index>`
+CLI: `herdr-live workspace move <workspace_id> <insert_index>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
 | `workspace_id` | workspace id | yes | Target workspace. |
-| `index` | integer 0..65535 | yes | New 0-based position. |
+| `insert_index` | integer 0..65535 | yes | Gap to insert at, 0-based; past the end fails. |
 
-Result: `workspace_info` with `workspace` (`workspace` object).
+Result: `workspace_list` with `workspaces` (list of `workspace` object).
 
-Errors: `invalid_params`, `not_found`
+Errors: `invalid_params`, `not_found`, `failed`
 
 ### `workspace.close`
 
@@ -367,18 +367,18 @@ Errors: `invalid_params`, `not_found`
 
 ### `tab.move`
 
-Move a tab to a 0-based position in its workspace (clamped); the active one stays active.
+Move a tab before the one at `insert_index` in its workspace (its count appends); the active one stays active. Answers the workspace's new tab order.
 
-CLI: `herdr-live tab move <tab_id> <index>`
+CLI: `herdr-live tab move <tab_id> <insert_index>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
 | `tab_id` | tab id | yes | Target tab. |
-| `index` | integer 0..65535 | yes | New 0-based position. |
+| `insert_index` | integer 0..65535 | yes | Gap to insert at, 0-based; past the end fails. |
 
-Result: `tab_info` with `tab` (`tab` object).
+Result: `tab_list` with `tabs` (list of `tab` object).
 
-Errors: `invalid_params`, `not_found`
+Errors: `invalid_params`, `not_found`, `failed`
 
 ### `tab.close`
 
@@ -738,7 +738,7 @@ CLI: `herdr-live events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] 
 
 | param | type | required | description |
 | --- | --- | --- | --- |
-| `subscriptions` | list of object {type: `workspace.created`, `workspace.closed`, `workspace.focused`, `workspace.renamed`, `tab.created`, `tab.closed`, `tab.focused`, `tab.renamed`, `pane.created`, `pane.closed`, `pane.focused`, `pane.updated`, `pane.agent_detected`, `pane.agent_status_changed`, `layout.updated` or `notification.shown`, pane_id?: pane id, tab_id?: tab id, workspace_id?: workspace id} (at least 1) | yes | Subscriptions. |
+| `subscriptions` | list of object {type: `workspace.created`, `workspace.closed`, `workspace.focused`, `workspace.renamed`, `workspace.moved`, `tab.created`, `tab.closed`, `tab.focused`, `tab.renamed`, `tab.moved`, `pane.created`, `pane.closed`, `pane.focused`, `pane.updated`, `pane.agent_detected`, `pane.agent_status_changed`, `layout.updated` or `notification.shown`, pane_id?: pane id, tab_id?: tab id, workspace_id?: workspace id} (at least 1) | yes | Subscriptions. |
 
 Result: `subscription_started` with `subscriptions` (integer).
 
@@ -1301,6 +1301,14 @@ A workspace's label changed.
 | `workspace_id` | workspace id |
 | `workspace` | `workspace` object |
 
+### `workspace.moved`
+
+The workspace order changed.
+
+| data field | type |
+| --- | --- |
+| `workspaces` | list of `workspace` object |
+
 ### `tab.created`
 
 A tab was created.
@@ -1339,6 +1347,15 @@ A tab's label changed.
 | `tab_id` | tab id |
 | `workspace_id` | workspace id |
 | `tab` | `tab` object |
+
+### `tab.moved`
+
+A workspace's tab order changed.
+
+| data field | type |
+| --- | --- |
+| `workspace_id` | workspace id |
+| `tabs` | list of `tab` object |
 
 ### `pane.created`
 

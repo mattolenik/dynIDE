@@ -179,6 +179,20 @@ defmodule HerdrIntegration.ArchitectureTest do
         {"scene #{label}/#{mode}/#{extra_label}", {:scene, View.compute(a, state.(mode, extra))}}
       end
 
+    # a tab drag (:before) and a workspace drag (:after): drop_marker atoms
+    {dapp, _} = Actions.new_tab(app)
+    {dapp, _} = Actions.new_workspace(dapp)
+    {dapp, []} = Actions.switch_workspace_id(dapp, 1)
+    w = &[:sidebar, :spaces, :list, {:workspace, &1}]
+
+    drags =
+      for {n, d} <- [
+            tab: %{from: [:tabs, {:tab, 2}], over: [:tabs, {:tab, 1}]},
+            workspace: %{from: w.(1), over: w.(2)}
+          ] do
+        {"scene drag #{n}", {:scene, View.compute(dapp, state.(:terminal, drag: d))}}
+      end
+
     # one status state per reload/handoff outcome
     statuses =
       for {n, ev} <- [
@@ -228,6 +242,7 @@ defmodule HerdrIntegration.ArchitectureTest do
       end
 
     scenes ++
+      drags ++
       statuses ++
       graphics(split, state.(:terminal, [])) ++
       modal_scenes(split, state.(:terminal, [])) ++

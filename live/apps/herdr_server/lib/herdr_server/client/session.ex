@@ -38,7 +38,8 @@ defmodule HerdrServer.Client.Session do
   changed status repaints (the scene is pushed only if it differs).
 
   Drag (M17): `:drag` on a tab or workspace item (`over`: the client's hit path under the
-  pointer) sets `state.drag` and repaints, without the Store; `:drop` goes to the Store
+  pointer) sets `state.drag` (`Client.Drag.over/2`, guarded) and repaints, without the
+  Store; a pushed app without the dragged node clears it (`Client.Drag.live/2`); `:drop` goes to the Store
   (`App.Chrome` reorders) and clears it.
 
   Window title: `{:window_title, title | nil}` (API `client.window_title.set|clear`) sets the
@@ -85,7 +86,7 @@ defmodule HerdrServer.Client.Session do
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
   alias HerdrServer.App.{Actions, Keybinds, Modal, Store}
-  alias HerdrServer.Client.{CopyMode, Foreground, Keys, Pointer, PointerIo, State, Toasts}
+  alias HerdrServer.Client.{CopyMode, Drag, Foreground, Keys, Pointer, PointerIo, State, Toasts}
   alias HerdrServer.Handoff.Notice
   alias HerdrServer.Layout
   alias HerdrServer.Mirror
@@ -530,11 +531,11 @@ defmodule HerdrServer.Client.Session do
   end
 
   defp dragged(state, from, :drag, at, _ev) do
-    over = Map.get(at, :over)
-
     drag =
-      if is_list(over) and over != from and Enum.drop(over, -1) == Enum.drop(from, -1),
-        do: %{from: from, over: over}
+      case Guard.run_twice(Drag, :over, [from, at], guard()) do
+        {:ok, %{} = d} -> d
+        _ -> nil
+      end
 
     if drag == state.drag, do: state, else: repaint(%{state | drag: drag})
   end
@@ -542,6 +543,16 @@ defmodule HerdrServer.Client.Session do
   defp dragged(state, _from, :drop, _at, ev) do
     Store.event(ev, driving_size(state))
     if state.drag, do: repaint(%{state | drag: nil}), else: state
+  end
+
+  # a drag whose dragged node is gone (closed mid-drag) ends
+  defp drag_live(%{drag: nil} = state, _app), do: state
+
+  defp drag_live(state, app) do
+    case Guard.run_twice(Drag, :live, [state.drag, app], guard()) do
+      {:ok, %{} = d} -> %{state | drag: d}
+      _ -> %{state | drag: nil}
+    end
   end
 
   defp alerted(state, a) do
@@ -849,7 +860,7 @@ defmodule HerdrServer.Client.Session do
 
   defp push(state, app) do
     # every app the session sees, before View reads the pointer
-    state = state |> focus_moved(app) |> copy_follow(app)
+    state = state |> focus_moved(app) |> copy_follow(app) |> drag_live(app)
 
     # outside the guard: an app without keybinds (a broken Store) must not crash us
     state =

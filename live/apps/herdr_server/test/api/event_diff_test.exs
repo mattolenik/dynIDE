@@ -128,9 +128,11 @@ defmodule HerdrServer.Api.EventDiffTest do
     f = put_in(e.session.panes[2].title, "vim")
     {g, _} = Commands.close_pane(f, 3)
     {h, _} = Commands.create_tab(g, 2, nil, true)
-    {i, _} = Commands.close_tab(h, 2, 2)
+    {h2, _} = Commands.move_tab(h, 2, 2, 0)
+    {h3, _} = Commands.move_workspace(h2, 2, 0)
+    {i, _} = Commands.close_tab(h3, 2, 2)
     {j, _} = Commands.close_workspace(i, 2)
-    steps = [a, b, c, d, e, f, g, h, i, j]
+    steps = [a, b, c, d, e, f, g, h, h2, h3, i, j]
 
     seen =
       steps
@@ -141,5 +143,22 @@ defmodule HerdrServer.Api.EventDiffTest do
     # the agent events come from detection (M11), published ahead of their task
     not_diffed = ["notification.shown", "pane.agent_detected", "pane.agent_status_changed"]
     assert Enum.sort(Enum.uniq(seen)) == Enum.sort(Spec.event_types() -- not_diffed)
+  end
+
+  test "reorders give workspace.moved and tab.moved with the new order" do
+    a = app()
+    {a, _} = Commands.create_tab(a, 1, "b", false)
+    {a, _} = Commands.create_workspace(a, "two", false)
+    {b, []} = Commands.move_tab(a, 1, 2, 0)
+    assert [%{"event" => "tab.moved", "workspace_id" => "w1", "tabs" => tabs}] = diff(a, b)
+    assert Enum.map(tabs, & &1.tab_id) == ["w1:t2", "w1:t1"]
+
+    {c, []} = Commands.move_workspace(a, 2, 0)
+    assert [%{"event" => "workspace.moved", "workspaces" => wss}] = diff(a, c)
+    assert Enum.map(wss, & &1.workspace_id) == ["w2", "w1"]
+
+    # a close is not a move
+    {d, _} = Commands.close_workspace(a, 1)
+    refute "workspace.moved" in types(diff(a, d))
   end
 end

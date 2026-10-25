@@ -28,7 +28,7 @@ defmodule HerdrCli.Argv do
   @sources ~w(visible recent)
   @agent_states ~w(idle working blocked done unknown)
   @event_types ~w(workspace.created workspace.closed workspace.focused workspace.renamed
-                  tab.created tab.closed tab.focused tab.renamed
+                  workspace.moved tab.created tab.closed tab.focused tab.renamed tab.moved
                   pane.created pane.closed pane.focused pane.updated
                   pane.agent_detected pane.agent_status_changed layout.updated
                   notification.shown)
@@ -190,10 +190,10 @@ defmodule HerdrCli.Argv do
       cmd(
         ~w(workspace move),
         "workspace.move",
-        [id, {:int, "index"}],
+        [id, {:int, "insert_index"}],
         %{},
         :json,
-        "workspace move <workspace_id> <index>"
+        "workspace move <workspace_id> <insert_index>"
       ),
       cmd(
         ~w(workspace close),
@@ -236,10 +236,10 @@ defmodule HerdrCli.Argv do
       cmd(
         ~w(tab move),
         "tab.move",
-        [id, {:int, "index"}],
+        [id, {:int, "insert_index"}],
         %{},
         :json,
-        "tab move <tab_id> <index>"
+        "tab move <tab_id> <insert_index>"
       ),
       cmd(~w(tab close), "tab.close", [id], %{}, :json, "tab close <tab_id>")
     ]

@@ -61,7 +61,11 @@ defmodule HerdrServer.Api.Spec do
   defp tab_id, do: req("tab_id", :tab_id, "Target tab.")
   defp ws_id, do: req("workspace_id", :workspace_id, "Target workspace.")
   defp label, do: req("label", :string, "New label.")
-  defp index, do: req("index", {:integer, 0, 65_535}, "New 0-based position.")
+
+  defp insert_index,
+    do:
+      req("insert_index", {:integer, 0, 65_535}, "Gap to insert at, 0-based; past the end fails.")
+
   defp focus(doc), do: opt("focus", :boolean, doc)
   defp source, do: opt("source", {:enum, @sources}, "Text source; default `visible`.")
   defp lines, do: opt("lines", {:integer, 1, 10_000}, "Maximum number of lines.")
@@ -344,11 +348,12 @@ defmodule HerdrServer.Api.Spec do
       method(
         "workspace.move",
         g,
-        "Move a workspace to a 0-based position (clamped); the focused one stays focused.",
-        [ws_id(), index()],
-        "workspace_info",
-        [:not_found],
-        "herdr-live workspace move <workspace_id> <index>"
+        "Move a workspace before the one at `insert_index` (its count appends); the " <>
+          "focused one stays focused. Answers the new order.",
+        [ws_id(), insert_index()],
+        "workspace_list",
+        [:not_found, :failed],
+        "herdr-live workspace move <workspace_id> <insert_index>"
       ),
       method(
         "workspace.close",
@@ -418,11 +423,12 @@ defmodule HerdrServer.Api.Spec do
       method(
         "tab.move",
         g,
-        "Move a tab to a 0-based position in its workspace (clamped); the active one stays active.",
-        [tab_id(), index()],
-        "tab_info",
-        [:not_found],
-        "herdr-live tab move <tab_id> <index>"
+        "Move a tab before the one at `insert_index` in its workspace (its count appends); " <>
+          "the active one stays active. Answers the workspace's new tab order.",
+        [tab_id(), insert_index()],
+        "tab_list",
+        [:not_found, :failed],
+        "herdr-live tab move <tab_id> <insert_index>"
       ),
       method(
         "tab.close",
@@ -1075,10 +1081,20 @@ defmodule HerdrServer.Api.Spec do
       ev("workspace.closed", "A workspace was closed.", ws),
       ev("workspace.focused", "The focused workspace changed.", ws_obj),
       ev("workspace.renamed", "A workspace's label changed.", ws_obj),
+      ev(
+        "workspace.moved",
+        "The workspace order changed.",
+        [f("workspaces", {:list, {:ref, "workspace"}})]
+      ),
       ev("tab.created", "A tab was created.", tab_obj),
       ev("tab.closed", "A tab was closed.", tab),
       ev("tab.focused", "The focused tab changed.", tab_obj),
       ev("tab.renamed", "A tab's label changed.", tab_obj),
+      ev(
+        "tab.moved",
+        "A workspace's tab order changed.",
+        ws ++ [f("tabs", {:list, {:ref, "tab"}})]
+      ),
       ev("pane.created", "A pane was created.", pane_obj),
       ev("pane.closed", "A pane was closed.", pane),
       ev("pane.focused", "The focused pane changed.", pane_obj),

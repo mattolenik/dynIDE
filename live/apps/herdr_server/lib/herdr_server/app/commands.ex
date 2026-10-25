@@ -38,8 +38,16 @@ defmodule HerdrServer.App.Commands do
   @spec rename_workspace(app(), integer(), String.t()) :: result()
   defdelegate rename_workspace(app, ws_id, label), to: Workspaces
 
+  @doc """
+  Moves a workspace to gap `insert` (herdr's `insert_index`: 0..len, len appends; the
+  final position is `insert - 1` past its old one). Out of range warns.
+  """
   @spec move_workspace(app(), integer(), integer()) :: result()
-  defdelegate move_workspace(app, ws_id, index), to: Workspaces
+  def move_workspace(app, ws_id, insert) do
+    with_ws(app, ws_id, fn _ ->
+      gap(app, app.session.workspaces, ws_id, insert, &Workspaces.move_workspace(app, ws_id, &1))
+    end)
+  end
 
   @spec close_workspace(app(), integer()) :: result()
   def close_workspace(%{session: %{workspaces: [_only]}} = app, ws_id) do
@@ -75,8 +83,13 @@ defmodule HerdrServer.App.Commands do
   @spec rename_tab(app(), integer(), integer(), String.t()) :: result()
   defdelegate rename_tab(app, ws_id, tab_id, label), to: Workspaces
 
+  @doc "Moves a tab within its workspace to gap `insert`, as `move_workspace/3`."
   @spec move_tab(app(), integer(), integer(), integer()) :: result()
-  defdelegate move_tab(app, ws_id, tab_id, index), to: Workspaces
+  def move_tab(app, ws_id, tab_id, insert) do
+    with_tab(app, ws_id, tab_id, fn ws, _tab ->
+      gap(app, ws.tabs, tab_id, insert, &Workspaces.move_tab(app, ws_id, tab_id, &1))
+    end)
+  end
 
   @spec close_tab(app(), integer(), integer()) :: result()
   def close_tab(app, ws_id, tab_id) do
@@ -165,6 +178,14 @@ defmodule HerdrServer.App.Commands do
     else
       _ -> {app, []}
     end
+  end
+
+  defp gap(app, list, _id, insert, _move) when insert > length(list),
+    do: {app, [{:notice, %{level: :warning, text: "insert_index #{insert} is out of bounds"}}]}
+
+  defp gap(_app, list, id, insert, move) do
+    i = Enum.find_index(list, &(&1.id == id))
+    move.(if insert > i, do: insert - 1, else: insert)
   end
 
   defp find_ws(app, ws_id), do: Enum.find(app.session.workspaces, &(&1.id == ws_id))

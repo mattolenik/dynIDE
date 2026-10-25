@@ -57,8 +57,19 @@ defmodule HerdrServer.Api.Handlers.Topology do
   def handle("workspace.rename", %{workspace_id: w, label: l}),
     do: change_ws(w, {Commands, :rename_workspace, [w, l]})
 
-  def handle("workspace.move", %{workspace_id: w, index: i}),
-    do: change_ws(w, {Commands, :move_workspace, [w, i]})
+  def handle("workspace.move", %{workspace_id: w, insert_index: i}) do
+    with {:ok, _before, aft, notes} <- run_on_ws(w, {Commands, :move_workspace, [w, i]}),
+         [] <- notes do
+      {:ok,
+       %{
+         type: "workspace_list",
+         workspaces: Enum.map(aft.session.workspaces, &View.workspace(aft, &1))
+       }}
+    else
+      [_ | _] = notes -> unchanged(notes)
+      err -> err
+    end
+  end
 
   def handle("workspace.close", %{workspace_id: w}) do
     with {:ok, before, aft, notes} <- run_on_ws(w, {Commands, :close_workspace, [w]}) do
@@ -95,8 +106,17 @@ defmodule HerdrServer.Api.Handlers.Topology do
   def handle("tab.rename", %{tab_id: {w, t} = id, label: l}),
     do: change_tab(id, {Commands, :rename_tab, [w, t, l]})
 
-  def handle("tab.move", %{tab_id: {w, t} = id, index: i}),
-    do: change_tab(id, {Commands, :move_tab, [w, t, i]})
+  def handle("tab.move", %{tab_id: {w, t} = id, insert_index: i}) do
+    with {:ok, _before, aft, notes} <- run_on_tab(id, {Commands, :move_tab, [w, t, i]}),
+         [] <- notes,
+         %{} = ws <- View.find_workspace(aft, w) do
+      {:ok, %{type: "tab_list", tabs: Enum.map(ws.tabs, &View.tab(aft, ws, &1))}}
+    else
+      [_ | _] = notes -> unchanged(notes)
+      nil -> unchanged([])
+      err -> err
+    end
+  end
 
   def handle("tab.close", %{tab_id: {w, t} = id}) do
     with {:ok, before, aft, notes} <- run_on_tab(id, {Commands, :close_tab, [w, t]}) do

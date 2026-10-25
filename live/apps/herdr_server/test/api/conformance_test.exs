@@ -223,6 +223,10 @@ defmodule HerdrServer.Api.ConformanceTest do
 
   defp produce("workspace.close", :failed, ctx), do: call(listen(ctx), "workspace.close")
 
+  # an insert_index past the end
+  defp produce(method, :failed, ctx) when method in ~w(tab.move workspace.move),
+    do: call(listen(ctx), method, %{"insert_index" => 99})
+
   defp produce("pane.split", :failed, ctx) do
     s = listen(ctx)
 

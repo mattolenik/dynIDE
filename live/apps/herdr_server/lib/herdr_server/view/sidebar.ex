@@ -10,13 +10,13 @@ defmodule HerdrServer.View.Sidebar do
   pane's `agent`, else its title, else `"terminal"`; its `:tab` text shows only when the
   workspace has more than one tab. A workspace whose `git` fact (`WorkspaceFacts`) has a
   branch carries it as the item's `:detail`, `"main ↑1 ↓2"`. Collapsed: sections carry no text.
-  The workspace item under the client's workspace drag (`drag`, as `View.Tabs.node/3`)
+  The workspace item under the client's workspace drag (`drag`, `View.DropMarker`)
   carries `drop_marker`.
   """
 
   alias HerdrScene.Scene.Node
   alias HerdrServer.Layout
-  alias HerdrServer.View.Tabs
+  alias HerdrServer.View.DropMarker
 
   @prio %{unknown: 0, idle: 1, working: 2, done: 3, blocked: 4}
 
@@ -119,7 +119,7 @@ defmodule HerdrServer.View.Sidebar do
         props:
           %{active: ws.id == app.session.active_workspace, index: i}
           |> detail(ws)
-          |> Tabs.put_marker(Tabs.drop_marker(drag, path.(ws.id), paths)),
+          |> DropMarker.put(DropMarker.side(drag, path.(ws.id), paths)),
         children: [line(0, [badge(state), text(:workspace, ws.name)])]
       }
     end)

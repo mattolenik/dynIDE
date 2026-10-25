@@ -243,8 +243,8 @@ defmodule HerdrServer.Api.TopologyTest do
           {"tab.focus", t},
           {"tab.rename", Map.put(t, "label", "x")},
           {"tab.close", t},
-          {"tab.move", Map.put(t, "index", 0)},
-          {"workspace.move", Map.put(w, "index", 0)},
+          {"tab.move", Map.put(t, "insert_index", 0)},
+          {"workspace.move", Map.put(w, "insert_index", 0)},
           {"pane.list", w},
           {"pane.list", t},
           {"pane.get", p},
@@ -261,21 +261,32 @@ defmodule HerdrServer.Api.TopologyTest do
     end
   end
 
-  test "tab.move and workspace.move reorder, clamped, keeping the focused one", %{s: s} do
+  test "tab.move and workspace.move take herdr's insert_index and answer the new order",
+       %{s: s} do
     ok!(s, "workspace.list")
     ok!(s, "tab.create", %{})
     ok!(s, "tab.create", %{})
-    r = ok!(s, "tab.move", %{"tab_id" => "w1:t1", "index" => 99})
-    assert r["tab"]["tab_id"] == "w1:t1"
-    assert r["tab"]["focused"]
-    assert Enum.map(ok!(s, "tab.list")["tabs"], & &1["tab_id"]) == ~w(w1:t2 w1:t3 w1:t1)
+    ids = fn r -> Enum.map(r["tabs"], & &1["tab_id"]) end
+    # gap 3 of 3 appends: t1 goes last
+    assert ids.(ok!(s, "tab.move", %{"tab_id" => "w1:t1", "insert_index" => 3})) ==
+             ~w(w1:t2 w1:t3 w1:t1)
+
+    # gap 1 (before t3) moves t1 left of t3
+    assert ids.(ok!(s, "tab.move", %{"tab_id" => "w1:t1", "insert_index" => 1})) ==
+             ~w(w1:t2 w1:t1 w1:t3)
+
+    assert {"failed", "insert_index 4 is out of bounds"} =
+             err(s, "tab.move", %{"tab_id" => "w1:t1", "insert_index" => 4})
 
     ok!(s, "workspace.create", %{})
-    r = ok!(s, "workspace.move", %{"workspace_id" => "w2", "index" => 0})
-    refute r["workspace"]["focused"]
-    assert Enum.map(ok!(s, "workspace.list")["workspaces"], & &1["workspace_id"]) == ~w(w2 w1)
+    r = ok!(s, "workspace.move", %{"workspace_id" => "w2", "insert_index" => 0})
+    assert Enum.map(r["workspaces"], & &1["workspace_id"]) == ~w(w2 w1)
     assert focused_ws(s) == "w1"
 
-    assert {"invalid_params", _} = err(s, "tab.move", %{"tab_id" => "w1:t1", "index" => -1})
+    assert {"failed", _} =
+             err(s, "workspace.move", %{"workspace_id" => "w2", "insert_index" => 3})
+
+    assert {"invalid_params", _} =
+             err(s, "tab.move", %{"tab_id" => "w1:t1", "insert_index" => -1})
   end
 end

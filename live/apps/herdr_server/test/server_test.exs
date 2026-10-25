@@ -1377,4 +1377,30 @@ defmodule HerdrServer.ServerTest do
     assert marker.(scene_until(a, &(marker.(&1) == nil))) == nil
     assert :sys.get_state(sa).drag == nil
   end
+
+  test "a malformed or wrong-kind over sets no drag; closing the dragged tab ends the drag" do
+    {a, sa} = client()
+    scene(a)
+    cmds = HerdrServer.App.Commands
+    for _ <- 1..2, do: {:ok, _, _} = Store.request({cmds, :create_tab, [1, nil, false]})
+    from = [:tabs, {:tab, 1}]
+
+    for {seq, over} <- [
+          {1, [:tabs | :x]},
+          {2, [:sidebar, :spaces, :list, {:workspace, 1}]},
+          {3, [:tabs, :new_tab]},
+          {4, from}
+        ] do
+      input(sa, a, seq, {:chrome, from, {:drag, %{x: 1, y: 0, over: over}}})
+      assert_receive {^a, {:ack, ^seq}}
+      assert :sys.get_state(sa).drag == nil
+    end
+
+    over = %{x: 1, y: 0, over: [:tabs, {:tab, 3}]}
+    input(sa, a, 5, {:chrome, [:tabs, {:tab, 2}], {:drag, over}})
+    assert_receive {^a, {:ack, 5}}
+    assert %{from: [:tabs, {:tab, 2}]} = :sys.get_state(sa).drag
+    {:ok, _, _} = Store.request({cmds, :close_tab, [1, 2]})
+    assert eventually(fn -> :sys.get_state(sa).drag == nil end)
+  end
 end
