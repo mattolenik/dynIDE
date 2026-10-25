@@ -35,7 +35,7 @@ defmodule HerdrServer.Client.Remote do
   queued output given 200 ms to leave the driver (else the socket is dropped, not
   carried), an UPDATE with `prepared: true`, then no reads and no writes (output is kept)
   until `thaw_all/0`, which UPDATEs `prepared: false` back. A conn that does not answer
-  prepare in 1 s is DROPped. `terminate/2` DROPs too, so a crashed conn's peer sees EOF.
+  prepare in 1 s is DROPped (and HOLDs again at THAW). `terminate/2` DROPs too, so a crashed conn's peer sees EOF.
   A new VM's `Client.Socket` starts one adopted conn per entry. A prepared blob is
   carried: a new session with the blob's info, `last_seq := acked`,
   `{:attached, %{resumed: :handoff}}`, a full scene, then the carried buffer. Any other
@@ -118,9 +118,15 @@ defmodule HerdrServer.Client.Remote do
   """
   @spec prepare_all() :: :ok
   def prepare_all do
+    pids = conns()
     results = each_conn(:prepare)
     late = for {id, :timeout} <- results, do: id
-    for id <- late, do: Carry.hold_mod().drop("client/" <> id)
+
+    for id <- late do
+      Carry.hold_mod().drop("client/" <> id)
+      # so its THAW holds it again (it reads this after the late :prepare)
+      if pid = pids[id], do: send(pid, :hold_dropped)
+    end
 
     HerdrReload.Telemetry.event(:client_handoff_freeze,
       conns: length(results),
@@ -307,6 +313,8 @@ defmodule HerdrServer.Client.Remote do
     held = Enum.reverse(state.frozen_out)
     # no longer prepared: a later crash must not carry this socket mid-stream
     state = Carry.update_hold(%{state | frozen: false, frozen_out: []})
+    # dropped for a late prepare: carried again from now on
+    state = if state.held, do: state, else: Carry.hold(state)
     state = Out.write_all(state, held)
     # what arrived before the freeze is still in the buffer
     state = if state.socket, do: received(state, ""), else: state
@@ -436,6 +444,9 @@ defmodule HerdrServer.Client.Remote do
     state = Map.merge(%__MODULE__{}, state)
     {:noreply, Out.out(state, msg)}
   end
+
+  def handle_info(:hold_dropped, state),
+    do: {:noreply, %{Map.merge(%__MODULE__{}, state) | held: false}}
 
   def handle_info(:flush, state) do
     state = Map.merge(%__MODULE__{}, state)

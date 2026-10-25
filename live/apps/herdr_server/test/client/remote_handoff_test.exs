@@ -130,7 +130,7 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
     assert_receive {:drop, "client/stop1"}, 2000
   end
 
-  test "a conn that does not answer prepare is dropped" do
+  test "a conn that does not answer prepare is dropped, and held again at thaw" do
     ctx = setup_listener()
     attached!(attach(ctx, client_id: "slow1"), false)
     assert_receive {:hold, "client/slow1", _, 1}, 2000
@@ -139,6 +139,10 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
     :ok = Remote.prepare_all()
     assert_receive {:drop, "client/slow1"}, 2000
     :ok = :sys.resume(pid)
+    # THAW holds it again: a later handoff carries it
+    :ok = Remote.thaw_all()
+    assert_receive {:hold, "client/slow1", _, 1}, 2000
+    assert :sys.get_state(pid).held
   end
 
   test "an undrained socket is dropped at prepare, not carried" do
