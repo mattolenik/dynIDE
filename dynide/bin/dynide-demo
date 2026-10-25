@@ -1,0 +1,19 @@
+#!/bin/sh
+# Throwaway tty/blit demo (mix herdr_term.demo). The VM never touches stdio:
+# stdin is /dev/null and stdout/stderr go to the log; it paints /dev/tty via
+# the NIF. scripts/tty_guard.sh restores the tty after the VM exits, whatever
+# the cause (including kill -9, which no destructor survives).
+set -u
+log=${DYNIDE_DEMO_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/dynide-demo.log}
+case $log in /*) ;; *) log=$PWD/$log ;; esac
+mkdir -p "$(dirname "$log")" || exit 1
+# resolve symlinks (portable: no readlink -f on macOS)
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
+done
+cd "$(dirname "$self")/.." || exit 1
+export MIX_ENV="${MIX_ENV:-dev}"
+mix compile </dev/null >>"$log" 2>&1 || { echo "dynide-demo: mix compile failed, see $log" >&2; exit 1; }
+exec "$PWD/scripts/tty_guard.sh" -s elixir --erl "-noshell -noinput" -S mix herdr_term.demo </dev/null >>"$log" 2>&1

@@ -1,7 +1,7 @@
 # herdr-live task runner
 set windows-shell := ["cmd.exe", "/d", "/s", "/c"]
 
-import 'live/live.just'
+import 'dynide/dynide.just'
 
 python := if os() == "windows" { "python" } else { "python3" }
 
@@ -9,8 +9,8 @@ python := if os() == "windows" { "python" } else { "python3" }
 maintenance-test:
     {{python}} -m unittest scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
 
-# The gate: alias of live-check
-check: live-check
+# The gate: alias of dynide-check
+check: dynide-check
 
 # Regenerate the C API bindings with bindgen-cli 0.72.1
 libghostty-bindings *clang_args:

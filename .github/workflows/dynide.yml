@@ -1,0 +1,123 @@
+name: dynIDE
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN_VERSION: 1.96.1
+  # Only branch pushes save caches; PR caches are PR-private and crowd out master's.
+  SAVE_CACHES: ${{ github.event_name == 'push' }}
+
+concurrency:
+  group: dynide-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dynide-check:
+    name: dynide-check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          components: rustfmt,clippy
+
+      - name: Install just
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: just
+
+      # Zig downloads vary from seconds to minutes; reuse the verified install.
+      - name: Restore Zig compiler
+        id: zig-compiler
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/herdr-zig-0.16.0
+          key: zig-compiler-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0
+
+      - name: Install Zig
+        if: steps.zig-compiler.outputs.cache-hit != 'true'
+        uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        with:
+          version: 0.16.0
+
+      # Zig's C-header cache keys include the compiler installation path.
+      - name: Stabilize Zig installation path on Unix
+        env:
+          ZIG_RESTORED: ${{ steps.zig-compiler.outputs.cache-hit }}
+        run: |
+          stable_zig="$RUNNER_TEMP/herdr-zig-0.16.0"
+          if [ "$ZIG_RESTORED" != "true" ]; then
+            mv "$(dirname "$(command -v zig)")" "$stable_zig"
+          fi
+          echo "$stable_zig" >> "$GITHUB_PATH"
+          echo "ZIG=$stable_zig/zig" >> "$GITHUB_ENV"
+
+      - name: Save Zig compiler
+        if: steps.zig-compiler.outputs.cache-hit != 'true' && env.SAVE_CACHES == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/herdr-zig-0.16.0
+          key: zig-compiler-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0
+
+      - name: Install Erlang and Elixir (Linux)
+        if: runner.os == 'Linux'
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          otp-version: "29"
+          elixir-version: "1.20.4"
+
+      # erlef/setup-beam does not support macOS; brew installs the current
+      # OTP/Elixir rather than the pinned versions.
+      - name: Install Erlang and Elixir (macOS)
+        if: runner.os == 'macOS'
+        run: brew install erlang elixir
+
+      - name: Install Hex and Rebar
+        run: mix local.hex --force && mix local.rebar --force
+
+      - name: Identify BEAM toolchain
+        id: beam
+        run: |
+          elixir --version
+          otp=$(erl -noshell -eval 'io:put_chars(erlang:system_info(otp_release)), halt().')
+          ex=$(elixir -e 'IO.write(System.version())')
+          maj=${ex%%.*}; min=${ex#*.}; min=${min%%.*}
+          if [ "$maj" != 1 ] || [ "$min" -lt 20 ]; then echo "::error::Elixir $ex does not satisfy ~> 1.20"; exit 1; fi
+          echo "id=otp$otp-ex$ex" >> "$GITHUB_OUTPUT"
+
+      - name: Cache mix deps and build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dynide/deps
+            dynide/_build
+          key: dynide-${{ runner.os }}-${{ steps.beam.outputs.id }}-${{ hashFiles('dynide/mix.lock') }}
+          restore-keys: dynide-${{ runner.os }}-${{ steps.beam.outputs.id }}-
+
+      - name: Cache native targets
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dynide/native/herdr_kernel/target
+            dynide/native/herdr_term/target
+          key: dynide-native-${{ runner.os }}-${{ env.RUST_TOOLCHAIN_VERSION }}-${{ hashFiles('dynide/native/*/Cargo.lock') }}
+          restore-keys: dynide-native-${{ runner.os }}-${{ env.RUST_TOOLCHAIN_VERSION }}-
+
+      - name: Run dynide-check
+        run: just dynide-check
