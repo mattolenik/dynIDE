@@ -67,10 +67,9 @@ defmodule HerdrServer.Plugins.Panes do
     end
   end
 
-  # the pty env cannot unset, so nil entries go, except the VM-only names, blanked
-  # ("" reads as unset) so none is inherited
+  # a nil entry removes the name from the inherited env (the kernel unsets it), as for
+  # plugin commands
   defp pty_env({k, _}) when k in @store_env, do: []
-  defp pty_env({k, nil}), do: if(k in Env.vm_only(), do: [{k, ""}], else: [])
   defp pty_env(kv), do: [kv]
 
   @doc "Places the pane `spec` describes; a vanished target changes nothing."

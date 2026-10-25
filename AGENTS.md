@@ -251,7 +251,7 @@ Full guide: `docs/herdr-live/editing-live.md`. Human checks: `docs/herdr-live/re
   `just live-check` from another worktree or with the dogfood instance
   stopped (another terminal is not enough: harness and smokes share
   `_build/dev`, selfhost writes into the watched tree). One instance per log
-  file (two brokers on one log give false `broker_died` losses). In a pane (inherited `HERDR_BROKER_SOCK`) the tty harness skips
+  file (two brokers on one log give false `broker_died` losses). In a herdr-live pane (`HERDR_LIVE_API` set) the tty harness skips
   its launcher modes (`herdr`, `herdr-stress`, `selfhost`) with a SKIP line.
 - After any change to the snapshot path or a libghostty-vt bump, re-run
   `cd live && elixir bench/handoff/kill9.exs runs=30` (ADR 0001), and keep or

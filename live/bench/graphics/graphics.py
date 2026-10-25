@@ -454,7 +454,7 @@ def main():
 
 
 if __name__ == "__main__":
-    if os.environ.get("HERDR_BROKER_SOCK"):
+    if os.environ.get("HERDR_LIVE_API"):
         print("SKIP: graphics: running inside herdr-live (run it outside, see editing-live.md)")
         sys.exit(0)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))

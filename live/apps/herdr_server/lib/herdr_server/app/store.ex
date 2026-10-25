@@ -546,7 +546,7 @@ defmodule HerdrServer.App.Store do
     do: effect(state, {:spawn, id, size, %{cwd: nil, replay: nil}}, origin)
 
   # opts: a restored pane's recorded `cwd` and saved `replay` (Persist.RestorePlan), and
-  # a program other than `$SHELL` (`cmd`, `args`, extra `env` as {name, value})
+  # a program other than `$SHELL` (`cmd`, `args`, extra `env` as {name, value | nil})
   defp effect(state, {:spawn, id, %{cols: c, rows: r}, opts}, origin) do
     # The kernel sets TERM=xterm-256color; Pane.Server subscribes when it starts. Children
     # inherit the OS environment of the VM, not `System.put_env/2` changes: extra
@@ -654,15 +654,21 @@ defmodule HerdrServer.App.Store do
   end
 
   # herdr's pane variables come last and win over :pane_env and the caller's env; a
-  # popup (`identity: false`) gets no pane or place variables
+  # popup (`identity: false`) gets no pane or place variables, not even ones the VM itself
+  # inherited. A nil value removes the name from the env the kernel child inherits; no
+  # pane gets this VM's handoff link (a `mix test` or second VM in a pane would dial it).
+  @identity ~w(HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID)
+  @vm_link ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN)
+
   defp pane_env(state, id, extra, identity?) do
     own =
       if identity?,
         do: [{"HERDR_PANE_ID", "p#{id}"} | place_env(state.app, id)],
-        else: []
+        else: Enum.map(@identity, &{&1, nil})
 
     env =
-      Application.get_env(:herdr_server, :pane_env, []) ++ extra ++ [{"HERDR_ENV", "1"} | own]
+      Application.get_env(:herdr_server, :pane_env, []) ++
+        extra ++ Enum.map(@vm_link, &{&1, nil}) ++ [{"HERDR_ENV", "1"} | own]
 
     env |> Enum.reverse() |> Enum.uniq_by(&elem(&1, 0)) |> Enum.reverse()
   end

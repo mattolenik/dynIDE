@@ -66,7 +66,8 @@ pub struct SpawnOptions {
     pub id: u64,
     pub cmd: String,
     pub args: Vec<String>,
-    pub env: Vec<(String, String)>,
+    /// Overrides of the inherited environment; a `None` value removes the name.
+    pub env: Vec<(String, Option<String>)>,
     pub cwd: Option<String>,
     pub cols: u16,
     pub rows: u16,
@@ -800,10 +801,14 @@ impl Pty {
 
         let mut cmd = CommandBuilder::new(&opts.cmd);
         cmd.args(&opts.args);
-        // CommandBuilder starts from the inherited environment; caller entries override.
+        // CommandBuilder starts from the inherited environment; caller entries override,
+        // and a `None` entry removes the name (a value the VM itself inherited).
         cmd.env("TERM", "xterm-256color");
         for (k, v) in &opts.env {
-            cmd.env(k, v);
+            match v {
+                Some(v) => cmd.env(k, v),
+                None => cmd.env_remove(k),
+            }
         }
         if let Some(cwd) = &opts.cwd {
             cmd.cwd(cwd);
@@ -1158,7 +1163,7 @@ mod tests {
             id: 1,
             cmd: cmd.into(),
             args: args.iter().map(|a| a.to_string()).collect(),
-            env: vec![("PS1".into(), "$ ".into())],
+            env: vec![("PS1".into(), Some("$ ".into()))],
             cwd: None,
             cols: 80,
             rows: 24,
@@ -1223,6 +1228,36 @@ mod tests {
             matches!(ev, Event::Damage(_))
                 && lines(&vt).iter().any(|l| l == "hi" || l.ends_with("$ hi"))
         });
+    }
+
+    #[test]
+    fn env_none_removes_an_inherited_name() {
+        // cargo sets CARGO_PKG_NAME and CARGO_MANIFEST_DIR for the test process
+        let vt = Vt::new(80, 24, 1000).expect("vt");
+        let (tx, rx) = mpsc::channel();
+        let opts = SpawnOptions {
+            id: 1,
+            cmd: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                "echo \"a=${CARGO_PKG_NAME-unset} b=${CARGO_MANIFEST_DIR+set} c=$X\"".into(),
+            ],
+            env: vec![
+                ("CARGO_PKG_NAME".into(), None),
+                ("X".into(), Some("x".into())),
+            ],
+            cwd: None,
+            cols: 80,
+            rows: 24,
+        };
+        let _pty =
+            Pty::spawn(Arc::clone(&vt), opts, Arc::new(ChanSink(Mutex::new(tx)))).expect("spawn");
+        exit_of(&rx);
+        assert!(
+            lines(&vt).iter().any(|l| l == "a=unset b=set c=x"),
+            "{:?}",
+            lines(&vt)
+        );
     }
 
     #[test]

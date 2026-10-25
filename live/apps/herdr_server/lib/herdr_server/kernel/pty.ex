@@ -23,7 +23,7 @@ defmodule HerdrServer.Kernel.Pty do
               id :: non_neg_integer,
               cmd :: binary,
               args :: [binary],
-              env :: [{binary, binary}],
+              env :: [{binary, binary | nil}],
               cwd :: binary | nil,
               pos_integer,
               pos_integer

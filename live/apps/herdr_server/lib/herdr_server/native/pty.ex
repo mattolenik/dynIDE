@@ -37,14 +37,15 @@ defmodule HerdrServer.Native.Pty do
 
   @doc """
   Spawns `cmd` with `args` on a new PTY of `cols` x `rows`; `env` entries override the
-  inherited environment. Raises `ArgumentError` for sizes outside 1..65535.
+  inherited environment, and a `nil` value removes the name from it. Raises
+  `ArgumentError` for sizes outside 1..65535.
   """
   @spec spawn(
           Vt.vt(),
           non_neg_integer,
           binary,
           [binary],
-          [{binary, binary}],
+          [{binary, binary | nil}],
           binary | nil,
           pos_integer,
           pos_integer

@@ -433,7 +433,7 @@ grep -E 'herdr-event (session_lost|crash|broker_handoff_failed)' "$L"
 - Inside herdr-live, run `just live-test` and focused tests. The tty harness modes that
   launch `bin/herdr-live` (`herdr`, `herdr-stress`, `selfhost`) compile into and reload the
   `_build/dev` the running instance uses, so inside a herdr-live pane (detected by the
-  inherited `HERDR_BROKER_SOCK`) they print `SKIP: <mode>: running inside herdr-live ...`
+  `HERDR_LIVE_API` its panes inherit) they print `SKIP: <mode>: running inside herdr-live ...`
   and exit 0.
 - Gate before committing: `just live-check` (format, credo --strict, dialyzer, cargo
   fmt/clippy, tests, launcher and attached smokes, tty harness), run from another

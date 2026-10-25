@@ -232,6 +232,12 @@ defmodule HerdrServer.App.CustomCommandsTest do
     %{kind: :popup, pane: id} = Modal.top(Store.snapshot())
     {:ok, %{pty: pty}} = Keeper.lookup(Rows.kernel_id(id))
 
+    # no pane identity, not even one the VM inherited (nil: the kernel removes it)
+    env = Map.new(Keeper.last_spec().env)
+
+    for k <- ~w(HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID HERDR_BROKER_SOCK HERDR_LIVE_GEN),
+        do: assert(Map.fetch(env, k) == {:ok, nil}, k)
+
     :ok = Store.event(Event.key("q"), @size)
     assert Enum.any?(1..100, fn _ -> Pty.writes(pty) != [] or (Process.sleep(10) && false) end)
 

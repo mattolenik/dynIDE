@@ -38,7 +38,7 @@ defmodule HerdrServer.Native.Keeper do
           optional(:replay) => binary | nil,
           cmd: binary,
           args: [binary],
-          env: [{binary, binary}],
+          env: [{binary, binary | nil}],
           cwd: binary | nil,
           cols: pos_integer,
           rows: pos_integer,
@@ -412,7 +412,10 @@ defmodule HerdrServer.Native.Keeper do
 
   defp valid?(:cmd, v), do: is_binary(v)
   defp valid?(:args, v), do: list_of?(v, &is_binary/1)
-  defp valid?(:env, v), do: list_of?(v, &match?({k, x} when is_binary(k) and is_binary(x), &1))
+
+  defp valid?(:env, v),
+    do: list_of?(v, &match?({k, x} when is_binary(k) and (is_binary(x) or is_nil(x)), &1))
+
   defp valid?(:cwd, v), do: is_binary(v) or is_nil(v)
   defp valid?(:max_scrollback, v), do: is_integer(v) and v >= 0
   defp valid?(:subscriber, v), do: is_pid(v) or is_nil(v)

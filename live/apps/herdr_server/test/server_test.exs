@@ -853,6 +853,11 @@ defmodule HerdrServer.ServerTest do
     {:ok, _, app} = Store.request({HerdrServer.App.Commands, :create_tab, [1, nil, false]})
     id = app.session.next_id - 1
     assert eventually(fn -> {"HERDR_PANE_ID", "p#{id}"} in Fake.Keeper.last_spec().env end)
+    # the VM's handoff link is removed from every pane's env
+    env = Map.new(Fake.Keeper.last_spec().env)
+
+    assert {Map.fetch(env, "HERDR_BROKER_SOCK"), Map.fetch(env, "HERDR_LIVE_GEN")} ==
+             {{:ok, nil}, {:ok, nil}}
   end
 
   test "spawn opts set cmd, args and env; herdr's pane ids are authoritative" do

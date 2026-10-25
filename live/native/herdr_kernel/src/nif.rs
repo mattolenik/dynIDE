@@ -702,7 +702,7 @@ fn pty_spawn<'a>(
     id: u64,
     cmd: String,
     argv: Vec<String>,
-    envs: Vec<(String, String)>,
+    envs: Vec<(String, Option<String>)>,
     cwd: Option<String>,
     cols: u16,
     rows: u16,

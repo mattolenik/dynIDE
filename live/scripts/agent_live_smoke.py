@@ -219,7 +219,7 @@ def smoke(h, name, tmp, first):
 
 def main():
     args = [a for a in sys.argv[1:] if a != "-v"]
-    if os.environ.get("HERDR_BROKER_SOCK"):
+    if os.environ.get("HERDR_LIVE_API"):
         print("BLOCKED: running inside herdr-live; run from another terminal")
         sys.exit(2)
     tmp = os.path.abspath(args.pop(0)) if args and "/" in args[0] else \

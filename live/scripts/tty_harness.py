@@ -39,7 +39,7 @@ defense: since b30f3505 the status bridge subscribes at once and seeds from
 the newest batch, so the first write normally shows); `bin/herdr-live rollback` shows
 `r<n> rolled back: manual`; `bin/herdr-live kernel-restart` shows
 `handoff graceful g<gen>` and both panes still answer an `echo` (clicked to
-focus), and a pane shell has HERDR_BROKER_SOCK set; the probe file is deleted (the status settles), prefix q exits 0, and
+focus), and a pane shell has HERDR_LIVE_API set and no HERDR_BROKER_SOCK; the probe file is deleted (the status settles), prefix q exits 0, and
 log_summary.py on the run's log reports reloads >= 1, rollbacks manual 1,
 handoffs graceful 1, session_losses 0. The probe file is removed in a
 `finally` (also on Ctrl-C); afterwards no probe beam is left in
@@ -106,7 +106,7 @@ broker, a clean stop (exit 0, settings unchanged, no broker_killed).
 
 herdr, herdr-stress, selfhost, persist, agent, plugins, remote and broker-kill launch bin/herdr-live and compile into the
 shared _build/dev, so they skip (print SKIP, exit 0) inside a herdr-live pane:
-pane shells inherit the VM's HERDR_BROKER_SOCK. Run them outside the dogfood
+pane shells have HERDR_LIVE_API set (herdr's own panes do not). Run them outside the dogfood
 instance (another terminal or worktree).
 
 Every herdr-live launch gets its own HERDR_LIVE_LOG, HERDR_LIVE_API,
@@ -958,10 +958,10 @@ def selfhost():
                 h.send(f'echo {mark[:5]}""{mark[5:]}\r'.encode())
                 h.until(lambda: h.shows(mark), f"echo {mark} after the handoff", timeout=20)
                 ok(True, f"selfhost: pane {i + 1} answers an echo after the handoff ({mark})")
-            # the marker the launcher modes skip on: pane shells inherit the VM's broker socket
-            h.send(b'echo inside-${HERDR_BROKER_SOCK:+herdr}-live\r')
-            h.until(lambda: h.shows("inside-herdr-live"), "HERDR_BROKER_SOCK in a pane's env", timeout=20)
-            ok(True, "selfhost: a pane shell has HERDR_BROKER_SOCK (the harness skip marker)")
+            # the marker the launcher modes skip on; the VM's broker socket is removed from panes
+            h.send(b'echo inside-${HERDR_LIVE_API:+herdr}-${HERDR_BROKER_SOCK:-live}\r')
+            h.until(lambda: h.shows("inside-herdr-live"), "HERDR_LIVE_API and no HERDR_BROKER_SOCK in a pane's env", timeout=20)
+            ok(True, "selfhost: a pane shell has HERDR_LIVE_API (the harness skip marker), not HERDR_BROKER_SOCK")
             os.remove(PROBE_SRC)
             settle(h)
             last = h.screen.rows()[rows - 1].strip() if len(h.screen.rows()) >= rows else ""
@@ -1464,7 +1464,7 @@ if __name__ == "__main__":
         sys.exit(__doc__)
     # a pane of a running herdr-live inherits the VM's env: these modes would compile into
     # and reload that instance's own _build
-    if args[0] in ("herdr", "herdr-stress", "selfhost", "persist", "agent", "remote", "plugins", "broker-kill") and os.environ.get("HERDR_BROKER_SOCK"):
+    if args[0] in ("herdr", "herdr-stress", "selfhost", "persist", "agent", "remote", "plugins", "broker-kill") and os.environ.get("HERDR_LIVE_API"):
         print(f"SKIP: {args[0]}: running inside herdr-live (run live-check outside it, see editing-live.md)")
         sys.exit(0)
     # CI cancellation: let `finally` kill the process groups.

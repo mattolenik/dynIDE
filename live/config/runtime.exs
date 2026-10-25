@@ -40,24 +40,24 @@ end
 # child: port children (plugins, hooks, custom commands, git, sound, ssh) take the VM's
 # env, edited here; pane shells come from the kernel, which reads the real process env
 # that System.put_env/delete_env do not reach, so they get the same list as :pane_env
-# ("" reads as unset to the release scripts' `${VAR:-default}`).
+# (a nil value: the kernel removes the name).
 if config_env() == :prod do
   config :herdr_server, :version, System.get_env("RELEASE_VSN")
 
-  blank =
+  unset =
     for {k, _} <- System.get_env(),
         String.starts_with?(k, "RELEASE_") or
           k in ~w(ROOTDIR BINDIR EMU PROGNAME HERDR_LIVE_PANE_PATH),
-        do: {k, ""}
+        do: {k, nil}
 
   child_env =
     case System.get_env("HERDR_LIVE_PANE_PATH") do
-      nil -> blank
-      path -> [{"PATH", path} | blank]
+      nil -> unset
+      path -> [{"PATH", path} | unset]
     end
 
   for {k, v} <- child_env,
-      do: if(v == "", do: System.delete_env(k), else: System.put_env(k, v))
+      do: if(v, do: System.put_env(k, v), else: System.delete_env(k))
 
   config :herdr_server, :pane_env, child_env
 end

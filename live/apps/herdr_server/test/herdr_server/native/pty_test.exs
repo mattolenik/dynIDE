@@ -47,6 +47,16 @@ defmodule HerdrServer.Native.PtyTest do
     assert Pty.write(pty, "x") == {:error, :closed}
   end
 
+  test "a nil env value removes a name the VM inherited" do
+    {:ok, vt} = Vt.new(80, 24, 1000)
+    env = [{"HOME", nil} | @env]
+    script = "echo \"h=${HOME-unset} p=${PATH+set}\"; sleep 5"
+    {:ok, pty, _} = Pty.spawn(vt, 40, "/bin/sh", ["-c", script], env, nil, 80, 24)
+    deadline = System.monotonic_time(:millisecond) + 2000
+    assert poll_rows(vt, &(String.trim_trailing(&1) == "h=unset p=set"), deadline)
+    Pty.kill(pty, :kill)
+  end
+
   test "resubscribe after the subscriber dies gets full damage" do
     {vt, pty} = spawn_sh(2)
     test = self()

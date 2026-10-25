@@ -119,7 +119,10 @@ defmodule HerdrServer.Plugins.PanesTest do
     assert %{kind: :popup, pane: ^next, title: "Pop"} = Modal.top(app)
     refute Map.has_key?(app.session.panes, next)
     e = Map.new(Fake.Keeper.last_spec().env)
-    refute Map.has_key?(e, "HERDR_PANE_ID")
+
+    assert Enum.map(~w(HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID), &Map.fetch(e, &1)) ==
+             [{:ok, nil}, {:ok, nil}, {:ok, nil}]
+
     assert e["HERDR_PLUGIN_ENTRYPOINT_ID"] == "pop"
     assert {Fake.Keeper.last_spec().cols, Fake.Keeper.last_spec().rows} == {pane.cols, pane.rows}
 
@@ -173,13 +176,12 @@ defmodule HerdrServer.Plugins.PanesTest do
     assert Map.has_key?(Store.snapshot().session.panes, 1)
   end
 
-  test "the VM-only env is blanked in a plugin pane (the pty env cannot unset)" do
+  test "the VM-only env is removed from a plugin pane (nil: the kernel unsets it)" do
     System.put_env("HERDR_BROKER_SOCK", "/tmp/live-broker.sock")
     on_exit(fn -> System.delete_env("HERDR_BROKER_SOCK") end)
     assert {:ok, _} = open(%{target_pane_id: 1, env: %{"HERDR_BROKER_SOCK" => "/evil"}})
     e = Map.new(Fake.Keeper.last_spec().env)
-    assert Enum.all?(Env.vm_only(), &(e[&1] == ""))
-    assert e["HERDR_BROKER_SOCK"] == ""
+    assert Enum.all?(Env.vm_only(), &(Map.fetch(e, &1) == {:ok, nil}))
   end
 
   test "a disabled plugin is failed / plugin_disabled" do

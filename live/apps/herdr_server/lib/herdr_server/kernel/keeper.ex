@@ -16,7 +16,7 @@ defmodule HerdrServer.Kernel.Keeper do
           optional(:replay) => binary | nil,
           cmd: binary,
           args: [binary],
-          env: [{binary, binary}],
+          env: [{binary, binary | nil}],
           cwd: binary | nil,
           cols: pos_integer,
           rows: pos_integer,

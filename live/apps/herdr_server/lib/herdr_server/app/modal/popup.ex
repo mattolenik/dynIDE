@@ -8,9 +8,9 @@ defmodule HerdrServer.App.Modal.Popup do
       pane id (`session.next_id`), pushes the modal owned by the active tab and returns
       the id and the pane's terminal size; the caller spawns the pane
       (`{:spawn, id, size, opts}` with `identity: false`). herdr gives a popup no pane
-      identity; here `identity: false` only keeps the Store from setting
-      `HERDR_PANE_ID` / `HERDR_TAB_ID` / `HERDR_WORKSPACE_ID`: the kernel can only set
-      variables, so one the VM itself inherited stays (kernel env removal is deferred).
+      identity; with `identity: false` the Store removes `HERDR_PANE_ID` /
+      `HERDR_TAB_ID` / `HERDR_WORKSPACE_ID` from the child's env, ones the VM itself
+      inherited included.
     * `orphaned/1` (the Store, after every step; herdr's
       `reconcile_client_shell_locations`): closes the popup once its owner tab is gone
       (a tab or workspace close by key, menu or API).
