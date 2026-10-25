@@ -92,6 +92,8 @@ defmodule HerdrIntegration.CliConformanceTest do
     "pane link activate p1 --col 0 --row 2 --modifier ctrl",
     "plugin list --plugin a --json",
     "plugin install o/r --ref main --yes",
+    "plugin update",
+    "plugin update o/r --ref v2 --yes",
     "plugin link ./x --disabled",
     "plugin uninstall a",
     "plugin remove a",

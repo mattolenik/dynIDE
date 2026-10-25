@@ -26,6 +26,14 @@ defmodule HerdrServer.Api.Handlers.Plugins do
   def handle("plugin.install", p),
     do: info(Install.install(p.source, p[:ref], p[:yes] == true))
 
+  # ponytail: same as install (git and builds in the connection process)
+  def handle("plugin.update", p) do
+    with {:ok, r} <- Install.update(p[:target], p[:ref], p[:yes] == true) |> err() do
+      {:ok,
+       %{type: "plugin_update", updated: Enum.map(r.updated, &public/1), up_to_date: r.up_to_date}}
+    end
+  end
+
   def handle("plugin.link", p), do: info(Install.link(p.path, p[:enabled] != false))
   def handle("plugin.enable", p), do: info(Install.set_enabled(p.plugin_id, true))
   def handle("plugin.disable", p), do: info(Install.set_enabled(p.plugin_id, false))

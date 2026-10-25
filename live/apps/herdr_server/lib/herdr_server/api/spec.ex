@@ -959,6 +959,31 @@ defmodule HerdrServer.Api.Spec do
           "and `data.preview` describing what would be installed. Every error carries herdr's code in `data.reason`."
       ),
       plugin(
+        "update",
+        "Update GitHub-installed plugins; without `yes` answers a preview to confirm.",
+        [
+          opt(
+            "target",
+            :string,
+            "Plugin id or `owner/repo[/subdir]`; default every GitHub install."
+          ),
+          opt("ref", :string, "Git ref to move to; default the recorded one."),
+          opt("yes", :boolean, "Confirm the update.")
+        ],
+        "plugin_update",
+        "herdr-live plugin update [<target>] [--ref REF] [--yes]",
+        [:not_found, :failed]
+      )
+      |> Map.put(
+        :notes,
+        "Re-clones each plugin at its ref, checks the plugin id is unchanged, then installs it " <>
+          "in a fresh dir like `plugin.install` (build, register, enabled state kept); a failure " <>
+          "leaves the old checkout registered. Without `yes`, when anything changed, the answer " <>
+          "is `failed` with `data.reason` `confirmation_required` and `data.preview` a list of " <>
+          "install previews. A linked or locally copied plugin is `failed` with `data.reason` " <>
+          "`not_applicable`; others carry herdr's code in `data.reason`."
+      ),
+      plugin(
         "link",
         "Link a local plugin directory.",
         [
@@ -1370,6 +1395,10 @@ defmodule HerdrServer.Api.Spec do
       "pane_link_activated" => [f("url", :null_or_string), f("handled", :boolean)],
       "plugin_list" => [f("plugins", {:list, {:ref, "plugin"}})],
       "plugin_info" => [f("plugin", {:ref, "plugin"})],
+      "plugin_update" => [
+        f("updated", {:list, {:ref, "plugin"}}),
+        f("up_to_date", {:list, :string})
+      ],
       "plugin_removed" => [f("plugin_id", :string)],
       "plugin_dir" => [f("path", :string)],
       "plugin_action_list" => [f("actions", {:list, :object})],

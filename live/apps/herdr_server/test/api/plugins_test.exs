@@ -50,6 +50,16 @@ defmodule HerdrServer.Api.PluginsTest do
     assert %{"plugins" => []} = ok!(s, "plugin.list", %{})
   end
 
+  test "update: nothing to update answers empty lists; a linked plugin is not_applicable",
+       %{s: s, base: base} do
+    assert %{"updated" => [], "up_to_date" => []} = ok!(s, "plugin.update", %{"yes" => true})
+    ok!(s, "plugin.link", %{"path" => PluginDirs.plugin(base <> "/p", "t.p")})
+    assert %{"updated" => [], "up_to_date" => []} = ok!(s, "plugin.update", %{})
+
+    assert %{"code" => "failed", "data" => %{"reason" => "not_applicable"}} =
+             err(s, "plugin.update", %{"target" => "t.p"})
+  end
+
   test "a broken manifest lists with error", %{s: s, base: base} do
     dir = PluginDirs.plugin(base <> "/p", "t.p")
     ok!(s, "plugin.link", %{"path" => dir})

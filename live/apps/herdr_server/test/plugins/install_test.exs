@@ -267,6 +267,92 @@ defmodule HerdrServer.Plugins.InstallTest do
              Install.install("owner/repo", "--upload-pack=x", false)
   end
 
+  # a second commit on the bare repo at <base>/git/owner/repo.git: `change` edits a clone
+  defp push(base, change) do
+    work = base <> "/push"
+    git!(["clone", "-q", base <> "/git/owner/repo.git", work], base)
+    change.(work)
+    git!(["add", "-A"], work)
+    git!(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "next"], work)
+    git!(["push", "-q", "origin", "HEAD"], work)
+    commit = String.trim(git!(["rev-parse", "HEAD"], work))
+    File.rm_rf!(work)
+    commit
+  end
+
+  defp git_base(base) do
+    Application.put_env(
+      :herdr_server,
+      :plugins,
+      Application.get_env(:herdr_server, :plugins) ++ [git_base: "file://#{base}/git/"]
+    )
+  end
+
+  describe "update/3" do
+    setup %{base: base} do
+      bare_repo(base, PluginDirs.plugin(base <> "/src", "t.u"))
+      git_base(base)
+      {:ok, p1} = Install.install("owner/repo", nil, true)
+      %{p1: p1}
+    end
+
+    test "previews, then moves to the new commit in a fresh dir, keeping the old one and enabled",
+         %{base: base, p1: p1} do
+      assert {:ok, %{updated: [], up_to_date: ["t.u"]}} = Install.update("t.u", nil, true)
+
+      build = ~s([[build]]\ncommand = ["sh", "-c", "echo two > built"])
+      c2 = push(base, fn w -> PluginDirs.plugin(w, "t.u", build) end)
+      {:ok, _} = Install.set_enabled("t.u", false)
+
+      assert {:error, "confirmation_required", msg, [preview]} = Install.update("t.u", nil, false)
+      assert msg =~ "--yes"
+      assert preview.build == [["sh", "-c", "echo two > built"]]
+      assert preview.source["resolved_commit"] == c2
+      assert {:ok, %{"plugin_root" => root}} = Registry.find("t.u")
+      assert root == p1["plugin_root"]
+
+      assert {:ok, %{updated: [p2], up_to_date: []}} = Install.update("owner/repo", nil, true)
+      assert p2["source"]["resolved_commit"] == c2
+      assert p2["enabled"] == false
+      assert p2["plugin_root"] == Paths.installations_dir("t.u") <> "/2"
+      assert File.read!(p2["plugin_root"] <> "/built") == "two\n"
+      assert File.dir?(p1["plugin_root"])
+      assert {:ok, %{updated: [], up_to_date: ["t.u"]}} = Install.update(nil, nil, true)
+    end
+
+    test "a failing build keeps the old checkout registered", %{base: base, p1: p1} do
+      push(base, fn w -> PluginDirs.plugin(w, "t.u", ~s([[build]]\ncommand = ["false"])) end)
+      assert {:error, "plugin_build_failed", _} = Install.update("t.u", nil, true)
+      assert {:ok, %{"plugin_root" => root, "source" => s}} = Registry.find("t.u")
+      assert root == p1["plugin_root"]
+      assert s["resolved_commit"] == p1["source"]["resolved_commit"]
+    end
+
+    test "a source that now holds another plugin id is refused", %{base: base} do
+      push(base, fn w -> PluginDirs.plugin(w, "t.other") end)
+      assert {:error, "plugin_update_id_changed", msg} = Install.update("t.u", nil, true)
+      assert msg =~ "t.other"
+    end
+
+    test "--ref moves to that ref and is recorded", %{base: base} do
+      c2 = push(base, fn w -> File.write!(w <> "/extra", "x") end)
+      git!(["tag", "v2", c2], base <> "/git/owner/repo.git")
+      assert {:ok, %{updated: [p]}} = Install.update("t.u", "v2", true)
+      assert p["source"]["requested_ref"] == "v2"
+      assert p["source"]["resolved_commit"] == c2
+    end
+
+    test "linked or locally installed plugins are not applicable; all skips them", %{base: base} do
+      {:ok, _} = Install.link(PluginDirs.plugin(base <> "/l", "t.l"), true)
+      {:ok, _} = Install.install(PluginDirs.plugin(base <> "/lc", "t.c"), nil, true)
+      assert {:error, "not_applicable", msg} = Install.update("t.l", nil, true)
+      assert msg =~ "cannot be updated"
+      assert {:error, "not_applicable", _} = Install.update("t.c", nil, true)
+      assert {:error, "plugin_not_found", _} = Install.update("t.none", nil, true)
+      assert {:ok, %{updated: [], up_to_date: ["t.u"]}} = Install.update(nil, nil, true)
+    end
+  end
+
   test "bad GitHub shorthand is refused" do
     for s <- ["owner", "https://github.com/a/b", "a/../b", "a b/c"] do
       assert {:error, "invalid_plugin_source", _} = Install.install(s, nil, false), s

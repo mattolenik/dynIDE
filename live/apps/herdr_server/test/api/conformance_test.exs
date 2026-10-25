@@ -138,6 +138,18 @@ defmodule HerdrServer.Api.ConformanceTest do
     call(listen(ctx), method)
   end
 
+  defp produce("plugin.update", :not_found, ctx) do
+    PluginDirs.use_tmp()
+    call(listen(ctx), "plugin.update", %{"target" => "none"})
+  end
+
+  # a linked plugin cannot be updated: data.reason not_applicable
+  defp produce("plugin.update", :failed, ctx) do
+    base = PluginDirs.use_tmp()
+    {:ok, _} = Install.link(PluginDirs.plugin(base <> "/p", "x"), true)
+    call(listen(ctx), "plugin.update", %{"target" => "x"})
+  end
+
   defp produce("plugin.config_dir", :failed, ctx) do
     PluginDirs.use_tmp()
     File.mkdir_p!(Paths.config_dir())

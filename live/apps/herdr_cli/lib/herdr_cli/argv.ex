@@ -619,6 +619,14 @@ defmodule HerdrCli.Argv do
         "plugin install <source> [--ref REF] [--yes]"
       ),
       cmd(
+        ~w(plugin update),
+        "plugin.update",
+        [{:opt, "target"}],
+        %{"ref" => {"ref", :string}, "yes" => {"yes", :flag}},
+        :json,
+        "plugin update [<target>] [--ref REF] [--yes]"
+      ),
+      cmd(
         ~w(plugin link),
         "plugin.link",
         [{:req, "path"}],

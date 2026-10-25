@@ -16,6 +16,8 @@ defmodule HerdrCliTest do
   test "a confirmed plugin install waits as long as the server's git and builds" do
     assert HerdrCli.timeout("plugin.install", %{"source" => "o/r", "yes" => true}) == :infinity
     assert HerdrCli.timeout("plugin.install", %{"source" => "o/r"}) == 60_000
+    assert HerdrCli.timeout("plugin.update", %{"yes" => true}) == :infinity
+    assert HerdrCli.timeout("plugin.update", %{}) == 60_000
     assert HerdrCli.timeout("plugin.list", %{}) == 60_000
   end
 

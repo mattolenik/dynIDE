@@ -1024,6 +1024,24 @@ Errors: `invalid_params`, `failed`
 
 `source` may also be a local directory (absolute, `./`, `../` or `~`), copied without `.git`. Without `yes` the answer is `failed` with `data.reason` `confirmation_required` and `data.preview` describing what would be installed. Every error carries herdr's code in `data.reason`.
 
+### `plugin.update`
+
+Update GitHub-installed plugins; without `yes` answers a preview to confirm.
+
+CLI: `herdr-live plugin update [<target>] [--ref REF] [--yes]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `target` | string | no | Plugin id or `owner/repo[/subdir]`; default every GitHub install. |
+| `ref` | string | no | Git ref to move to; default the recorded one. |
+| `yes` | boolean | no | Confirm the update. |
+
+Result: `plugin_update` with `updated` (list of `plugin` object), `up_to_date` (list of string).
+
+Errors: `invalid_params`, `not_found`, `failed`
+
+Re-clones each plugin at its ref, checks the plugin id is unchanged, then installs it in a fresh dir like `plugin.install` (build, register, enabled state kept); a failure leaves the old checkout registered. Without `yes`, when anything changed, the answer is `failed` with `data.reason` `confirmation_required` and `data.preview` a list of install previews. A linked or locally copied plugin is `failed` with `data.reason` `not_applicable`; others carry herdr's code in `data.reason`.
+
 ### `plugin.link`
 
 Link a local plugin directory.

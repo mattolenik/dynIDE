@@ -318,6 +318,11 @@ defmodule HerdrCli.ArgvTest do
                {:call, "plugin.install", %{"source" => "o/r", "ref" => "v1", "yes" => true},
                 :json}
 
+      assert p("plugin update") == {:call, "plugin.update", %{}, :json}
+
+      assert p("plugin update t.u --ref v2 --yes") ==
+               {:call, "plugin.update", %{"target" => "t.u", "ref" => "v2", "yes" => true}, :json}
+
       assert p("plugin link ./x") == {:call, "plugin.link", %{"path" => "./x"}, :json}
 
       assert p("plugin link ./x --disabled") ==

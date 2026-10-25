@@ -166,7 +166,7 @@ defmodule HerdrCli do
     end
   end
 
-  def timeout("plugin.install", %{"yes" => true}), do: :infinity
+  def timeout(m, %{"yes" => true}) when m in ["plugin.install", "plugin.update"], do: :infinity
   def timeout(_method, _params), do: 60_000
 
   defp subscribe(s, params) do

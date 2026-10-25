@@ -8,6 +8,10 @@ defmodule HerdrServer.Plugins.Install do
   An install stages the checkout under `<config>/plugins/.staging`, validates its manifest,
   answers `confirmation_required` with a preview unless confirmed, then moves it to a fresh
   `Paths.installations_dir(id)/<n>` and runs the build commands there.
+
+  An update (herdr's `plugin update`) re-clones a GitHub install at its recorded ref (or a
+  new one), checks the plugin id is unchanged, previews like an install, then places it
+  in a fresh installation dir; the old dir and registry entry stay until that succeeds.
   """
 
   alias HerdrServer.Plugins.{Command, Manifest, Paths, Registry}
@@ -32,13 +36,7 @@ defmodule HerdrServer.Plugins.Install do
           {:ok, Registry.plugin()} | error() | {:error, String.t(), String.t(), map()}
   def install(source, ref, yes?) do
     with {:ok, src} <- parse(source, ref) do
-      stage =
-        Path.join([
-          Paths.config_dir(),
-          "plugins",
-          ".staging",
-          "#{System.unique_integer([:positive])}"
-        ])
+      stage = stage_dir()
 
       try do
         staged(src, ref, yes?, stage)
@@ -47,6 +45,92 @@ defmodule HerdrServer.Plugins.Install do
       end
     end
   end
+
+  @type update_result :: %{updated: [Registry.plugin()], up_to_date: [String.t()]}
+
+  @doc "herdr's `plugin update`: one plugin (id or `owner/repo[/subdir]`) or, for nil, every GitHub install."
+  @spec update(String.t() | nil, String.t() | nil, boolean()) ::
+          {:ok, update_result()} | error() | {:error, String.t(), String.t(), [map()]}
+  def update(target, ref, yes?) do
+    with :ok <- valid_ref(ref),
+         {:ok, plugins} <- update_targets(target) do
+      update_each(plugins, ref, yes?, %{updated: [], up_to_date: [], previews: []})
+    end
+  end
+
+  defp update_targets(nil),
+    do: {:ok, Enum.filter(Registry.plugins(), &(&1["source"]["kind"] == "github"))}
+
+  defp update_targets(target) do
+    case lookup(target) do
+      {:ok, %{"source" => %{"kind" => "github"}} = p} ->
+        {:ok, [p]}
+
+      {:ok, _} ->
+        {:error, "not_applicable", "plugin is locally linked and cannot be updated: #{target}"}
+
+      e ->
+        e
+    end
+  end
+
+  defp update_each([], _ref, _yes?, %{previews: []} = acc),
+    do: {:ok, %{updated: Enum.reverse(acc.updated), up_to_date: Enum.reverse(acc.up_to_date)}}
+
+  defp update_each([], _ref, _yes?, acc),
+    do:
+      {:error, "confirmation_required",
+       "plugin update needs confirmation: review data.preview, then re-run with --yes",
+       Enum.reverse(acc.previews)}
+
+  defp update_each([p | rest], ref, yes?, acc) do
+    case update_one(p, ref, yes?) do
+      {:ok, new} ->
+        update_each(rest, ref, yes?, %{acc | updated: [new | acc.updated]})
+
+      :up_to_date ->
+        update_each(rest, ref, yes?, %{acc | up_to_date: [p["plugin_id"] | acc.up_to_date]})
+
+      {:preview, pr} ->
+        update_each(rest, ref, yes?, %{acc | previews: [pr | acc.previews]})
+
+      e ->
+        e
+    end
+  end
+
+  defp update_one(%{"plugin_id" => id, "source" => old} = p, ref, yes?) do
+    src = {:github, old["owner"], old["repo"], old["subdir"]}
+    ref = ref || old["requested_ref"]
+    stage = stage_dir()
+
+    try do
+      with {:ok, source} <- fetch(src, ref, stage),
+           :ok <- contained(stage, src),
+           {:ok, m} <- Manifest.load(root(stage, src)),
+           :ok <- same_id(m["plugin_id"], id) do
+        cond do
+          source["resolved_commit"] == old["resolved_commit"] and ref == old["requested_ref"] ->
+            :up_to_date
+
+          yes? ->
+            place(id, src, source, stage, p["enabled"])
+
+          true ->
+            {:preview, preview(m, source)}
+        end
+      end
+    after
+      File.rm_rf(stage)
+    end
+  end
+
+  defp same_id(id, id), do: :ok
+
+  defp same_id(new, id),
+    do:
+      {:error, "plugin_update_id_changed",
+       "update source now contains plugin #{new}, expected #{id}"}
 
   @spec uninstall(String.t()) :: {:ok, String.t()} | error()
   def uninstall(target) do
@@ -72,13 +156,30 @@ defmodule HerdrServer.Plugins.Install do
 
   # --- install ---
 
+  defp stage_dir,
+    do:
+      Path.join([
+        Paths.config_dir(),
+        "plugins",
+        ".staging",
+        "#{System.unique_integer([:positive])}"
+      ])
+
+  defp valid_ref(ref) when is_binary(ref) do
+    if String.starts_with?(ref, "-"),
+      do: {:error, "invalid_plugin_source", "invalid ref #{inspect(ref)}"},
+      else: :ok
+  end
+
+  defp valid_ref(nil), do: :ok
+
   defp staged(src, ref, yes?, stage) do
     with {:ok, source} <- fetch(src, ref, stage),
          :ok <- contained(stage, src),
          {:ok, m} <- Manifest.load(root(stage, src)),
          :ok <- not_linked(m["plugin_id"]) do
       if yes?,
-        do: place(m["plugin_id"], src, source, stage),
+        do: place(m["plugin_id"], src, source, stage, true),
         else:
           {:error, "confirmation_required",
            "plugin install needs confirmation: review data.preview, then re-run with --yes",
@@ -86,14 +187,14 @@ defmodule HerdrServer.Plugins.Install do
     end
   end
 
-  defp place(id, src, source, stage) do
+  defp place(id, src, source, stage, enabled?) do
     case claim(id, stage) do
       {:ok, dest} ->
         with {:ok, m} <- Manifest.load(root(dest, src)),
              :ok <- user_dirs(id),
              :ok <- build(m),
              {:ok, ^m} <- Manifest.load(root(dest, src)),
-             :ok <- register(m, true, Map.put(source, "managed_path", dest)) do
+             :ok <- register(m, enabled?, Map.put(source, "managed_path", dest)) do
           found(id)
         else
           e ->
@@ -297,8 +398,8 @@ defmodule HerdrServer.Plugins.Install do
 
   defp parse(source, ref) do
     cond do
-      ref != nil and String.starts_with?(ref, "-") ->
-        {:error, "invalid_plugin_source", "invalid ref #{inspect(ref)}"}
+      valid_ref(ref) != :ok ->
+        valid_ref(ref)
 
       String.starts_with?(source, ["/", "./", "../", "~"]) ->
         cond do

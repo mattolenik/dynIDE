@@ -119,7 +119,8 @@ left in the results files. Each entry names its source.
 - The CLI prints herdr's `{"id","result"}` envelope, but `plugin list`, `plugin install`
   and `plugin uninstall` print it where herdr prints human text (herdr's `--json` form),
   and request ids are `cli:<method>`, not herdr's per-verb ids. ([m18](../results/m18.md))
-- `plugin update` is not ported; also not ported: per-plugin checkout locks across VMs,
+- `plugin update` has no fast-forward check (it moves to the ref's tip, as herdr does) and
+  prints JSON, not herdr's text; not ported: per-plugin checkout locks across VMs,
   `pane.link.resolve`, stale-target checks on `pane.link.activate`, cleanup of old
   managed installs. ([m14](../results/m14.md))
 - Plugin commands have no default timeout (as in herdr); 32 hung commands block plugin

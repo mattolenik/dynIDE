@@ -8,7 +8,7 @@ defmodule HerdrServer.Api.SpecTest do
     methods = Spec.methods()
     names = Enum.map(methods, & &1.name)
     assert names == Enum.uniq(names)
-    assert length(names) == 78
+    assert length(names) == 79
 
     for m <- methods do
       assert Enum.all?(m.errors, &(&1 in Spec.error_codes())), m.name
