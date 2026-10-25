@@ -188,6 +188,25 @@ defmodule HerdrServer.Api.AgentsTest do
              err(s, "pane.report_agent", %{hook | "pane_id" => "p9"} |> Map.put("state", "idle"))
   end
 
+  test "report and release normalize the agent label; a blank one is invalid", %{s: s} do
+    hook = %{"pane_id" => "p1", "source" => "claude-hooks", "state" => "working", "seq" => 1}
+    ok!(s, "pane.report_agent", Map.put(hook, "agent", " Claude-Code "))
+    assert %{agent: "claude", hook_source: "claude-hooks"} = Facts.agent(1)
+
+    ok!(s, "pane.release_agent", %{
+      "pane_id" => "p1",
+      "source" => "claude-hooks",
+      "agent" => "claude-code"
+    })
+
+    assert %{hook_source: nil} = Facts.agent(1)
+
+    assert {"invalid_params", _} = err(s, "pane.report_agent", Map.put(hook, "agent", "  "))
+
+    assert {"invalid_params", _} =
+             err(s, "pane.release_agent", %{"pane_id" => "p1", "source" => "x", "agent" => ""})
+  end
+
   test "another hook sets the hook source but explain still reads the screen", %{s: s, pty: pty} do
     Fake.Pty.output(pty, "\r\n Run a dynamic workflow?\r\n esc to cancel\r\n")
     hook = %{"pane_id" => "p1", "source" => "claude-hooks", "agent" => "claude"}

@@ -12,7 +12,7 @@ defmodule HerdrServer.Api.Handlers.Agents do
   alias HerdrServer.Api.{AgentView, Ids}
   alias HerdrServer.Api.Handlers.{PaneIo, Topology}
   alias HerdrServer.App.Store
-  alias HerdrServer.Detect.{Engine, Manifests, Poller}
+  alias HerdrServer.Detect.{Engine, Identify, Manifests, Poller}
   alias HerdrServer.Pane.Facts
 
   # the Spec's report states; never `String.to_atom` on input
@@ -77,12 +77,16 @@ defmodule HerdrServer.Api.Handlers.Agents do
     do: {:ok, %{type: "agent_manifests", manifests: Manifests.reload()}}
 
   def handle("pane.report_agent", %{pane_id: id} = p) do
-    hook = %{source: p.source, agent: p.agent, state: Map.fetch!(@states, p.state), seq: p[:seq]}
-    id |> Poller.report(hook) |> hooked(id)
+    with {:ok, agent} <- agent_label(p.agent) do
+      hook = %{source: p.source, agent: agent, state: Map.fetch!(@states, p.state), seq: p[:seq]}
+      id |> Poller.report(hook) |> hooked(id)
+    end
   end
 
-  def handle("pane.release_agent", %{pane_id: id} = p),
-    do: id |> Poller.release(p.source, p.agent) |> hooked(id)
+  def handle("pane.release_agent", %{pane_id: id} = p) do
+    with {:ok, agent} <- agent_label(p.agent),
+         do: id |> Poller.release(p.source, agent) |> hooked(id)
+  end
 
   @doc """
   `agent.wait`: see the moduledoc. The continuation holds only data (the pane id, the
@@ -163,6 +167,14 @@ defmodule HerdrServer.Api.Handlers.Agents do
   defp explained(map, verbose),
     do:
       {:ok, %{type: "agent_explain", agent: map, explanation: Engine.explain_text(map, verbose)}}
+
+  # a known spelling is its canonical label (as detection names it), else the trimmed text
+  defp agent_label(agent) do
+    case Identify.label(agent) || String.trim(agent) do
+      "" -> {:error, :invalid_params, "agent must not be blank"}
+      label -> {:ok, label}
+    end
+  end
 
   defp hooked(:ok, _id), do: {:ok, %{type: "ok"}}
   defp hooked({:error, :not_found}, id), do: {:error, :not_found, "no such pane #{Ids.pane(id)}"}
