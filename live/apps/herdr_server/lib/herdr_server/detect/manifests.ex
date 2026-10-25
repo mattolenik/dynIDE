@@ -11,7 +11,7 @@ defmodule HerdrServer.Detect.Manifests do
   The loaded entries live in `:persistent_term`; `reload/0` replaces them.
   """
 
-  alias HerdrServer.Detect.Manifest
+  alias HerdrServer.Detect.{Identify, Manifest}
 
   @key {__MODULE__, :entries}
 
@@ -120,7 +120,8 @@ defmodule HerdrServer.Detect.Manifests do
   end
 
   defp override(entry, path, {:ok, m}) do
-    if entry.agent in [m.id | m.aliases] do
+    if entry.agent in [m.id | m.aliases] or
+         entry.agent in Enum.map([m.id | m.aliases], &Identify.label/1) do
       %{
         entry
         | manifest: m,

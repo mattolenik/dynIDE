@@ -39,6 +39,12 @@ defmodule HerdrServer.Detect.ManifestsTest do
     assert [%{gate: %{contains: ["override"]}}] = e.manifest.rules
   end
 
+  test "an override whose id is an alias spelling of the label wins", %{bundled: b, overrides: o} do
+    File.write!(Path.join(b, "claude.toml"), manifest("claude", "a"))
+    File.write!(Path.join(o, "claude.toml"), manifest("claude-code", "override"))
+    assert %{source: :override, warning: nil} = Manifests.load(b, o)["claude"]
+  end
+
   test "an invalid override keeps bundled with a warning", %{bundled: b, overrides: o} do
     File.write!(Path.join(o, "alpha.toml"), "id = \"alpha\"\n")
     e = Manifests.load(b, o)["alpha"]
