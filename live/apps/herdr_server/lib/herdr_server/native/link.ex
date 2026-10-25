@@ -67,6 +67,14 @@ defmodule HerdrServer.Native.Link do
   @spec send(link, byte, iodata, [Pty.fd() | Pty.pty()]) :: :ok | {:error, atom | binary}
   def send(link, kind, body, fds), do: Native.link_send(link, kind, body, fds)
 
+  @doc "CLOEXEC dup of a raw fd (the caller keeps its own) into an fd resource."
+  @spec fd_dup(non_neg_integer) :: {:ok, Pty.fd()} | {:error, atom | binary}
+  def fd_dup(raw), do: Native.fd_dup_raw(raw)
+
+  @doc "Takes the fd out of the resource; the caller owns the raw fd and must close or `fdopen` it."
+  @spec fd_take(Pty.fd()) :: {:ok, non_neg_integer} | {:error, :consumed}
+  def fd_take(fd), do: Native.fd_into_raw(fd)
+
   @doc "Shuts the socket down; the reader then reports `:eof`. Idempotent."
   @spec close(link) :: :ok
   def close(link), do: Native.link_close(link)

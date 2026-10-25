@@ -3,7 +3,7 @@
 //! `docs/herdr-live/results/m1.md` ("Events").
 
 use std::cell::Cell;
-use std::os::fd::{AsFd, OwnedFd};
+use std::os::fd::{AsFd, BorrowedFd, IntoRawFd, OwnedFd};
 use std::path::Path;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -588,6 +588,34 @@ fn pty_adopt<'a>(
     }
 }
 
+/// CLOEXEC dup of a raw fd the caller still owns (e.g. a gen_tcp socket's).
+fn dup_raw(raw: i64) -> std::io::Result<OwnedFd> {
+    let raw = i32::try_from(raw)
+        .ok()
+        .filter(|r| *r >= 0)
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    // SAFETY: the caller keeps `raw` open for the duration of this call; the borrow
+    // ends at the dup.
+    unsafe { BorrowedFd::borrow_raw(raw) }.try_clone_to_owned()
+}
+
+#[rustler::nif]
+fn fd_dup_raw(env: Env, raw: i64) -> Term {
+    match dup_raw(raw) {
+        Ok(fd) => (atoms::ok(), ResourceArc::new(FdRes(Mutex::new(Some(fd))))).encode(env),
+        Err(e) => (atoms::error(), e.to_string()).encode(env),
+    }
+}
+
+/// Takes the fd out of the resource; the caller owns the raw fd and must close or adopt it.
+#[rustler::nif]
+fn fd_into_raw(env: Env, fd: ResourceArc<FdRes>) -> Term {
+    match lock(&fd.0).take() {
+        Some(f) => (atoms::ok(), f.into_raw_fd()).encode(env),
+        None => (atoms::error(), atoms::consumed()).encode(env),
+    }
+}
+
 #[rustler::nif]
 fn pty_dup_fd(env: Env, pty: ResourceArc<PtyRes>) -> Term {
     match pty.pty.dup_fd() {
@@ -939,4 +967,29 @@ pub fn load(_env: Env, info: Term) -> bool {
     // Refuse to load if SIGCHLD still auto-reaps: exit statuses would be lost. ERTS reports
     // this only as "Library load-call unsuccessful (1)".
     !sigchld_auto_reaps()
+}
+
+#[cfg(test)]
+mod fd_tests {
+    use super::dup_raw;
+    use std::io::{Read, Write};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn dup_raw_survives_closing_the_original() {
+        let (a, mut b) = UnixStream::pair().expect("pair");
+        let dup = dup_raw(i64::from(a.as_raw_fd())).expect("dup");
+        drop(a);
+        let mut a2 = UnixStream::from(dup);
+        a2.write_all(b"hi").expect("write");
+        let mut buf = [0u8; 2];
+        b.read_exact(&mut buf).expect("read");
+        assert_eq!(&buf, b"hi");
+    }
+
+    #[test]
+    fn dup_raw_rejects_negative() {
+        assert!(dup_raw(-1).is_err());
+    }
 }

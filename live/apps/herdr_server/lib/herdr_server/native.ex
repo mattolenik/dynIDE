@@ -134,6 +134,12 @@ defmodule HerdrServer.Native do
   @spec link_connect(term, term) :: {:ok, reference} | {:error, atom}
   def link_connect(_path, _owner), do: err()
   @doc false
+  @spec fd_dup_raw(integer) :: {:ok, reference} | {:error, binary}
+  def fd_dup_raw(_raw), do: err()
+
+  @spec fd_into_raw(term) :: {:ok, non_neg_integer} | {:error, :consumed}
+  def fd_into_raw(_fd), do: err()
+
   @spec link_send(term, term, term, term) :: :ok | {:error, atom | binary}
   def link_send(_link, _kind, _body, _fds), do: err()
   @doc false
