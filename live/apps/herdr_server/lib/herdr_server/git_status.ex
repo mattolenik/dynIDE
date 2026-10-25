@@ -32,9 +32,23 @@ defmodule HerdrServer.GitStatus do
   @doc "`parse/1` of `cwd`'s status, or nil when git fails there."
   @spec status(Path.t()) :: info | nil
   def status(cwd) do
-    case Worktree.run(["-C", cwd, "status", "--porcelain=v2", "--branch", "--untracked-files=no"]) do
+    case Worktree.run(argv(cwd)) do
       {:ok, out} -> parse(out)
       {:error, _} -> nil
     end
   end
+
+  @doc false
+  # --no-optional-locks: a poll never takes index.lock from the user's own git
+  @spec argv(Path.t()) :: [binary]
+  def argv(cwd),
+    do: [
+      "--no-optional-locks",
+      "-C",
+      cwd,
+      "status",
+      "--porcelain=v2",
+      "--branch",
+      "--untracked-files=no"
+    ]
 end

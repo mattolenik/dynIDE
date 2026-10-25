@@ -8,9 +8,10 @@ defmodule HerdrServer.WorkspaceFacts do
   in the Store, so a hung mount stalls this poller only.
 
   On its own `git_ms` (5 s) timer it runs `git` (`GitStatus.status/1`) once per distinct
-  `workspace.cwd`, all in parallel, each in a `Task` given 2 s: a call that does not
-  answer by then is shut down and counts as nil (as does no git, or no repo). `{:workspace_git, ws_id, info | nil}` is sent only when a workspace's info
-  changed. Exits are trapped so a crashing call is a nil, not a restart.
+  `workspace.cwd`, each in an unlinked process that sends its result back, so this
+  process never waits on git. A cwd whose call is still out gets no new one; past 2 s it
+  counts as nil (as does no git, or no repo) until the call answers. `{:workspace_git, ws_id, info | nil}` is sent only when a workspace's info
+  changed.
 
   The app is read from the mirror (`Mirror.app/0`); the scan runs through
   `HerdrReload.Guard.run_twice/4`, so a bad edit is logged and skips a tick. It runs whether or not persistence is
@@ -35,7 +36,10 @@ defmodule HerdrServer.WorkspaceFacts do
             poll_ms: 2000,
             git_ms: 5000,
             sent: %{},
-            git_sent: %{}
+            git_sent: %{},
+            git_wss: %{},
+            git_by_cwd: %{},
+            git_inflight: %{}
 
   @git_timeout_ms 2000
 
@@ -50,7 +54,6 @@ defmodule HerdrServer.WorkspaceFacts do
 
   @impl true
   def init(opts) do
-    Process.flag(:trap_exit, true)
     state = struct(__MODULE__, Keyword.take(opts, [:cwd, :app, :notify, :git, :poll_ms, :git_ms]))
     Process.send_after(self(), :poll, state.poll_ms)
     Process.send_after(self(), :git_poll, state.git_ms)
@@ -70,21 +73,38 @@ defmodule HerdrServer.WorkspaceFacts do
     end
   end
 
+  # each tick: refresh the workspace cwds, start a call for every cwd without one in
+  # flight, and count a call older than the budget as nil (it is never restarted while
+  # it hangs, so a hung repo holds one git process, not one per tick)
   def handle_info(:git_poll, state) do
     state = Map.merge(%__MODULE__{}, state)
     Process.send_after(self(), :git_poll, state.git_ms)
 
-    case Guard.run_twice(__MODULE__, :git_scan, [state.app, state.git, state.git_sent],
-           server: Store.reload_server()
-         ) do
-      {:ok, {infos, events}} ->
-        {m, f} = state.notify
-        Enum.each(events, &apply(m, f, [&1]))
-        {:noreply, %{state | git_sent: infos}}
+    case Guard.run_twice(__MODULE__, :git_cwds, [state.app], server: Store.reload_server()) do
+      {:ok, wss} ->
+        now = System.monotonic_time(:millisecond)
+        cwds = wss |> Map.values() |> Enum.reject(&is_nil/1) |> Enum.uniq()
+        Enum.each(cwds -- Map.keys(state.git_inflight), &start_git(&1, state.git))
+        inflight = Map.new(cwds, &{&1, Map.get(state.git_inflight, &1, now)})
+        stale = for {cwd, t} <- inflight, now - t >= @git_timeout_ms, into: %{}, do: {cwd, nil}
+        by_cwd = state.git_by_cwd |> Map.take(cwds) |> Map.merge(stale)
+        # a call for a cwd no workspace has any more still finishes: keep it in flight
+        inflight = Map.merge(state.git_inflight, inflight)
+
+        {:noreply, emit_git(%{state | git_wss: wss, git_inflight: inflight, git_by_cwd: by_cwd})}
 
       {:failed, _} ->
         {:noreply, state}
     end
+  end
+
+  def handle_info({:git_result, cwd, info}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    state = %{state | git_inflight: Map.delete(state.git_inflight, cwd)}
+
+    if cwd in Map.values(state.git_wss),
+      do: {:noreply, emit_git(%{state | git_by_cwd: Map.put(state.git_by_cwd, cwd, info)})},
+      else: {:noreply, state}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -117,37 +137,39 @@ defmodule HerdrServer.WorkspaceFacts do
   end
 
   @doc false
-  # `{infos, events}`: `infos` is %{ws_id => info or nil} for every workspace (nil without a
-  # cwd); `events` the `{:workspace_git, ws_id, info}` of each that differs from `sent`'s
-  @spec git_scan({module, atom}, {module, atom}, map) :: {map, [tuple]}
-  def git_scan({am, af}, runner, sent) do
-    wss =
-      case apply(am, af, []) do
-        nil -> []
-        app -> for ws <- app.session.workspaces, do: {ws.id, Map.get(ws, :cwd)}
-      end
-
-    by_cwd = wss |> Enum.map(&elem(&1, 1)) |> Enum.reject(&is_nil/1) |> Enum.uniq() |> git(runner)
-    infos = Map.new(wss, fn {id, cwd} -> {id, Map.get(by_cwd, cwd)} end)
-    events = for {id, info} <- infos, Map.get(sent, id) != info, do: {:workspace_git, id, info}
-    {infos, events}
+  # %{ws_id => workspace cwd or nil} of the app `{m, f}` returns (none when it is nil)
+  @spec git_cwds({module, atom}) :: %{pos_integer => binary | nil}
+  def git_cwds({am, af}) do
+    case apply(am, af, []) do
+      nil -> %{}
+      app -> Map.new(app.session.workspaces, &{&1.id, Map.get(&1, :cwd)})
+    end
   end
 
-  # %{cwd => info or nil}: one Task per cwd, nil past the timeout or on a crash
-  defp git(cwds, {m, f}) do
-    tasks = Enum.map(cwds, fn cwd -> Task.async(fn -> apply(m, f, [cwd]) end) end)
+  # unlinked: the reply is the only tie; a failing runner (bad edit) answers nil
+  defp start_git(cwd, {m, f}) do
+    parent = self()
 
-    tasks
-    |> Task.yield_many(@git_timeout_ms)
-    |> Enum.zip(cwds)
-    |> Map.new(fn
-      {{_task, {:ok, info}}, cwd} ->
-        {cwd, info}
+    spawn(fn ->
+      info =
+        case Guard.run_twice(m, f, [cwd], server: Store.reload_server()) do
+          {:ok, info} -> info
+          {:failed, _} -> nil
+        end
 
-      {{task, _timeout_or_exit}, cwd} ->
-        Task.shutdown(task, :brutal_kill)
-        {cwd, nil}
+      send(parent, {:git_result, cwd, info})
     end)
+  end
+
+  # `{:workspace_git, ws_id, info}` for each workspace whose info differs from the last sent
+  defp emit_git(%{git_wss: wss, git_by_cwd: by_cwd, git_sent: sent, notify: {m, f}} = state) do
+    infos = Map.new(wss, fn {id, cwd} -> {id, Map.get(by_cwd, cwd)} end)
+
+    for {id, info} <- infos,
+        Map.get(sent, id) != info,
+        do: apply(m, f, [{:workspace_git, id, info}])
+
+    %{state | git_sent: infos}
   end
 
   defp send_changed({cwds, events}, %{notify: {m, f}, sent: sent}) do

@@ -26,6 +26,10 @@ defmodule HerdrServer.GitStatusTest do
     assert GitStatus.parse("") == %{branch: nil, ahead: 0, behind: 0}
   end
 
+  test "argv never takes optional locks" do
+    assert ["--no-optional-locks", "-C", "/r", "status" | _] = GitStatus.argv("/r")
+  end
+
   @tag :tmp_dir
   test "status: nil outside a repo, the branch inside one", %{tmp_dir: dir} do
     assert GitStatus.status(Path.join(dir, "missing")) == nil
