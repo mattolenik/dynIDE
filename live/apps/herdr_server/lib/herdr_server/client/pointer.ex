@@ -223,7 +223,9 @@ defmodule HerdrServer.Client.Pointer do
       link != nil ->
         local = {:mouse, %{m | x: vx, y: vy}}
         swallow = %{pane: id, local: local, tracking: info.tracking}
-        {%{p | swallow_up: swallow, press: nil}, [{:open, id, target(link, vx, vy)}]}
+
+        {%{p | swallow_up: swallow, press: nil},
+         [{:open, id, Map.put(target(link, vx, vy), :mods, m.mods)}]}
 
       scrollbar?(info, rect, vx) ->
         scrollbar_press(p, id, rect, info, vy, ctx)

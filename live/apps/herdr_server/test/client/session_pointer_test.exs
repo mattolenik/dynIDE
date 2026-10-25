@@ -9,6 +9,8 @@ defmodule HerdrServer.Client.SessionPointerTest do
   alias HerdrServer.Client.{Pointer, PointerIo, Selection, State}
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Pane.{Facts, Rows, Server}
+  alias HerdrServer.Plugins.{Install, Menu, Runtime}
+  alias HerdrServer.Test.PluginDirs
   alias HerdrServer.View.Overlays
 
   setup do
@@ -374,6 +376,33 @@ defmodule HerdrServer.Client.SessionPointerTest do
       link("https://e.com/z")
       click(c)
       assert_receive {_, {:open_url, "https://e.com/z"}}, 500
+    end
+
+    test "a url a plugin link handler matches runs its action, not the browser", c do
+      base = PluginDirs.use_tmp()
+      out = Path.join(base, "out")
+      start_supervised!({Task.Supervisor, name: HerdrServer.Plugins.Tasks})
+      start_supervised!(Runtime)
+      on_exit(fn -> Menu.put([]) end)
+
+      toml = """
+      [[actions]]
+      id = "go"
+      title = "Go"
+      command = ["sh", "-c", "printf '%s|%s' \\"$HERDR_PLUGIN_CLICKED_URL\\" \\"$HERDR_PLUGIN_CLICK_MODIFIERS\\" > #{out}"]
+      [[link_handlers]]
+      id = "h"
+      title = "H"
+      pattern = "^https://e\\\\.com/"
+      action = "go"
+      """
+
+      dir = PluginDirs.plugin(base <> "/p", "t.p", toml)
+      {:ok, _} = Install.link(dir, true)
+      link("https://e.com/z")
+      click(c)
+      assert eventually(fn -> File.exists?(out) and File.read!(out) == "https://e.com/z|ctrl" end)
+      refute_receive {_, {:open_url, _}}, 100
     end
 
     test "an unsafe url is dropped", c do

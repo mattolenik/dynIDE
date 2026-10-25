@@ -2,13 +2,14 @@ defmodule HerdrServer.Api.Handlers.Plugins do
   @moduledoc """
   The `plugin.*` methods and `pane.link.activate`. Registry methods go to `Plugins.Install`
   and `Plugins.Registry`, actions and logs to `Plugins.Runtime` (`not_available` when it
-  is not running), panes to `Plugins.Panes`; herdr's specific error code is `data.reason`.
-  The rest answer `not_available` naming the M14 task that serves them.
+  is not running), panes to `Plugins.Panes`, link activation to `Plugins.Links`; herdr's
+  specific error code is `data.reason`.
   """
 
-  alias HerdrServer.Api.{Spec, View}
+  alias HerdrServer.Api.{Ids, Spec, View}
   alias HerdrServer.App.{Commands, Store}
-  alias HerdrServer.Plugins.{Install, Panes, Registry, Runtime}
+  alias HerdrServer.Client.PointerIo
+  alias HerdrServer.Plugins.{Install, Links, Panes, Registry, Runtime}
 
   @invalid ~w(invalid_plugin_id invalid_plugin_source invalid_plugin_path ambiguous_plugin_action)
 
@@ -83,12 +84,21 @@ defmodule HerdrServer.Api.Handlers.Plugins do
     end
   end
 
-  def handle(method, _params),
-    do:
-      {:error, :not_available, "#{method} is not served yet",
-       %{requires: "M14 task #{task(method)}"}}
+  def handle("pane.link.activate", %{pane_id: id} = p) do
+    case PointerIo.url_at(id, p.col, p.viewport_row) do
+      :error ->
+        {:error, :not_found, "no such pane #{Ids.pane(id)}", %{reason: "pane_not_found"}}
 
-  defp task("pane.link.activate"), do: 6
+      nil ->
+        {:ok, %{type: "pane_link_activated", url: nil, handled: false}}
+
+      url ->
+        case Links.dispatch(url, p[:modifiers] || [], id) do
+          {:error, msg} -> {:error, :failed, msg, %{reason: "plugin_link_failed"}}
+          r -> {:ok, %{type: "pane_link_activated", url: url, handled: r == :handled}}
+        end
+    end
+  end
 
   # the Store's notices to this request's origin (a spawn failure, a pane too small)
   defp drain do

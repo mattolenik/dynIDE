@@ -175,8 +175,33 @@ defmodule HerdrServer.Api.ConformanceTest do
   # without a plugin runtime
   defp produce("plugin." <> _ = method, :not_available, ctx), do: call(listen(ctx), method)
 
-  defp produce("pane.link.activate", :not_available, ctx),
-    do: call(listen(ctx), "pane.link.activate")
+  # a handler matches the text url at (0, 0), but no plugin runtime runs to launch it
+  defp produce("pane.link.activate", :failed, ctx) do
+    base = PluginDirs.use_tmp()
+
+    toml = """
+    [[actions]]
+    id = "go"
+    title = "Go"
+    command = ["true"]
+    [[link_handlers]]
+    id = "h"
+    title = "H"
+    pattern = "^https://"
+    action = "go"
+    """
+
+    {:ok, _} = Install.link(PluginDirs.plugin(base <> "/p", "x", toml), true)
+    s = listen(ctx)
+    Fake.Pty.output(pty(), "https://e.com/z")
+
+    Enum.find_value(1..50, fn _ ->
+      case call(s, "pane.link.activate") do
+        %{"result" => %{"url" => nil}} -> Process.sleep(10) && nil
+        reply -> reply
+      end
+    end)
+  end
 
   defp produce("events.subscribe", :not_found, ctx) do
     subs = [%{"type" => "pane.created", "pane_id" => "p99"}]

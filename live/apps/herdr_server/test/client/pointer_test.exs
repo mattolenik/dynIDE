@@ -242,7 +242,7 @@ defmodule HerdrServer.Client.PointerTest do
     test "ctrl press on a link opens it and swallows until the release" do
       c = ctx(p1: [rows: link_rows()])
       {p, actions} = Pointer.resolve(%Pointer{}, m(:press, :left, 5, 1, [:ctrl]), c)
-      assert actions == [{:open, 1, %{url: "https://e.com/x"}}]
+      assert actions == [{:open, 1, %{url: "https://e.com/x", mods: [:ctrl]}}]
       assert {p, []} = Pointer.resolve(p, m(:drag, :left, 6, 1, [:ctrl]), c)
       assert {p, []} = Pointer.resolve(p, m(:release, :left, 6, 1, [:ctrl]), c)
       assert p.swallow_up == nil and p.selection == nil

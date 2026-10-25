@@ -10,10 +10,12 @@ defmodule HerdrServer.Client.PointerIo do
   `copy_context/2` is the same for `Client.CopyMode`, whose actions `run/3` executes too.
   """
 
+  alias HerdrScene.Cell
   alias HerdrServer.App.{Actions, Store}
   alias HerdrServer.Client.{Links, Pointer}
   alias HerdrServer.Kernel
   alias HerdrServer.Pane.{Facts, Input, Rows, Server}
+  alias HerdrServer.Plugins.Links, as: PluginLinks
 
   @tracking [:mouse_x10, :mouse_normal, :mouse_button, :mouse_any]
 
@@ -173,11 +175,11 @@ defmodule HerdrServer.Client.PointerIo do
     end
   end
 
-  defp act({:open, _id, %{url: url}}, _p, io), do: open(url, io)
+  defp act({:open, id, %{url: url} = t}, _p, io), do: open(url, id, t, io)
 
-  defp act({:open, id, %{id: _, x: x, y: y}}, p, io) do
+  defp act({:open, id, %{id: _, x: x, y: y} = t}, p, io) do
     case vt(id) do
-      {:ok, vt} -> opened(Kernel.vt().link_at(vt, x, y), p, io)
+      {:ok, vt} -> opened(Kernel.vt().link_at(vt, x, y), id, t, p, io)
       _ -> :ok
     end
   end
@@ -186,18 +188,50 @@ defmodule HerdrServer.Client.PointerIo do
 
   # no link under the press after all: a tracking child gets the press (and then its
   # release); on a non-tracking pane the click is dropped
-  defp opened(nil, %{swallow_up: %{tracking: true, pane: id, local: ev}} = p, _io) do
+  defp opened(nil, _id, _t, %{swallow_up: %{tracking: true, pane: id, local: ev}} = p, _io) do
     Input.mouse(ev, id)
     %{p | swallow_up: nil}
   end
 
-  defp opened(%{uri: uri}, _p, io), do: open(uri, io)
-  defp opened(_none, _p, _io), do: :ok
+  defp opened(%{uri: uri}, id, t, _p, io), do: open(uri, id, t, io)
+  defp opened(_none, _id, _t, _p, _io), do: :ok
 
-  defp open(url, io) do
-    if is_binary(url) and Links.safe?(url), do: send(io.client, {:open_url, url})
+  # a plugin link handler first (any scheme); unhandled, only http(s) opens on the client.
+  # A failed handler launch has shown its alert and does not fall back to the browser.
+  defp open(url, id, t, io) when is_binary(url) do
+    if PluginLinks.dispatch(url, t[:mods] || [], id) == :unhandled and Links.safe?(url),
+      do: send(io.client, {:open_url, url})
+
     :ok
   end
+
+  defp open(_url, _id, _t, _io), do: :ok
+
+  @doc """
+  The URL of the link at viewport cell (`x`, `y`) of pane `id`: a text URL or an OSC 8
+  link's URI (any scheme); nil for none, `:error` when the pane has no rows.
+  """
+  @spec url_at(term, non_neg_integer, non_neg_integer) :: String.t() | nil | :error
+  def url_at(id, x, y) do
+    case Rows.fetch(id) do
+      {_gen, rows, _cursor} when tuple_size(rows) > 0 ->
+        uri(id, Links.at(rows, Cell.cols(elem(rows, 0)), x, y), x, y)
+
+      {_gen, _rows, _cursor} ->
+        nil
+
+      nil ->
+        :error
+    end
+  end
+
+  defp uri(_id, %{url: url}, _x, _y), do: url
+
+  defp uri(id, %{id: _}, x, y) do
+    with {:ok, vt} <- vt(id), %{uri: uri} <- Kernel.vt().link_at(vt, x, y), do: uri
+  end
+
+  defp uri(_id, nil, _x, _y), do: nil
 
   defp vt(id) do
     with kid when kid != nil <- Rows.kernel_id(id),

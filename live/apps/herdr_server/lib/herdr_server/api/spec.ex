@@ -429,7 +429,6 @@ defmodule HerdrServer.Api.Spec do
         [:not_found],
         "herdr-live pane rename <pane_id> [<label>]"
       ),
-      # answers not_available until M14 task 6, which narrows the errors to not_found, failed
       method(
         "pane.link.activate",
         g,
@@ -441,7 +440,7 @@ defmodule HerdrServer.Api.Spec do
           opt("modifiers", {:list, {:enum, ~w(shift alt ctrl)}}, "Modifiers held.")
         ],
         "pane_link_activated",
-        [:not_available],
+        [:not_found, :failed],
         "herdr-live pane link activate <pane_id> --col N --row N [--modifier M]..."
       ),
       method(

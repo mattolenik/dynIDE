@@ -495,7 +495,7 @@ CLI: `herdr-live pane link activate <pane_id> --col N --row N [--modifier M]...`
 
 Result: `pane_link_activated` with `url` (string or null), `handled` (boolean).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`, `failed`
 
 ### `pane.close`
 

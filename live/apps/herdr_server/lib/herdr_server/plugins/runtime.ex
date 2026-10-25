@@ -43,7 +43,8 @@ defmodule HerdrServer.Plugins.Runtime do
 
   @doc """
   Runs action `id` (qualified, or local when unique; `plugin_id` narrows it) with the
-  context built from the current app, `overrides` (herdr context fields) winning.
+  context built from the current app, `overrides` (herdr context fields) winning; an
+  `:pane` override builds it for that pane instead of the focused one.
   """
   @spec invoke(String.t(), String.t() | nil, map(), String.t()) ::
           {:ok, %{action: map(), context: map(), log: log()}} | {:error, String.t(), String.t()}
@@ -175,9 +176,11 @@ defmodule HerdrServer.Plugins.Runtime do
 
   @doc false
   def run_invoke(state, id, plugin_id, overrides, source) do
+    # `:pane` (a link click's pane) is the context's pane instead of the focused one
+    {pane, overrides} = Map.pop(overrides, :pane)
     extra = Map.new(overrides, fn {k, v} -> {to_string(k), v} end)
 
-    case run_action(state, id, plugin_id, source, nil, extra) do
+    case run_action(state, id, plugin_id, source, pane, extra) do
       {:ok, reply, state} -> {{:ok, reply}, state}
       {:error, reason, msg, state} -> {{:error, reason, msg}, state}
     end
