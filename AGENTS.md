@@ -79,7 +79,10 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   clips to the pane, crops around top-layer chrome, overlays and popup panes,
   and `Native.Blit` writes the kitty ops inside synchronized output. A new
   overlay type needs an occluder clause in `Render.Graphics`. Images are not
-  persisted and do not survive a kernel handoff (M18).
+  persisted; a graceful kernel handoff carries on-screen and virtual
+  placements and their pixels (16 MiB per pane) as a VT replay in the final
+  pane blob (`Vt.graphics_replay/2`), a `kill -9` does not (M18). `t=t` files
+  go in `/tmp/herdr-live-kitty-<euid>/herdr-live-gfx-<pid>/`.
 - Chrome: 19 node roles with required props in `HerdrScene.Chrome`; golden
   fixtures in `live/apps/herdr_scene/priv/fixtures/scenes` (every role must
   have one and render in both the terminal client and the HTML renderer).
