@@ -12,9 +12,9 @@ defmodule HerdrTerm.Client.Term.Render do
   composing, so a burst of damage costs one fetch per frame and a keystroke one fetch.
   The host cursor is the focused pane's cached cursor placed in its rect.
 
-  Rows (inline): non-empty `{:inline, rows}` in a scene replace the pane's cached rows,
-  `{:inline, []}` keeps them, `{:rows, id, gen, rows}` updates them; the cursor is the
-  scene's.
+  Rows (inline): the rows listed in a scene's `{:inline, rows}` replace those rows of the
+  pane's cache and unlisted rows keep it (`{:inline, []}` changes nothing);
+  `{:rows, id, gen, rows}` merges the same way; the cursor is the scene's.
 
   Frames are at least `:min_frame_interval_ms` (default 6) apart with at most one
   pending timer. A frame repaints fully on the first frame, after a re-attach, when the
@@ -111,7 +111,7 @@ defmodule HerdrTerm.Client.Term.Render do
           acc
 
         %{id: id, rows: {:inline, r}}, {rows, dirty, refs} ->
-          {Map.put(rows, id, Map.new(r)), dirty, refs}
+          {Map.put(rows, id, Map.merge(as_map(Map.get(rows, id, %{})), Map.new(r))), dirty, refs}
 
         %{id: id, rows: {:ref, _, lg}}, {rows, dirty, refs} ->
           fresh? = Map.get(state.refs, id) == lg and Map.has_key?(rows, id)
@@ -135,8 +135,7 @@ defmodule HerdrTerm.Client.Term.Render do
 
   def handle_info({:rows, id, _gen, rows}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    old = Map.get(state.rows, id, %{})
-    old = if is_map(old), do: old, else: Map.new(Enum.with_index(Tuple.to_list(old), &{&2, &1}))
+    old = as_map(Map.get(state.rows, id, %{}))
     {:noreply, schedule(%{state | rows: Map.put(state.rows, id, Map.merge(old, Map.new(rows)))})}
   end
 
@@ -282,4 +281,8 @@ defmodule HerdrTerm.Client.Term.Render do
   end
 
   defp now, do: System.monotonic_time(:millisecond)
+
+  # a cached value is a map, or the tuple a `{:ref}` fetch returned
+  defp as_map(rows) when is_map(rows), do: rows
+  defp as_map(rows), do: Map.new(Enum.with_index(Tuple.to_list(rows), &{&2, &1}))
 end

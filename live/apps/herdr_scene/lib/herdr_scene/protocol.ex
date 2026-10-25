@@ -40,6 +40,10 @@ defmodule HerdrScene.Protocol do
       `client` pid right after attaching.
       A client may take the fast path only while its own mode is `:terminal`
 
+  Inline rows: a scene pane's `{:inline, rows}` is a partial update (listed rows replace
+  those of the client's cache, unlisted rows keep it; see `Scene.Pane`). Over a socket
+  the same messages travel as `HerdrScene.Wire` frames.
+
   Generations: `{:ref, id, layout_gen}` in a scene is the pane's layout generation;
   the `gen` of `{:damage, ...}`, `{:rows, ...}` and the rows MFA is its content
   generation. They are unrelated and must not be compared (see `Scene.Pane`).

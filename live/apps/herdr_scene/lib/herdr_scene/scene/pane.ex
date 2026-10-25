@@ -4,8 +4,9 @@ defmodule HerdrScene.Scene.Pane do
   rows map 1:1. The optional `border` carries its own outer rect.
 
   `rows` is `{:ref, pane_id, layout_gen}` (client resolves packed rows from the
-  row cache) or `{:inline, [{n, packed_row}]}` (the pane's rows; an empty list
-  means "no rows sent", not "blank pane": keep what you have).
+  row cache) or `{:inline, [{n, packed_row}]}` (a partial update: the listed
+  rows replace those rows of the client's cache, unlisted rows keep it, blank when
+  none; an empty list changes nothing).
 
   Generations: `layout_gen` counts the pane's resizes (contract decision 2:
   "bumped on resize or respawn"; M3 has no respawn, a restarted pane server

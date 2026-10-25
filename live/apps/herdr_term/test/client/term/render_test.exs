@@ -157,6 +157,18 @@ defmodule HerdrTerm.Client.Term.RenderTest do
     assert hd(Blit.screen(tty)) =~ "seeded"
   end
 
+  test "scene with {:inline, [{1, b}]} after a full pane keeps row 0", %{render: render, tty: tty} do
+    scene = Fixture.load("single_pane_80x24")
+    [p] = scene.panes
+    inline = fn rows -> %{scene | panes: [%{p | rows: {:inline, rows}}]} end
+    send(render, {:scene, inline.([{0, Cells.text("rowzero", @s)}])})
+    assert_receive {:frame, _, _}
+    send(render, {:scene, inline.([{1, Cells.text("rowone", @s)}])})
+    assert_receive {:frame, _, _}
+    [r0, r1 | _] = Blit.screen(tty)
+    assert r0 =~ "rowzero" and r1 =~ "rowone"
+  end
+
   test ":repaint forces a full repaint", %{render: render} do
     send(render, {:scene, Fixture.load("single_pane_80x24")})
     assert_receive {:frame, _, %{repaint: true}}
