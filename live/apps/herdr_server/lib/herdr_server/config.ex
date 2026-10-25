@@ -45,6 +45,7 @@ defmodule HerdrServer.Config do
     {:ui, ["confirm_close"], :bool, [:confirm_close]},
     {:ui, ["status_indicators"], {:enum, ~w(dots symbols)}, [:indicators]},
     {:ui, ["prompt_new_tab_name"], :bool, [:prompt_new_tab_name]},
+    {:ui, ["pane_borders"], {:enum, ~w(auto always off)}, [:pane_borders]},
     {:ui, ["sound", "enabled"], :bool, [:sound, :enabled]},
     {:ui, ["sound", "command"], :string, [:sound, :command]},
     {:ui, ["toast", "delivery"], {:enum, ~w(off herdr terminal system)}, [:toast, :delivery]},
@@ -235,8 +236,10 @@ defmodule HerdrServer.Config do
   defp cast(:string, v) when is_binary(v), do: {:ok, v}
   defp cast(:delay, v) when is_integer(v) and v in 0..3600, do: {:ok, v * 1000}
 
+  # to_atom, not to_existing_atom: a value may name an atom no loaded module holds yet
+  # (`always`), and `vals` is a fixed whitelist, so config cannot grow the atom table
   defp cast({:enum, vals}, v) when is_binary(v),
-    do: if(v in vals, do: {:ok, String.to_existing_atom(v)}, else: :error)
+    do: if(v in vals, do: {:ok, String.to_atom(v)}, else: :error)
 
   defp cast(_kind, _v), do: :error
 

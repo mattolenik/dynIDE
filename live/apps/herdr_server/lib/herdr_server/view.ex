@@ -6,8 +6,8 @@ defmodule HerdrServer.View do
     * Regions come from `View.Frame.regions/2` at the client's own size (sidebar, top tab
       bar, full-width status row, pane area), so every client gets its own rects; pane ids
       are shared.
-    * Panes follow `Layout.panes` preorder inside the pane area. `Pane.rect` is the content
-      rect, the border carries the outer rect (see `Layout.borders/2`). Rows are
+    * Panes are `Layout.rects/3` (zoom, `ui.pane_borders`) in `Layout.panes` preorder inside
+      the pane area. `Pane.rect` is the content rect, the border carries the outer rect. Rows are
       `{:ref, id, layout_gen}` (or `{:inline, []}` for inline clients; the caller fills
       rows). Pane cursors are nil here.
     * Chrome: `:root` (props `theme`, `indicators`, `mouse: true`, the `sound` prefs
@@ -26,7 +26,7 @@ defmodule HerdrServer.View do
     * A divider's `direction` names the split: `:horizontal` means panes side by side, so
       the divider line itself is vertical (and `:vertical` gives a horizontal line).
     * Divider rects are clamped into the pane area; pane rects are inside it by
-      `Layout.borders/2`, so tiny clients never produce invalid scenes.
+      `Layout.borders/3`, so tiny clients never produce invalid scenes.
   """
 
   alias HerdrScene.Scene
@@ -47,8 +47,7 @@ defmodule HerdrServer.View do
 
     panes =
       layout
-      |> Layout.panes(area)
-      |> Layout.borders(area)
+      |> Layout.rects(area, Layout.opts(tab, app.ui))
       |> Enum.map(&pane(&1, app, client))
 
     modal = Modal.view(app, size)

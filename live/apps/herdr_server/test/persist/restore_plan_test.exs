@@ -18,7 +18,7 @@ defmodule HerdrServer.Persist.RestorePlanTest do
     s = app.session
     [ws] = s.workspaces
     tab = Enum.find(ws.tabs, &(&1.id == tab_id))
-    Map.new(Layout.borders(Layout.panes(tab.layout, s.area), s.area), &{&1.id, &1.rect})
+    Map.new(Layout.rects(tab.layout, s.area, Layout.opts(tab, app.ui)), &{&1.id, &1.rect})
   end
 
   test "one spawn per pane of every tab, sized to that tab's rects" do

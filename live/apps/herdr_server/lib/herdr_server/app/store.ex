@@ -613,16 +613,20 @@ defmodule HerdrServer.App.Store do
     tab = Enum.find(ws.tabs, &(&1.id == ws.active_tab))
     g = [scan: false, server: reload_server()]
 
-    with {:ok, panes} <- Guard.run_twice(Layout, :panes, [tab.layout, s.area], g),
-         {:ok, rects} <- Guard.run_twice(Layout, :borders, [panes, s.area], g) do
-      visible = MapSet.new(rects, & &1.id)
+    # built here, not by Layout.opts/2: only the guarded call may run editable code
+    opts = %{zoom: Map.get(tab, :zoom), borders: Map.get(state.app.ui, :pane_borders, :auto)}
 
-      state =
-        Enum.reduce(Map.keys(s.panes), state, &hide(&2, &1, not MapSet.member?(visible, &1)))
+    case Guard.run_twice(Layout, :rects, [tab.layout, s.area, opts], g) do
+      {:ok, rects} ->
+        visible = MapSet.new(rects, & &1.id)
 
-      Enum.reduce(rects, state, &resize/2)
-    else
-      {:failed, _} -> state
+        state =
+          Enum.reduce(Map.keys(s.panes), state, &hide(&2, &1, not MapSet.member?(visible, &1)))
+
+        Enum.reduce(rects, state, &resize/2)
+
+      {:failed, _} ->
+        state
     end
   end
 

@@ -9,7 +9,7 @@ defmodule HerdrServer.App.UpgradeTest do
   alias HerdrServer.View
 
   @new_ui [:sidebar, :tab_bar, :indicators, :confirm_close, :onboarding, :toast, :sound] ++
-            [:prompt_new_tab_name]
+            [:prompt_new_tab_name, :pane_borders]
 
   # an app as the M7 mirror or a pre-M13 handoff carry holds it
   defp old_app do
@@ -28,6 +28,8 @@ defmodule HerdrServer.App.UpgradeTest do
 
     assert %Ui{theme: %{name: "catppuccin"}, sidebar: %{width: 26}, keybinds: %Keybinds{}} =
              app.ui
+
+    assert app.ui.pane_borders == :auto
 
     assert %Session{size: %{cols: 80, rows: 24}} = app.session
     assert %Focus{pane: 1, modal: []} = app.focus

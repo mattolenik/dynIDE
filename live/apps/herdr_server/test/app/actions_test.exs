@@ -144,8 +144,7 @@ defmodule HerdrServer.App.ActionsTest do
   defp wide(app), do: elem(Actions.apply(app, {:resize, %{cols: 200, rows: 51, cell_px: nil}}), 0)
 
   defp content_rects(app) do
-    area = app.session.area
-    Layout.borders(Layout.panes(tab_layout(app), area), area)
+    Layout.rects(tab_layout(app), app.session.area, Layout.opts(nil, app.ui))
   end
 
   defp focus_pane(app, id) do

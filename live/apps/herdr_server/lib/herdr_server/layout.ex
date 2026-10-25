@@ -1,7 +1,7 @@
 defmodule HerdrServer.Layout do
   @moduledoc """
   Pure BSP tile layout: a port of herdr's `src/layout.rs` plus the pane-border rule
-  of `apply_pane_chrome` (default config: auto borders, gaps, outer borders).
+  of `apply_pane_chrome` (gaps, outer borders; `pane_borders` auto/always/off) and zoom.
 
   Tree: `{:pane, id} | {:split, :horizontal | :vertical, ratio, first, second}`.
   `:horizontal` is side by side, `:vertical` is stacked. Rects are `%{x, y, w, h}`.
@@ -128,31 +128,68 @@ defmodule HerdrServer.Layout do
   @spec set_ratio(t(), [boolean()], float()) :: t()
   def set_ratio(l, path, ratio), do: %{l | root: put_ratio(l.root, path, clamp(ratio))}
 
+  @type borders :: :auto | :always | :off
+  @type opts :: %{zoom: id() | nil, borders: borders()}
+  @type entry :: %{id: id(), rect: rect(), border: map() | nil}
+
   @doc """
-  Pane chrome with herdr's defaults. One pane: no border. Several: every pane gets all
-  four edges around its layout rect and a content rect inset by one cell (origin capped at
-  the outer rect's end, so the content rect always lies inside the border rect).
+  The pane rects of a tab: the one function View, Actions and the Store size panes with.
+  A `zoom` id in the layout gets the whole `area` with no border (the other panes have no
+  rect); otherwise `borders(panes(layout, area), area, opts.borders)`.
   """
-  @spec borders([%{id: id(), rect: rect()}], rect()) :: [
-          %{id: id(), rect: rect(), border: map() | nil}
-        ]
-  def borders([%{id: id, rect: r}], _rect), do: [%{id: id, rect: r, border: nil}]
+  @spec rects(t(), rect(), opts()) :: [entry()]
+  def rects(l, area, %{zoom: zoom, borders: mode}) do
+    if zoom != nil and zoom in pane_ids(l),
+      do: [%{id: zoom, rect: area, border: nil}],
+      else: borders(panes(l, area), area, mode)
+  end
 
-  def borders(panes, _rect) do
-    Enum.map(panes, fn %{id: id, rect: r} ->
-      content = %{
-        x: min(r.x + 1, r.x + r.w),
-        y: min(r.y + 1, r.y + r.h),
-        w: max(r.w - 2, 0),
-        h: max(r.h - 2, 0)
-      }
+  @doc "`rects/3` opts for `tab` (nil: a tab with no zoom) under the `App.Ui` `ui`."
+  @spec opts(map() | nil, map()) :: opts()
+  def opts(tab, ui),
+    do: %{zoom: tab && Map.get(tab, :zoom), borders: Map.get(ui, :pane_borders, :auto)}
 
-      %{
-        id: id,
-        rect: content,
-        border: %{rect: r, edges: [:top, :bottom, :left, :right], title: nil}
-      }
-    end)
+  @doc """
+  Content size of pane `id`: its `rects/3` rect, or its unzoomed tile when a zoom hides it
+  (the size a hidden pane keeps). nil when `id` is not in the layout.
+  """
+  @spec size(t(), rect(), opts(), id()) ::
+          %{cols: non_neg_integer(), rows: non_neg_integer()} | nil
+  def size(l, area, opts, id) do
+    find = &Enum.find(rects(l, area, &1), fn e -> e.id == id end)
+
+    case find.(opts) || find.(%{opts | zoom: nil}) do
+      %{rect: r} -> %{cols: r.w, rows: r.h}
+      nil -> nil
+    end
+  end
+
+  @doc """
+  Pane chrome. `:auto` (herdr's default): one pane has no border, several each get all four
+  edges around the layout rect and a content rect inset by one cell (origin capped at the
+  outer rect's end, so the content rect always lies inside the border rect). `:always`
+  borders a single pane too; `:off` never borders, so the panes tile the area.
+  """
+  @spec borders([%{id: id(), rect: rect()}], rect(), borders()) :: [entry()]
+  def borders(panes, _rect, :off), do: Enum.map(panes, &bare/1)
+  def borders([p], _rect, :auto), do: [bare(p)]
+  def borders(panes, _rect, _mode), do: Enum.map(panes, &bordered/1)
+
+  defp bare(%{id: id, rect: r}), do: %{id: id, rect: r, border: nil}
+
+  defp bordered(%{id: id, rect: r}) do
+    content = %{
+      x: min(r.x + 1, r.x + r.w),
+      y: min(r.y + 1, r.y + r.h),
+      w: max(r.w - 2, 0),
+      h: max(r.h - 2, 0)
+    }
+
+    %{
+      id: id,
+      rect: content,
+      border: %{rect: r, edges: [:top, :bottom, :left, :right], title: nil}
+    }
   end
 
   # --- internals ---

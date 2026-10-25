@@ -137,10 +137,10 @@ defmodule HerdrServer.LayoutTest do
   test "borders" do
     one = Layout.new(1)
     a = r(0, 0, 100, 24)
-    assert Layout.borders(Layout.panes(one, a), a) == [%{id: 1, rect: a, border: nil}]
+    assert Layout.borders(Layout.panes(one, a), a, :auto) == [%{id: 1, rect: a, border: nil}]
 
     two = Layout.new(1) |> Layout.split(1, :horizontal, 2)
-    [left, right] = Layout.borders(Layout.panes(two, a), a)
+    [left, right] = Layout.borders(Layout.panes(two, a), a, :auto)
     assert left.rect == r(1, 1, 48, 22)
 
     assert left.border == %{
@@ -152,6 +152,34 @@ defmodule HerdrServer.LayoutTest do
     assert right.rect == r(51, 1, 48, 22)
 
     tiny = [%{id: 1, rect: r(0, 0, 1, 1)}, %{id: 2, rect: r(1, 0, 1, 1)}]
-    assert [%{rect: %{w: 0, h: 0}} | _] = Layout.borders(tiny, a)
+    assert [%{rect: %{w: 0, h: 0}} | _] = Layout.borders(tiny, a, :auto)
+  end
+
+  defp opts(zoom, borders), do: %{zoom: zoom, borders: borders}
+
+  test "rects: a zoomed pane gets the whole area, an unknown zoom id is ignored" do
+    a = r(0, 0, 100, 40)
+    assert Layout.rects(l_shape(), a, opts(2, :auto)) == [%{id: 2, rect: a, border: nil}]
+
+    assert Layout.rects(l_shape(), a, opts(99, :auto)) ==
+             Layout.rects(l_shape(), a, opts(nil, :auto))
+
+    assert Layout.size(l_shape(), a, opts(2, :auto), 2) == %{cols: 100, rows: 40}
+    # a pane the zoom hides keeps its unzoomed tile size
+    assert Layout.size(l_shape(), a, opts(2, :auto), 1) == %{cols: 48, rows: 38}
+    assert Layout.size(l_shape(), a, opts(2, :auto), 99) == nil
+  end
+
+  test "rects: :off tiles the area with no borders, :always borders a single pane" do
+    a = r(0, 0, 100, 40)
+    off = Layout.rects(l_shape(), a, opts(nil, :off))
+    assert Enum.all?(off, &(&1.border == nil))
+    assert Enum.map(off, & &1.rect) == Enum.map(Layout.panes(l_shape(), a), & &1.rect)
+    assert off |> Enum.map(&(&1.rect.w * &1.rect.h)) |> Enum.sum() == 100 * 40
+
+    assert [%{rect: %{x: 1, y: 1, w: 98, h: 38}, border: %{rect: ^a}}] =
+             Layout.rects(Layout.new(1), a, opts(nil, :always))
+
+    assert [%{border: nil}] = Layout.rects(Layout.new(1), a, opts(nil, :auto))
   end
 end

@@ -40,7 +40,7 @@ defmodule HerdrServer.ViewHelpers do
     area = app.session.area
 
     %{rect: r} =
-      layout(app) |> Layout.panes(area) |> Layout.borders(area) |> Enum.find(&(&1.id == id))
+      layout(app) |> Layout.rects(area, Layout.opts(nil, app.ui)) |> Enum.find(&(&1.id == id))
 
     ev = {:mouse, %{kind: :press, button: :left, x: r.x, y: r.y, mods: [], px: nil}}
     elem(Actions.apply(app, ev), 0)

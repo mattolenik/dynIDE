@@ -84,12 +84,13 @@ defmodule HerdrServer.App.Commands do
 
   defp split_in(app, ws_id, tab_id, {pane, dir, ratio, focus?}) do
     {id, app2} = take_id(app)
-    l = tab_layout(app, ws_id, tab_id)
+    tab = Enum.find(find_ws(app, ws_id).tabs, &(&1.id == tab_id))
+    l = tab.layout
     l2 = Layout.split(l, pane, dir, id, ratio)
-    area = app.session.area
-    new = size_of(l2, area, id)
+    opts = Layout.opts(tab, app.ui)
+    new = Layout.size(l2, app.session.area, opts, id)
 
-    if big_enough?(new) and big_enough?(size_of(l2, area, pane)) do
+    if big_enough?(new) and big_enough?(Layout.size(l2, app.session.area, opts, pane)) do
       l2 = if focus?, do: l2, else: restore_focus(l2, l)
       app2 = app2 |> put_tab_layout(ws_id, tab_id, l2) |> sync()
       {put_in(app2.session.panes[id], new_meta()), [{:spawn, id, new}]}
@@ -149,9 +150,6 @@ defmodule HerdrServer.App.Commands do
     end)
   end
 
-  defp tab_layout(app, ws_id, tab_id),
-    do: find_ws(app, ws_id).tabs |> Enum.find(&(&1.id == tab_id)) |> Map.fetch!(:layout)
-
   defp put_tab_layout(app, ws_id, tab_id, l) do
     ws = find_ws(app, ws_id)
     tabs = Enum.map(ws.tabs, &if(&1.id == tab_id, do: %{&1 | layout: l}, else: &1))
@@ -172,11 +170,6 @@ defmodule HerdrServer.App.Commands do
   defp take_id(app), do: {app.session.next_id, update_in(app.session.next_id, &(&1 + 1))}
 
   defp new_meta, do: %{title: nil, layout_gen: 0}
-
-  defp size_of(l, area, id) do
-    %{rect: r} = Enum.find(Layout.borders(Layout.panes(l, area), area), &(&1.id == id))
-    %{cols: r.w, rows: r.h}
-  end
 
   defp big_enough?(%{cols: c, rows: r}), do: c >= 2 and r >= 1
 end

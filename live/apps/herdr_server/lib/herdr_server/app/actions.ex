@@ -71,7 +71,7 @@ defmodule HerdrServer.App.Actions do
 
     app = Onboarding.at_start(%{session: session, focus: %Focus{pane: 1}, ui: ui})
 
-    {app, [{:spawn, 1, size_of(layout, area, 1)} | fx]}
+    {app, [{:spawn, 1, Layout.size(layout, area, Layout.opts(nil, ui), 1)} | fx]}
   end
 
   defp configure(ui, nil, _opts), do: {ui, []}
@@ -196,7 +196,7 @@ defmodule HerdrServer.App.Actions do
     tab = %{id: tab_id, name: tab_name(ws.tabs), layout: layout}
     app = put_ws(app, %{ws | tabs: ws.tabs ++ [tab], active_tab: tab_id})
     app = put_in(app.session.panes[id], %{title: nil, layout_gen: 0})
-    {sync(app), [{:spawn, id, size_of(layout, app.session.area, id)}]}
+    {sync(app), [{:spawn, id, size_of(app, tab, layout, id)}]}
   end
 
   @spec close_tab(app()) :: {app(), [effect()]}
@@ -230,10 +230,9 @@ defmodule HerdrServer.App.Actions do
     with %{} = l <- layout(app), focus when not is_nil(focus) <- l.focus do
       {id, app2} = take_id(app)
       l2 = Layout.split(l, focus, dir, id)
-      area = app.session.area
-      new = size_of(l2, area, id)
+      new = size_of(app, tab(app), l2, id)
 
-      if big_enough?(new) and big_enough?(size_of(l2, area, focus)) do
+      if big_enough?(new) and big_enough?(size_of(app, tab(app), l2, focus)) do
         app2 = app2 |> put_layout(l2) |> sync()
         app2 = put_in(app2.session.panes[id], %{title: nil, layout_gen: 0})
         {app2, [{:spawn, id, new}]}
@@ -378,16 +377,12 @@ defmodule HerdrServer.App.Actions do
     switch_tab(app, rem(i + d + n, n) + 1)
   end
 
-  defp content_rects(app) do
-    l = layout(app)
-    area = app.session.area
-    Layout.borders(Layout.panes(l, area), area)
-  end
+  defp content_rects(app),
+    do: Layout.rects(layout(app), app.session.area, Layout.opts(tab(app), app.ui))
 
-  defp size_of(l, area, id) do
-    %{rect: r} = Enum.find(Layout.borders(Layout.panes(l, area), area), &(&1.id == id))
-    %{cols: r.w, rows: r.h}
-  end
+  # `l` is `tab`'s layout, possibly not yet stored on it
+  defp size_of(app, tab, l, id),
+    do: Layout.size(l, app.session.area, Layout.opts(tab, app.ui), id)
 
   # Close pane `id` wherever it lives; unknown ids are a no-op (Layout.close/2 returns
   # :last for them too, so membership is checked first).
@@ -433,7 +428,7 @@ defmodule HerdrServer.App.Actions do
         t = %{id: tab_id, name: "1", layout: l}
         app = put_ws(app, %{ws | tabs: [t], active_tab: t.id})
         app = put_in(app.session.panes[id], %{title: nil, layout_gen: 0})
-        {sync(app), closes ++ [{:spawn, id, size_of(l, app.session.area, id)}]}
+        {sync(app), closes ++ [{:spawn, id, size_of(app, t, l, id)}]}
 
       _ ->
         active =

@@ -291,9 +291,9 @@ defmodule HerdrServer.Persist.Writer do
 
     for ws <- app.session.workspaces,
         tab <- ws.tabs,
-        %{id: id, rect: r} <- Layout.borders(Layout.panes(tab.layout, area), area),
+        id <- Layout.pane_ids(tab.layout),
         into: %{},
-        do: {id, max(r.w, 1)}
+        do: {id, max(Layout.size(tab.layout, area, Layout.opts(tab, app.ui), id).cols, 1)}
   end
 
   # --- helpers ---

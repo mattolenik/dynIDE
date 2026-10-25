@@ -80,7 +80,9 @@ defmodule HerdrServer.Api.View do
   # --- internals ---
 
   defp pane_in(app, ws, tab, id) do
-    size = size_of(tab.layout, app.session.area, id)
+    size =
+      Layout.size(tab.layout, app.session.area, Layout.opts(tab, app.ui), id) ||
+        %{cols: 0, rows: 0}
 
     %{
       pane_id: Ids.pane(id),
@@ -104,13 +106,6 @@ defmodule HerdrServer.Api.View do
 
   defp ws_focused?(app, ws), do: app.session.active_workspace == ws.id
   defp tab_focused?(app, ws, tab), do: ws_focused?(app, ws) and ws.active_tab == tab.id
-
-  defp size_of(layout, area, id) do
-    case Enum.find(Layout.borders(Layout.panes(layout, area), area), &(&1.id == id)) do
-      %{rect: r} -> %{cols: r.w, rows: r.h}
-      nil -> %{cols: 0, rows: 0}
-    end
-  end
 
   defp tree({:pane, id}), do: %{type: "pane", pane_id: Ids.pane(id)}
 
