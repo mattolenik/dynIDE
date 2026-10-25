@@ -521,8 +521,10 @@ defmodule HerdrServer.Pane.Server do
   defp publish(state, cursor \\ nil) do
     cursor = cursor || read_cursor(state.vt)
     :ok = Rows.put(state.id, state.gen, state.rows, cursor)
+    # placements first: a session never draws the new rows with stale placements
+    state = put_graphics(%{state | cursor: cursor})
     dispatch({:pane_damage, state.id, state.gen})
-    put_graphics(%{state | cursor: cursor})
+    state
   end
 
   # kitty placements: written and announced only when they change

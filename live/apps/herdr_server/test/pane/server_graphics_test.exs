@@ -122,7 +122,7 @@ defmodule HerdrServer.Pane.ServerGraphicsTest do
     Fake.Pty.output(res(1).pty, "z")
     assert_receive {:pane_facts, 1}, 500
     assert Facts.graphics(1) == []
-    assert scene_until(c, &(pane(&1, 1).graphics == [])) |> pane(1)
+    assert %{id: 1, graphics: []} = scene_until(c, &(pane(&1, 1).graphics == [])) |> pane(1)
   end
 
   test "a pane on a hidden tab is not in the scene, so its graphics are not", %{c: c} do
@@ -134,6 +134,9 @@ defmodule HerdrServer.Pane.ServerGraphicsTest do
     Fake.Pty.output(res(2).pty, "x")
     s = scene_until(c, &(pane(&1, 2).graphics != []))
     assert [%{id: 2, graphics: [%{placement: 9}]}] = s.panes
+    # the hidden pane gets no damage, so it neither reads nor announces placements
+    refute_receive {:pane_facts, 1}, 100
+    assert Facts.graphics(1) == []
   end
 
   test "closing a pane drops its graphics", %{c: c} do

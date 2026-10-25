@@ -4,8 +4,8 @@ defmodule HerdrServer.Pane.State do
   `title` (sanitized), `stripped_title` and `progress` are the pane's terminal facts
   (`Pane.Facts`); `colors` the host colours last applied to the vt; `pending` the
   write queue (`{binary, nil | {paste_origin, bytes_written}}`, oldest first) and
-  `write_retry` its backpressure retry state; `facts_tick` the scroll-facts throttle; `graphics` the kitty placements last
-  written to `Pane.Facts`.
+  `write_retry` its backpressure retry state; `facts_tick` the scroll-facts throttle;
+  `graphics` the kitty placements last written to `Pane.Facts`.
   """
 
   defstruct [
