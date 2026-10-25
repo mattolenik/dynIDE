@@ -828,9 +828,15 @@ impl Vt {
     // from a refcounted image handle outside the lock if large images stall output.
     pub fn graphics_image(&self, id: u32) -> Option<Image> {
         let core = lock(&self.core);
+        // one copy under the core lock: a placeholder image yields a placement per row run
+        let mut taken = false;
         let ps = core
             .terminal
-            .kitty_image_placements_with_data_filter(|d| d.image_id == id)
+            .kitty_image_placements_with_data_filter(|d| {
+                let take = !taken && d.image_id == id;
+                taken |= take;
+                take
+            })
             .ok()?;
         let p = ps
             .into_iter()
