@@ -92,3 +92,11 @@ live-bench-handoff:
 live-bench-remote *args:
     elixir '{{live_dir}}/bench/remote/bench.exs' unix {{args}}
     elixir '{{live_dir}}/bench/remote/bench.exs' relay {{args}}
+
+# M18: the self-contained release tarball and .sha256 in live/_build/release; args: [--version V] [--out DIR]
+live-release *args:
+    '{{live_dir}}/scripts/release/build.sh' {{args}}
+
+# M18: install the release (built first unless a tarball is given) under a temp prefix and smoke it in a clean env
+live-release-smoke *args:
+    '{{live_dir}}/scripts/release/release_smoke.sh' {{args}}

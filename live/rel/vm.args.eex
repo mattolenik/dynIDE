@@ -1,0 +1,4 @@
+## M18: no stdin (the broker gives the VM /dev/null); +Bi: the VMs share the
+## broker's process group, so a terminal ^C must not open the break menu.
+-noinput
++Bi

@@ -30,3 +30,15 @@ config :herdr_server, HerdrServer.Persist,
 if System.get_env("HERDR_LIVE_TEST_ON_SAVE") == "1" do
   config :herdr_reload, HerdrReload, test_on_save: :gate
 end
+
+# M18: a release VM (bin/herdr_live) records its version for the API. Pane shells inherit
+# the VM's real env (the kernel spawns them; System.delete_env does not reach that env), so
+# the release script's RELEASE_* are blanked there: its `${VAR:-default}` reads "" as
+# unset, and another Elixir release started from a pane does not boot as this one.
+if config_env() == :prod do
+  config :herdr_server, :version, System.get_env("RELEASE_VSN")
+
+  config :herdr_server,
+         :pane_env,
+         for({k, _} <- System.get_env(), String.starts_with?(k, "RELEASE_"), do: {k, ""})
+end

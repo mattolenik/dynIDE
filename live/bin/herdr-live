@@ -1,5 +1,14 @@
 #!/bin/sh
-# herdr-live launcher (dev build). Usage: herdr-live [kernel-restart | status | <verb> ...]
+# herdr-live launcher. Usage: herdr-live [kernel-restart | status | --version | <verb> ...]
+# One script for both layouts (M18 R2): in a source tree (live/bin/herdr-live) it runs
+# mix and cargo as described below; in a release root (scripts/release/build.sh: it has
+# releases/start_erl.data) it runs the bundled broker, `bin/herdr_live start` as the VM
+# with cwd $HOME, and the bundled erts for the CLI and the attach client (no elixir,
+# mix or cargo on PATH). Installed as <prefix>/bin/herdr-live -> ../lib/herdr-live/current/
+# bin/herdr-live (R4), symlinks are resolved only down to that path, never through
+# `current`, so the broker's VM argv (and a kernel-restart) follows a flipped `current`,
+# and HERDR_LIVE_BIN is the path it was invoked through. `--version` prints
+# `herdr-live <V>` (a source tree: mix.exs's version with -dev).
 # With no argument it builds native/herdr_broker and execs `herdr_broker run`,
 # which supervises the VMs (warm standby, fd holding, handoff on kill -9 or
 # kernel-restart) and restores the host tty at exit; attached, scripts/tty_guard.sh
@@ -60,7 +69,25 @@ while [ -L "$self" ]; do
   case $link in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
 done
 root=$(cd "$(dirname "$self")/.." && pwd) || exit 1
+rel='' bin=$root/bin/herdr-live
+if [ -f "$root/releases/start_erl.data" ]; then
+  rel=$(cut -d' ' -f2 "$root/releases/start_erl.data") || exit 1
+  # HERDR_LIVE_BIN: the path invoked (the install symlink), so pane shells survive an update
+  case $0 in /*) bin=$0 ;; *) bin=$(cd "$(dirname "$0")" && pwd)/$(basename "$0") || exit 1 ;; esac
+  # the release scripts honour these from the env: a stale one (another release's, or a
+  # pane of an older version) would boot the wrong files
+  unset RELEASE_NAME RELEASE_VSN RELEASE_PROG RELEASE_COOKIE RELEASE_MODE RELEASE_NODE \
+    RELEASE_TMP RELEASE_VM_ARGS RELEASE_REMOTE_VM_ARGS RELEASE_DISTRIBUTION \
+    RELEASE_BOOT_SCRIPT RELEASE_BOOT_SCRIPT_CLEAN RELEASE_SYS_CONFIG ERL_ROOTDIR
+fi
 cli() { # runs in the caller's cwd, so a relative HERDR_LIVE_API keeps its meaning
+  if [ -n "$rel" ]; then # the release's erts and ebins; bin/no_dot_erlang.boot is OTP's
+    for erl in "$root"/erts-*/bin/erl; do :; done
+    for exs in "$root"/lib/elixir-*/ebin; do :; done
+    for ebin in "$root"/lib/herdr_cli-*/ebin; do :; done
+    for scene in "$root"/lib/herdr_scene-*/ebin; do :; done
+    ERL_CRASH_DUMP_SECONDS=0 exec "$erl" -noinput -boot no_dot_erlang -pa "$exs" -pa "$ebin" -pa "$scene" -run Elixir.HerdrCli main_erl -extra "$@"
+  fi
   ebin=$root/_build/dev/lib/herdr_cli/ebin
   [ -d "$ebin" ] || (cd "$root" && MIX_ENV=dev mix compile) >&2 || exit 1
   cache=$root/_build/dev/herdr_cli.elixir_ebin
@@ -99,18 +126,23 @@ client() { # attach | terminal: the remote client VM, stdio to its log (R18)
   [ -z "${HERDR_LIVE_API:-}" ] || export HERDR_LIVE_API
   [ -z "${HERDR_LIVE_CLIENT_SOCK:-}" ] || export HERDR_LIVE_CLIENT_SOCK
   (umask 077 && mkdir -p "$(dirname "$clog")") || exit 1
-  command -v elixir >/dev/null 2>&1 || {
-    echo "herdr-live: elixir not found on PATH (the attach client runs under mix)" >&2
-    exit 1
-  }
-  cd "$root" || exit 1
+  if [ -n "$rel" ]; then # eval boots no app (Remote.main starts herdr_term); argv as given
+    set -- "$root/bin/herdr_live" eval 'HerdrTerm.Remote.main(System.argv())' "$@"
+  else
+    command -v elixir >/dev/null 2>&1 || {
+      echo "herdr-live: elixir not found on PATH (the attach client runs under mix)" >&2
+      exit 1
+    }
+    cd "$root" || exit 1
+    set -- elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt --no-start -e 'HerdrTerm.Remote.main(System.argv())' -- "$@"
+  fi
   # not exec'd: a failure's reason (HerdrTerm.Remote.fail/1) goes to this stderr
   reason=$(mktemp "${TMPDIR:-/tmp}/herdr-live-client.XXXXXX") || exit 1
   trap 'rm -f "$reason"' EXIT
   # background + wait so TERM/HUP/INT reach the VM (a foreground child would not see them while
   # sh waits). A non-interactive sh has no job control: the job stays in this process group, so
   # the VM keeps the foreground tty (it opens /dev/tty itself) and gets no SIGTTIN/SIGTTOU.
-  MIX_ENV=dev HERDR_LIVE_HEADLESS=1 HERDR_LIVE_CLIENT_REASON=$reason elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt --no-start -e 'HerdrTerm.Remote.main(System.argv())' -- "$@" </dev/null >>"$clog" 2>&1 &
+  MIX_ENV=dev HERDR_LIVE_HEADLESS=1 HERDR_LIVE_CLIENT_REASON=$reason "$@" </dev/null >>"$clog" 2>&1 &
   pid=$!
   trap 'kill -TERM $pid 2>/dev/null' TERM HUP INT
   wait $pid
@@ -127,6 +159,14 @@ client() { # attach | terminal: the remote client VM, stdio to its log (R18)
 if [ $# -gt 0 ]; then
   case $1 in
     kernel-restart | status) ;;
+    --version)
+      if [ -n "$rel" ]; then
+        echo "herdr-live $rel"
+      else
+        echo "herdr-live $(sed -n 's/^  @version "\(.*\)"$/\1/p' "$root/mix.exs")-dev"
+      fi
+      exit 0
+      ;;
     attach | terminal) client "$@" ;;
     *) cli "$@" ;;
   esac
@@ -143,9 +183,16 @@ fi
 (umask 077 && mkdir -p "$(dirname "$log")") || exit 1
 sock=${HERDR_LIVE_API:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/api.sock}
 case $sock in /*) ;; *) sock=$PWD/$sock ;; esac
-cd "$root" || exit 1
-broker=$PWD/native/herdr_broker/target/release/herdr_broker
-build() { cargo build --release --locked --quiet --manifest-path native/herdr_broker/Cargo.toml; }
+if [ -n "$rel" ]; then
+  # pane shells start in the VM's cwd: $HOME, never the release dir
+  cd "${HOME:-/}" || exit 1
+  broker=$root/bin/herdr_broker
+  build() { echo "herdr-live: $broker is missing" >&2 && return 1; }
+else
+  cd "$root" || exit 1
+  broker=$PWD/native/herdr_broker/target/release/herdr_broker
+  build() { cargo build --release --locked --quiet --manifest-path native/herdr_broker/Cargo.toml; }
+fi
 case ${1:-} in
   kernel-restart)
     [ -x "$broker" ] || build >&2 || exit 1
@@ -159,18 +206,24 @@ case ${1:-} in
     exit $rc
     ;;
 esac
-export MIX_ENV="${MIX_ENV:-dev}"
 # pane shells inherit both: an agent in a pane runs "$HERDR_LIVE_BIN" pane ... against this instance
-export HERDR_LIVE_BIN="$root/bin/herdr-live" HERDR_LIVE_API="$sock"
+export HERDR_LIVE_BIN="$bin" HERDR_LIVE_API="$sock"
 # herdr's names for the same two, so herdr plugins and scripts find this instance
-export HERDR_SOCKET_PATH="$sock" HERDR_BIN_PATH="$root/bin/herdr-live"
+export HERDR_SOCKET_PATH="$sock" HERDR_BIN_PATH="$bin"
 exec </dev/null >>"$log" 2>&1
-build || exit 1
-# +Bi: the VMs share the broker's process group, so a terminal ^C must not
-# open the BEAM break menu (the broker turns SIGINT into a clean stop).
+[ -n "$rel" ] || build || exit 1
+# the VM argv. +Bi (the release's vm.args has it too): the VMs share the broker's
+# process group, so a terminal ^C must not open the BEAM break menu (the broker
+# turns SIGINT into a clean stop).
+if [ -n "$rel" ]; then
+  set -- "$root/bin/herdr_live" start
+else
+  export MIX_ENV="${MIX_ENV:-dev}"
+  set -- elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt
+fi
 [ "${HERDR_LIVE_HEADLESS:-}" = 1 ] &&
-  exec "$broker" run -- elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt
+  exec "$broker" run -- "$@"
 # attached: tty_guard.sh is the backstop for a broker that cannot run its own
 # restore (kill -9); it logs that as broker_killed (an operator kill, not a loss)
 export HERDR_GUARD_EVENT_LOG="$log"
-exec "$root/scripts/tty_guard.sh" "$broker" run -- elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt
+exec "$root/scripts/tty_guard.sh" "$broker" run -- "$@"

@@ -88,8 +88,12 @@ defmodule HerdrServer.Api.Handlers.Server do
 
   defp reload?, do: Application.get_env(:herdr_reload, HerdrReload, [])[:enabled] == true
 
+  # the release version (config/runtime.exs) in a release, else the app's
   @doc false
-  def version, do: to_string(Application.spec(:herdr_server, :vsn) || "0")
+  def version,
+    do:
+      Application.get_env(:herdr_server, :version) ||
+        to_string(Application.spec(:herdr_server, :vsn) || "0")
 
   @doc false
   def gen do
