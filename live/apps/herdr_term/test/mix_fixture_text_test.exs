@@ -1,5 +1,7 @@
 defmodule Mix.Tasks.HerdrTerm.FixtureTextTest do
-  use ExUnit.Case, async: true
+  # not async: the task runs Mix's app.config, which can change the VM cwd, and async
+  # modules start while ExUnit still requires the other test files by relative path
+  use ExUnit.Case, async: false
 
   alias HerdrScene.Cell
   alias Mix.Tasks.HerdrTerm.FixtureText
