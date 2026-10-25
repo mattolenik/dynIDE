@@ -66,6 +66,15 @@ defmodule HerdrServer.Plugins.InstallTest do
       assert System.monotonic_time(:millisecond) - t0 < 1300
     end
 
+    test "the command leads its own process group, its exit status passed through",
+         %{base: base} do
+      assert %{exit_code: 7, stdout: out} =
+               Command.run(["sh", "-c", "echo $$; ps -o pgid= -p $$; exit 7"], base, [], [])
+
+      assert [pid, pgid] = String.split(out)
+      assert pid == pgid
+    end
+
     test "a timeout kills the whole process group and closes the port", %{base: base} do
       mine = fn ->
         Enum.filter(Port.list(), &(Port.info(&1, :connected) == {:connected, self()}))

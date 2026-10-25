@@ -7,14 +7,18 @@ defmodule HerdrServer.Plugins.Command do
   alias HerdrServer.Plugins.Paths
 
   @cap 65_536
-  # ponytail: a sh wrapper sends stdout and stderr to files and, with job control, starts
-  # the command as its own process group so a timeout kills the whole tree; a NIF if
-  # Windows ever matters. The port carries only the wrapper, so the run ends when the
-  # command exits even if a descendant still holds its output open (as herdr). The files
-  # grow with the command's output until it exits (only the first `cap` bytes are read):
-  # bounded by the timeout, if any. The wrapper's own stderr (job notices) goes to /dev/null.
-  @wrapper ~S(d=$HERDR_LIVE_CMD_DIR; unset HERDR_LIVE_CMD_DIR; exec 2>/dev/null; set -m; ) <>
-             ~S("$0" "$@" </dev/null >"$d/out" 2>"$d/err" & echo $! >"$d/pid"; wait $!)
+  # ponytail: a sh wrapper sends stdout and stderr to files and starts the command as its
+  # own process group so a timeout kills the whole tree: with `setsid` where it exists
+  # (Linux; dash's `set -m` without a tty leaves the job in the wrapper's group), else job
+  # control (macOS sh). A background job is no group leader here, so setsid execs in place
+  # and `$!` is the command (pid = pgid), its status passed through `wait`. A NIF if Windows
+  # ever matters. The port carries only the wrapper, so the run ends when the command exits
+  # even if a descendant still holds its output open (as herdr). The files grow with the
+  # command's output until it exits (only the first `cap` bytes are read): bounded by the
+  # timeout, if any. The wrapper's own stderr (job notices) goes to /dev/null.
+  @wrapper ~S(d=$HERDR_LIVE_CMD_DIR; unset HERDR_LIVE_CMD_DIR; exec 2>/dev/null; ) <>
+             ~S(if command -v setsid >/dev/null; then s=setsid; else s=; set -m; fi; ) <>
+             ~S($s "$0" "$@" </dev/null >"$d/out" 2>"$d/err" & echo $! >"$d/pid"; wait $!)
 
   @type result :: %{
           exit_code: integer() | nil,
