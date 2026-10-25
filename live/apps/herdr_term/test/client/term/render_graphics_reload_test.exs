@@ -25,8 +25,13 @@ defmodule HerdrTerm.Client.Term.RenderGraphicsReloadTest do
     original = File.read!(source)
     Code.put_compiler_option(:ignore_module_conflict, true)
 
+    # back to the on-disk beam: a module left in memory has no :code.which/1 path
+    # (the integration ArchitectureTest reads beams in the same umbrella VM)
     on_exit(fn ->
-      swap(original, source)
+      :code.purge(Graphics)
+      :code.delete(Graphics)
+      :code.purge(Graphics)
+      {:module, _} = :code.load_file(Graphics)
       Code.put_compiler_option(:ignore_module_conflict, false)
     end)
 
@@ -41,7 +46,8 @@ defmodule HerdrTerm.Client.Term.RenderGraphicsReloadTest do
   end
 
   defp swap(code, source) do
-    Code.compile_string(code, source)
+    # diagnostics collected, not printed: the stripped versions warn by design
+    {_, _diagnostics} = Code.with_diagnostics(fn -> Code.compile_string(code, source) end)
     :ok
   end
 
