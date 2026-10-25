@@ -212,4 +212,35 @@ defmodule HerdrTerm.Client.Term.Render.ChromeTest do
 
     assert Cells.to_text(Text.ellipsize(Cells.text("abcdef", s), 4, @theme)) == "abc…"
   end
+
+  describe "hover" do
+    test "an inactive tab under the pointer takes the :selected background; nil restores" do
+      layout = RChrome.layout(root([tabs(["a", "b"], 1)]), @size, @theme)
+      path = [:tabs, {:tab, 2}]
+      assert RChrome.hover(layout, nil, @theme) == layout
+      assert RChrome.hover(layout, [:nope], @theme) == layout
+
+      hovered = RChrome.hover(layout, path, @theme)
+      %{rect: r} = hit(layout, path)
+      bg = Theme.style(@theme, :selected).bg
+
+      cell = fn l, x ->
+        l.base
+        |> Map.fetch!(0)
+        |> Enum.find(fn {sx, w, _} -> x >= sx and x < sx + w end)
+        |> then(fn {sx, _, row} -> row |> Cell.decode_row() |> Enum.at(x - sx) end)
+      end
+
+      refute cell.(layout, r.x).bg == bg
+      assert cell.(hovered, r.x).bg == bg
+      assert cell.(hovered, r.x + r.w - 1).bg == bg
+      assert cell.(hovered, r.x + r.w).bg == cell.(layout, r.x + r.w).bg
+    end
+
+    test "non-item hits (the status bar, a button) do not hover" do
+      layout = RChrome.layout(root([status(), tabs(["a"], 1)]), @size, @theme)
+      assert RChrome.hover(layout, [:status], @theme) == layout
+      assert RChrome.hover(layout, [:tabs, :new_tab], @theme) == layout
+    end
+  end
 end

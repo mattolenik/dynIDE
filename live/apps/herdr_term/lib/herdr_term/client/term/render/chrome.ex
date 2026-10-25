@@ -62,6 +62,43 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
     }
   end
 
+  @hoverable [:item, :tab]
+
+  @doc """
+  The layout with the hit at `path` drawn `:selected` (the pointer hover); `nil`, an
+  unknown path or a non-item hit (`:item`, `:tab` roles only) returns it unchanged.
+  Pure post-pass over the cached layout: the segments under the hit's rect get the
+  `:selected` background, in both layers (the top layer covers the base).
+  """
+  @spec hover(t, [term] | nil, Theme.t()) :: t
+  def hover(chrome, nil, _theme), do: chrome
+
+  def hover(%{hits: hits} = chrome, path, theme) do
+    case Enum.find(hits, &(&1.path == path)) do
+      %{role: role, rect: r} when role in @hoverable ->
+        bg = Theme.style(theme, :selected).bg
+        %{chrome | base: tint(chrome.base, r, bg), top: tint(chrome.top, r, bg)}
+
+      _ ->
+        chrome
+    end
+  end
+
+  defp tint(layer, r, bg) do
+    Enum.reduce(r.y..(r.y + r.h - 1)//1, layer, fn y, acc ->
+      case acc do
+        %{^y => segs} -> %{acc | y => Enum.map(segs, &tint_seg(&1, r, bg))}
+        _ -> acc
+      end
+    end)
+  end
+
+  defp tint_seg({sx, sw, row} = seg, r, bg) do
+    x0 = max(sx, r.x)
+    x1 = min(sx + sw, r.x + r.w)
+    if x1 > x0, do: {sx, sw, Cells.restyle(row, x0 - sx, x1 - x0, bg: bg)}, else: seg
+  end
+
   @doc "A hit for `rect` at `path`; `drag: true` makes a press start a grab."
   @spec hit(Scene.rect(), [term], atom, boolean) :: hit
   def hit(rect, path, role, drag \\ false), do: %{rect: rect, path: path, role: role, drag: drag}

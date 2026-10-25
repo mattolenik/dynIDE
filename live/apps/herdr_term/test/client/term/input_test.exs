@@ -287,4 +287,31 @@ defmodule HerdrTerm.Client.Term.InputTest do
         x
     end
   end
+
+  test "hover goes to Render only when the hovered path changes, never to the server",
+       %{sup: sup, tty: tty} do
+    input = Client.whereis(:sys.get_state(Client.render(sup)).id, :input)
+    render = Client.render(sup)
+    :erlang.trace(render, true, [:receive])
+    r = fn x, w -> %{x: x, y: 2, w: w, h: 1} end
+
+    hits = [
+      %{rect: r.(0, 5), path: [:tabs, 1], role: :tab, drag: false},
+      %{rect: r.(5, 5), path: [:tabs, 2], role: :tab, drag: false},
+      %{rect: %{x: 0, y: 0, w: 80, h: 24}, path: [:bg], role: :sidebar, drag: false}
+    ]
+
+    send(input, {:chrome_hits, hits})
+    move = fn x -> Tty.inject(tty, "\e[<35;#{x};3M") end
+    move.(2)
+    assert_receive {:trace, ^render, :receive, {:hover, [:tabs, 1]}}
+    move.(3)
+    move.(4)
+    refute_receive {:trace, ^render, :receive, {:hover, _}}, 50
+    move.(7)
+    assert_receive {:trace, ^render, :receive, {:hover, [:tabs, 2]}}
+    move.(20)
+    assert_receive {:trace, ^render, :receive, {:hover, nil}}
+    refute_receive {:input, _, _, {:chrome, _, _}}, 20
+  end
 end

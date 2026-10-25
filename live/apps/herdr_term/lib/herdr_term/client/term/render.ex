@@ -97,6 +97,7 @@ defmodule HerdrTerm.Client.Term.Render do
     :images_mfa,
     :cell_px,
     :title,
+    hover: nil,
     transport: :ref,
     caps: nil,
     appearance: :dark,
@@ -211,6 +212,12 @@ defmodule HerdrTerm.Client.Term.Render do
     appearance = Detect.appearance(caps, state.colorfgbg)
     state = refresh_theme(%{state | caps: caps, appearance: appearance})
     {:noreply, state |> chrome() |> schedule()}
+  end
+
+  # the pointer's hovered chrome path (Input sends it only when it changes)
+  def handle_info({:hover, path}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, schedule(%{state | hover: path})}
   end
 
   def handle_info(:repaint, state) do
@@ -530,7 +537,8 @@ defmodule HerdrTerm.Client.Term.Render do
     scene = state.scene
     resized? = scene.size != state.last_size
     state = if resized?, do: %{state | cell_px: cell_px(state)}, else: state
-    args = [scene, state.rows, state.cursors, state.theme, state.chrome]
+    chrome = Chrome.hover(state.chrome, state.hover, state.theme)
+    args = [scene, state.rows, state.cursors, state.theme, chrome]
 
     case Guard.run_twice(Compose, :screen, args, @compose) do
       {:ok, {frame, cursor}} ->

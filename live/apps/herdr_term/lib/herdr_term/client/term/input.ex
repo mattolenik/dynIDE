@@ -81,7 +81,10 @@ defmodule HerdrTerm.Client.Term.Input do
     # chrome hit testing (`Hit.route/4`): Render's hits and the grab / last left press
     hits: [],
     grab: nil,
-    inline: false
+    inline: false,
+    # last pointer cell and the hovered chrome path, sent to Render only on change
+    pointer: nil,
+    hover: nil
   ]
 
   def start_link(opts),
@@ -215,7 +218,7 @@ defmodule HerdrTerm.Client.Term.Input do
 
   def handle_info({:chrome_hits, hits}, state) when is_list(hits) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, %{state | hits: hits}}
+    {:noreply, hover(%{state | hits: hits}, state.pointer)}
   end
 
   def handle_info({:exit, :tty, _} = msg, state), do: to_owner(msg, state)
@@ -253,6 +256,7 @@ defmodule HerdrTerm.Client.Term.Input do
       end)
 
     state = Enum.reduce(colors, %{state | replies: replies}, &color_reply/2)
+    state = Enum.reduce(events, state, &track/2)
     {events, state} = Enum.flat_map_reduce(events, state, &hit/2)
     drain(%{state | queue: Enum.reduce(events, state.queue, &queue_event/2)})
   end
@@ -330,6 +334,22 @@ defmodule HerdrTerm.Client.Term.Input do
          do: send(render, {:host_colors, Map.take(c, [:fg, :bg])})
 
     state
+  end
+
+  # any-motion events keep the pointer; hover goes only to Render (never the server)
+  defp track({:mouse, %{kind: :move, x: x, y: y}}, state), do: hover(state, {x, y})
+  defp track(_ev, state), do: state
+
+  defp hover(%{hits: hits, hover: old} = state, pointer) do
+    path = with {x, y} <- pointer, do: Hit.hover(hits, x, y)
+    state = %{state | pointer: pointer}
+
+    if path != old do
+      if pid = Client.whereis(state.id, :render), do: send(pid, {:hover, path})
+      %{state | hover: path}
+    else
+      state
+    end
   end
 
   # mouse over chrome becomes `{:chrome, ...}`; a failing Hit passes the event unchanged

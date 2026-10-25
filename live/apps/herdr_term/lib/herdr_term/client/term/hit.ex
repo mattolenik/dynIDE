@@ -38,6 +38,15 @@ defmodule HerdrTerm.Client.Term.Hit do
 
   def route(_hits, grab, ev, _now), do: {[ev], grab}
 
+  @doc "The path of the topmost hit under `{x, y}` when its role is hoverable, else nil."
+  @spec hover([map], integer, integer) :: [term] | nil
+  def hover(hits, x, y) do
+    case Enum.find(hits, &inside?(&1.rect, x, y)) do
+      %{role: role, path: path} when role in [:item, :tab] -> path
+      _ -> nil
+    end
+  end
+
   defp stale?(%{held: true, path: p}, hits), do: not Enum.any?(hits, &(&1.path == p))
   defp stale?(_grab, _hits), do: false
 
