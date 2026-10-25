@@ -176,7 +176,7 @@ defmodule HerdrServer.Persist.SchemaTest do
       assert [%{name: "1", auto_name: false}] = a3.session.workspaces
       assert {:error, {:invalid, :workspaces}} = Schema.restore(put_ws(s, &%{&1 | auto_name: 1}))
       # the cwd is runtime only
-      {a, []} = Actions.apply(a, {:workspace_cwd, 1, "/nonexistent-herdr-test/x"})
+      {a, []} = Actions.apply(a, {:workspace_cwd, 1, "/x", "x"})
       refute Map.has_key?(hd(Schema.capture(a, %{}).session.workspaces), :cwd)
     end
 

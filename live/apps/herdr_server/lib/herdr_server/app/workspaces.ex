@@ -8,13 +8,12 @@ defmodule HerdrServer.App.Workspaces do
   not in the active tab, so switching needs no effect here.
 
   A workspace created without a name is `auto_name: true`: it starts as `"workspace"`,
-  `"workspace 2"`, ... and the server-internal `workspace_cwd/3` (from `WorkspaceFacts`)
-  renames it after its root pane's repo or cwd (`Workspaces.Label.auto/1`) until a user
-  renames it.
+  `"workspace 2"`, ... and the server-internal `workspace_cwd/4` (from `WorkspaceFacts`,
+  which computes the label with `Workspaces.Label.auto/1`) renames it after its root
+  pane's repo or cwd until a user renames it.
   """
 
   alias HerdrServer.App.Actions
-  alias HerdrServer.App.Workspaces.Label
   alias HerdrServer.Layout
 
   @type app :: Actions.app()
@@ -158,20 +157,15 @@ defmodule HerdrServer.App.Workspaces do
 
   @doc """
   Server-internal: stores workspace `ws_id`'s root-pane `cwd` (not persisted) and, while
-  it is `auto_name`, renames it to `Label.auto(cwd)` when that is non-nil.
+  it is `auto_name`, renames it to `label` when that is non-nil. Pure: the label is
+  computed by the sender (`WorkspaceFacts`).
   """
-  @spec workspace_cwd(app(), term(), binary() | nil) :: {app(), [effect()]}
-  def workspace_cwd(app, ws_id, cwd),
-    do: {update_ws(app, ws_id, &auto_name(Map.put(&1, :cwd, cwd))), []}
+  @spec workspace_cwd(app(), term(), binary() | nil, binary() | nil) :: {app(), [effect()]}
+  def workspace_cwd(app, ws_id, cwd, label),
+    do: {update_ws(app, ws_id, &auto_name(Map.put(&1, :cwd, cwd), label)), []}
 
-  defp auto_name(%{auto_name: true} = ws) do
-    case Label.auto(ws.cwd) do
-      nil -> ws
-      name -> %{ws | name: name}
-    end
-  end
-
-  defp auto_name(ws), do: ws
+  defp auto_name(%{auto_name: true} = ws, label) when is_binary(label), do: %{ws | name: label}
+  defp auto_name(ws, _label), do: ws
 
   defp update_ws(app, ws_id, fun) do
     update_in(app.session.workspaces, fn l ->

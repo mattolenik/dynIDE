@@ -20,6 +20,11 @@ defmodule HerdrServer.App.Commands do
   @spec noop(app()) :: result()
   def noop(app), do: {app, []}
 
+  @doc """
+  An unlabelled workspace starts named after its id and stays `auto_name: true`, so
+  `WorkspaceFacts` renames it from its root pane's repo or cwd (as herdr does); a label
+  is kept.
+  """
   @spec create_workspace(app(), String.t() | nil, boolean()) :: result()
   def create_workspace(app, label, focus?) do
     {app, fx} = Workspaces.new_workspace(app, label, focus?)
@@ -48,7 +53,7 @@ defmodule HerdrServer.App.Commands do
       {app, fx} = Workspaces.within(app, ws_id, &Actions.new_tab/1)
       %{tabs: tabs} = new_ws = find_ws(app, ws_id)
       tab = List.last(tabs)
-      # an unlabeled API tab is named after its id, as API workspaces are
+      # an unlabeled API tab is named after its id (API workspaces start so, then auto-name)
       tab = %{tab | name: label || Integer.to_string(tab.id)}
       active = if focus?, do: tab.id, else: ws.active_tab
       new_ws = %{new_ws | tabs: List.replace_at(tabs, -1, tab), active_tab: active}

@@ -2,7 +2,7 @@ defmodule HerdrServer.App.Actions do
   @moduledoc """
   Pure input handling: `apply/2` turns a neutral `HerdrScene.Event` (plus the
   server-internal `{:pane_exited, id}`, `{:pane_title, id, title}`, `{:config_loaded, cfg}`,
-  `{:agent_state, id, state}` and `{:workspace_cwd, ws_id, cwd}`, which are never accepted from clients) into new app state and a list of effects. Effects are the only
+  `{:agent_state, id, state}` and `{:workspace_cwd, ws_id, cwd, label}`, which are never accepted from clients) into new app state and a list of effects. Effects are the only
   side-effect channel; this module does no I/O and sends no messages.
 
   Effects: `{:spawn, id, %{cols, rows}}`, `{:close, id}`, `{:key, id, event}`,
@@ -129,7 +129,8 @@ defmodule HerdrServer.App.Actions do
   end
 
   # server-internal (`WorkspaceFacts`): the root pane's cwd, and an automatic name
-  def apply(app, {:workspace_cwd, ws_id, cwd}), do: Workspaces.workspace_cwd(app, ws_id, cwd)
+  def apply(app, {:workspace_cwd, ws_id, cwd, label}),
+    do: Workspaces.workspace_cwd(app, ws_id, cwd, label)
 
   # server-internal (M11 detection): stores the state, alerts on herdr's transitions
   def apply(app, {:agent_state, id, state}) do

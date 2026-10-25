@@ -132,8 +132,7 @@ defmodule HerdrServer.App.WorkspacesTest do
     assert {^app, []} = Actions.rename_pane(app, 99, "x")
   end
 
-  # no .git on the way up, so the label is the basename
-  @cwd "/nonexistent-herdr-test/proj"
+  @cwd "/somewhere/proj"
 
   test "workspace_cwd stores the cwd and renames only auto-named workspaces" do
     {app, _} = Actions.new_workspace(fresh())
@@ -142,21 +141,21 @@ defmodule HerdrServer.App.WorkspacesTest do
 
     app =
       Enum.reduce([1, 2, 3], app, fn id, app ->
-        elem(Actions.apply(app, {:workspace_cwd, id, @cwd}), 0)
+        elem(Actions.apply(app, {:workspace_cwd, id, @cwd, "proj"}), 0)
       end)
 
     assert names(app) == ["proj", "proj", "named"]
     assert Enum.all?(app.session.workspaces, &(&1.cwd == @cwd))
-    # nil (no label) keeps the name; an unknown workspace is a no-op
-    {app, []} = Actions.apply(app, {:workspace_cwd, 1, "/"})
-    assert hd(names(app)) == "proj"
-    assert {^app, []} = Actions.apply(app, {:workspace_cwd, 99, @cwd})
+    # a nil label keeps the name; an unknown workspace is a no-op
+    {app, []} = Actions.apply(app, {:workspace_cwd, 1, "/", nil})
+    assert hd(names(app)) == "proj" and hd(app.session.workspaces).cwd == "/"
+    assert {^app, []} = Actions.apply(app, {:workspace_cwd, 99, @cwd, "proj"})
   end
 
   test "a user rename clears auto_name" do
     {app, []} = Actions.rename_workspace(fresh(), 1, "mine")
     assert [%{name: "mine", auto_name: false}] = app.session.workspaces
-    {app, []} = Actions.apply(app, {:workspace_cwd, 1, @cwd})
+    {app, []} = Actions.apply(app, {:workspace_cwd, 1, @cwd, "proj"})
     assert names(app) == ["mine"]
   end
 end
