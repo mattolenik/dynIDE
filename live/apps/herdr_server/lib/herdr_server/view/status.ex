@@ -16,8 +16,9 @@ defmodule HerdrServer.View.Status do
 
   @spec node(map, HerdrServer.Client.State.t(), HerdrScene.Scene.rect()) :: Node.t()
   def node(app, client, rect) do
-    left = [mode(client.mode, client.copy) | hints(client.mode, app.ui)]
+    mode = mode(client.mode, client.copy)
     hint = hint(client.mode, app.ui)
+    left = [mode | fit(hints(client.mode, app.ui), rect.w - width([mode, hint]))]
     free = rect.w - width(left) - width([hint])
     runtime = RuntimeStatus.nodes(client.runtime, free)
     left = left ++ runtime
@@ -62,11 +63,25 @@ defmodule HerdrServer.View.Status do
 
   defp hints(_mode, _ui), do: []
 
-  # a keycap, then its label unless nil (keys sharing one label)
+  # whole hints (a keycap with its label) in order while they fit `budget` cells, counted
+  # as the client draws them (`width/1`: text plus one gap each); the client only clips
+  # by cell, so this keeps a hint from being cut mid-label
+  defp fit(groups, budget) do
+    groups
+    |> Enum.reduce_while({[], budget}, fn g, {acc, left} ->
+      w = width(g)
+      if w <= left, do: {:cont, {[g | acc], left - w}}, else: {:halt, {acc, 0}}
+    end)
+    |> elem(0)
+    |> Enum.reverse()
+    |> List.flatten()
+  end
+
+  # one group per hint: a keycap, then its label unless nil (keys sharing one label)
   defp pairs(hints) do
     hints
     |> Enum.with_index()
-    |> Enum.flat_map(fn {{{key, mods}, label}, i} ->
+    |> Enum.map(fn {{{key, mods}, label}, i} ->
       cap = %Node{
         role: :keycap,
         id: {:key, i},

@@ -94,6 +94,16 @@ defmodule HerdrServer.ViewTest do
     assert child(s, :hint).text == ""
   end
 
+  test "prefix hints are cut at a whole hint to fit left of the hint key" do
+    app = fresh(40, 24)
+    kids = fn w -> status(View.compute(app, client(w, 24, :ref, :prefix))).children end
+    texts = fn w -> for %{id: {_, _}, text: t} <- kids.(w), do: t end
+
+    assert texts.(40) == ["esc", "cancel"]
+    assert Status.width(kids.(40)) - 1 <= 40
+    assert length(texts.(200)) == 6
+  end
+
   test "prefix and resize modes show mode-bar hints after the mode" do
     app = fresh(80, 24)
 
