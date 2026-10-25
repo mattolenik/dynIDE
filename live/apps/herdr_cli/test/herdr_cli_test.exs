@@ -57,6 +57,7 @@ defmodule HerdrCliTest do
              JSON.decode!(err)
 
     assert m =~ path
+    assert m =~ "`herdr-live attach`"
   end
 
   test "a usage error exits 2 without touching the socket" do

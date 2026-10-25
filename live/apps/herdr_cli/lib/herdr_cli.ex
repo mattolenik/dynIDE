@@ -122,7 +122,7 @@ defmodule HerdrCli do
       "error" => %{
         "code" => "server_not_running",
         "message" =>
-          "no herdr-live server is running at #{path}; run `herdr-live` to start or attach it"
+          "no herdr-live server is running at #{path}; run `herdr-live` to start it, or `herdr-live attach` to join a running one"
       }
     }
 

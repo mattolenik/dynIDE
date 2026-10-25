@@ -1,7 +1,8 @@
 # Quick start
 
 ```sh
-herdr-live              # start (or attach to) the instance in this terminal
+herdr-live              # start the instance in this terminal
+herdr-live attach       # join it from another terminal
 ```
 
 The prefix key is `ctrl+b`. Defaults (see the in-app keybind help for the full list):

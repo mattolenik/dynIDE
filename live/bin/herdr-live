@@ -18,7 +18,9 @@
 # The VMs never touch stdio: stdin is /dev/null and stdout/stderr (broker log
 # lines, first-compile output) go to the log.
 # HERDR_LIVE_HEADLESS=1 (inherited by the VMs) starts no terminal client.
-# HERDR_LIVE_RUNTIME_DIR picks the broker socket dir (read by the broker).
+# HERDR_LIVE_RUNTIME_DIR picks the broker socket dir (read by the broker). A start when a
+# broker already answers there prints one line on stderr and exits 2 (`herdr-live attach`
+# joins the running instance).
 # kernel-restart and status talk to the running broker on this terminal.
 # Session persistence (M8): the VM saves the layout, focus, ui prefs, pane cwds and
 # scrollback to <state dir>/session.<name>.etf and restores them at the next start.
@@ -90,9 +92,9 @@ fi
 pinned() { # the release a VM boots: $root with `current` resolved one level (R4)
   if [ -L "$root" ]; then
     t=$(readlink "$root") || return 1
-    case $t in /*) echo "$t" ;; *) echo "$(dirname "$root")/$t" ;; esac
+    case $t in /*) printf '%s\n' "$t" ;; *) printf '%s\n' "$(dirname "$root")/$t" ;; esac
   else
-    echo "$root"
+    printf '%s\n' "$root"
   fi
 }
 cli() { # runs in the caller's cwd, so a relative HERDR_LIVE_API keeps its meaning
@@ -235,6 +237,11 @@ esac
 export HERDR_LIVE_BIN="$bin" HERDR_LIVE_API="$sock"
 # herdr's names for the same two, so herdr plugins and scripts find this instance
 export HERDR_SOCKET_PATH="$sock" HERDR_BIN_PATH="$bin"
+# a second start on this runtime dir: the broker would refuse it into the log, unseen
+if [ -x "$broker" ] && "$broker" status >/dev/null 2>&1; then
+  echo "herdr-live is already running; use \`herdr-live attach\`" >&2
+  exit 2
+fi
 exec </dev/null >>"$log" 2>&1
 [ -n "$rel" ] || build || exit 1
 # the VM argv. +Bi (the release's vm.args has it too): the VMs share the broker's

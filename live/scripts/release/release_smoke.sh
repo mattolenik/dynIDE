@@ -5,7 +5,8 @@
 # <prefix>/bin/herdr-live -> ../lib/herdr-live/current/bin/herdr-live) and runs every
 # command through that symlink in a clean env (env -i: temp HOME, XDG dirs, runtime dir,
 # PATH=/usr/bin:/bin with no erl, elixir or mix), started from cwd /. Checks: --version;
-# a headless start answers ping within 20 s with the version; one pane, whose shell
+# a headless start answers ping within 20 s with the version; a second start prints
+# "already running" on stderr and exits 2; one pane, whose shell
 # starts in $HOME and inherits no RELEASE_* env; the broker's VM argv is pinned to
 # releases/<V> (`current` resolved); kernel-restart keeps the pane id; 20 pings p50 < 300 ms (printed with the
 # load average); attach reaches the client socket; SIGTERM stops the broker with status
@@ -82,6 +83,15 @@ done
 grep -q "\"version\":\"$v\"" "$tmp/ping" || fail "ping: $(cat "$tmp/ping") (wanted version $v)"
 echo "PASS: ping answers within 20 s with version $v"
 [ ! -s "$tmp/start.out" ] || fail "launcher wrote to its stdout/stderr: $(cat "$tmp/start.out")"
+
+# a second start on the same runtime dir says so on stderr and exits 2 (not silently into the log)
+"$x" "$bin" </dev/null >"$tmp/second.out" 2>"$tmp/second.err"
+rc=$?
+# shellcheck disable=SC2016 # literal backticks in the expected message
+want='herdr-live is already running; use `herdr-live attach`'
+[ "$rc" = 2 ] && [ "$(cat "$tmp/second.err")" = "$want" ] && [ ! -s "$tmp/second.out" ] ||
+  fail "second start: exit $rc, stderr $(cat "$tmp/second.err") (wanted exit 2, $want)"
+echo "PASS: a second start says it is already running (stderr, exit 2)"
 
 ps -o command= -p "$pid" | grep -qF "$prefix/lib/herdr-live/releases/$v/bin/herdr_live start" ||
   fail "broker argv is not pinned to releases/$v: $(ps -o command= -p "$pid")"

@@ -31,7 +31,8 @@ Put `<P>/bin` on `PATH`. The prefix may contain spaces.
 
 ```sh
 herdr-live --version   # herdr-live 0.1.0
-herdr-live             # start, or attach to the running instance
+herdr-live             # start an instance in this terminal
+herdr-live attach      # join the running instance (a second `herdr-live` refuses, exit 2)
 ```
 
 The release is a production build: hot reload is off, and there is no Erlang
