@@ -15,6 +15,10 @@ defmodule HerdrCli.OutputTest do
              {0, ~s({"a":"é","b":[{"a":null,"z":1}],"type":"x"}\n)}
   end
 
+  test "path prints the path plus a newline" do
+    assert Output.render(:path, ok(%{"type" => "plugin_dir", "path" => "/c/p"})) == {0, "/c/p\n"}
+  end
+
   test "text prints the text plus a newline" do
     assert Output.render(:text, ok(%{"type" => "pane_read", "text" => "a\nb"})) == {0, "a\nb\n"}
   end

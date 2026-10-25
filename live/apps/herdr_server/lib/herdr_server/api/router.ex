@@ -31,7 +31,7 @@ defmodule HerdrServer.Api.Router do
 
   def handle(method, params, _ctx)
       when method in ~w(pane.list pane.get pane.current pane.split pane.close pane.focus
-                        pane.layout pane.process_info),
+                        pane.layout pane.process_info pane.rename),
       do: Handlers.Topology.handle(method, params)
 
   def handle("pane.wait_for_output", params, ctx),
@@ -44,6 +44,11 @@ defmodule HerdrServer.Api.Router do
   def handle("events.subscribe", params, ctx), do: Events.request(params, ctx.conn)
 
   def handle("agent." <> _ = method, params, _ctx), do: Handlers.Agents.handle(method, params)
+
+  def handle("plugin." <> _ = method, params, _ctx), do: Handlers.Plugins.handle(method, params)
+
+  def handle("pane.link.activate", params, _ctx),
+    do: Handlers.Plugins.handle("pane.link.activate", params)
 
   def handle(method, _params, _ctx), do: {:error, :not_available, "#{method} is not served yet"}
 end

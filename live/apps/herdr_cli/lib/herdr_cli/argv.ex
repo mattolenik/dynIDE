@@ -7,14 +7,17 @@ defmodule HerdrCli.Argv do
   integration conformance test). Ids are passed through as given (the server
   validates them); enums are checked here so a typo is a usage error (exit 2).
 
-  Positional kinds: `{:req, name}`; `{:pane, name, :required | :optional}` (when
+  Positional kinds: `{:req, name}`; `{:opt, name}` (a string, may be omitted); `{:pane, name, :required | :optional}` (when
   omitted, `HERDR_PANE_ID` from env, else usage / left out); `{:keys, name}` (one or
   more); `{:opt_int, name}`; `{:opt_enum, name, values}`. Option kinds: `:string`,
-  `:int`, `:number`, `:flag`, `{:enum, values}`, `{:many, values}` (repeatable).
+  `:int`, `:number`, `:flag`, `{:const, value}` (a flag that sets `value`), `{:enum, values}`,
+  `{:many, values}` (repeatable), `{:kv_many}` (repeatable `KEY=VALUE`, collected into a map).
+  An atom key is consumed by `finish/3` (`:json` is accepted and dropped). A row with
+  `alias: true` is another spelling of a command and has no Spec `cli` string of its own.
   `--opt value` and `--opt=value` are both accepted; `--` ends options.
   """
 
-  @type out :: :json | :text | :lines | :rollback | :gate
+  @type out :: :json | :text | :path | :lines | :rollback | :gate
   @type result ::
           {:call, String.t(), map(), out()}
           | {:subscribe, map()}
@@ -37,7 +40,7 @@ defmodule HerdrCli.Argv do
   @doc "Every command row; `usage` is the CLI form without the `herdr-live ` prefix."
   @spec commands() :: [map()]
   def commands do
-    server() ++ workspace() ++ tab() ++ pane() ++ agent() ++ events()
+    server() ++ workspace() ++ tab() ++ pane() ++ agent() ++ events() ++ plugin()
   end
 
   defp server do
@@ -148,7 +151,14 @@ defmodule HerdrCli.Argv do
     split = %{
       "direction" => {"direction", {:enum, ["right", "down"]}},
       "ratio" => {"ratio", :number},
-      "focus" => {"focus", :flag}
+      "focus" => {"focus", :flag},
+      "no-focus" => {"focus", {:const, false}}
+    }
+
+    link = %{
+      "col" => {"col", :int},
+      "row" => {"viewport_row", :int},
+      "modifier" => {"modifiers", {:many, ~w(shift alt ctrl)}}
     }
 
     wait =
@@ -175,7 +185,23 @@ defmodule HerdrCli.Argv do
         [opt_id],
         split,
         :json,
-        "pane split [<pane_id>] --direction right|down [--ratio R] [--focus]"
+        "pane split [<pane_id>] --direction right|down [--ratio R] [--focus|--no-focus]"
+      ),
+      cmd(
+        ~w(pane rename),
+        "pane.rename",
+        [id, {:opt, "label"}],
+        %{},
+        :json,
+        "pane rename <pane_id> [<label>]"
+      ),
+      cmd(
+        ~w(pane link activate),
+        "pane.link.activate",
+        [id],
+        link,
+        :json,
+        "pane link activate <pane_id> --col N --row N [--modifier M]..."
       ),
       cmd(~w(pane close), "pane.close", [id], %{}, :json, "pane close <pane_id>"),
       cmd(~w(pane focus), "pane.focus", [id], %{}, :json, "pane focus <pane_id>"),
@@ -292,6 +318,126 @@ defmodule HerdrCli.Argv do
     ]
   end
 
+  defp plugin do
+    pid = {:req, "plugin_id"}
+    filter = %{"plugin" => {"plugin_id", :string}}
+    target = {:req, "target"}
+
+    open = %{
+      "plugin" => {"plugin_id", :string},
+      "entrypoint" => {"entrypoint", :string},
+      "placement" => {"placement", {:enum, ~w(overlay popup split tab zoomed)}},
+      "width" => {"width", :string},
+      "height" => {"height", :string},
+      "workspace" => {"workspace_id", :string},
+      "target-pane" => {"target_pane_id", :string},
+      "direction" => {"direction", {:enum, ["right", "down"]}},
+      "cwd" => {"cwd", :string},
+      "env" => {"env", {:kv_many}},
+      "focus" => {"focus", :flag},
+      "no-focus" => {"focus", {:const, false}}
+    }
+
+    [
+      cmd(
+        ~w(plugin list),
+        "plugin.list",
+        [],
+        Map.put(filter, "json", {:json, :flag}),
+        :json,
+        "plugin list [--plugin ID] [--json]"
+      ),
+      cmd(
+        ~w(plugin install),
+        "plugin.install",
+        [{:req, "source"}],
+        %{"ref" => {"ref", :string}, "yes" => {"yes", :flag}},
+        :json,
+        "plugin install <source> [--ref REF] [--yes]"
+      ),
+      cmd(
+        ~w(plugin link),
+        "plugin.link",
+        [{:req, "path"}],
+        %{"disabled" => {"enabled", {:const, false}}},
+        :json,
+        "plugin link <path> [--disabled]"
+      ),
+      cmd(
+        ~w(plugin uninstall),
+        "plugin.uninstall",
+        [target],
+        %{},
+        :json,
+        "plugin uninstall <target>"
+      ),
+      cmd(~w(plugin remove), "plugin.uninstall", [target], %{}, :json, "plugin remove <target>")
+      |> Map.put(:alias, true),
+      cmd(~w(plugin unlink), "plugin.uninstall", [target], %{}, :json, "plugin unlink <target>")
+      |> Map.put(:alias, true),
+      cmd(~w(plugin enable), "plugin.enable", [pid], %{}, :json, "plugin enable <plugin_id>"),
+      cmd(~w(plugin disable), "plugin.disable", [pid], %{}, :json, "plugin disable <plugin_id>"),
+      cmd(
+        ~w(plugin config-dir),
+        "plugin.config_dir",
+        [pid],
+        %{},
+        :path,
+        "plugin config-dir <plugin_id>"
+      ),
+      cmd(
+        ~w(plugin action list),
+        "plugin.action.list",
+        [],
+        filter,
+        :json,
+        "plugin action list [--plugin ID]"
+      ),
+      cmd(
+        ~w(plugin action invoke),
+        "plugin.action.invoke",
+        [{:req, "action_id"}],
+        filter,
+        :json,
+        "plugin action invoke <action_id> [--plugin ID]"
+      ),
+      cmd(
+        ~w(plugin log list),
+        "plugin.log.list",
+        [],
+        Map.put(filter, "limit", {"limit", :int}),
+        :json,
+        "plugin log list [--plugin ID] [--limit N]"
+      ),
+      cmd(
+        ~w(plugin pane open),
+        "plugin.pane.open",
+        [],
+        open,
+        :json,
+        "plugin pane open --plugin ID --entrypoint ID [--placement P] [--width S] " <>
+          "[--height S] [--workspace ID] [--target-pane PANE] [--direction right|down] " <>
+          "[--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus]"
+      ),
+      cmd(
+        ~w(plugin pane focus),
+        "plugin.pane.focus",
+        [{:req, "pane_id"}],
+        %{},
+        :json,
+        "plugin pane focus <pane_id>"
+      ),
+      cmd(
+        ~w(plugin pane close),
+        "plugin.pane.close",
+        [{:req, "pane_id"}],
+        %{},
+        :json,
+        "plugin pane close <pane_id>"
+      )
+    ]
+  end
+
   @doc "The event types `events subscribe` accepts."
   @spec event_types() :: [String.t()]
   def event_types, do: @event_types
@@ -374,7 +520,7 @@ defmodule HerdrCli.Argv do
     {:call, c.method, params, if(kv, do: :lines, else: :json)}
   end
 
-  defp finish(c, params, _env), do: {:call, c.method, params, c.out}
+  defp finish(c, params, _env), do: {:call, c.method, Map.delete(params, :json), c.out}
 
   # --- options ---------------------------------------------------------------
 
@@ -403,7 +549,10 @@ defmodule HerdrCli.Argv do
   defp split_opts([arg | rest], spec, pos, acc), do: split_opts(rest, spec, [arg | pos], acc)
 
   defp take_value(_name, :flag, :none, rest), do: {:ok, true, rest}
+  defp take_value(_name, {:const, v}, :none, rest), do: {:ok, v, rest}
+
   defp take_value(name, :flag, {:inline, _}, _), do: {:error, "--#{name} takes no value"}
+  defp take_value(name, {:const, _}, {:inline, _}, _), do: {:error, "--#{name} takes no value"}
   defp take_value(_name, _kind, {:inline, v}, rest), do: {:ok, v, rest}
 
   defp take_value(name, _kind, :none, [v | rest]) do
@@ -415,9 +564,22 @@ defmodule HerdrCli.Argv do
   defp take_value(name, _kind, :none, []), do: {:error, "--#{name} needs a value"}
 
   defp put_opt(acc, key, {:many, _}, v), do: Map.update(acc, key, [v], &(&1 ++ [v]))
+
+  defp put_opt(acc, key, {:kv_many}, {k, v}),
+    do: Map.update(acc, key, %{k => v}, &Map.put(&1, k, v))
+
   defp put_opt(acc, key, _kind, v), do: Map.put(acc, key, v)
 
   defp convert(_name, :flag, v), do: {:ok, v}
+  defp convert(_name, {:const, _}, v), do: {:ok, v}
+
+  defp convert(name, {:kv_many}, v) do
+    case String.split(v, "=", parts: 2) do
+      [k, val] when k != "" -> {:ok, {k, val}}
+      _ -> {:error, "--#{name} must be KEY=VALUE, got #{inspect(v)}"}
+    end
+  end
+
   defp convert(_name, :string, v), do: {:ok, v}
   defp convert(name, :int, v), do: int(v, "--#{name}")
   defp convert(name, {:enum, values}, v), do: enum(v, values, "--#{name}")
@@ -468,6 +630,11 @@ defmodule HerdrCli.Argv do
 
   defp positionals([{:keys, name}], [_ | _] = vs, _env, acc), do: {:ok, Map.put(acc, name, vs)}
   defp positionals([{:keys, name}], [], _env, _acc), do: {:error, "missing <#{name}>"}
+
+  defp positionals([{:opt, _} | spec], [], env, acc), do: positionals(spec, [], env, acc)
+
+  defp positionals([{:opt, name} | spec], [v | rest], env, acc),
+    do: positionals(spec, rest, env, Map.put(acc, name, v))
 
   defp positionals([{:opt_int, _} | spec], [], env, acc), do: positionals(spec, [], env, acc)
 

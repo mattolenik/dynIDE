@@ -8,7 +8,7 @@ defmodule HerdrServer.Api.SpecTest do
     methods = Spec.methods()
     names = Enum.map(methods, & &1.name)
     assert names == Enum.uniq(names)
-    assert length(names) == 38
+    assert length(names) == 53
 
     for m <- methods do
       assert Enum.all?(m.errors, &(&1 in Spec.error_codes())), m.name
@@ -121,5 +121,104 @@ defmodule HerdrServer.Api.SpecTest do
   test "api.md is generated from the spec" do
     assert File.read!(Doc.path()) == Doc.markdown(),
            "docs/herdr-live/api.md is stale: run `mix herdr.api.docs` from live/"
+  end
+
+  test "m14 methods and their params" do
+    params = fn name ->
+      {:ok, m} = Spec.fetch(name)
+      Map.new(m.params, &{&1.name, {&1.type, &1.required}})
+    end
+
+    assert params.("pane.rename") == %{
+             "pane_id" => {:pane_id, true},
+             "label" => {:string, false}
+           }
+
+    assert %{
+             "pane_id" => {:pane_id, true},
+             "col" => {{:integer, 0, _}, true},
+             "viewport_row" => {{:integer, 0, _}, true},
+             "modifiers" => {{:list, {:enum, ~w(shift alt ctrl)}}, false}
+           } = params.("pane.link.activate")
+
+    assert params.("plugin.list") == %{"plugin_id" => {:string, false}}
+
+    assert params.("plugin.install") == %{
+             "source" => {:string, true},
+             "ref" => {:string, false},
+             "yes" => {:boolean, false}
+           }
+
+    assert params.("plugin.link") == %{"path" => {:string, true}, "enabled" => {:boolean, false}}
+    assert params.("plugin.uninstall") == %{"target" => {:string, true}}
+
+    for m <- ~w(plugin.enable plugin.disable plugin.config_dir),
+        do: assert(params.(m) == %{"plugin_id" => {:string, true}}, m)
+
+    assert params.("plugin.action.list") == %{"plugin_id" => {:string, false}}
+
+    assert params.("plugin.action.invoke") == %{
+             "action_id" => {:string, true},
+             "plugin_id" => {:string, false},
+             "context" => {:object, false}
+           }
+
+    assert params.("plugin.log.list") == %{
+             "plugin_id" => {:string, false},
+             "limit" => {{:integer, 1, 200}, false}
+           }
+
+    assert params.("plugin.pane.open") == %{
+             "plugin_id" => {:string, true},
+             "entrypoint" => {:string, true},
+             "placement" => {{:enum, ~w(overlay popup split tab zoomed)}, false},
+             "width" => {:string, false},
+             "height" => {:string, false},
+             "workspace_id" => {:workspace_id, false},
+             "target_pane_id" => {:pane_id, false},
+             "direction" => {{:enum, ~w(right down)}, false},
+             "cwd" => {:string, false},
+             "env" => {{:map, :string}, false},
+             "focus" => {:boolean, false}
+           }
+
+    for m <- ~w(plugin.pane.focus plugin.pane.close),
+        do: assert(params.(m) == %{"pane_id" => {:pane_id, true}}, m)
+
+    assert {:ok, %{context: %{"a" => [1]}}} =
+             Spec.validate_params("plugin.action.invoke", %{
+               "action_id" => "x",
+               "context" => %{"a" => [1]}
+             })
+
+    assert {:error, _} =
+             Spec.validate_params("plugin.action.invoke", %{"action_id" => "x", "context" => 1})
+
+    plugin = Map.new(Spec.objects()["plugin"], &{&1.name, &1.type})
+
+    assert plugin == %{
+             "plugin_id" => :string,
+             "name" => :string,
+             "version" => :string,
+             "min_herdr_version" => :string,
+             "description" => :null_or_string,
+             "plugin_root" => :string,
+             "manifest_path" => :string,
+             "enabled" => :boolean,
+             "source" => :object,
+             "warnings" => {:list, :string},
+             "error" => :null_or_string,
+             "actions" => {:list, :object},
+             "panes" => {:list, :object},
+             "link_handlers" => {:list, :object},
+             "events" => {:list, :object},
+             "startup" => {:list, :object}
+           }
+
+    assert Spec.validate_result("pane.link.activate", %{
+             "type" => "pane_link_activated",
+             "url" => nil,
+             "handled" => false
+           }) == :ok
   end
 end

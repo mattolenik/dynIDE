@@ -7,7 +7,8 @@ defmodule HerdrServer.Api.Spec do
 
   Param types: `:string | :boolean | {:integer, min, max} | {:number, min, max} |
   {:enum, [String.t()]} | :pane_id | :tab_id | :workspace_id | {:list, type} |
-  {:map, :string} | {:object, [param]}`. A list param may carry `min_items: n`.
+  {:map, :string} | :object | {:object, [param]}` (`:object` is any JSON object). A list
+  param may carry `min_items: n`.
   Result field types add `:integer`, `:object` (opaque JSON object),
   `:null_or_string`, `{:ref, object_name}`.
   """
@@ -66,7 +67,9 @@ defmodule HerdrServer.Api.Spec do
 
   @spec methods() :: [map()]
   def methods do
-    server() ++ reload() ++ workspace() ++ tab() ++ pane() ++ event_methods() ++ agents()
+    server() ++
+      reload() ++
+      workspace() ++ tab() ++ pane() ++ event_methods() ++ agents() ++ plugins()
   end
 
   defp server do
@@ -293,7 +296,31 @@ defmodule HerdrServer.Api.Spec do
         ],
         "pane_split",
         [:not_found, :failed],
-        "herdr-live pane split [<pane_id>] --direction right|down [--ratio R] [--focus]"
+        "herdr-live pane split [<pane_id>] --direction right|down [--ratio R] [--focus|--no-focus]"
+      ),
+      method(
+        "pane.rename",
+        g,
+        "Name a pane; an absent or empty label clears the name.",
+        [pid, opt("label", :string, "New name; absent or empty clears it.")],
+        "pane_info",
+        [:not_found],
+        "herdr-live pane rename <pane_id> [<label>]"
+      ),
+      # answers not_available until M14 task 6, which narrows the errors to not_found, failed
+      method(
+        "pane.link.activate",
+        g,
+        "Activate the link under a cell of a pane's viewport, as a click would.",
+        [
+          pid,
+          req("col", {:integer, 0, 65_535}, "Viewport column."),
+          req("viewport_row", {:integer, 0, 65_535}, "Viewport row."),
+          opt("modifiers", {:list, {:enum, ~w(shift alt ctrl)}}, "Modifiers held.")
+        ],
+        "pane_link_activated",
+        [:not_available],
+        "herdr-live pane link activate <pane_id> --col N --row N [--modifier M]..."
       ),
       method(
         "pane.close",
@@ -470,6 +497,141 @@ defmodule HerdrServer.Api.Spec do
     ]
   end
 
+  # M14 publishes every plugin method now; until its task lands each answers
+  # not_available, and that task narrows the error list
+  defp plugin(name, summary, params, result, cli),
+    do: method("plugin." <> name, "plugin", summary, params, result, [:not_available], cli)
+
+  defp plugins do
+    filter = opt("plugin_id", :string, "Only this plugin.")
+    plugin_id = req("plugin_id", :string, "Target plugin.")
+    pid = req("pane_id", :pane_id, "Target plugin pane.")
+
+    [
+      plugin(
+        "list",
+        "List installed and linked plugins.",
+        [filter],
+        "plugin_list",
+        "herdr-live plugin list [--plugin ID] [--json]"
+      ),
+      plugin(
+        "install",
+        "Install a plugin from GitHub; without `yes` answers a preview to confirm.",
+        [
+          req("source", :string, "`owner/repo[/subdir]` or a GitHub URL."),
+          opt("ref", :string, "Git ref to check out."),
+          opt("yes", :boolean, "Confirm the install.")
+        ],
+        "plugin_info",
+        "herdr-live plugin install <source> [--ref REF] [--yes]"
+      )
+      |> Map.put(
+        :notes,
+        "Once served (M14 task 3): without `yes` the answer is `failed` with `data.reason` `confirmation_required` " <>
+          "and `data.preview` describing what would be installed."
+      ),
+      plugin(
+        "link",
+        "Link a local plugin directory.",
+        [
+          req("path", :string, "Plugin directory."),
+          opt("enabled", :boolean, "Enable it; default true.")
+        ],
+        "plugin_info",
+        "herdr-live plugin link <path> [--disabled]"
+      ),
+      plugin(
+        "uninstall",
+        "Remove a plugin by id or by `owner/repo[/subdir]`.",
+        [req("target", :string, "Plugin id or `owner/repo[/subdir]`.")],
+        "plugin_removed",
+        "herdr-live plugin uninstall <target>"
+      ),
+      plugin(
+        "enable",
+        "Enable a plugin.",
+        [plugin_id],
+        "plugin_info",
+        "herdr-live plugin enable <plugin_id>"
+      ),
+      plugin(
+        "disable",
+        "Disable a plugin.",
+        [plugin_id],
+        "plugin_info",
+        "herdr-live plugin disable <plugin_id>"
+      ),
+      plugin(
+        "config_dir",
+        "The plugin's config directory.",
+        [plugin_id],
+        "plugin_dir",
+        "herdr-live plugin config-dir <plugin_id>"
+      ),
+      plugin(
+        "action.list",
+        "List plugin actions.",
+        [filter],
+        "plugin_action_list",
+        "herdr-live plugin action list [--plugin ID]"
+      ),
+      plugin(
+        "action.invoke",
+        "Run a plugin action.",
+        [
+          req("action_id", :string, "Action id."),
+          opt("plugin_id", :string, "Plugin owning the action, when the id is ambiguous."),
+          opt("context", :object, "Extra context passed to the command.")
+        ],
+        "plugin_action_invoked",
+        "herdr-live plugin action invoke <action_id> [--plugin ID]"
+      ),
+      plugin(
+        "log.list",
+        "Recent plugin command records.",
+        [filter, opt("limit", {:integer, 1, 200}, "Maximum number of records.")],
+        "plugin_log_list",
+        "herdr-live plugin log list [--plugin ID] [--limit N]"
+      ),
+      plugin(
+        "pane.open",
+        "Open a plugin pane entrypoint.",
+        [
+          req("plugin_id", :string, "Plugin."),
+          req("entrypoint", :string, "Pane entrypoint id."),
+          opt("placement", {:enum, ~w(overlay popup split tab zoomed)}, "Where it opens."),
+          opt("width", :string, "Width, cells or percent."),
+          opt("height", :string, "Height, cells or percent."),
+          opt("workspace_id", :workspace_id, "Workspace; default the focused one."),
+          opt("target_pane_id", :pane_id, "Pane to split; default the focused pane."),
+          opt("direction", {:enum, ["right", "down"]}, "Split direction."),
+          opt("cwd", :string, "Working directory."),
+          opt("env", {:map, :string}, "Extra environment; herdr's own variables win."),
+          focus("Focus the new pane; default true.")
+        ],
+        "pane_info",
+        "herdr-live plugin pane open --plugin ID --entrypoint ID [--placement P] [--width S] " <>
+          "[--height S] [--workspace ID] [--target-pane PANE] [--direction right|down] " <>
+          "[--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus]"
+      ),
+      plugin(
+        "pane.focus",
+        "Focus a plugin pane.",
+        [pid],
+        "ok",
+        "herdr-live plugin pane focus <pane_id>"
+      ),
+      plugin(
+        "pane.close",
+        "Close a plugin pane.",
+        [pid],
+        "ok",
+        "herdr-live plugin pane close <pane_id>"
+      )
+    ]
+  end
+
   @spec fetch(String.t()) :: {:ok, map()} | :error
   def fetch(name) do
     case Enum.find(methods(), &(&1.name == name)) do
@@ -508,6 +670,24 @@ defmodule HerdrServer.Api.Spec do
         f("focused", :boolean),
         f("cols", :integer),
         f("rows", :integer)
+      ],
+      "plugin" => [
+        f("plugin_id", :string),
+        f("name", :string),
+        f("version", :string),
+        f("min_herdr_version", :string),
+        f("description", :null_or_string),
+        f("plugin_root", :string),
+        f("manifest_path", :string),
+        f("enabled", :boolean),
+        f("source", :object),
+        f("warnings", {:list, :string}),
+        f("error", :null_or_string),
+        f("actions", {:list, :object}),
+        f("panes", {:list, :object}),
+        f("link_handlers", {:list, :object}),
+        f("events", {:list, :object}),
+        f("startup", {:list, :object})
       ],
       "layout" => [
         f("tab_id", :tab_id),
@@ -625,7 +805,19 @@ defmodule HerdrServer.Api.Spec do
       "agent_info" => [f("agent", :object)],
       "agent_read" => [f("target", :string), f("text", :string)],
       "agent_explain" => [f("agent", :object), f("explanation", :string)],
-      "agent_wait" => [f("agent", :object)]
+      "agent_wait" => [f("agent", :object)],
+      "pane_link_activated" => [f("url", :null_or_string), f("handled", :boolean)],
+      "plugin_list" => [f("plugins", {:list, {:ref, "plugin"}})],
+      "plugin_info" => [f("plugin", {:ref, "plugin"})],
+      "plugin_removed" => [f("plugin_id", :string)],
+      "plugin_dir" => [f("path", :string)],
+      "plugin_action_list" => [f("actions", {:list, :object})],
+      "plugin_action_invoked" => [
+        f("action", :object),
+        f("context", :object),
+        f("log", :object)
+      ],
+      "plugin_log_list" => [f("logs", {:list, :object})]
     }
   end
 
@@ -739,6 +931,8 @@ defmodule HerdrServer.Api.Spec do
 
   defp check({:map, :string}, _, full, _), do: bad(full, "an object of strings")
   defp check({:object, params}, v, full, _), do: check_object(params, v, full)
+  defp check(:object, v, _, _) when is_map(v), do: {:ok, v}
+  defp check(:object, _, full, _), do: bad(full, "an object")
 
   defp id({:ok, v}, _, _), do: {:ok, v}
   defp id(:error, full, what), do: bad(full, what)

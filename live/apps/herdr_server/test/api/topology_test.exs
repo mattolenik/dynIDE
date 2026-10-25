@@ -138,6 +138,21 @@ defmodule HerdrServer.Api.TopologyTest do
     assert length(ok!(s, "pane.list")["panes"]) == 2
   end
 
+  test "pane.rename sets and clears the pane's name", %{s: s} do
+    ok!(s, "workspace.list")
+    name = fn -> Map.get(Store.snapshot().session.panes[1], :name) end
+
+    assert ok!(s, "pane.rename", %{"pane_id" => "p1", "label" => "logs"})["pane"]["pane_id"] ==
+             "p1"
+
+    assert name.() == "logs"
+    ok!(s, "pane.rename", %{"pane_id" => "p1", "label" => ""})
+    assert name.() == nil
+    ok!(s, "pane.rename", %{"pane_id" => "p1", "label" => "again"})
+    ok!(s, "pane.rename", %{"pane_id" => "p1"})
+    assert name.() == nil
+  end
+
   test "pane.split of a pane closed meanwhile is not_found", %{s: s} do
     ok!(s, "workspace.list")
     ok!(s, "pane.split", %{"direction" => "right"})
@@ -217,7 +232,8 @@ defmodule HerdrServer.Api.TopologyTest do
           {"pane.close", p},
           {"pane.focus", p},
           {"pane.layout", p},
-          {"pane.process_info", p}
+          {"pane.process_info", p},
+          {"pane.rename", Map.put(p, "label", "x")}
         ] do
       assert {"not_found", _} = err(s, m, params), m
     end

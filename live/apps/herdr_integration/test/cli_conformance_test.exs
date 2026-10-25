@@ -55,7 +55,27 @@ defmodule HerdrIntegration.CliConformanceTest do
     "agent wait p1 --until idle --until done --timeout 100",
     "agent prompt p1 hello",
     "agent send-keys p1 Enter",
-    "events subscribe pane.created layout.updated --pane p1 --tab w1:t1 --workspace w1"
+    "events subscribe pane.created layout.updated --pane p1 --tab w1:t1 --workspace w1",
+    "pane split p1 --direction right --no-focus",
+    "pane rename p1 logs",
+    "pane rename p1",
+    "pane link activate p1 --col 0 --row 2 --modifier ctrl",
+    "plugin list --plugin a --json",
+    "plugin install o/r --ref main --yes",
+    "plugin link ./x --disabled",
+    "plugin uninstall a",
+    "plugin remove a",
+    "plugin unlink o/r/sub",
+    "plugin enable a",
+    "plugin disable a",
+    "plugin config-dir a",
+    "plugin action list --plugin a",
+    "plugin action invoke hello --plugin a",
+    "plugin log list --plugin a --limit 10",
+    "plugin pane open --plugin a --entrypoint b --placement split --width 40% --height 10 " <>
+      "--workspace w1 --target-pane p1 --direction down --cwd /tmp --env A=1 --env B=2 --no-focus",
+    "plugin pane focus p1",
+    "plugin pane close p1"
   ]
 
   defp parsed do
@@ -89,7 +109,12 @@ defmodule HerdrIntegration.CliConformanceTest do
   end
 
   test "every Spec cli string is the parser's usage line for that method" do
-    usages = Map.new(Argv.commands(), &{&1.method, "herdr-live " <> &1.usage})
+    # an alias row (`plugin remove`) is another spelling, not the Spec's cli string
+    usages =
+      for c <- Argv.commands(),
+          not Map.get(c, :alias, false),
+          into: %{},
+          do: {c.method, "herdr-live " <> c.usage}
 
     for m <- Spec.methods() do
       assert usages[m.name] == m.cli, "#{m.name}: spec #{inspect(m.cli)}"

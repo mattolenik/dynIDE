@@ -69,6 +69,7 @@ defmodule HerdrServer.Api.ConformanceTest do
   defp default(:tab_id), do: "w1:t1"
   defp default(:pane_id), do: "p1"
   defp default(:string), do: "x"
+  defp default({:integer, min, _}), do: min
   defp default({:enum, [v | _]}), do: v
   defp default({:list, :string}), do: ["a"]
   defp default({:list, {:object, _}}), do: [%{"type" => "pane.created"}]
@@ -94,6 +95,12 @@ defmodule HerdrServer.Api.ConformanceTest do
   end
 
   defp produce("agent." <> _ = method, :not_available, ctx), do: call(listen(ctx), method)
+
+  # published ahead of their M14 tasks
+  defp produce("plugin." <> _ = method, :not_available, ctx), do: call(listen(ctx), method)
+
+  defp produce("pane.link.activate", :not_available, ctx),
+    do: call(listen(ctx), "pane.link.activate")
 
   defp produce("events.subscribe", :not_found, ctx) do
     subs = [%{"type" => "pane.created", "pane_id" => "p99"}]

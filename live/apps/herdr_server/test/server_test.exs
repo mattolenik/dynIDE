@@ -29,6 +29,22 @@ defmodule HerdrServer.ServerTest.Capture do
   def ignores_escape?(_m), do: true
 end
 
+defmodule HerdrServer.ServerTest.SpawnWith do
+  @moduledoc false
+  alias HerdrServer.App.Commands
+
+  # a split whose spawn effect carries `opts` (as plugin panes will)
+  def split(app, opts) do
+    {app, fx} = Commands.split_pane(app, app.focus.pane, :horizontal, 0.5, false)
+
+    {app,
+     Enum.map(fx, fn
+       {:spawn, id, size} -> {:spawn, id, size, opts}
+       e -> e
+     end)}
+  end
+end
+
 defmodule HerdrServer.ServerTest do
   # Fake in-VM clients speak the protocol against the running herdr_server app.
   use ExUnit.Case, async: false
@@ -40,6 +56,8 @@ defmodule HerdrServer.ServerTest do
   alias HerdrServer.Handoff.Notice
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Pane.{Input, Rows}
+  alias HerdrServer.Plugins.{Keybind, Runtime}
+  alias HerdrServer.ServerTest.SpawnWith
 
   import ExUnit.CaptureLog
 
@@ -814,6 +832,50 @@ defmodule HerdrServer.ServerTest do
     {:ok, _, app} = Store.request({HerdrServer.App.Commands, :create_tab, [1, nil, false]})
     id = app.session.next_id - 1
     assert eventually(fn -> {"HERDR_PANE_ID", "p#{id}"} in Fake.Keeper.last_spec().env end)
+  end
+
+  test "spawn opts set cmd, args and env; herdr's pane ids are authoritative" do
+    {c, _s} = client()
+    scene(c)
+    opts = %{cmd: "/bin/echo", args: ["hi"], env: [{"X", "1"}, {"HERDR_PANE_ID", "p9"}]}
+    {:ok, _, app} = Store.request({SpawnWith, :split, [opts]})
+    id = app.session.next_id - 1
+
+    # the Store opens the pane inside the request
+    spec = Fake.Keeper.last_spec()
+
+    assert {spec.cmd, spec.args} == {"/bin/echo", ["hi"]}
+    env = Map.new(spec.env)
+    assert map_size(env) == length(spec.env)
+
+    assert Map.take(env, ~w(X HERDR_ENV HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID)) == %{
+             "X" => "1",
+             "HERDR_ENV" => "1",
+             "HERDR_PANE_ID" => "p#{id}",
+             "HERDR_TAB_ID" => "w1:t1",
+             "HERDR_WORKSPACE_ID" => "w1"
+           }
+  end
+
+  test "a {:plugin, msg} effect without a plugin runtime warns the origin" do
+    {c, _s} = client()
+    scene(c)
+    mfa = Keybind.mfa("demo.hello")
+    assert mfa == {Keybind, :invoke, ["demo.hello"]}
+    {m, f, a} = mfa
+    assert {:ok, _, _} = Store.request({m, f, a})
+    assert_receive {:notice, %{level: :warning, text: "plugins are not running"}}, 500
+  end
+
+  test "a {:plugin, msg} effect reaches a registered plugin runtime with its origin" do
+    {c, _s} = client()
+    scene(c)
+    Process.register(self(), Runtime)
+    me = self()
+    assert {:ok, _, _} = Store.request(Keybind.mfa("demo.hello"))
+
+    assert_receive {{:invoke, "demo.hello", %{source: "keybinding"}}, ^me}, 500
+    Process.unregister(Runtime)
   end
 
   test "a failing Keybinds.intercept_set keeps the Store alive and its fast path" do

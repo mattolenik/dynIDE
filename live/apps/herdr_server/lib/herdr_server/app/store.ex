@@ -55,7 +55,8 @@ defmodule HerdrServer.App.Store do
 
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
-  alias HerdrServer.App.{Actions, Keybinds, Reconcile, Restore, Upgrade}
+  alias HerdrServer.Api.Ids
+  alias HerdrServer.App.{Actions, Commands, Keybinds, Reconcile, Restore, Upgrade}
   alias HerdrServer.App.Store.{Carry, Mirror}
   alias HerdrServer.App.Store.Config, as: StoreConfig
   alias HerdrServer.Handoff.Link
@@ -476,24 +477,27 @@ defmodule HerdrServer.App.Store do
   defp effect(state, {:spawn, id, size}, origin),
     do: effect(state, {:spawn, id, size, %{cwd: nil, replay: nil}}, origin)
 
-  # a restored pane (Persist.RestorePlan): its recorded cwd and saved scrollback
+  # opts: a restored pane's recorded `cwd` and saved `replay` (Persist.RestorePlan), and
+  # a program other than `$SHELL` (`cmd`, `args`, extra `env` as {name, value})
   defp effect(state, {:spawn, id, %{cols: c, rows: r}, opts}, origin) do
     # The kernel sets TERM=xterm-256color; Pane.Server subscribes when it starts. Children
     # inherit the OS environment of the VM, not `System.put_env/2` changes: extra
     # variables go in `config :herdr_server, :pane_env` (a list of {name, value}).
+    cwd = Map.get(opts, :cwd)
+
     spec = %{
-      cmd: System.get_env("SHELL", "/bin/sh"),
-      args: [],
-      env: Application.get_env(:herdr_server, :pane_env, []) ++ [{"HERDR_PANE_ID", "p#{id}"}],
-      cwd: opts.cwd || File.cwd!(),
+      cmd: Map.get(opts, :cmd) || System.get_env("SHELL", "/bin/sh"),
+      args: Map.get(opts, :args, []),
+      env: pane_env(state, id, Map.get(opts, :env, [])),
+      cwd: cwd || File.cwd!(),
       cols: c,
       rows: r,
       max_scrollback: @max_scrollback,
-      replay: opts.replay,
+      replay: Map.get(opts, :replay),
       subscriber: nil
     }
 
-    with {:ok, kid} <- open(spec, opts.cwd),
+    with {:ok, kid} <- open(spec, cwd),
          :ok <- Rows.put_kernel_id(id, kid),
          {:ok, _} <- Panes.start_pane(id) do
       put_in(state.sizes[id], {c, r})
@@ -539,6 +543,24 @@ defmodule HerdrServer.App.Store do
          do: Kernel.keeper().open(%{spec | cwd: File.cwd!()})
   end
 
+  # herdr's pane variables come last and win over :pane_env and the caller's env
+  defp pane_env(state, id, extra) do
+    env =
+      Application.get_env(:herdr_server, :pane_env, []) ++
+        extra ++ [{"HERDR_ENV", "1"}, {"HERDR_PANE_ID", "p#{id}"}] ++ place_env(state.app, id)
+
+    env |> Enum.reverse() |> Enum.uniq_by(&elem(&1, 0)) |> Enum.reverse()
+  end
+
+  defp place_env(nil, _id), do: []
+
+  defp place_env(app, id) do
+    case Guard.run_twice(Commands, :locate, [app, id], server: reload_server()) do
+      {:ok, {w, t}} -> [{"HERDR_TAB_ID", Ids.tab(w, t)}, {"HERDR_WORKSPACE_ID", Ids.workspace(w)}]
+      _ -> []
+    end
+  end
+
   defp io({:key, id, ev}, _), do: Input.key(ev, id)
   defp io({:mouse, id, ev}, _), do: Input.mouse(ev, id)
 
@@ -555,6 +577,14 @@ defmodule HerdrServer.App.Store do
 
   defp io({:config_write, table, kv}, origin), do: notice(origin, StoreConfig.write(table, kv))
   defp io({:reload_config}, origin), do: notice(origin, StoreConfig.reload())
+
+  defp io({:plugin, msg}, origin) do
+    case Process.whereis(HerdrServer.Plugins.Runtime) do
+      nil -> notice(origin, %{level: :warning, text: "plugins are not running"})
+      pid -> send(pid, {msg, origin})
+    end
+  end
+
   defp io(other, _), do: Logger.warning("unknown effect #{inspect(other)}")
 
   defp notice(_origin, nil), do: :ok

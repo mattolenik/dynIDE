@@ -205,6 +205,108 @@ defmodule HerdrCli.ArgvTest do
     end
   end
 
+  describe "m14 pane and plugin verbs" do
+    test "pane split --no-focus, pane rename, pane link activate" do
+      assert p("pane split p1 --direction right --ratio 0.58 --no-focus") ==
+               {:call, "pane.split",
+                %{"pane_id" => "p1", "direction" => "right", "ratio" => 0.58, "focus" => false},
+                :json}
+
+      assert p("pane rename p2 logs") ==
+               {:call, "pane.rename", %{"pane_id" => "p2", "label" => "logs"}, :json}
+
+      assert p("pane rename p2") == {:call, "pane.rename", %{"pane_id" => "p2"}, :json}
+
+      assert p("pane link activate p2 --col 3 --row 4 --modifier ctrl --modifier shift") ==
+               {:call, "pane.link.activate",
+                %{
+                  "pane_id" => "p2",
+                  "col" => 3,
+                  "viewport_row" => 4,
+                  "modifiers" => ["ctrl", "shift"]
+                }, :json}
+
+      assert {:usage, _} = p("pane link activate p2 --col 3 --row 4 --modifier meta")
+    end
+
+    test "plugin pane open: env pairs, focus flags" do
+      assert p("plugin pane open --plugin a --entrypoint b --env A=1 --env B=x=y --focus") ==
+               {:call, "plugin.pane.open",
+                %{
+                  "plugin_id" => "a",
+                  "entrypoint" => "b",
+                  "env" => %{"A" => "1", "B" => "x=y"},
+                  "focus" => true
+                }, :json}
+
+      assert p(
+               "plugin pane open --plugin a --entrypoint b --placement split --width 40% " <>
+                 "--height 10 --workspace w1 --target-pane p2 --direction down --cwd /tmp --no-focus"
+             ) ==
+               {:call, "plugin.pane.open",
+                %{
+                  "plugin_id" => "a",
+                  "entrypoint" => "b",
+                  "placement" => "split",
+                  "width" => "40%",
+                  "height" => "10",
+                  "workspace_id" => "w1",
+                  "target_pane_id" => "p2",
+                  "direction" => "down",
+                  "cwd" => "/tmp",
+                  "focus" => false
+                }, :json}
+
+      assert {:usage, _} = p("plugin pane open --plugin a --entrypoint b --env A")
+      assert {:usage, _} = p("plugin pane open --plugin a --entrypoint b --env =1")
+      assert {:usage, _} = p("plugin pane open --plugin a --entrypoint b --placement side")
+
+      assert p("plugin pane focus p3") ==
+               {:call, "plugin.pane.focus", %{"pane_id" => "p3"}, :json}
+
+      assert p("plugin pane close p3") ==
+               {:call, "plugin.pane.close", %{"pane_id" => "p3"}, :json}
+    end
+
+    test "plugin management verbs and aliases" do
+      assert p("plugin list") == {:call, "plugin.list", %{}, :json}
+
+      assert p("plugin list --plugin a --json") ==
+               {:call, "plugin.list", %{"plugin_id" => "a"}, :json}
+
+      assert p("plugin install o/r --ref v1 --yes") ==
+               {:call, "plugin.install", %{"source" => "o/r", "ref" => "v1", "yes" => true},
+                :json}
+
+      assert p("plugin link ./x") == {:call, "plugin.link", %{"path" => "./x"}, :json}
+
+      assert p("plugin link ./x --disabled") ==
+               {:call, "plugin.link", %{"path" => "./x", "enabled" => false}, :json}
+
+      for verb <- ~w(uninstall remove unlink) do
+        assert p("plugin #{verb} x") == {:call, "plugin.uninstall", %{"target" => "x"}, :json}
+      end
+
+      assert p("plugin enable a") == {:call, "plugin.enable", %{"plugin_id" => "a"}, :json}
+      assert p("plugin disable a") == {:call, "plugin.disable", %{"plugin_id" => "a"}, :json}
+
+      assert p("plugin config-dir a") ==
+               {:call, "plugin.config_dir", %{"plugin_id" => "a"}, :path}
+
+      assert p("plugin action list --plugin a") ==
+               {:call, "plugin.action.list", %{"plugin_id" => "a"}, :json}
+
+      assert p("plugin action invoke hello --plugin a") ==
+               {:call, "plugin.action.invoke", %{"action_id" => "hello", "plugin_id" => "a"},
+                :json}
+
+      assert p("plugin log list --plugin a --limit 5") ==
+               {:call, "plugin.log.list", %{"plugin_id" => "a", "limit" => 5}, :json}
+
+      assert {:usage, _} = p("plugin install")
+    end
+  end
+
   describe "agent" do
     test "every verb" do
       assert p("agent list") == {:call, "agent.list", %{}, :json}

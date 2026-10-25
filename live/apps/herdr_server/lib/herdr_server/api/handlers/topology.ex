@@ -152,6 +152,12 @@ defmodule HerdrServer.Api.Handlers.Topology do
          do: pane_reply("pane_info", aft, id)
   end
 
+  def handle("pane.rename", %{pane_id: id} = p) do
+    with {:ok, _before, aft, _notes} <-
+           run_on_pane(id, {Commands, :rename_pane, [id, p[:label]]}),
+         do: pane_reply("pane_info", aft, id)
+  end
+
   def handle("pane.layout", p) do
     app = app!()
     id = p[:pane_id] || app.focus.pane

@@ -10,6 +10,7 @@ defmodule HerdrServer.App.Commands do
   """
 
   alias HerdrServer.App.{Actions, Session, Workspaces}
+  alias HerdrServer.App.Modal.Menu
   alias HerdrServer.Layout
 
   @type app :: Actions.app()
@@ -104,6 +105,11 @@ defmodule HerdrServer.App.Commands do
       {ws_id, _tab_id} -> Workspaces.within(app, ws_id, &Actions.close_pane(&1, pane))
     end
   end
+
+  @doc "Names a pane (the border shows it when the program set no title); nil or \"\" clears it."
+  @spec rename_pane(app(), integer(), String.t() | nil) :: result()
+  def rename_pane(app, pane, label) when label in [nil, ""], do: Menu.clear_name(app, pane)
+  def rename_pane(app, pane, label), do: Workspaces.rename_pane(app, pane, label)
 
   @spec focus_pane(app(), integer()) :: result()
   defdelegate focus_pane(app, pane), to: Workspaces

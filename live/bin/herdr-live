@@ -95,6 +95,8 @@ esac
 export MIX_ENV="${MIX_ENV:-dev}"
 # pane shells inherit both: an agent in a pane runs "$HERDR_LIVE_BIN" pane ... against this instance
 export HERDR_LIVE_BIN="$root/bin/herdr-live" HERDR_LIVE_API="$sock"
+# herdr's names for the same two, so herdr plugins and scripts find this instance
+export HERDR_SOCKET_PATH="$sock" HERDR_BIN_PATH="$root/bin/herdr-live"
 exec </dev/null >>"$log" 2>&1
 build || exit 1
 # +Bi: the VMs share the broker's process group, so a terminal ^C must not

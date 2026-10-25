@@ -337,7 +337,7 @@ Errors: `invalid_params`, `not_found`
 
 Split a pane; the new pane is created beside it.
 
-CLI: `herdr-live pane split [<pane_id>] --direction right|down [--ratio R] [--focus]`
+CLI: `herdr-live pane split [<pane_id>] --direction right|down [--ratio R] [--focus|--no-focus]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -349,6 +349,38 @@ CLI: `herdr-live pane split [<pane_id>] --direction right|down [--ratio R] [--fo
 Result: `pane_split` with `pane` (`pane` object).
 
 Errors: `invalid_params`, `not_found`, `failed`
+
+### `pane.rename`
+
+Name a pane; an absent or empty label clears the name.
+
+CLI: `herdr-live pane rename <pane_id> [<label>]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | yes | Target pane. |
+| `label` | string | no | New name; absent or empty clears it. |
+
+Result: `pane_info` with `pane` (`pane` object).
+
+Errors: `invalid_params`, `not_found`
+
+### `pane.link.activate`
+
+Activate the link under a cell of a pane's viewport, as a click would.
+
+CLI: `herdr-live pane link activate <pane_id> --col N --row N [--modifier M]...`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | yes | Target pane. |
+| `col` | integer 0..65535 | yes | Viewport column. |
+| `viewport_row` | integer 0..65535 | yes | Viewport row. |
+| `modifiers` | list of `shift`, `alt` or `ctrl` | no | Modifiers held. |
+
+Result: `pane_link_activated` with `url` (string or null), `handled` (boolean).
+
+Errors: `invalid_params`, `not_available`
 
 ### `pane.close`
 
@@ -608,6 +640,208 @@ Result: `ok` (no fields).
 
 Errors: `invalid_params`, `not_available`
 
+## Methods: plugin
+
+### `plugin.list`
+
+List installed and linked plugins.
+
+CLI: `herdr-live plugin list [--plugin ID] [--json]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `plugin_id` | string | no | Only this plugin. |
+
+Result: `plugin_list` with `plugins` (list of `plugin` object).
+
+Errors: `invalid_params`, `not_available`
+
+### `plugin.install`
+
+Install a plugin from GitHub; without `yes` answers a preview to confirm.
+
+CLI: `herdr-live plugin install <source> [--ref REF] [--yes]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `source` | string | yes | `owner/repo[/subdir]` or a GitHub URL. |
+| `ref` | string | no | Git ref to check out. |
+| `yes` | boolean | no | Confirm the install. |
+
+Result: `plugin_info` with `plugin` (`plugin` object).
+
+Errors: `invalid_params`, `not_available`
+
+Once served (M14 task 3): without `yes` the answer is `failed` with `data.reason` `confirmation_required` and `data.preview` describing what would be installed.
+
+### `plugin.link`
+
+Link a local plugin directory.
+
+CLI: `herdr-live plugin link <path> [--disabled]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `path` | string | yes | Plugin directory. |
+| `enabled` | boolean | no | Enable it; default true. |
+
+Result: `plugin_info` with `plugin` (`plugin` object).
+
+Errors: `invalid_params`, `not_available`
+
+### `plugin.uninstall`
+
+Remove a plugin by id or by `owner/repo[/subdir]`.
+
+CLI: `herdr-live plugin uninstall <target>`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `target` | string | yes | Plugin id or `owner/repo[/subdir]`. |
+
+Result: `plugin_removed` with `plugin_id` (string).
+
+Errors: `invalid_params`, `not_available`
+
+### `plugin.enable`
+
+Enable a plugin.
+
+CLI: `herdr-live plugin enable <plugin_id>`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `plugin_id` | string | yes | Target plugin. |
+
+Result: `plugin_info` with `plugin` (`plugin` object).
+
+Errors: `invalid_params`, `not_available`
+
+### `plugin.disable`
+
+Disable a plugin.
+
+CLI: `herdr-live plugin disable <plugin_id>`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `plugin_id` | string | yes | Target plugin. |
+
+Result: `plugin_info` with `plugin` (`plugin` object).
+
+Errors: `invalid_params`, `not_available`
+
+### `plugin.config_dir`
+
+The plugin's config directory.
+
+CLI: `herdr-live plugin config-dir <plugin_id>`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `plugin_id` | string | yes | Target plugin. |
+
+Result: `plugin_dir` with `path` (string).
+
+Errors: `invalid_params`, `not_available`
+
+### `plugin.action.list`
+
+List plugin actions.
+
+CLI: `herdr-live plugin action list [--plugin ID]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `plugin_id` | string | no | Only this plugin. |
+
+Result: `plugin_action_list` with `actions` (list of object).
+
+Errors: `invalid_params`, `not_available`
+
+### `plugin.action.invoke`
+
+Run a plugin action.
+
+CLI: `herdr-live plugin action invoke <action_id> [--plugin ID]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `action_id` | string | yes | Action id. |
+| `plugin_id` | string | no | Plugin owning the action, when the id is ambiguous. |
+| `context` | object | no | Extra context passed to the command. |
+
+Result: `plugin_action_invoked` with `action` (object), `context` (object), `log` (object).
+
+Errors: `invalid_params`, `not_available`
+
+### `plugin.log.list`
+
+Recent plugin command records.
+
+CLI: `herdr-live plugin log list [--plugin ID] [--limit N]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `plugin_id` | string | no | Only this plugin. |
+| `limit` | integer 1..200 | no | Maximum number of records. |
+
+Result: `plugin_log_list` with `logs` (list of object).
+
+Errors: `invalid_params`, `not_available`
+
+### `plugin.pane.open`
+
+Open a plugin pane entrypoint.
+
+CLI: `herdr-live plugin pane open --plugin ID --entrypoint ID [--placement P] [--width S] [--height S] [--workspace ID] [--target-pane PANE] [--direction right|down] [--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `plugin_id` | string | yes | Plugin. |
+| `entrypoint` | string | yes | Pane entrypoint id. |
+| `placement` | `overlay`, `popup`, `split`, `tab` or `zoomed` | no | Where it opens. |
+| `width` | string | no | Width, cells or percent. |
+| `height` | string | no | Height, cells or percent. |
+| `workspace_id` | workspace id | no | Workspace; default the focused one. |
+| `target_pane_id` | pane id | no | Pane to split; default the focused pane. |
+| `direction` | `right` or `down` | no | Split direction. |
+| `cwd` | string | no | Working directory. |
+| `env` | object of strings | no | Extra environment; herdr's own variables win. |
+| `focus` | boolean | no | Focus the new pane; default true. |
+
+Result: `pane_info` with `pane` (`pane` object).
+
+Errors: `invalid_params`, `not_available`
+
+### `plugin.pane.focus`
+
+Focus a plugin pane.
+
+CLI: `herdr-live plugin pane focus <pane_id>`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | yes | Target plugin pane. |
+
+Result: `ok` (no fields).
+
+Errors: `invalid_params`, `not_available`
+
+### `plugin.pane.close`
+
+Close a plugin pane.
+
+CLI: `herdr-live plugin pane close <pane_id>`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | yes | Target plugin pane. |
+
+Result: `ok` (no fields).
+
+Errors: `invalid_params`, `not_available`
+
 ## Objects
 
 ### `layout`
@@ -630,6 +864,27 @@ Errors: `invalid_params`, `not_available`
 | `focused` | boolean |
 | `cols` | integer |
 | `rows` | integer |
+
+### `plugin`
+
+| field | type |
+| --- | --- |
+| `plugin_id` | string |
+| `name` | string |
+| `version` | string |
+| `min_herdr_version` | string |
+| `description` | string or null |
+| `plugin_root` | string |
+| `manifest_path` | string |
+| `enabled` | boolean |
+| `source` | object |
+| `warnings` | list of string |
+| `error` | string or null |
+| `actions` | list of object |
+| `panes` | list of object |
+| `link_handlers` | list of object |
+| `events` | list of object |
+| `startup` | list of object |
 
 ### `tab`
 
