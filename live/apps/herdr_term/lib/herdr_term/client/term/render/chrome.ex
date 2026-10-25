@@ -27,7 +27,13 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
   alias HerdrTerm.Client.Term.Theme
 
   @type seg :: {non_neg_integer, non_neg_integer, Cell.row()}
-  @type hit :: %{rect: Scene.rect(), path: [term], role: atom, drag: boolean}
+  @type hit :: %{
+          required(:rect) => Scene.rect(),
+          required(:path) => [term],
+          required(:role) => atom,
+          required(:drag) => boolean,
+          optional(:layer) => :base | :top
+        }
   @type t :: %{
           base: %{non_neg_integer => [seg]},
           top: %{non_neg_integer => [seg]},
@@ -53,6 +59,8 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
 
     {base_rows, base_hits} = layer(base, theme, ind, size)
     {top_rows, top_hits} = layer(top, theme, ind, size)
+    base_hits = Enum.map(base_hits, &tag(&1, :base))
+    top_hits = Enum.map(top_hits, &tag(&1, :top))
 
     %{
       base: base_rows,
@@ -68,16 +76,18 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
   The layout with the hit at `path` drawn `:selected` (the pointer hover); `nil`, an
   unknown path or a non-item hit (`:item`, `:tab` roles only) returns it unchanged.
   Pure post-pass over the cached layout: the segments under the hit's rect get the
-  `:selected` background, in both layers (the top layer covers the base).
+  `:selected` background, in the layer that owns the hit only.
   """
   @spec hover(t, [term] | nil, Theme.t()) :: t
   def hover(chrome, nil, _theme), do: chrome
 
   def hover(%{hits: hits} = chrome, path, theme) do
     case Enum.find(hits, &(&1.path == path)) do
-      %{role: role, rect: r} when role in @hoverable ->
+      %{role: role, rect: r} = hit when role in @hoverable ->
         bg = Theme.style(theme, :selected).bg
-        %{chrome | base: tint(chrome.base, r, bg), top: tint(chrome.top, r, bg)}
+        # only the layer that owns the hit: a base hit under an overlay must not tint it
+        layer = Map.get(hit, :layer, :base)
+        Map.update!(chrome, layer, &tint(&1, r, bg))
 
       _ ->
         chrome
@@ -98,6 +108,8 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
     x1 = min(sx + sw, r.x + r.w)
     if x1 > x0, do: {sx, sw, Cells.restyle(row, x0 - sx, x1 - x0, bg: bg)}, else: seg
   end
+
+  defp tag(hits, layer), do: Enum.map(hits, &Map.put(&1, :layer, layer))
 
   @doc "A hit for `rect` at `path`; `drag: true` makes a press start a grab."
   @spec hit(Scene.rect(), [term], atom, boolean) :: hit

@@ -185,6 +185,23 @@ defmodule HerdrTerm.Client.Term.Render.Chrome.SidebarTest do
     assert hit(l, [:sidebar, :spaces, :list, {:workspace, 1}]).rect.h == 2
   end
 
+  test "hover tints both rows of a 2-row item, nothing around it" do
+    scene = Fixture.load("sidebar_expanded_120x40")
+    path = [:sidebar, :spaces, :list, {:workspace, 1}]
+    scene = %{scene | chrome: put_props(scene.chrome, tl(path), detail: "main ↑1")}
+    l = layout(scene)
+    %{rect: r} = hit(l, path)
+    hov = Chrome.hover(l, path, @theme)
+    bg = Theme.style(@theme, :selected).bg
+    bgs = fn l, y -> l |> row(y) |> Cell.decode_row() |> Enum.map(& &1.bg) end
+
+    for y <- r.y..(r.y + r.h - 1),
+        do: assert(Enum.all?(Enum.slice(bgs.(hov, y), 0, r.w), &(&1 == bg)))
+
+    assert bgs.(hov, r.y - 1) == bgs.(l, r.y - 1)
+    assert bgs.(hov, r.y + r.h) == bgs.(l, r.y + r.h)
+  end
+
   defp put_props(%Node{} = n, [], kv), do: %{n | props: Map.merge(n.props, Map.new(kv))}
 
   defp put_props(%Node{} = n, [id | rest], kv) do

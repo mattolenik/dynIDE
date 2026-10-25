@@ -116,7 +116,8 @@ defmodule HerdrTerm.Client.Term.Render.ChromeTest do
              rect: %{x: 40, y: 1, w: 1, h: 22},
              path: [{:divider, []}],
              role: :divider,
-             drag: true
+             drag: true,
+             layer: :base
            }
   end
 
@@ -155,7 +156,14 @@ defmodule HerdrTerm.Client.Term.Render.ChromeTest do
     assert Map.keys(layout.top) == [5, 6, 7]
     assert [{10, 20, row}] = layout.top[6]
     assert Cell.cols(row) == 20
-    assert hd(layout.hits) == %{rect: modal.rect, path: [{:modal, 0}], role: :modal, drag: false}
+
+    assert hd(layout.hits) == %{
+             rect: modal.rect,
+             path: [{:modal, 0}],
+             role: :modal,
+             drag: false,
+             layer: :top
+           }
 
     refute RChrome.layout(root([%{modal | props: %{kind: :confirm}}]), @size, @theme).dim
   end
@@ -235,6 +243,38 @@ defmodule HerdrTerm.Client.Term.Render.ChromeTest do
       assert cell.(hovered, r.x).bg == bg
       assert cell.(hovered, r.x + r.w - 1).bg == bg
       assert cell.(hovered, r.x + r.w).bg == cell.(layout, r.x + r.w).bg
+    end
+
+    test "a wide-glyph tab is tinted across its whole rect, no further" do
+      layout = RChrome.layout(root([tabs(["日本語", "b"], 1)]), @size, @theme)
+      path = [:tabs, {:tab, 1}]
+      %{rect: r} = hit(layout, path)
+      bg = Theme.style(@theme, :selected).bg
+
+      cells = fn l ->
+        l.base |> Map.fetch!(0) |> Enum.flat_map(fn {_, _, row} -> Cell.decode_row(row) end)
+      end
+
+      before = cells.(layout)
+      hov = cells.(RChrome.hover(layout, [:tabs, {:tab, 2}], @theme))
+      assert Enum.slice(hov, 0, r.x + r.w) == Enum.slice(before, 0, r.x + r.w)
+      assert Enum.all?(Enum.slice(hov, hit(layout, [:tabs, {:tab, 2}]).rect.x, 8), &(&1.bg == bg))
+    end
+
+    test "a tab hovered under an open menu leaves the menu cells unchanged" do
+      menu = %Node{
+        role: :menu,
+        id: :menu,
+        rect: %{x: 0, y: 0, w: 30, h: 4},
+        children: [%Node{role: :item, id: :one, text: "one"}]
+      }
+
+      layout = RChrome.layout(root([tabs(["a", "b"], 1), menu]), @size, @theme)
+      path = [:tabs, {:tab, 2}]
+      assert hit(layout, path).layer == :base
+      hov = RChrome.hover(layout, path, @theme)
+      assert hov.top == layout.top
+      refute hov.base == layout.base
     end
 
     test "non-item hits (the status bar, a button) do not hover" do

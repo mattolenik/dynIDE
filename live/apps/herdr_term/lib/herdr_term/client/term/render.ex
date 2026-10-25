@@ -98,6 +98,7 @@ defmodule HerdrTerm.Client.Term.Render do
     :cell_px,
     :title,
     hover: nil,
+    hovered: nil,
     transport: :ref,
     caps: nil,
     appearance: :dark,
@@ -537,7 +538,7 @@ defmodule HerdrTerm.Client.Term.Render do
     scene = state.scene
     resized? = scene.size != state.last_size
     state = if resized?, do: %{state | cell_px: cell_px(state)}, else: state
-    chrome = Chrome.hover(state.chrome, state.hover, state.theme)
+    {chrome, state} = hovered(state)
     args = [scene, state.rows, state.cursors, state.theme, chrome]
 
     case Guard.run_twice(Compose, :screen, args, @compose) do
@@ -669,6 +670,18 @@ defmodule HerdrTerm.Client.Term.Render do
   end
 
   defp valid_image(_), do: nil
+
+  # the tinted layout, memoised on {chrome, hover, theme} so pane-damage frames reuse it
+  defp hovered(%{hover: nil} = state), do: {state.chrome, state}
+
+  defp hovered(%{hovered: {key, chrome}} = state)
+       when key == {state.chrome, state.hover, state.theme},
+       do: {chrome, state}
+
+  defp hovered(state) do
+    chrome = Chrome.hover(state.chrome, state.hover, state.theme)
+    {chrome, %{state | hovered: {{state.chrome, state.hover, state.theme}, chrome}}}
+  end
 
   defp fetch(%{rows_mfa: nil} = state, _id), do: state
 
