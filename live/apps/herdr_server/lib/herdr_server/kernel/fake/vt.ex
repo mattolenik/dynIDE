@@ -113,7 +113,9 @@ defmodule HerdrServer.Kernel.Fake.Vt do
   def search_with(read, query, opts) do
     fold = if opts.case_sensitive, do: & &1, else: &String.downcase/1
     dir = if opts.direction == :forward, do: 1, else: -1
-    scan(read, {fold.(query), fold}, opts.from, opts.max_rows, dir, opts.max_matches, [])
+    # the kernel's per-call cap (SEARCH_MAX_ROWS)
+    left = min(opts.max_rows, 20_000)
+    scan(read, {fold.(query), fold}, opts.from, left, dir, opts.max_matches, [])
   end
 
   @window 200

@@ -185,6 +185,9 @@ pub type ScreenRow = (u32, Vec<u8>, bool);
 
 /// Rows `search` reads per core lock, so the reader waits at most this many rows.
 const SEARCH_LOCK_ROWS: u32 = 256;
+/// Rows one `search` call reads at most, whatever `max_rows` asks: one DirtyCpu call stays
+/// bounded regardless of the caller.
+pub const SEARCH_MAX_ROWS: u32 = 20_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -825,8 +828,8 @@ impl Vt {
         Ok(out)
     }
 
-    /// Matches of `query` (case folded with `to_lowercase` unless `case_sensitive`) over at
-    /// most `o.max_rows` rows from `o.from` in `o.direction`, matched on each row's glyphs
+    /// Matches of `query` (case folded per char with `to_lowercase`, as the rows are, unless
+    /// `case_sensitive`) over at most `o.max_rows` (capped at `SEARCH_MAX_ROWS`) rows from `o.from` in `o.direction`, matched on each row's glyphs
     /// (columns and lengths in cells). Rows are read whole: matches come in reading order of
     /// rows and left to right within a row, and the call stops after the row on which
     /// `o.max_matches` was reached (so it may return a few more). Returns the matches and
@@ -838,12 +841,14 @@ impl Vt {
     ) -> Result<(Vec<SearchMatch>, Option<u32>), VtError> {
         let needle = match o.case_sensitive {
             true => query.to_string(),
-            false => query.to_lowercase(),
+            // per char, as `RowText::push` folds the rows: `str::to_lowercase` would give a
+            // word-final sigma `ς` that no folded row has
+            false => query.chars().flat_map(char::to_lowercase).collect(),
         };
         let mut out = Vec::new();
         let mut line = RowText::default();
         let mut row = o.from;
-        let mut left = o.max_rows;
+        let mut left = o.max_rows.min(SEARCH_MAX_ROWS);
         if needle.is_empty() {
             return Ok((out, None));
         }
@@ -1454,6 +1459,37 @@ mod tests {
             ..opts(5, Direction::Backward)
         };
         assert_eq!(vt.search("3", &o).expect("search"), (vec![(3, 0, 1)], None));
+    }
+
+    #[test]
+    fn search_max_rows_is_capped() {
+        let vt = Vt::new(10, 5, 100_000_000).expect("vt");
+        let mut text = String::new();
+        for i in 0..SEARCH_MAX_ROWS + 100 {
+            text.push_str(&format!("{i}\r\n"));
+        }
+        vt.write(text.as_bytes());
+        let o = SearchOpts {
+            max_rows: u32::MAX,
+            ..opts(0, Direction::Forward)
+        };
+        assert_eq!(
+            vt.search("absent", &o).expect("search"),
+            (vec![], Some(SEARCH_MAX_ROWS))
+        );
+    }
+
+    #[test]
+    fn search_folds_the_query_per_char() {
+        let vt = vt();
+        vt.write("ΟΔΟΣ".as_bytes());
+        let o = SearchOpts {
+            case_sensitive: false,
+            ..opts(0, Direction::Forward)
+        };
+        // "ΟΔΟΣ".to_lowercase() is "οδος" (final sigma); the row folds to "οδοσ"
+        assert_eq!(vt.search("ΟΔΟΣ", &o).expect("search").0, vec![(0, 0, 4)]);
+        assert_eq!(vt.search("οδοσ", &o).expect("search").0, vec![(0, 0, 4)]);
     }
 
     #[test]

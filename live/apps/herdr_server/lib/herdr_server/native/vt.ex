@@ -195,7 +195,8 @@ defmodule HerdrServer.Native.Vt do
   Matches are non-overlapping, in row reading order and left to right within a row. Rows
   are read whole: the call stops after the row on which `max_matches` was reached. Returns
   the next unread row, or `:done` once the scan passed the first or last row. An empty
-  query matches nothing. Runs on a dirty CPU scheduler; `max_rows` bounds it.
+  query matches nothing. Runs on a dirty CPU scheduler; `max_rows`, capped at 20_000 by the
+  kernel, bounds it.
   """
   @spec search(vt, binary, search_opts) :: {:ok, [search_match], non_neg_integer | :done}
   def search(vt, query, %{max_rows: r, max_matches: m, from: f, direction: d} = opts)
