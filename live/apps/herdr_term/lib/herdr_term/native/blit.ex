@@ -6,12 +6,13 @@ defmodule HerdrTerm.Native.Blit do
   cells that changed. Frames never queue: a frame submitted while the
   previous one is still pending replaces it (counted in
   `HerdrTerm.Native.Tty.stats/1` as dropped, its `repaint` carried over).
-  A frame whose rows fail to decode is dropped the same way.
+  A frame whose rows fail to decode is dropped the same way, except that
+  its graphics ops are still written (then it counts as written).
 
   `opts.graphics` are kitty graphics ops (`t:HerdrTerm.Kernel.Blit.graphics_op/0`),
   encoded as given and written after the cells inside the frame's
   synchronized output, between `ESC 7` and `ESC 8`. A replaced frame's ops
-  go first in the replacing frame. The one mechanism choice made here: a
+  go first in the replacing frame, minus ops a later op makes moot. The one mechanism choice made here: a
   `:file` upload is sent direct until the temp-file transport is known to
   work (see `HerdrTerm.Native.Tty.stats/1`).
   """

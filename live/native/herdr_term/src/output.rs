@@ -2,7 +2,7 @@
 //! `tty::Inner` runs the single output thread that drains it, so the
 //! encoder's retained frame always matches what reached the host.
 
-use crate::graphics::{Op, Transport};
+use crate::graphics::{self, Op, Transport};
 use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::Duration;
@@ -106,7 +106,8 @@ impl Output {
 
     /// Queues a frame behind everything already queued. A frame still
     /// pending is replaced (counted dropped); its `repaint` is carried over
-    /// and its graphics ops go first (uploads and deletes are not idempotent).
+    /// and its graphics ops go first (uploads and deletes are not idempotent),
+    /// coalesced so a stalled host keeps a bounded backlog.
     pub fn submit_frame(&self, mut job: FrameJob) {
         let mut q = lock(&self.queue);
         if q.closed {
@@ -114,10 +115,9 @@ impl Output {
             return;
         }
         if let Some(index) = q.pending_frame.take() {
-            if let Some(Item::Frame(mut old)) = q.items.remove(index) {
+            if let Some(Item::Frame(old)) = q.items.remove(index) {
                 job.repaint |= old.repaint;
-                old.graphics.append(&mut job.graphics);
-                job.graphics = old.graphics;
+                job.graphics = graphics::coalesce(old.graphics, std::mem::take(&mut job.graphics));
             }
             q.frames_dropped += 1;
         }
@@ -295,7 +295,7 @@ mod tests {
         };
         out.submit_frame(with(vec![Op::DeleteImage(1)]));
         out.submit_frame(with(vec![Op::DeleteImage(2)]));
-        out.submit_frame(with(vec![Op::DeleteAll]));
+        out.submit_frame(with(vec![Op::DeleteImage(3)]));
         let runner = Arc::clone(&out);
         let thread = std::thread::spawn(move || {
             let mut rec = Graphics(Vec::new());
@@ -308,8 +308,74 @@ mod tests {
         out.close();
         assert_eq!(
             thread.join().unwrap(),
-            [vec![Op::DeleteImage(1), Op::DeleteImage(2), Op::DeleteAll]]
+            [vec![
+                Op::DeleteImage(1),
+                Op::DeleteImage(2),
+                Op::DeleteImage(3)
+            ]]
         );
         assert_eq!(out.stats().frames_dropped, 2);
+    }
+
+    #[test]
+    fn stalled_writer_keeps_pending_graphics_bounded_and_ordered() {
+        // No output thread: every frame replaces the pending one.
+        let out = Output::new();
+        let upload = |id| Op::Upload {
+            id,
+            format: 32,
+            width: 1,
+            height: 1,
+            data: vec![0; 4],
+            medium: crate::graphics::Medium::Direct,
+        };
+        let place = |id| Op::Place {
+            id,
+            placement: 1,
+            x: 0,
+            y: 0,
+            cols: 1,
+            rows: 1,
+            src: (0, 0, 0, 0),
+            off: (0, 0),
+            z: 0,
+        };
+        // Image 1 stays live (uploaded once, placed every frame); image k is
+        // uploaded, placed and deleted in the next frame.
+        out.submit_frame(FrameJob {
+            graphics: vec![Op::DeleteImage(8), upload(1), upload(9), place(1), place(9)],
+            ..FrameJob::default()
+        });
+        for k in 10..1000 {
+            out.submit_frame(FrameJob {
+                graphics: vec![Op::DeleteImage(k - 1), upload(k), place(1), place(k)],
+                ..FrameJob::default()
+            });
+        }
+        let q = lock(&out.queue);
+        let Some(Item::Frame(job)) = q.items.back() else {
+            panic!("pending frame");
+        };
+        assert_eq!(
+            job.graphics,
+            [
+                Op::DeleteImage(8),
+                upload(1),
+                upload(999),
+                place(1),
+                place(999)
+            ]
+        );
+        drop(q);
+        // A delete-all supersedes everything before it.
+        out.submit_frame(FrameJob {
+            graphics: vec![place(1), Op::DeleteAll, upload(5)],
+            ..FrameJob::default()
+        });
+        let q = lock(&out.queue);
+        let Some(Item::Frame(job)) = q.items.back() else {
+            panic!("pending frame");
+        };
+        assert_eq!(job.graphics, [place(1), Op::DeleteAll, upload(5)]);
     }
 }

@@ -888,13 +888,9 @@ mod tests {
         let out = read_until(&p.master, b"\x1b[?1049l", Duration::from_secs(1));
         assert!(
             out.starts_with(GRAPHICS_DELETE_ALL),
-            "no kitty pop: {out:?}"
+            "images deleted first, no kitty pop: {out:?}"
         );
         assert!(out.ends_with(b"\x1b[?1049l"), "{out:?}");
-        assert!(
-            contains(&out, b"\x1b_Ga=d,d=A,q=2\x1b\\"),
-            "images deleted: {out:?}"
-        );
         tty.inner.restore().unwrap();
         drop(tty);
         let again = read_until(&p.master, b"", Duration::from_millis(200));

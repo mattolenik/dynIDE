@@ -68,9 +68,10 @@ defmodule HerdrTerm.NativeTest do
     Tty.restore(tty)
   end
 
-  # The slave of a pty that `script` holds open and relays to this process.
+  # The slave of a pty that `script` holds open and relays to this process;
+  # the port and its `sleep` go away when the test exits.
   defp pty_path do
-    sh = "tty; exec sleep 30"
+    sh = "echo pid=$$; tty; exec sleep 30"
 
     args =
       if match?({:unix, :darwin}, :os.type()),
@@ -79,10 +80,27 @@ defmodule HerdrTerm.NativeTest do
 
     port = Port.open({:spawn_executable, System.find_executable("script")}, [:binary, args: args])
 
-    receive do
-      {^port, {:data, "/dev/" <> _ = out}} -> out |> String.split() |> hd()
-    after
-      2000 -> flunk("no pty from script")
+    {pid, path} = read_pty(port, "")
+
+    on_exit(fn ->
+      System.cmd("kill", [pid])
+      if Port.info(port), do: Port.close(port)
+    end)
+
+    path
+  end
+
+  defp read_pty(port, acc) do
+    case Regex.run(~r/pid=(\d+)\s+(\/dev\/\S+)/, acc) do
+      [_, pid, path] ->
+        {pid, path}
+
+      nil ->
+        receive do
+          {^port, {:data, data}} -> read_pty(port, acc <> data)
+        after
+          2000 -> flunk("no pty from script: #{inspect(acc)}")
+        end
     end
   end
 end

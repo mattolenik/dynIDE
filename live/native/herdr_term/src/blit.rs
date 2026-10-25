@@ -61,7 +61,16 @@ pub struct BlitEncoder {
 
 impl Encoder for BlitEncoder {
     fn encode(&mut self, job: &FrameJob) -> Option<Vec<u8>> {
-        BlitEncoder::encode(self, job).ok()
+        match BlitEncoder::encode(self, job) {
+            Ok(out) => Some(out),
+            // The rows are dropped, but uploads and deletes must reach the host.
+            Err(BadFrame) if !job.graphics.is_empty() => {
+                let mut out = Vec::new();
+                self.write_graphics(&mut out, job);
+                Some(out)
+            }
+            Err(BadFrame) => None,
+        }
     }
 
     fn reset(&mut self) {
@@ -126,18 +135,24 @@ impl BlitEncoder {
 
         let cursor = self.resolve_host_cursor_state(job, width, height);
         write_host_cursor_state(&mut out, cursor, &mut self.last_cursor_shape);
-        if !job.graphics.is_empty() {
-            let start = out.len();
-            out.extend_from_slice(b"\x1b7");
-            graphics::encode(&mut out, &job.graphics, &mut self.files, Instant::now());
-            out.extend_from_slice(b"\x1b8");
-            self.graphics_bytes += (out.len() - start) as u64;
-        }
+        self.write_graphics(&mut out, job);
         let _ = out.write_all(b"\x1b[?2026l");
         write_ime_anchor_cursor_state(&mut out, cursor);
 
         self.commit(width, height, &job.rows, decoded);
         Ok(out)
+    }
+
+    /// The job's graphics ops wrapped in `ESC7..ESC8`; nothing without ops.
+    fn write_graphics(&mut self, out: &mut Vec<u8>, job: &FrameJob) {
+        if job.graphics.is_empty() {
+            return;
+        }
+        let start = out.len();
+        out.extend_from_slice(b"\x1b7");
+        graphics::encode(out, &job.graphics, &mut self.files, Instant::now());
+        out.extend_from_slice(b"\x1b8");
+        self.graphics_bytes += (out.len() - start) as u64;
     }
 
     /// Forgets the retained frame and cursor memory: the next frame clears
@@ -783,5 +798,21 @@ mod tests {
         // No ops: no DECSC.
         assert!(!encode(&mut enc, &job(vec![ascii_row("ab")])).contains("\x1b7"));
         assert_eq!(enc.graphics_bytes, 2 * ops.len() as u64);
+    }
+
+    #[test]
+    fn undecodable_frame_still_writes_its_graphics() {
+        use crate::graphics::Op;
+        let mut enc = BlitEncoder::default();
+        let mut bad = ascii_row("ab");
+        bad[0] = 0xC3;
+        let mut j = job(vec![bad]);
+        j.graphics = vec![Op::DeleteAll];
+        let out = s(&Encoder::encode(&mut enc, &j).expect("graphics alone"));
+        assert_eq!(out, "\x1b7\x1b_Ga=d,d=A,q=2;\x1b\\\x1b8");
+        j.graphics.clear();
+        assert_eq!(Encoder::encode(&mut enc, &j), None);
+        // Nothing retained: the next good frame is a full first draw.
+        assert!(encode(&mut enc, &job(vec![ascii_row("ab")])).contains("\x1b[2J"));
     }
 }

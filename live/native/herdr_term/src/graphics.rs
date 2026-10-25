@@ -6,6 +6,7 @@
 //! made here is the mechanism fallback: a `File` upload goes direct while the
 //! temp-file transport is not known to work.
 
+use std::collections::HashMap;
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
@@ -18,6 +19,8 @@ const CHUNK_BYTES: usize = 3072;
 const CONSUMPTION_TIMEOUT: Duration = Duration::from_secs(10);
 /// Unconsumed bytes we keep in /tmp; beyond it uploads go direct.
 const MAX_PENDING_BYTES: usize = 64 << 20;
+/// herdr's per-image cap for `t=t`; larger images go direct.
+const MAX_IMAGE_BYTES: usize = 16 << 20;
 const FILE_PREFIX: &str = "tty-graphics-protocol-";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +104,51 @@ fn write_chunked(out: &mut Vec<u8>, control: &str, data: &[u8]) {
             write_apc(out, &format!("m={more}"), chunk);
         }
     }
+}
+
+/// Merges a superseded frame's ops into the replacing frame's, dropping
+/// superseded ops a later op makes moot, so a stalled host keeps a bounded
+/// backlog. Dropped: superseded ops before the last `DeleteAll`; superseded
+/// places when the new frame places (places replay every frame); a
+/// superseded upload of X together with the next delete of X (the image
+/// never reached the host; relies on uploads of X only while X is absent
+/// there, as Render's cache does). Order is kept.
+/// ponytail: the upload backlog is bounded only by distinct live images.
+pub fn coalesce(mut old: Vec<Op>, mut new: Vec<Op>) -> Vec<Op> {
+    let superseded = old.len();
+    let new_places = new.iter().any(|op| matches!(op, Op::Place { .. }));
+    old.append(&mut new);
+    let mut keep = vec![true; old.len()];
+    let mut later_delete_all = false;
+    // Image id -> index of the nearest later DeleteImage not yet paired.
+    let mut next_delete = HashMap::new();
+    for (i, op) in old.iter().enumerate().rev() {
+        let is_old = i < superseded;
+        match op {
+            Op::DeleteAll => {
+                keep[i] = !(is_old && later_delete_all);
+                later_delete_all = true;
+            }
+            _ if is_old && later_delete_all => keep[i] = false,
+            Op::Place { .. } => keep[i] = !(is_old && new_places),
+            Op::DeleteImage(id) => {
+                next_delete.insert(*id, i);
+            }
+            Op::Upload { id, .. } => {
+                if let Some(j) = next_delete.remove(id) {
+                    if is_old {
+                        keep[i] = false;
+                        keep[j] = false;
+                    }
+                }
+            }
+            Op::DeletePlacement(..) => {}
+        }
+    }
+    old.into_iter()
+        .zip(keep)
+        .filter_map(|(op, keep)| keep.then_some(op))
+        .collect()
 }
 
 /// Encodes `ops` in order. `now` is injected for the consumption timeout.
@@ -227,7 +275,10 @@ impl Files {
             }
             Transport::Ok => {
                 let queued: usize = self.pending.iter().map(|(_, n, _)| n).sum();
-                if data.is_empty() || queued + data.len() > MAX_PENDING_BYTES {
+                if data.is_empty()
+                    || data.len() > MAX_IMAGE_BYTES
+                    || queued + data.len() > MAX_PENDING_BYTES
+                {
                     return None;
                 }
                 match self.write_file(data, now) {
@@ -602,5 +653,25 @@ mod tests {
             Instant::now(),
         );
         assert!(!dead.exists() && live.exists() && other.exists());
+    }
+
+    #[test]
+    fn images_over_the_file_cap_go_direct() {
+        let root = root("cap");
+        let mut files = Files::at(&root);
+        let now = Instant::now();
+        let mut out = Vec::new();
+        encode(&mut out, &[upload(vec![1], Medium::File)], &mut files, now);
+        let probe = payloads(&s(&out))[0].1.clone();
+        fs::remove_file(String::from_utf8(unb64(&probe)).unwrap()).unwrap();
+        let mut out = Vec::new();
+        let big = upload(vec![1; MAX_IMAGE_BYTES + 1], Medium::File);
+        encode(&mut out, &[big], &mut files, now);
+        assert_eq!(files.state(), Transport::Ok);
+        assert!(s(&out[..64]).contains("t=d"), "direct");
+        let mut out = Vec::new();
+        let max = upload(vec![1; MAX_IMAGE_BYTES], Medium::File);
+        encode(&mut out, &[max], &mut files, now);
+        assert!(s(&out).contains("t=t"), "at the cap: file");
     }
 }
