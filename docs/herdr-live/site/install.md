@@ -5,23 +5,23 @@ you build the tarball locally.
 
 ## Build
 
-<!-- m18: verify against task 1 -->
 ```sh
-live/scripts/release/build.sh [--version V]
+live/scripts/release/build.sh [--version V] [--out DIR]
 ```
 
-Produces `live/_build/release/herdr-live-<V>-<os>-<arch>.tar.gz` and a `.sha256` next to
-it (`os` is `macos` or `linux`, `arch` is `aarch64`). Building needs the toolchain in
+Produces `live/_build/release/herdr-live-<V>-<os>-<arch>.tar.gz` (or under `--out DIR`) and
+a `.sha256` next to it, and prints the tarball path as its last line (`os` is `macos` or
+`linux`, `arch` is `aarch64`; x86_64 was not built, see [release-notes.md](release-notes.md)). Building needs the toolchain in
 [AGENTS.md](../../../AGENTS.md) (Elixir 1.20.4 / OTP 29, Rust, Zig 0.16.0).
 
 ## Install
 
-<!-- m18: verify against task 2 -->
 ```sh
-live/scripts/release/install.sh [--prefix P] TARBALL
+live/scripts/release/install.sh [--prefix P] [--force] TARBALL
 ```
 
-Default prefix is `~/.local`. Layout:
+Default prefix is `~/.local`. The `.sha256` beside the tarball is checked when present; an
+existing `releases/<V>` is refused without `--force`. Layout:
 
 - `<P>/lib/herdr-live/releases/<V>/` the release
 - `<P>/lib/herdr-live/current` symlink to the active release
@@ -30,7 +30,7 @@ Default prefix is `~/.local`. Layout:
 Put `<P>/bin` on `PATH`. The prefix may contain spaces.
 
 ```sh
-herdr-live --version   # <!-- m18: verify against task 1 -->
+herdr-live --version   # herdr-live 0.1.0
 herdr-live             # start, or attach to the running instance
 ```
 

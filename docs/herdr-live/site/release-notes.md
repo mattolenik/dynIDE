@@ -17,14 +17,18 @@ were not). The release is a production build with hot reload off.
 - M8 persistence: layout, prefs, cwds and scrollback survive a full restart.
 - M9 terminal fidelity: scrollback, selection, copy mode and search, links, paste, reflow.
 - M10 kitty graphics: images and placements, equal to herdr in the manual comparison.
-- M11 detection: agent detection and agent facts. <!-- m18: confirm M11 has merged before release; if not, delete this line -->
+- M11 detection: agent detection with herdr's manifests (idle, working, blocked, done),
+  sidebar badges, toasts, `agent.*` API and CLI, manifest hot reload.
 - M12 API and CLI: socket API, `herdr-live <verb>` CLI, event streams.
 - M13 chrome: sidebar, tabs, menus, modals, toasts, themes, `config.toml`, keybind UI.
 - M14 plugins: herdr's external-process plugin model.
 - M16 remote attach: more clients, local or over ssh, with reconnect and kernel-restart survival.
 - M17 long tail: zoom, worktrees, navigator, custom commands and popups, drag-reorder,
   notifications and sounds, shell completion.
-- M18 release: tarball build, installer, `herdr-live update`, this documentation.
+- M18 release: tarball build, installer, signed `herdr-live update` through
+  `kernel-restart`, Homebrew formula and Nix flake (local), signing scripts, this
+  documentation; kernel copy-mode search, herdr's CLI output shape, `plugin update`, kitty
+  images across a graceful kernel restart, `t=t` temp-file cleanup, popup env removal.
 
 ## Known limitations
 
@@ -42,8 +46,9 @@ left in the results files. Each entry names its source.
 - `attach` runs a client VM and, in a source checkout, needs a compiled tree on the
   client machine; the release has no separate client package.
   ([m16](../results/m16.md), note for M18)
-- Linux was only run on aarch64 in a VM; the gate's Linux typing max during a flood is
-  69-622 ms (p95 11-12 ms). ([m6-gate](../results/m6-gate.md))
+- Linux was only run on aarch64 in a VM; no x86_64 build exists (rustc segfaults under
+  qemu on the build Mac). The gate's Linux typing max during a flood is 47-608 ms
+  (p95 10-13 ms). ([m6-gate](../results/m6-gate.md), [m18-gate](../results/m18-gate.md))
 - A demoted Linux flood reader stays at nice 10 without `CAP_SYS_NICE`.
   ([m6-gate](../results/m6-gate.md))
 
@@ -52,8 +57,11 @@ left in the results files. Each entry names its source.
 - A full quit restores layout, cwd and scrollback (last 1000 rows as VT text) but not
   running programs; restore starts `$SHELL`. Kitty images are not persisted.
   ([m8](../results/m8.md), [m10](../results/m10.md))
-- Kitty images are lost across `kernel-restart` until the child sends them again.
-  ([m10](../results/m10.md), deferred in [m17-inventory](../results/m17-inventory.md))
+- Kitty images survive a graceful `kernel-restart` (and `update`) only when placed on the
+  active screen or as virtual placements, up to 16 MiB of pixels per pane; images partly
+  scrolled off, in scrollback, on the inactive screen or under origin mode are dropped, and
+  a crash handoff (`kill -9`) carries none until the child sends them again.
+  ([m18](../results/m18.md))
 - Exit status of children adopted by a new VM is `:unknown`.
   ([m5](../results/m5.md))
 - A cold handoff with no ready standby takes about 1.0-1.1 s under load; one outlier of
@@ -75,9 +83,8 @@ left in the results files. Each entry names its source.
 
 ### Terminal fidelity
 
-- Copy-mode search for a miss over 20 000 rows takes about 1.1 s and stalls that
-  client's input meanwhile; a kernel-side search was deferred. ([m9](../results/m9.md),
-  [m17-inventory](../results/m17-inventory.md))
+- Case-insensitive copy-mode search folds per character: a query typed with a final
+  sigma (`ς`) does not match `Σ`. ([m18](../results/m18.md))
 - Copy mode: a focus move ends it; search matches are not cleared by new output; absolute
   rows drift at full scrollback; mouse-wheel scrolling is not reflected in its position.
   ([m9](../results/m9.md))
@@ -90,8 +97,7 @@ left in the results files. Each entry names its source.
   query by 5 s. ([m9](../results/m9.md))
 - Kitty graphics: an implicit placement can collide with an explicit one of the same id;
   one cell-size geometry per pane (a second client with other cell pixels may be off by
-  a fraction of a cell); no size cap or per-scene byte budget; the shared
-  `/tmp/herdr-live-kitty-<uid>/` upload directory is never cleaned.
+  a fraction of a cell); no size cap or per-scene byte budget.
   ([m10](../results/m10.md), [m17-inventory](../results/m17-inventory.md))
 - Scroll step and copy-on-select are fixed at 3 lines and on. ([m9](../results/m9.md))
 
@@ -116,11 +122,14 @@ left in the results files. Each entry names its source.
 
 ### API, CLI and plugins
 
-- The CLI prints herdr's `{"id","result"}` envelope, but `plugin list`, `plugin install`
-  and `plugin uninstall` print it where herdr prints human text (herdr's `--json` form),
-  and request ids are `cli:<method>`, not herdr's per-verb ids. ([m18](../results/m18.md))
-- `plugin update` has no fast-forward check (it moves to the ref's tip, as herdr does) and
-  prints JSON, not herdr's text; not ported: per-plugin checkout locks across VMs,
+- The CLI prints herdr's whole `{"id","result"}` reply (errors `{"error","id"}` on
+  stderr), but `plugin list`, `install`, `update`, `uninstall` and `api schema` print it
+  where herdr prints human text; request ids are `cli:<method>`, not herdr's per-verb ids;
+  keys are sorted. `api call pane.read` answers `{"text"}`, not herdr's `{"read":{...}}`.
+  ([m18](../results/m18.md))
+- `plugin update` has no fast-forward check (it moves to the ref's tip, as herdr does); an
+  `uninstall` or `disable` issued during a long update build is reverted when the build
+  registers. Not ported: per-plugin checkout locks across VMs,
   `pane.link.resolve`, stale-target checks on `pane.link.activate`, cleanup of old
   managed installs. ([m14](../results/m14.md))
 - Plugin commands have no default timeout (as in herdr); 32 hung commands block plugin
@@ -130,8 +139,6 @@ left in the results files. Each entry names its source.
   has no foreground process list. ([m12](../results/m12.md))
 - Each connection has a 1 MiB receive buffer and at most 16 pipelined requests during a
   wait. ([m12](../results/m12.md))
-- Popups with `identity: false` still inherit pane-identity variables the VM already had
-  (the kernel spawn can only set variables). ([m17](../results/m17.md))
 - `pane.swap` lacks herdr's `source_pane_id`/`target_pane_id` form; a paneless
   `notification.show` raises no `notification.shown` event;
   `resume_argv` reports are refused until agent detection claims the pane.
@@ -141,9 +148,12 @@ left in the results files. Each entry names its source.
 
 ### Agents
 
-- Agent states and labels depend on M11 detection; without it badges show `unknown` and
-  agent notifications and dots do not fire. ([m13](../results/m13.md),
-  [m17](../results/m17.md)) <!-- m18: drop or restate once M11's merge is known -->
+- Detection manifests update only with a release (or a local override in
+  `<config dir>/agent-detection/`); herdr's remote manifest channel is not ported and
+  `server agent-manifests` shows its columns as `never` / `not checked`.
+  ([m11](../results/m11.md), [m18](../results/m18.md))
+- Hook integrations are installed by hand; there is no settings integrations section.
+  macOS lists an arbitrary 64-process subset of a foreground job. ([m11](../results/m11.md))
 
 ### Reload (source checkouts)
 
@@ -168,10 +178,32 @@ beams accumulating (M17 task 2 prunes to 20); the `conn.ex` compile warning (M17
 no zoom, pane borders, hover, navigator, worktrees, tab-bar options, drag-reorder,
 `--default-config`, completion, `split --cwd/--env`, system toasts (M17 inventory);
 plugin popups (M17 task 23); a module removed by rollback keeping its beam (M4 phase 2).
+M18 fixed: the 1.1 s copy-mode search miss (now about 23 ms in the kernel, off the client
+session), herdr's CLI output shape, `plugin update`, kitty images lost on a graceful kernel
+restart, the never-cleaned `t=t` upload directory, popups with `identity: false` inheriting
+pane-identity variables, and pane shells inheriting `HERDR_BROKER_SOCK`
+([m18](../results/m18.md)).
 
 ## Pending in this release
 
-Filled by the M18 owner at the end: open items of M18 itself (CLI envelope, `plugin update`,
-kernel search, image carry, update-manifest and signing status, perf/stability results).
+Open items of M18 itself ([m18](../results/m18.md)):
 
-- (to be filled)
+- No update channel is published. `releases/<V>/update.url` names
+  `https://updates.herdr-live.invalid/stable/manifest.json`, so a plain `herdr-live update`
+  fails with `fetch_failed` until a manifest is hosted; `--manifest URL` works today.
+- Signing and notarization have only been dry-run. A locally built tarball is ad-hoc
+  signed, and a quarantined download is refused by Gatekeeper.
+- A local build trusts the dev update key from `keygen.sh`. A real build must set
+  `HERDR_LIVE_UPDATE_PUBKEY` (see [signing.md](signing.md)).
+- The Homebrew formula is macOS arm64 only and was tested in a throwaway brew. The Nix flake
+  is untested (no nix on the build host). Both install a flat tree, and `herdr-live update`
+  refuses there (`managed_install`).
+- Linux needs the OS's `libcrypto.so.3`, `libtinfo.so.6` and glibc 2.39 or newer (Ubuntu
+  24.04 has them).
+- A killed update leaves `<lib>/.update.lock`; the next run takes it over once its pid is
+  gone.
+- After a successful `kernel-restart` the updater waits 5 s for the new version to answer.
+  A slower takeover reports `restart_did_not_switch`; re-running `update` finishes it.
+- Perf and stability: no regression at matched load; every slice-1 row is met on both OSes
+  on the release build ([m18-gate](../results/m18-gate.md)). Reload latency for state-shape
+  edits grew since M7 and is still inside its targets.

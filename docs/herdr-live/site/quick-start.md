@@ -12,6 +12,7 @@ The prefix key is `ctrl+b`. Defaults (see the in-app keybind help for the full l
 | `ctrl+b z` | zoom the focused pane |
 | `ctrl+b g` / `ctrl+b w` | go-to navigator / workspace navigate mode |
 | `ctrl+b q` | quit the client (detaches only that client when attached) |
+| `ctrl+b [` / `ctrl+b ?` | copy mode / keybind help |
 
 The UI is mouse-first: click tabs, workspaces and menus; drag to reorder; select text and
 it is copied. Configuration is `${XDG_CONFIG_HOME:-~/.config}/herdr-live/config.toml` (`HERDR_LIVE_CONFIG`); `herdr-live --default-config` prints the

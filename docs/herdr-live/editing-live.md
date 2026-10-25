@@ -39,6 +39,17 @@ The reload pipeline runs only in the primary VM. The warm standby VM does not ru
 NIF modules are never hot reloaded. A new `#[rustler::nif]` also needs the Elixir stub in
 the crate's NIF module and a facade function (see AGENTS.md "Adding a NIF").
 
+Elixir that calls a changed NIF must not run against the old one. M18 changed the kernel
+(`vt_search`, env removal on spawn, `vt_graphics_replay`, the Linux foreground-job probe), so
+an instance started before M18 needs `kernel-restart` to use them. Do not hot-reload the new
+`app/store.ex` or `native/keeper.ex` into that instance first. They pass `{name, nil}` env
+entries, the old NIF cannot decode them, and every pane spawn fails with `badarg` until the
+`kernel-restart`. A merge or pull of M18 into a running checkout triggers exactly that
+reload, so either take it with the instance stopped or run `kernel-restart` straight after
+it (new panes fail in between; existing panes are unaffected). Copy-mode search on the old
+kernel answers "copy mode search failed" and the session stays up
+([results/m18.md](results/m18.md)).
+
 ## Fan-out and why `herdr_scene` edits are expensive
 
 The cost of an edit is its dependency fan-out: Mix recompiles every module that depends

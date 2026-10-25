@@ -122,6 +122,27 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   `live/scripts/launcher_smoke.sh`, `attached_smoke.sh`,
   `live/bench/handoff/smoke.exs`. A VM learns its role over the link when
   `HERDR_BROKER_SOCK` is set; without it (tests, iex) it starts standalone.
+- Release (M18, `docs/herdr-live/results/m18.md`): `live/rel/` holds the Mix
+  release templates (`env.sh.eex`: `RELEASE_DISTRIBUTION=none`; `vm.args.eex`),
+  `rel/macos/entitlements.plist` and `rel/packaging/` (Homebrew formula
+  template, Nix flake). `live/scripts/release/`: `build.sh` (tarball +
+  `.sha256`, path printed last), `install.sh`, `keygen.sh` (dev update key into
+  `live/_build/release/keys/`, never committed), `make_manifest.exs` /
+  `sign_manifest.sh`, `sign_macos.sh` / `notarize_macos.sh` (dry-run capable),
+  and the checks `release_smoke.sh`, `fresh_install_check.sh`,
+  `update_check.sh`, `package_check.sh`. The release is `MIX_ENV=prod`: no hot
+  reload, no distribution. `bin/herdr-live` serves both layouts (release when
+  `$root/releases/start_erl.data` exists). Install layout:
+  `<prefix>/lib/herdr-live/releases/<V>/`, `current -> releases/<V>`,
+  `<prefix>/bin/herdr-live -> ../lib/herdr-live/current/bin/herdr-live`.
+  `current` decides what the next start or `kernel-restart` runs; the broker
+  pins the resolved `releases/<V>` in its VM argv, so standby and crash boots
+  never change version. `herdr-live update [--manifest URL] [--check] [--yes]
+  [--no-restart]` verifies a signed manifest (ed25519, keys in
+  `releases/<V>/update-keys/`), installs beside, `kernel-restart`s into the new
+  release, and flips `current` only once it answers as the new version. A
+  `releases/managed-by` marker (brew, nix) makes it refuse. The running broker
+  binary changes only on a full stop and start.
 - Remote attach (M16): the server listens on `client.sock` (0600, in the
   0700 dir of the API socket; `$HERDR_LIVE_CLIENT_SOCK` overrides) with a
   token in `client.token` beside it (0600). `herdr-live attach [<host>]
