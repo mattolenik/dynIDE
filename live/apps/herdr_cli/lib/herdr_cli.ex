@@ -77,6 +77,10 @@ defmodule HerdrCli do
         out(text)
         0
 
+      {:print, text} ->
+        out(text)
+        0
+
       {:call, method, params, out} ->
         run_call(read_files(params), method, out, env)
 

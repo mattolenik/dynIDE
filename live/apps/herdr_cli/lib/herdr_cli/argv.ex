@@ -23,6 +23,7 @@ defmodule HerdrCli.Argv do
           | {:subscribe, map()}
           | {:usage, String.t()}
           | {:help, String.t()}
+          | {:print, binary()}
 
   @sources ~w(visible recent)
   @agent_states ~w(idle working blocked done unknown)
@@ -97,7 +98,10 @@ defmodule HerdrCli.Argv do
         %{},
         :gate,
         "test-on-save [on|off]"
-      )
+      ),
+      # CLI-local (no API method): answered by `parse/2` itself
+      cmd(["--default-config"], :print, [], %{}, :text, "--default-config"),
+      cmd(["completion"], :print, [], %{}, :text, "completion bash|zsh|fish")
     ]
   end
 
@@ -532,6 +536,7 @@ defmodule HerdrCli.Argv do
   def parse(argv, env) do
     case find(argv) do
       {%{method: :raw} = c, rest} -> raw(c, rest)
+      {%{method: :print} = c, rest} -> print(c, rest)
       {c, rest} -> with_usage(c, build(c, rest, env))
       nil -> {:usage, unknown(argv) <> usage()}
     end
@@ -555,6 +560,31 @@ defmodule HerdrCli.Argv do
 
   defp with_usage(c, {:error, msg}),
     do: {:usage, "herdr-live: #{msg}\nusage: herdr-live #{c.usage}\n"}
+
+  defp print(%{words: ["--default-config"]}, []) do
+    case File.read(default_config_path()) do
+      {:ok, text} ->
+        {:print, text}
+
+      {:error, r} ->
+        {:usage, "herdr-live: cannot read default config: #{:file.format_error(r)}\n"}
+    end
+  end
+
+  defp print(%{words: ["completion"]}, [shell]) when shell in ~w(bash zsh fish),
+    do:
+      {:print,
+       HerdrCli.Completion.script(
+         Map.fetch!(%{"bash" => :bash, "zsh" => :zsh, "fish" => :fish}, shell),
+         commands()
+       )}
+
+  defp print(c, _), do: with_usage(c, {:error, "expected one of bash, zsh, fish"})
+
+  # ebin/../priv; works under `erl -pa ebin` where there is no application to ask
+  defp default_config_path do
+    :code.which(__MODULE__) |> Path.dirname() |> Path.join("../priv/default_config.toml")
+  end
 
   defp raw(_c, [method]), do: {:call, method, %{}, :json}
 

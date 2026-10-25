@@ -1,0 +1,60 @@
+# herdr-live default config. Save as ~/.config/herdr-live/config.toml (or $HERDR_LIVE_CONFIG).
+# Values shown are the defaults; the [keys] entries are commented, uncomment to change one.
+
+# Uncomment to skip the first-run onboarding.
+# onboarding = false
+
+[ui]
+sidebar_width = 26
+sidebar_min_width = 18
+sidebar_max_width = 36
+# sidebar_start_collapsed = false
+confirm_close = true
+status_indicators = "dots"   # "dots" | "symbols"
+prompt_new_tab_name = true
+
+[ui.sound]
+enabled = true
+# command = "afplay"         # run with the sound name as its last argument
+
+[ui.toast]
+delivery = "herdr"           # "off" | "herdr" | "terminal" | "system"
+delay_seconds = 1            # 0..3600
+
+[theme]
+name = "catppuccin"
+auto_switch = false
+light_name = "catppuccin-latte"
+dark_name = "catppuccin"
+
+# Each value is a key string or an array of them; [] unbinds. "prefix+x" means x after the prefix.
+[keys]
+# prefix = ["ctrl+b"]
+# close_pane = ["prefix+x"]
+# close_tab = ["prefix+shift+x"]
+# close_workspace = ["prefix+shift+d"]
+# cycle_pane_next = ["prefix+tab"]
+# cycle_pane_previous = ["prefix+shift+tab"]
+# detach = ["prefix+q"]
+# focus_pane_down = ["prefix+j"]
+# focus_pane_left = ["prefix+h"]
+# focus_pane_right = ["prefix+l"]
+# focus_pane_up = ["prefix+k"]
+# help = ["prefix+?"]
+# new_tab = ["prefix+c"]
+# new_workspace = ["prefix+shift+n"]
+# next_tab = ["prefix+n"]
+# previous_tab = ["prefix+p"]
+# reload_config = ["prefix+shift+r"]
+# rename_pane = ["prefix+shift+p"]
+# rename_tab = ["prefix+shift+t"]
+# rename_workspace = ["prefix+shift+w"]
+# resize_mode = ["prefix+r"]
+# settings = ["prefix+s"]
+# split_horizontal = ["prefix+minus"]
+# split_vertical = ["prefix+v"]
+# swap_pane_down = ["prefix+shift+j"]
+# swap_pane_left = ["prefix+shift+h"]
+# swap_pane_right = ["prefix+shift+l"]
+# swap_pane_up = ["prefix+shift+k"]
+# toggle_sidebar = ["prefix+b"]
