@@ -1114,7 +1114,8 @@ def remote():
             relay = int(read_text(pidfile).strip())
             os.remove(pidfile)
             at, before = len(b.transcript), len(events("client_reconnect"))
-            os.kill(relay, signal.SIGKILL)  # a port child of B's VM, in its own process group
+            os.kill(relay, signal.SIGKILL)  # a port child of B's VM, in its own process group; the first relay is only this pid
+            # (fake_ssh execs the relay, nothing else in its group), so cleanup needs the second
             b.until(lambda: b"reconnecting" in b.transcript[at:], "B shows reconnecting", timeout=30)
             ok(True, f"remote: killing the relay (pid {relay}) shows reconnecting in B")
             b.until(lambda: len(events("client_reconnect")) > before and not b.shows("reconnecting"),

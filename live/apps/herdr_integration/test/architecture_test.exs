@@ -46,42 +46,81 @@ defmodule HerdrIntegration.ArchitectureTest do
   end
 
   # M16 R7: a remote client decodes server frames with [:safe], so every atom the server
-  # puts in a frame must exist in the client VM: OTP's and Elixir's plus these apps' (it
-  # preloads them); a module's atoms chunk stands for its atoms once loaded
-  test "the remote client's apps know every handoff phase the server broadcasts" do
-    {:ok, types} = Code.Typespec.fetch_types(HerdrServer.Handoff.Notice)
-    [ast] = for {:type, {:event, ast, []}} <- types, do: ast
-    {_, phases} = Macro.prewalk(Code.Typespec.type_to_quoted({:event, ast, []}), [], &atoms/2)
-
-    client =
-      for app <- [:kernel, :stdlib, :elixir, :logger, :herdr_scene, :herdr_reload, :herdr_term],
-          {:ok, mods} = :application.get_key(app, :modules),
-          mod <- mods,
-          {:ok, {_, [atoms: atoms]}} <- [:beam_lib.chunks(:code.which(mod), [:atoms])],
-          {_, a} <- atoms,
-          into: MapSet.new(),
-          do: a
-
-    assert :adopted in phases
-    assert Enum.reject(phases, &(&1 in client)) == []
-  end
-
-  # every atom of every server message a socket client can get must be in the client VM
+  # puts in a frame must exist in the client VM. A fresh VM that preloads the client's apps
+  # the way `HerdrTerm.Remote.main/1` does decodes each atom with [:safe]; the ones it
+  # rejects are leaks.
   test "every atom a socket client receives exists on the client" do
-    client = client_atoms()
-
-    leaks =
-      for {name, msg} <- server_messages(),
-          atom <- msg |> walk([]) |> Enum.uniq(),
-          not MapSet.member?(client, atom),
-          do: "#{inspect(atom)} in #{name}"
-
+    leaks = leaks(server_messages())
     assert leaks == [], "atoms unknown to the remote client:\n" <> Enum.join(leaks, "\n")
   end
 
-  test "the walk finds map keys and struct names (negative control)" do
+  test "the leak check reports a server-only atom (negative control)" do
+    fresh = String.to_atom("server_only_#{System.unique_integer([:positive])}")
+
+    leaks = leaks([{"module", {:x, HerdrServer.View}}, {"fresh", %{k: [{:ok, fresh}]}}])
+    assert leaks == [~s(HerdrServer.View in module), "#{inspect(fresh)} in fresh"]
+    assert leaks([{"ok", {:notice, %{level: :info, text: "t"}}}]) == []
+  end
+
+  test "the walk finds map keys and struct names" do
     found = walk({:a, %{k: [%HerdrScene.Scene.Node{role: :r}]}}, [])
     assert [:a, :k, HerdrScene.Scene.Node, :role, :r, :children] -- found == []
+  end
+
+  test "every {:detached, reason} the server sends is in Protocol.detach_reasons/0" do
+    lib = Path.expand("../../herdr_server/lib", __DIR__)
+
+    sent =
+      for file <- Path.wildcard(Path.join(lib, "**/*.ex")),
+          [_, reason] <- Regex.scan(~r/\{:detached,\s*:(\w+)\}/, File.read!(file)),
+          uniq: true,
+          do: String.to_atom(reason)
+
+    assert sent != []
+    assert sent -- HerdrScene.Protocol.detach_reasons() == []
+  end
+
+  defp leaks(messages) do
+    atoms =
+      for {name, msg} <- messages,
+          atom <- msg |> walk([]) |> Enum.uniq(),
+          do: {atom, name}
+
+    missing = missing_on_client(atoms |> Enum.map(&elem(&1, 0)) |> Enum.uniq())
+    for {atom, name} <- atoms, atom in missing, do: "#{inspect(atom)} in #{name}"
+  end
+
+  @child ~S"""
+  [file] = System.argv()
+  HerdrTerm.Remote.preload()
+  {:ok, _} = Application.ensure_all_started(:logger)
+
+  missing =
+    for hex <- File.read!(file) |> String.split(),
+        name = Base.decode16!(hex),
+        byte_size(name) < 256,
+        not (try do
+               :erlang.binary_to_term(<<131, 119, byte_size(name)>> <> name, [:safe])
+               true
+             rescue
+               ArgumentError -> false
+             end),
+        do: hex
+
+  IO.puts("MISSING " <> Enum.join(missing, ","))
+  """
+
+  defp missing_on_client(atoms) do
+    dir = Path.join(System.tmp_dir!(), "r7_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    file = Path.join(dir, "atoms")
+    File.write!(file, Enum.map_join(atoms, "\n", &Base.encode16(Atom.to_string(&1))))
+    pa = Enum.flat_map(:code.get_path(), &["-pa", to_string(&1)])
+    {out, 0} = System.cmd("elixir", pa ++ ["-e", @child, file], stderr_to_stdout: true)
+    File.rm_rf!(dir)
+    [_, hexes] = Regex.run(~r/MISSING (.*)/, out) || flunk("client VM check failed:\n" <> out)
+    names = hexes |> String.split(",", trim: true) |> MapSet.new(&Base.decode16!/1)
+    Enum.filter(atoms, &MapSet.member?(names, Atom.to_string(&1)))
   end
 
   # prefix + key, as a client would
@@ -94,17 +133,12 @@ defmodule HerdrIntegration.ArchitectureTest do
     elem(Kernel.apply(m, f, [app | a]), 0)
   end
 
-  # the atoms chunk plus the atoms inside literals (constant lists and maps compile to the
-  # literal table); loading a module creates both
-  defp client_atoms do
-    for app <- [:kernel, :stdlib, :elixir, :logger, :herdr_scene, :herdr_reload, :herdr_term],
-        {:ok, mods} = :application.get_key(app, :modules),
-        mod <- mods,
-        {:ok, {_, [atoms: atoms, literals: lits]}} <-
-          [:beam_lib.chunks(:code.which(mod), [:atoms, :literals])],
-        a <- Enum.map(atoms, &elem(&1, 1)) ++ walk(lits, []),
-        into: MapSet.new(),
-        do: a
+  defp handoff_phases do
+    {:ok, types} = Code.Typespec.fetch_types(HerdrServer.Handoff.Notice)
+    [ast] = for {:type, {:event, ast, []}} <- types, do: ast
+    {_, phases} = Macro.prewalk(Code.Typespec.type_to_quoted({:event, ast, []}), [], &atoms/2)
+    true = :adopted in phases
+    phases
   end
 
   defp walk(t, acc) when is_atom(t) and t not in [nil, true, false], do: [t | acc]
@@ -179,7 +213,7 @@ defmodule HerdrIntegration.ArchitectureTest do
       end ++ [{"pane scene empty", {:scene, PaneScene.build(1, nil, size)}}]
 
     handoffs =
-      for phase <- [:begin, :aborted, :released, :adopted] do
+      for phase <- handoff_phases() do
         {"handoff #{phase}", {:handoff, %{phase: phase, gen: 2, panes: [1, 2]}}}
       end
 
@@ -216,7 +250,7 @@ defmodule HerdrIntegration.ArchitectureTest do
       ) ++
       for(m <- [:terminal, :prefix, :resize, :copy], do: {"input_mode #{m}", {:input_mode, m}}) ++
       for(
-        r <- [:requested, :store_restart, :replaced, :session_ended, :pane_closed],
+        r <- HerdrScene.Protocol.detach_reasons(),
         do: {"detached #{r}", {:detached, r}}
       )
   end
