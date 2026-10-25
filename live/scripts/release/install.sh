@@ -43,12 +43,16 @@ mkdir -p "$lib/releases" "$prefix/bin"
 
 # extract beside the target, then rename into place: a failed extract leaves nothing half-installed
 stage="$lib/releases/.stage.$$"
-trap 'rm -rf "$stage"' EXIT
+cleanup() { rm -rf "$stage" "$lib/.current.$$" "$prefix/bin/.herdr-live.$$"; }
+trap cleanup EXIT
+trap 'exit 1' INT TERM HUP
 rm -rf "$stage"
 mkdir "$stage"
-tar -xzf "$tarball" -C "$stage"
+tar -xzf "$tarball" --no-same-owner -C "$stage"
 [ -x "$stage/$top/bin/herdr-live" ] || die "tarball has no $top/bin/herdr-live"
-rm -rf "$rel"
+# --force: the old release is moved aside, never deleted before its replacement is in place
+old=''
+if [ -e "$rel" ]; then old="$rel.old.$$"; mv "$rel" "$old"; fi
 mv "$stage/$top" "$rel"
 
 # atomic flip: temp symlink, then rename over `current` without following it (GNU -T, BSD -h)
@@ -60,6 +64,7 @@ ln -s ../lib/herdr-live/current/bin/herdr-live "$prefix/bin/.herdr-live.$$"
 if mv --version >/dev/null 2>&1; then mv -fT "$prefix/bin/.herdr-live.$$" "$prefix/bin/herdr-live"
 else mv -fh "$prefix/bin/.herdr-live.$$" "$prefix/bin/herdr-live"; fi
 
+[ -z "$old" ] || rm -rf "$old"
 echo "installed herdr-live $v in $rel"
 case ":${PATH:-}:" in
   *":$prefix/bin:"*) echo "$prefix/bin is on PATH" ;;

@@ -18,7 +18,17 @@ if [ "${1:-}" = --inner ]; then # body: inner TARBALL INSTALL_SH
   tarball=$2 install=$3
   tmp=$(mktemp -d)
   pid=''
-  trap '[ -z "$pid" ] || kill -KILL "$pid" 2>/dev/null; rm -rf "$tmp"' EXIT
+  # failure path: TERM the broker first (it stops its VMs and pane shells), then KILL
+  # shellcheck disable=SC2329 # invoked via trap
+  stop() {
+    [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null
+    n=0
+    while [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ "$n" -lt 20 ]; do n=$((n + 1)); sleep 0.5; done
+    [ -z "$pid" ] || kill -KILL "$pid" 2>/dev/null
+    rm -rf "$tmp"
+  }
+  trap stop EXIT
+  trap 'exit 1' INT TERM HUP
   fail() { echo "FAIL: $*" >&2; tail -n 30 "$tmp/state/herdr-live/herdr-live.log" >&2 2>/dev/null; exit 1; }
   mkdir -p "$tmp/home" "$tmp/t"
   touch "$tmp/marker"
@@ -63,12 +73,17 @@ X
   mode=$(stat -c %a "$tmp/state/herdr-live" 2>/dev/null || stat -f %Lp "$tmp/state/herdr-live")
   [ "$mode" = 700 ] || fail "state dir mode $mode (wanted 700)"
   echo "PASS: state dir mode 700"
-  # only herdr-live's own default locations: other programs (the user's herdr) write in HOME too
-  stray=''
-  for h in "${REAL_HOME:-/nonexistent}" /root; do
-    stray="$stray$(find "$h/.local/state/herdr-live" "$h/.config/herdr-live" "$h/.cache/herdr-live" \
-      "$h/.local/lib/herdr-live" "$h/.local/bin/herdr-live" -newer "$tmp/marker" 2>/dev/null | head -n 5)"
-  done
+  if [ -f /run/.containerenv ] || [ -f /.dockerenv ]; then
+    # container: the real check, whole filesystem (one mount) minus the temp dir and kernel/runtime trees
+    stray=$(find / -xdev \( -path /proc -o -path /sys -o -path /dev -o -path /run -o -path "$tmp" \) -prune -o \
+      -type f -newer "$tmp/marker" -print 2>/dev/null | head -n 10)
+  else
+    # macOS host: only herdr-live's own default locations under the real HOME (the host runs the user's
+    # herdr, which writes elsewhere in HOME, so a whole-HOME find would false-fail)
+    stray=$(find "${REAL_HOME:-/nonexistent}/.local/state/herdr-live" "${REAL_HOME:-/nonexistent}/.config/herdr-live" \
+      "${REAL_HOME:-/nonexistent}/.cache/herdr-live" "${REAL_HOME:-/nonexistent}/.local/lib/herdr-live" \
+      "${REAL_HOME:-/nonexistent}/.local/bin/herdr-live" -newer "$tmp/marker" 2>/dev/null | head -n 5)
+  fi
   [ -z "$stray" ] || fail "files written outside the temp dir: $stray"
   echo "PASS: nothing written outside the temp dir"
   exit 0
@@ -92,6 +107,10 @@ else
 fi
 [ "$mac" = 0 ] || exit 1
 
+if ! command -v podman >/dev/null 2>&1; then
+  echo "SKIP: Linux fresh install (podman not installed)"
+  exit 0
+fi
 echo "== Linux fresh install (ubuntu:24.04 container)"
 image=${HERDR_FRESH_IMAGE:-docker.io/library/ubuntu:24.04}
 name="herdr-m18-fresh-$$"
