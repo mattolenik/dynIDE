@@ -13,11 +13,15 @@ defmodule HerdrServer.App.Modal.Confirm do
   closes that workspace (the last one is replaced by a fresh one); `ui.confirm_close`
   only decides whether `"Close workspace?"` (detail `"<name> — 1 pane"` / `"<name> — N
   panes"`) asks first. Other closes act directly.
+
+  `remove_worktree/1` (the `remove_worktree` binding) asks `"Remove worktree?"` before
+  removing the active workspace's linked worktree (`App.Worktrees`, the branch is kept);
+  a dirty one asks again before forcing.
   """
 
   @behaviour HerdrServer.App.Modal.Kind
 
-  alias HerdrServer.App.{Actions, Modal, Workspaces}
+  alias HerdrServer.App.{Actions, Modal, Workspaces, Worktrees}
   alias HerdrServer.Layout
   alias HerdrServer.View.Modal, as: V
 
@@ -83,6 +87,14 @@ defmodule HerdrServer.App.Modal.Confirm do
   """
   @spec close_workspace_now(map, term) :: {map, [tuple]}
   def close_workspace_now(app, ws_id), do: Workspaces.close_workspace(app, ws_id)
+
+  @spec remove_worktree(map) :: {map, [tuple]}
+  def remove_worktree(app) do
+    w = ws(app)
+    on_confirm = {Worktrees, :remove, [Worktrees.root_pane(w), false]}
+    modal = new("Remove worktree?", "#{w.name} — the branch is kept", :danger, on_confirm)
+    {Modal.push(app, modal), []}
+  end
 
   # the action removes workspace `w`: ask when confirm_close, else close it; the same
   # close either way

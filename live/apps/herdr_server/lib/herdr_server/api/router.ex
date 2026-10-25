@@ -63,6 +63,9 @@ defmodule HerdrServer.Api.Router do
 
   def handle("plugin." <> _ = method, params, _ctx), do: Handlers.Plugins.handle(method, params)
 
+  def handle("worktree." <> _ = method, params, _ctx),
+    do: Handlers.Worktrees.handle(method, params)
+
   def handle("pane.link.activate", params, _ctx),
     do: Handlers.Plugins.handle("pane.link.activate", params)
 

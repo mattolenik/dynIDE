@@ -14,12 +14,17 @@ defmodule HerdrServer.App.Modal.Menu do
   (when named), `Swap with focused pane` (another pane of the same tab is focused),
   `Split right`, `Split down`, `Close pane`; global `settings`, `keybinds`,
   `reload config`, `detach`.
+
+  `open_worktree/1` (the `open_worktree` binding) asks git for the active workspace's
+  worktrees off the Store (`App.Worktrees`); `worktrees/2` then lists them (a `:workspace`
+  menu near the top left, entries `{:entry, n}`): one already open in a workspace focuses
+  it, another opens a workspace on it.
   """
 
   @behaviour HerdrServer.App.Modal.Kind
 
   alias HerdrScene.Scene.Node
-  alias HerdrServer.App.{Actions, Modal, Workspaces}
+  alias HerdrServer.App.{Actions, Modal, Workspaces, Worktrees}
   alias HerdrServer.App.Modal.{Confirm, Prompt, Settings}
   alias HerdrServer.App.Modal.Keybinds, as: KeybindsModal
   alias HerdrServer.Layout
@@ -29,14 +34,43 @@ defmodule HerdrServer.App.Modal.Menu do
   @spec open(map, :tab | :workspace | :pane | :global, term, %{x: integer, y: integer}) ::
           {map, [tuple]}
   def open(app, menu, target, at) do
-    case with_plugins(items(app, menu, target), app, menu, target) do
-      [] ->
-        {app, []}
+    push(app, menu, target, at, with_plugins(items(app, menu, target), app, menu, target))
+  end
 
-      items ->
-        modal = %{kind: :menu, menu: menu, target: target, at: at, selected: 0, items: items}
-        {Modal.push(app, modal), []}
-    end
+  defp push(app, _menu, _target, _at, []), do: {app, []}
+
+  defp push(app, menu, target, at, items) do
+    modal = %{kind: :menu, menu: menu, target: target, at: at, selected: 0, items: items}
+    {Modal.push(app, modal), []}
+  end
+
+  @spec open_worktree(map) :: {map, [tuple]}
+  def open_worktree(app) do
+    Worktrees.list(app, Worktrees.root_pane(ws(app)))
+  end
+
+  @doc "Lists worktrees (`App.Worktrees.run(:list, _)` entries) to open or focus."
+  @spec worktrees(map, [map]) :: {map, [tuple]}
+  def worktrees(app, entries) do
+    paths = Enum.map(entries, & &1.path)
+    cwds = for ws <- app.session.workspaces, do: {ws.id, ws[:cwd]}
+
+    items =
+      entries
+      |> Enum.with_index()
+      |> Enum.map(fn {e, i} ->
+        text = Enum.join(Enum.reject([e.label, e.branch && "(#{e.branch})"], &is_nil/1), " ")
+
+        mfa =
+          case Worktrees.owner(cwds, paths, e.path) do
+            nil -> {Worktrees, :open, [e.path, e.label, true]}
+            id -> {Workspaces, :switch_workspace_id, [id]}
+          end
+
+        {i, text, mfa}
+      end)
+
+    push(app, :workspace, nil, %{x: 2, y: 1}, items)
   end
 
   # M14: plugin actions follow a menu's own items (none for a target that is gone)

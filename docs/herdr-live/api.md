@@ -1027,6 +1027,77 @@ Result: `ok` (no fields).
 
 Errors: `invalid_params`, `not_found`
 
+## Methods: worktree
+
+### `worktree.list`
+
+List the git worktrees of a workspace's repo.
+
+CLI: `herdr-live worktree list [--workspace <workspace_id> | --cwd <path>]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `workspace_id` | workspace id | no | Source workspace; default the focused one. |
+| `cwd` | string | no | Absolute path inside the source repo, instead of a workspace. |
+
+Result: `worktree_list` with `source` (object), `worktrees` (list of `worktree` object).
+
+Errors: `invalid_params`, `not_found`, `failed`
+
+### `worktree.create`
+
+Add a git worktree and open a workspace in it.
+
+CLI: `herdr-live worktree create --branch B [--workspace <workspace_id> | --cwd <path>] [--base REF] [--path P] [--label L] [--focus]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `workspace_id` | workspace id | no | Source workspace; default the focused one. |
+| `cwd` | string | no | Absolute path inside the source repo, instead of a workspace. |
+| `branch` | string | yes | Branch to check out; created from `base` when missing. |
+| `base` | string | no | Start point of a new branch; default HEAD. |
+| `path` | string | no | Absolute checkout path; default `~/.herdr-live/worktrees/<repo>/<branch>`. |
+| `label` | string | no | Workspace label; default the checkout's name. |
+| `focus` | boolean | no | Focus the workspace; default false. |
+
+Result: `worktree_created` with `workspace` (`workspace` object), `tab` (`tab` object), `root_pane` (`pane` object), `worktree` (`worktree` object).
+
+Errors: `invalid_params`, `not_found`, `failed`
+
+### `worktree.open`
+
+Open a workspace in an existing worktree (or focus the one open there).
+
+CLI: `herdr-live worktree open (--path P | --branch B) [--workspace <workspace_id> | --cwd <path>] [--label L] [--focus]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `workspace_id` | workspace id | no | Source workspace; default the focused one. |
+| `cwd` | string | no | Absolute path inside the source repo, instead of a workspace. |
+| `path` | string | no | Checkout path of the worktree. |
+| `branch` | string | no | Branch checked out in the worktree. |
+| `label` | string | no | Workspace label; default the checkout's name. |
+| `focus` | boolean | no | Focus the workspace; default false. |
+
+Result: `worktree_opened` with `workspace` (`workspace` object), `tab` (`tab` object), `root_pane` (`pane` object), `worktree` (`worktree` object), `already_open` (boolean).
+
+Errors: `invalid_params`, `not_found`, `failed`
+
+### `worktree.remove`
+
+Remove a workspace's linked worktree and close the workspaces in it; the branch is kept.
+
+CLI: `herdr-live worktree remove <workspace_id> [--force]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `workspace_id` | workspace id | yes | Target workspace. |
+| `force` | boolean | no | Remove even with uncommitted changes; default false. |
+
+Result: `worktree_removed` with `workspace_id` (workspace id), `path` (string), `forced` (boolean).
+
+Errors: `invalid_params`, `not_found`, `failed`
+
 ## Objects
 
 ### `agent`
@@ -1139,6 +1210,19 @@ Errors: `invalid_params`, `not_found`
 | `focused` | boolean |
 | `tabs` | integer |
 | `active_tab_id` | tab id |
+
+### `worktree`
+
+| field | type |
+| --- | --- |
+| `path` | string |
+| `branch` | string or null |
+| `is_bare` | boolean |
+| `is_detached` | boolean |
+| `is_prunable` | boolean |
+| `is_linked_worktree` | boolean |
+| `open_workspace_id` | string or null |
+| `label` | string |
 
 A layout `root` is `{"type": "pane", "pane_id": ...}` or
 `{"type": "split", "direction": "right" | "down", "ratio": number, "first": node, "second": node}`.

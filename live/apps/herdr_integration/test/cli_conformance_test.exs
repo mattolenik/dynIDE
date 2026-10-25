@@ -92,7 +92,13 @@ defmodule HerdrIntegration.CliConformanceTest do
     "plugin pane open --plugin a --entrypoint b --placement split --width 40% --height 10 " <>
       "--workspace w1 --target-pane p1 --direction down --cwd /tmp --env A=1 --env B=2 --no-focus",
     "plugin pane focus p1",
-    "plugin pane close p1"
+    "plugin pane close p1",
+    "worktree list --workspace w1",
+    "worktree list --cwd /tmp/r",
+    "worktree create --branch feat --cwd /tmp/r --base main --path /tmp/wt --label L --focus",
+    "worktree open --branch feat --workspace w1 --label L --focus",
+    "worktree open --path wt",
+    "worktree remove w2 --force"
   ]
 
   defp parsed do

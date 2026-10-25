@@ -11,11 +11,15 @@ defmodule HerdrServer.App.Modal.Prompt do
 
   `new_tab/1` (the `c` binding and the tab bar's `+`) asks for the name, prefilled with
   the next tab number, when `ui.prompt_new_tab_name` is set, else opens the tab directly.
+
+  `new_worktree/1` (`prefix+G`) asks for a branch name (title `"new worktree"`); submitting
+  emits `{:worktree, :create, %{pane: root, branch: name}}` (`App.Worktrees.create/3`) for
+  the active workspace's repo.
   """
 
   @behaviour HerdrServer.App.Modal.Kind
 
-  alias HerdrServer.App.{Actions, Modal}
+  alias HerdrServer.App.{Actions, Modal, Worktrees}
   alias HerdrServer.App.Modal.TextField
   alias HerdrServer.View.Modal, as: V
 
@@ -41,6 +45,10 @@ defmodule HerdrServer.App.Modal.Prompt do
     {app, []} = Actions.rename_tab(app, app.session.active_workspace, ws(app).active_tab, name)
     {app, effects}
   end
+
+  @spec new_worktree(map) :: {map, [tuple]}
+  def new_worktree(app),
+    do: open(app, new("new worktree", "", {Worktrees, :create, [Worktrees.root_pane(ws(app))]}))
 
   @spec rename_tab(map) :: {map, [tuple]}
   def rename_tab(app), do: rename_tab(app, app.session.active_workspace, ws(app).active_tab)

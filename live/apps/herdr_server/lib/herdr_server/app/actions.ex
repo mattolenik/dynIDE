@@ -2,14 +2,15 @@ defmodule HerdrServer.App.Actions do
   @moduledoc """
   Pure input handling: `apply/2` turns a neutral `HerdrScene.Event` (plus the
   server-internal `{:pane_exited, id}`, `{:pane_title, id, title}`, `{:config_loaded, cfg}`,
-  `{:agent_state, id, state}`, `{:workspace_cwd, ws_id, cwd, label}` and
-  `{:workspace_git, ws_id, info}`, which are never accepted from clients) into new app
+  `{:agent_state, id, state}`, `{:workspace_cwd, ws_id, cwd, label}`,
+  `{:workspace_git, ws_id, info}` and `{:worktree_done, result}` (`App.Worktrees.done/2`), which are never accepted from clients) into new app
   state and a list of effects. Effects are the only side-effect channel; this module does no I/O and sends no messages.
 
   Effects: `{:spawn, id, %{cols, rows}}`, `{:close, id}`, `{:key, id, event}`,
   `{:mouse, id, event}` (coordinates pane-relative), `{:paste, id, binary}`,
   `{:focus_report, id, boolean}`, `{:notice, %{level, text}}`, `{:detach}`,
-  `{:reload_config}`, `{:config_diagnostics, [binary]}`, `{:alert, alert}` (`App.Alerts`).
+  `{:reload_config}`, `{:config_diagnostics, [binary]}`, `{:alert, alert}` (`App.Alerts`),
+  `{:worktree, op, args}` (git off the Store, `App.Worktrees`).
 
   Config (`HerdrServer.Config`): `init/2` and the server-internal `{:config_loaded, cfg}`
   put the file over the ui (keybinds are always `Keybinds.default/0` plus the file); a
@@ -34,7 +35,8 @@ defmodule HerdrServer.App.Actions do
     Modal,
     Session,
     Ui,
-    Workspaces
+    Workspaces,
+    Worktrees
   }
 
   alias HerdrServer.App.Modal.Onboarding
@@ -134,6 +136,8 @@ defmodule HerdrServer.App.Actions do
     do: Workspaces.workspace_cwd(app, ws_id, cwd, label)
 
   def apply(app, {:workspace_git, ws_id, info}), do: Workspaces.workspace_git(app, ws_id, info)
+
+  def apply(app, {:worktree_done, result}), do: Worktrees.done(app, result)
 
   # server-internal (M11 detection): stores the state, alerts on herdr's transitions
   def apply(app, {:agent_state, id, state}) do

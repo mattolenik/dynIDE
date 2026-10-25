@@ -37,6 +37,7 @@ defmodule HerdrServer.Application do
           {Registry, keys: :unique, name: HerdrServer.Pane.Registry},
           # before the Store: an adopting Store starts its panes' servers in init
           HerdrServer.Pane.Supervisor,
+          {Task.Supervisor, name: HerdrServer.App.Store.Tasks},
           HerdrServer.App.Store,
           HerdrServer.WorkspaceFacts,
           HerdrServer.Client.Supervisor,

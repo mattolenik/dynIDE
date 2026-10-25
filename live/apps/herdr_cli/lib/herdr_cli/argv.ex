@@ -51,7 +51,49 @@ defmodule HerdrCli.Argv do
       title() ++
       agent() ++
       events() ++
-      plugin()
+      plugin() ++
+      worktree()
+  end
+
+  defp worktree do
+    src = %{"workspace" => {"workspace_id", :string}, "cwd" => {"cwd", :string}}
+    src_usage = "[--workspace <workspace_id> | --cwd <path>]"
+    open = Map.merge(src, %{"label" => {"label", :string}, "focus" => {"focus", :flag}})
+
+    create =
+      Map.merge(open, %{
+        "branch" => {"branch", :string},
+        "base" => {"base", :string},
+        "path" => {"path", :string}
+      })
+
+    [
+      cmd(~w(worktree list), "worktree.list", [], src, :json, "worktree list #{src_usage}"),
+      cmd(
+        ~w(worktree create),
+        "worktree.create",
+        [],
+        create,
+        :json,
+        "worktree create --branch B #{src_usage} [--base REF] [--path P] [--label L] [--focus]"
+      ),
+      cmd(
+        ~w(worktree open),
+        "worktree.open",
+        [],
+        Map.merge(open, %{"branch" => {"branch", :string}, "path" => {"path", :string}}),
+        :json,
+        "worktree open (--path P | --branch B) #{src_usage} [--label L] [--focus]"
+      ),
+      cmd(
+        ~w(worktree remove),
+        "worktree.remove",
+        [{:req, "workspace_id"}],
+        %{"force" => {"force", :flag}},
+        :json,
+        "worktree remove <workspace_id> [--force]"
+      )
+    ]
   end
 
   defp session do
@@ -682,6 +724,14 @@ defmodule HerdrCli.Argv do
     {:call, c.method, if(off, do: Map.put(params, "zoom", false), else: params), c.out}
   end
 
+  # the server takes absolute paths: relative ones are the caller's
+  defp finish(%{method: "worktree." <> _} = c, params, env) do
+    plain(
+      c,
+      Enum.reduce(~w(cwd path), params, &Map.replace_lazy(&2, &1, fn v -> abs_path(v, env) end))
+    )
+  end
+
   defp finish(c, params, _env), do: plain(c, params)
 
   defp plain(c, params), do: {:call, c.method, Map.delete(params, :json), c.out}
@@ -859,6 +909,15 @@ defmodule HerdrCli.Argv do
       if t not in @event_types,
         do: {:error, "unknown event type #{inspect(t)}; one of #{Enum.join(@event_types, ", ")}"}
     end)
+  end
+
+  defp check("worktree.create", %{"branch" => _}), do: :ok
+  defp check("worktree.create", _), do: {:error, "--branch is required"}
+
+  defp check("worktree.open", params) do
+    if Map.has_key?(params, "path") != Map.has_key?(params, "branch"),
+      do: :ok,
+      else: {:error, "give exactly one of --path and --branch"}
   end
 
   defp check(_method, _params), do: :ok

@@ -144,6 +144,43 @@ defmodule HerdrServer.Worktree do
   end
 
   @doc """
+  Adds a worktree for `branch` to the repo containing `cwd`, at `path` (nil: `default_path/3`
+  under `dir`), and returns its checkout path as git reports it.
+  """
+  @spec create(Path.t(), binary, binary | nil, Path.t() | nil, binary | nil) ::
+          {:ok, Path.t()} | {:error, binary}
+  def create(cwd, branch, base, path, dir) do
+    with {:ok, repo} <- repo(cwd),
+         path = path || default_path(dir, repo.name, branch),
+         :ok <- add(repo.root, path, branch, base),
+         {:ok, %{root: root}} <- repo(path) do
+      {:ok, root}
+    end
+  end
+
+  @doc "Removes the linked worktree containing `cwd` (see `remove/3`) and returns its path."
+  @spec remove_at(Path.t(), boolean) :: {:ok, Path.t()} | {:error, :dirty | binary}
+  def remove_at(cwd, force?) do
+    with {:ok, %{root: root}} <- repo(cwd),
+         :ok <- linked(root),
+         :ok <- remove(root, root, force?) do
+      {:ok, root}
+    end
+  end
+
+  # a linked worktree's checkout has a `.git` file; the main checkout a `.git` directory
+  defp linked(root) do
+    if File.regular?(Path.join(root, ".git")),
+      do: :ok,
+      else: {:error, "#{root} is not a linked worktree"}
+  end
+
+  @doc "The main checkout of a `repo/1` result (a bare repo: its git dir)."
+  @spec main_root(%{:common => Path.t(), optional(atom) => term}) :: Path.t()
+  def main_root(%{common: common}),
+    do: if(Path.basename(common) == ".git", do: Path.dirname(common), else: common)
+
+  @doc """
   Runs git with `args`. `opts[:path]` overrides the PATH searched for git.
   Output is trimmed; stderr is merged into it.
   """

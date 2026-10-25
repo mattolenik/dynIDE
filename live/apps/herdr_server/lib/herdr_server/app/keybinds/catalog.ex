@@ -6,11 +6,12 @@ defmodule HerdrServer.App.Keybinds.Catalog do
   `navigation`, `workspaces / tabs`, `panes`.
 
   Left out until their targets land: `workspace_picker` and the indexed
-  `switch_tab` (`prefix+1..9`, kept as defaults but not rebindable here).
+  `switch_tab` (`prefix+1..9`, kept as defaults but not rebindable here). A nil spec is
+  unbound by default (`open_worktree`, `remove_worktree`).
   """
 
   alias HerdrServer.App.Actions
-  alias HerdrServer.App.Modal.{Confirm, Prompt, Settings}
+  alias HerdrServer.App.Modal.{Confirm, Menu, Prompt, Settings}
   alias HerdrServer.App.Modal.Keybinds, as: KeybindsModal
   alias HerdrServer.Client.Keys
 
@@ -43,6 +44,9 @@ defmodule HerdrServer.App.Keybinds.Catalog do
       {"workspaces / tabs", "previous_tab", a(:previous_tab), "prefix+p"},
       {"workspaces / tabs", "next_tab", a(:next_tab), "prefix+n"},
       {"workspaces / tabs", "close_tab", {Confirm, :close_tab, []}, "prefix+shift+x"},
+      {"workspaces / tabs", "new_worktree", {Prompt, :new_worktree, []}, "prefix+shift+g"},
+      {"workspaces / tabs", "open_worktree", {Menu, :open_worktree, []}, nil},
+      {"workspaces / tabs", "remove_worktree", {Confirm, :remove_worktree, []}, nil},
       {"panes", "split_vertical", a(:split, [:horizontal]), "prefix+v"},
       {"panes", "split_horizontal", a(:split, [:vertical]), "prefix+minus"},
       {"panes", "close_pane", {Confirm, :close_pane, []}, "prefix+x"},
@@ -57,7 +61,7 @@ defmodule HerdrServer.App.Keybinds.Catalog do
       {"panes", "zoom", a(:toggle_zoom), "prefix+z"}
     ]
     |> Enum.map(fn {g, action, mfa, spec} ->
-      %{action: action, group: g, mfa: mfa, default: [spec]}
+      %{action: action, group: g, mfa: mfa, default: List.wrap(spec)}
     end)
   end
 

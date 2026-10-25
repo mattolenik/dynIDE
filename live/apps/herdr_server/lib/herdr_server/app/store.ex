@@ -56,7 +56,7 @@ defmodule HerdrServer.App.Store do
   alias HerdrReload.Guard
   alias HerdrScene.Protocol
   alias HerdrServer.Api.Ids
-  alias HerdrServer.App.{Actions, Commands, Keybinds, Reconcile, Restore, Upgrade}
+  alias HerdrServer.App.{Actions, Commands, Keybinds, Reconcile, Restore, Upgrade, Worktrees}
   alias HerdrServer.App.Store.{Carry, Mirror}
   alias HerdrServer.App.Store.Config, as: StoreConfig
   alias HerdrServer.Handoff.Link
@@ -114,6 +114,14 @@ defmodule HerdrServer.App.Store do
 
   @spec event_async(tuple) :: :ok
   def event_async(event), do: GenServer.cast(__MODULE__, {:event, event})
+
+  @doc "`event_async/1` whose notices go to `origin` (a session pid, or nil)."
+  @spec event_async(tuple, pid | nil) :: :ok
+  def event_async(event, origin), do: GenServer.cast(__MODULE__, {:event, event, origin})
+
+  @doc false
+  # the supervisor of the tasks effects run off the Store (`{:worktree, op, args}`)
+  def tasks, do: __MODULE__.Tasks
 
   @spec snapshot() :: Actions.app() | nil
   def snapshot, do: GenServer.call(__MODULE__, :snapshot)
@@ -276,9 +284,11 @@ defmodule HerdrServer.App.Store do
   end
 
   @impl true
-  def handle_cast({:event, ev}, state) do
+  def handle_cast({:event, ev}, state), do: handle_cast({:event, ev, nil}, state)
+
+  def handle_cast({:event, ev, origin}, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, state |> handle_event(ev, nil, nil) |> Mirror.dirty()}
+    {:noreply, state |> handle_event(ev, nil, origin) |> Mirror.dirty()}
   end
 
   @impl true
@@ -594,6 +604,19 @@ defmodule HerdrServer.App.Store do
       nil -> notice(origin, %{level: :warning, text: "plugins are not running"})
       pid -> send(pid, {msg, origin})
     end
+  end
+
+  # git runs in a task; its result comes back as {:worktree_done, result} (App.Worktrees)
+  defp io({:worktree, op, args}, origin) do
+    Task.Supervisor.start_child(tasks(), fn ->
+      result =
+        case Guard.run(Worktrees, :run, [op, args], server: reload_server()) do
+          {:ok, result} -> result
+          {:failed, f} -> {:error, "worktree #{op} failed: #{Guard.message(f)}"}
+        end
+
+      event_async({:worktree_done, result}, origin)
+    end)
   end
 
   defp io(other, _), do: Logger.warning("unknown effect #{inspect(other)}")

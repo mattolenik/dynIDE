@@ -8,7 +8,7 @@ defmodule HerdrServer.Api.ConformanceTest do
   @moduletag :capture_log
 
   alias HerdrServer.Api.{Events, Listener, Spec}
-  alias HerdrServer.App.Store
+  alias HerdrServer.App.{Store, Worktrees}
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Pane.Rows
   alias HerdrServer.Plugins.{Install, Menu, Paths, Runtime}
@@ -252,6 +252,19 @@ defmodule HerdrServer.Api.ConformanceTest do
 
   defp produce("pane.wait_for_output", :not_found, ctx),
     do: call(listen(ctx), "pane.wait_for_output", %{"pane_id" => "p99", "match" => "x"})
+
+  # git's own error: a cwd outside any repo (never a real checkout: remove would act on it)
+  defp produce("worktree.remove", :failed, ctx) do
+    s = listen(ctx)
+    {:ok, _, _} = Store.request({Worktrees, :open, [Path.dirname(ctx.path), "plain", false]})
+    call(s, "worktree.remove", %{"workspace_id" => "w2"})
+  end
+
+  defp produce("worktree." <> _ = method, :failed, ctx),
+    do: call(listen(ctx), method, %{"cwd" => Path.dirname(ctx.path), "branch" => "b"})
+
+  defp produce("worktree.open", :not_found, ctx),
+    do: call(listen(ctx), "worktree.open", %{"workspace_id" => "w9", "branch" => "b"})
 
   defp produce(method, :not_found, ctx), do: call(listen(ctx), method, missing(method))
 

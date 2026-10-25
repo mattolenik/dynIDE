@@ -106,7 +106,80 @@ defmodule HerdrServer.Api.Spec do
       window_title() ++
       event_methods() ++
       agents() ++
-      plugins()
+      plugins() ++
+      worktrees()
+  end
+
+  defp worktrees do
+    g = "worktree"
+    ws = opt("workspace_id", :workspace_id, "Source workspace; default the focused one.")
+    cwd = opt("cwd", :string, "Absolute path inside the source repo, instead of a workspace.")
+    label = opt("label", :string, "Workspace label; default the checkout's name.")
+    focus = focus("Focus the workspace; default false.")
+    errors = [:not_found, :failed]
+
+    [
+      method(
+        "worktree.list",
+        g,
+        "List the git worktrees of a workspace's repo.",
+        [ws, cwd],
+        "worktree_list",
+        errors,
+        "herdr-live worktree list [--workspace <workspace_id> | --cwd <path>]"
+      ),
+      method(
+        "worktree.create",
+        g,
+        "Add a git worktree and open a workspace in it.",
+        [
+          ws,
+          cwd,
+          req("branch", :string, "Branch to check out; created from `base` when missing."),
+          opt("base", :string, "Start point of a new branch; default HEAD."),
+          opt(
+            "path",
+            :string,
+            "Absolute checkout path; default `~/.herdr-live/worktrees/<repo>/<branch>`."
+          ),
+          label,
+          focus
+        ],
+        "worktree_created",
+        errors,
+        "herdr-live worktree create --branch B [--workspace <workspace_id> | --cwd <path>] " <>
+          "[--base REF] [--path P] [--label L] [--focus]"
+      ),
+      method(
+        "worktree.open",
+        g,
+        "Open a workspace in an existing worktree (or focus the one open there).",
+        [
+          ws,
+          cwd,
+          opt("path", :string, "Checkout path of the worktree."),
+          opt("branch", :string, "Branch checked out in the worktree."),
+          label,
+          focus
+        ],
+        "worktree_opened",
+        errors,
+        "herdr-live worktree open (--path P | --branch B) [--workspace <workspace_id> | --cwd <path>] " <>
+          "[--label L] [--focus]"
+      ),
+      method(
+        "worktree.remove",
+        g,
+        "Remove a workspace's linked worktree and close the workspaces in it; the branch is kept.",
+        [
+          ws_id(),
+          opt("force", :boolean, "Remove even with uncommitted changes; default false.")
+        ],
+        "worktree_removed",
+        errors,
+        "herdr-live worktree remove <workspace_id> [--force]"
+      )
+    ]
   end
 
   defp server do
@@ -946,6 +1019,16 @@ defmodule HerdrServer.Api.Spec do
         f("tab_id", :tab_id, false),
         f("pane_id", :pane_id, false)
       ],
+      "worktree" => [
+        f("path", :string),
+        f("branch", :null_or_string),
+        f("is_bare", :boolean),
+        f("is_detached", :boolean),
+        f("is_prunable", :boolean),
+        f("is_linked_worktree", :boolean),
+        f("open_workspace_id", :null_or_string),
+        f("label", :string)
+      ],
       "layout" => [
         f("tab_id", :tab_id),
         f("workspace_id", :workspace_id),
@@ -1097,7 +1180,26 @@ defmodule HerdrServer.Api.Spec do
         f("context", :object),
         f("log", :object)
       ],
-      "plugin_log_list" => [f("logs", {:list, :object})]
+      "plugin_log_list" => [f("logs", {:list, :object})],
+      "worktree_list" => [f("source", :object), f("worktrees", {:list, {:ref, "worktree"}})],
+      "worktree_created" => [
+        f("workspace", ws),
+        f("tab", tab),
+        f("root_pane", pane),
+        f("worktree", {:ref, "worktree"})
+      ],
+      "worktree_opened" => [
+        f("workspace", ws),
+        f("tab", tab),
+        f("root_pane", pane),
+        f("worktree", {:ref, "worktree"}),
+        f("already_open", :boolean)
+      ],
+      "worktree_removed" => [
+        f("workspace_id", :workspace_id),
+        f("path", :string),
+        f("forced", :boolean)
+      ]
     }
   end
 
