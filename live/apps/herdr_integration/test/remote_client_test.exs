@@ -123,7 +123,7 @@ defmodule HerdrIntegration.RemoteClientTest do
     }
   end
 
-  defp images(client), do: :sys.get_state(Client.render(client)).images
+  defp images(client), do: :sys.get_state(Client.render(client)).gfx.images
 
   defp show_image(client) do
     [id] = pane_ids(client)
