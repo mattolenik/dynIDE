@@ -70,13 +70,47 @@ defmodule HerdrTerm.Client.Term.HitTest do
     assert {[^ev], _} = route(ev, g2, 1030)
   end
 
-  test "stale grab: a grab whose path is gone from the hits is dropped" do
+  test "stale grab: dropped; its drags and release are swallowed, not leaked to a pane" do
     g = grabbed()
     hits = [@tab, @tabs]
+    {[], g} = Hit.route(hits, g, m(:drag, :left, 50, 6), 1010)
+    {[], g} = Hit.route(hits, g, m(:release, :left, 50, 6), 1020)
+    # after that release, events over no hit pass again
     ev = m(:drag, :left, 50, 6)
-    assert {[^ev], nil} = Hit.route(hits, g, ev, 1010)
-    rel = m(:release, :left, 50, 6)
-    assert {[^rel], nil} = Hit.route(hits, g, rel, 1010)
+    assert {[^ev], _} = Hit.route(hits, g, ev, 1030)
+  end
+
+  # {event, emitted} steps from no grab; :same is the event itself
+  defp walk(steps) do
+    Enum.reduce(steps, {nil, 1000}, fn {ev, want}, {g, now} ->
+      {out, g} = route(ev, g, now)
+      assert out == if(want == :same, do: [ev], else: want), inspect({ev, g})
+      {g, now + 400}
+    end)
+  end
+
+  test "pass-through grab: a press over no hit keeps its drags and release unchanged" do
+    # a pane selection dragged across the tab bar and the divider, released over a tab
+    walk([
+      {m(:press, :left, 5, 5), :same},
+      {m(:drag, :left, 12, 0), :same},
+      {m(:drag, :left, 40, 5), :same},
+      {m(:release, :left, 12, 0), :same},
+      # the release ended it: chrome is chrome again
+      {m(:drag, :left, 12, 0), []},
+      {m(:press, :left, 12, 0), [{:chrome, [:tabs, {:tab, 1}], {:click, %{x: 12, y: 0}}}]}
+    ])
+  end
+
+  test "a press on a non-drag hit swallows its drags and release, even over a pane" do
+    walk([
+      {m(:press, :left, 12, 0), [{:chrome, [:tabs, {:tab, 1}], {:click, %{x: 12, y: 0}}}]},
+      {m(:drag, :left, 5, 5), []},
+      {m(:release, :left, 5, 5), []},
+      # after the release, pane events pass again
+      {m(:drag, :left, 5, 5), :same},
+      {m(:release, :left, 5, 5), :same}
+    ])
   end
 
   test "double click within 350 ms of a press on the same path" do

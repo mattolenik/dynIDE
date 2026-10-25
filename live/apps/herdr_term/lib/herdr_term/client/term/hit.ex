@@ -4,27 +4,33 @@ defmodule HerdrTerm.Client.Term.Hit do
   `{:chrome, path, {kind, %{x, y}}}` and passes every other event through unchanged.
 
   `hits` are `Render.Chrome` hits (`%{rect, path, role, drag}`), topmost first. The
-  grab is `nil` or `%{path, at, held}`: `held: true` is an active drag grab, `held:
-  false` only remembers the last left press (`at`, ms) for double clicks.
+  grab is `nil`, `:pass`, or `%{path, at, held, down}`: `held: true` is an active drag
+  grab; `held: false` remembers the last left press on a hit (`at`, ms) for double
+  clicks, with `down: true` until its release.
 
     * Left press on a hit: `:double_click` when the previous left press hit the same
       path within 350 ms (and no grab starts), else a drag hit grabs (emits nothing)
-      and any other hit emits `:click`.
+      and any other hit emits `:click`. Drags and the release that follow a press on a
+      hit are swallowed wherever the pointer is.
     * With a held grab, `:drag` emits `:drag` and release emits `:drop` (and ends the
       grab) for the grabbed path, wherever the pointer is. A held grab whose path is no
-      longer in `hits` is dropped first ("stale grab").
+      longer in `hits` is dropped first ("stale grab"); its drags and release are
+      swallowed, never passed to a pane without their press.
+    * Left press over no hit passes through and sets the `:pass` grab: drags and the
+      release pass through unchanged until that release, even over a hit (a pane
+      selection or a program's mouse drag crossing chrome).
     * Right / middle press emit `:right_click` / `:middle_click`; wheel up / down emit
       `:scroll_up` / `:scroll_down`; other events over a hit are swallowed.
-    * Events over no hit pass through unchanged.
+    * Other events over no hit pass through unchanged.
   """
 
   @double_ms 350
 
-  @type grab :: %{path: [term], at: integer, held: boolean} | nil
+  @type grab :: %{path: [term] | nil, at: integer, held: boolean, down: boolean} | :pass | nil
 
   @spec route([map], grab, tuple, integer) :: {[tuple], grab}
   def route(hits, grab, {:mouse, m} = ev, now) do
-    grab = if stale?(grab, hits), do: nil, else: grab
+    grab = if stale?(grab, hits), do: Map.merge(grab, %{held: false, down: true}), else: grab
     held(grab, m, ev, hits, now)
   end
 
@@ -37,10 +43,16 @@ defmodule HerdrTerm.Client.Term.Hit do
     do: {[chrome(p, :drag, m)], g}
 
   defp held(%{held: true, path: p} = g, %{kind: :release} = m, _ev, _hits, _now),
-    do: {[chrome(p, :drop, m)], %{g | held: false}}
+    do: {[chrome(p, :drop, m)], Map.merge(g, %{held: false, down: false})}
+
+  defp held(:pass, %{kind: :drag}, ev, _hits, _now), do: {[ev], :pass}
+  defp held(:pass, %{kind: :release}, ev, _hits, _now), do: {[ev], nil}
+  defp held(%{down: true} = g, %{kind: :drag}, _ev, _hits, _now), do: {[], g}
+  defp held(%{down: true} = g, %{kind: :release}, _ev, _hits, _now), do: {[], %{g | down: false}}
 
   defp held(grab, m, ev, hits, now) do
     case Enum.find(hits, &inside?(&1.rect, m.x, m.y)) do
+      nil when m.kind == :press and m.button == :left -> {[ev], :pass}
       nil -> {[ev], grab}
       hit -> over(hit, m, release(grab), now)
     end
@@ -51,14 +63,14 @@ defmodule HerdrTerm.Client.Term.Hit do
 
   defp over(%{path: p} = hit, %{kind: :press, button: :left} = m, last, now) do
     cond do
-      last != nil and last.path == p and now - last.at <= @double_ms ->
-        {[chrome(p, :double_click, m)], nil}
+      match?(%{path: ^p}, last) and now - last.at <= @double_ms ->
+        {[chrome(p, :double_click, m)], %{path: nil, at: now, held: false, down: true}}
 
       hit.drag ->
-        {[], %{path: p, at: now, held: true}}
+        {[], %{path: p, at: now, held: true, down: false}}
 
       true ->
-        {[chrome(p, :click, m)], %{path: p, at: now, held: false}}
+        {[chrome(p, :click, m)], %{path: p, at: now, held: false, down: true}}
     end
   end
 
