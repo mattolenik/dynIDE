@@ -309,10 +309,9 @@ defmodule HerdrServer.Pane.ServerM9Test do
     before = Facts.get(1)
     :ok = Fake.Vt.set_history(vt(1), ["a", "b"])
     Fake.Pty.output(pty(1), "x")
-    assert_receive {:pane_damage, 1, _}, 500
-    sync(1)
+    # a damage already in the mailbox (from attach) can predate "x": wait for the state
+    assert eventually(fn -> sync(1).scroll.total == before.scroll.total + 2 end)
     assert Facts.get(1) == before
-    assert sync(1).scroll.total == before.scroll.total + 2
   end
 
   test "put_host_colors rejects malformed colours" do
