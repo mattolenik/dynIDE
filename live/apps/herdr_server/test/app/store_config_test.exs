@@ -72,4 +72,28 @@ defmodule HerdrServer.App.StoreConfigTest do
     :ok = Store.event(HerdrScene.Event.key(:enter), @size)
     assert_receive {:notice, %{level: :warning, text: "config write failed" <> _}}, 500
   end
+
+  test "an undecodable file on reload keeps the prefix and warns", %{path: path} do
+    File.write!(path, "onboarding = false\n[keys]\nprefix = \"ctrl+a\"\n")
+    Store.subscribe(self())
+    :ok = Store.event({:resize, @size}, @size)
+    assert Store.snapshot().ui.keybinds.prefix == [{"a", [:ctrl]}]
+
+    File.write!(path, "[keys\nprefix = ")
+    :ok = Store.run({Actions, :reload_config, []}, @size)
+    assert_receive {:notice, %{level: :warning, text: "config: " <> _}}, 500
+    refute_received {:notice, %{text: "reloaded config"}}
+    assert Store.snapshot().ui.keybinds.prefix == [{"a", [:ctrl]}]
+  end
+
+  test "herdr-live starts with an undecodable file: defaults and a warning", %{path: path} do
+    File.write!(path, "this is = = not toml")
+    Store.subscribe(self())
+    :ok = Store.event({:resize, @size}, @size)
+    assert_receive {:notice, %{level: :warning, text: "config: " <> _}}, 500
+    app = Store.snapshot()
+    assert app.ui.keybinds == Keybinds.default()
+    assert app.focus.modal == []
+    assert map_size(app.session.panes) == 1
+  end
 end

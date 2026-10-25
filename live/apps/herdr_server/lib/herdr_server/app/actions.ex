@@ -114,6 +114,10 @@ defmodule HerdrServer.App.Actions do
     end
   end
 
+  # a file that did not read or decode is not a config: only its diagnostics
+  def apply(app, {:config_loaded, %{failed: true} = cfg}),
+    do: {app, [{:config_diagnostics, cfg.diagnostics}]}
+
   def apply(app, {:config_loaded, cfg}) do
     {ui, fx} = configure(app.ui, cfg, [])
     app = reframe(%{app | ui: ui})

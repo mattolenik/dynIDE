@@ -74,13 +74,19 @@ defmodule HerdrServer.Config.Write do
     end
   end
 
-  # [a.b] (not [[a]]) -> ["a", "b"]
+  # [a.b] -> ["a", "b"]; [[a.b]] (an array of tables, never a write target) ->
+  # {:array, ["a", "b"]}; nil for any other line
   defp header(line) do
-    case Regex.run(~r/^\s*\[([^\[\]]+)\]\s*(#.*)?$/, String.trim_trailing(line)) do
-      [_, name | _] -> name |> String.split(".") |> Enum.map(&unquote_key/1)
-      _ -> nil
+    line = String.trim_trailing(line)
+
+    cond do
+      m = Regex.run(~r/^\s*\[\[([^\[\]]+)\]\]\s*(#.*)?$/, line) -> {:array, path(Enum.at(m, 1))}
+      m = Regex.run(~r/^\s*\[([^\[\]]+)\]\s*(#.*)?$/, line) -> path(Enum.at(m, 1))
+      true -> nil
     end
   end
+
+  defp path(name), do: name |> String.split(".") |> Enum.map(&unquote_key/1)
 
   defp key_of(line, missing) do
     with [_, k] <- Regex.run(~r/^\s*("[^"]*"|'[^']*'|[A-Za-z0-9_-]+)\s*=/, line),
@@ -152,7 +158,7 @@ defmodule HerdrServer.Config.Write do
 
   # --- encoding ---
 
-  defp assign(k, v, eol), do: [key(k), " = ", encode(v), eol]
+  defp assign(k, v, eol), do: IO.iodata_to_binary([key(k), " = ", encode(v), eol])
 
   defp key(k), do: if(k =~ ~r/^[A-Za-z0-9_-]+$/, do: k, else: string(k))
 

@@ -82,4 +82,33 @@ defmodule HerdrServer.Config.WriteTest do
     assert :ok = Write.upsert(path, ["t"], kv)
     assert {:ok, %{"t" => ^kv}} = Toml.decode_file(path)
   end
+
+  test "[[array of tables]] headers end a table and are never a write target", %{tmp_dir: dir} do
+    body = """
+    [keys]
+    new_tab = "prefix+t"
+
+    [[keys.command]]
+    key = "prefix+g"
+    new_tab = "not a bind"
+    """
+
+    path = write(dir, body)
+
+    assert :ok =
+             Write.upsert(path, ["keys"], %{
+               "new_tab" => ["prefix+y"],
+               "rename_tab" => ["prefix+u"]
+             })
+
+    assert File.read!(path) ==
+             String.replace(
+               body,
+               "new_tab = \"prefix+t\"\n",
+               "new_tab = [\"prefix+y\"]\nrename_tab = [\"prefix+u\"]\n"
+             )
+
+    assert {:ok, %{"keys" => %{"command" => [%{"key" => "prefix+g"} | _]}}} =
+             Toml.decode_file(path)
+  end
 end

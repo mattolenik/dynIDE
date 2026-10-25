@@ -85,6 +85,8 @@ defmodule HerdrServer.ConfigTest do
   test "bad TOML is the defaults and one diagnostic", %{tmp_dir: dir} do
     cfg = load(dir, "[keys\nnew_tab = ")
     assert cfg.onboarding == false
+    assert cfg.failed
+    refute Config.load(Path.join(dir, "missing.toml")).failed
     assert [<<"config: ", _::binary>>] = cfg.diagnostics
     {kb, _ui, [_]} = apply_cfg(cfg)
     assert kb == Keybinds.default()
@@ -210,5 +212,15 @@ defmodule HerdrServer.ConfigTest do
 
     {_app, [{:reload_config}]} =
       Actions.reload_config(elem(Actions.init(%{cols: 80, rows: 24}), 0))
+  end
+
+  test "a failed load leaves a running app as it is and only reports", %{tmp_dir: dir} do
+    {app, _} = Actions.init(%{cols: 80, rows: 24})
+    {:ok, kb} = Keybinds.rebind(app.ui.keybinds, "prefix", "ctrl+a")
+    app = put_in(app.ui.keybinds, kb)
+    cfg = load(dir, "[keys\nprefix = ")
+
+    assert {^app, [{:config_diagnostics, [<<"config: ", _::binary>>]}]} =
+             Actions.apply(app, {:config_loaded, cfg})
   end
 end

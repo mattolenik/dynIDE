@@ -7,7 +7,8 @@ defmodule HerdrServer.Config do
     * `load/1` reads and decodes the file into its raw `keys`, `ui` and `theme` tables
       plus `onboarding` (true unless the file sets `onboarding = false`). A missing file
       is the defaults with onboarding and no diagnostics; a file that does not decode or
-      cannot be read is the defaults, no onboarding, one `"config: <reason>"` diagnostic.
+      cannot be read is the defaults, no onboarding, one `"config: <reason>"` diagnostic
+      and `failed: true` (not a config: a running app keeps its keybinds and ui).
     * `apply/4` (pure) puts the tables over a keybind table and a `%Ui{}`: every key the
       file sets wins, keys it does not set keep the given value. An entry that is invalid
       (unknown action, bad key spec, wrong type or range) keeps its value with one
@@ -30,7 +31,8 @@ defmodule HerdrServer.Config do
           ui: map,
           theme: map,
           onboarding: boolean,
-          diagnostics: [binary]
+          diagnostics: [binary],
+          failed: boolean
         }
 
   # {table, key path in the table, kind, Ui path}
@@ -66,7 +68,7 @@ defmodule HerdrServer.Config do
   def load(path \\ path()) do
     case File.read(path) do
       {:ok, bin} -> decode(bin)
-      {:error, :enoent} -> defaults(true, [])
+      {:error, :enoent} -> %{defaults(true, []) | failed: false}
       {:error, r} -> defaults(false, ["config: #{path}: #{:file.format_error(r)}"])
     end
   end
@@ -76,7 +78,15 @@ defmodule HerdrServer.Config do
       {:ok, t} ->
         {[keys, ui, theme], diags} = Enum.map_reduce(~w(keys ui theme), [], &table(t, &1, &2))
         {onboarding, diags} = onboarding(Map.get(t, "onboarding", true), diags)
-        %{keys: keys, ui: ui, theme: theme, onboarding: onboarding, diagnostics: diags}
+
+        %{
+          keys: keys,
+          ui: ui,
+          theme: theme,
+          onboarding: onboarding,
+          diagnostics: diags,
+          failed: false
+        }
 
       {:error, {:invalid_toml, reason}} ->
         defaults(false, ["config: " <> (reason |> String.split("\n") |> hd())])
@@ -97,7 +107,14 @@ defmodule HerdrServer.Config do
   defp onboarding(_, diags), do: {true, diags ++ ["config: onboarding must be true or false"]}
 
   defp defaults(onboarding, diags),
-    do: %{keys: %{}, ui: %{}, theme: %{}, onboarding: onboarding, diagnostics: diags}
+    do: %{
+      keys: %{},
+      ui: %{},
+      theme: %{},
+      onboarding: onboarding,
+      diagnostics: diags,
+      failed: true
+    }
 
   @doc "Puts `cfg` over `kb` and `ui`: `{kb, ui, load diagnostics ++ apply diagnostics}`."
   @spec apply(t, Keybinds.t(), Ui.t(), keyword) :: {Keybinds.t(), Ui.t(), [binary]}

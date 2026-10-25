@@ -5,8 +5,8 @@ defmodule HerdrServer.App.Keybinds.Catalog do
   herdr's default specs (`Config.Keys` syntax). Groups in display order: `global`,
   `navigation`, `workspaces / tabs`, `panes`.
 
-  Left out until their targets land: `workspace_picker`, `zoom`, and the indexed `switch_tab` (`prefix+1..9`, kept as defaults but not
-  rebindable here).
+  Left out until their targets land: `workspace_picker`, `zoom`, and the indexed
+  `switch_tab` (`prefix+1..9`, kept as defaults but not rebindable here).
   """
 
   alias HerdrServer.App.Actions
