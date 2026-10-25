@@ -8,7 +8,8 @@ its Herdr launch with an isolated log, API socket, HERDR_LIVE_RUNTIME_DIR and
 HERDR_LIVE_STATE_DIR, its Screen and probe answers) with SSH_TTY=1 (clipboard writes go to the
 host as OSC 52, never to this machine's clipboard). The host also answers the client's
 colour queries: OSC 10 fg rgb:dddd/eeee/ffff, OSC 11 bg rgb:1111/2222/3333, OSC 4 palette,
-`CSI ? 996 n` (dark) and the `CSI 5 n` sentinel. Each check runs in a new tab (prefix c)
+`CSI ? 996 n` (dark) and the `CSI 5 n` sentinel. Each check runs in a new tab (prefix c,
+enter at M13's tab-name prompt)
 and prints `PASS <name> ...` or `FAIL <name>: reason`; exits 1 if any failed. Skips
 (SKIP line, exit 0) inside a herdr-live pane. Reflow against herdr is reflow.py.
 """
@@ -94,7 +95,10 @@ class Host(th.Herdr):
         return None
 
     def new_tab(self, name):
+        # prefix c opens M13's tab-name prompt; enter keeps the suggested name
         self.send(PREFIX + b"c")
+        self.wait(lambda: self.shows("new tab") and self.shows("save"), f"the tab name prompt for {name}")
+        self.send(b"\r")
         self.run(f"echo tab-{name}", f"a prompt in a new tab for {name}")
 
     def sgr(self, button, x, y, release=False):
