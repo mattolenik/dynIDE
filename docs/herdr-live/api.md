@@ -774,7 +774,7 @@ CLI: `herdr-live plugin list [--plugin ID] [--json]`
 
 Result: `plugin_list` with `plugins` (list of `plugin` object).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`
 
 ### `plugin.install`
 
@@ -790,9 +790,9 @@ CLI: `herdr-live plugin install <source> [--ref REF] [--yes]`
 
 Result: `plugin_info` with `plugin` (`plugin` object).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `failed`
 
-Once served (M14 task 3): without `yes` the answer is `failed` with `data.reason` `confirmation_required` and `data.preview` describing what would be installed.
+`source` may also be a local directory (absolute, `./`, `../` or `~`), copied without `.git`. Without `yes` the answer is `failed` with `data.reason` `confirmation_required` and `data.preview` describing what would be installed. Every error carries herdr's code in `data.reason`.
 
 ### `plugin.link`
 
@@ -807,7 +807,7 @@ CLI: `herdr-live plugin link <path> [--disabled]`
 
 Result: `plugin_info` with `plugin` (`plugin` object).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `failed`
 
 ### `plugin.uninstall`
 
@@ -821,7 +821,7 @@ CLI: `herdr-live plugin uninstall <target>`
 
 Result: `plugin_removed` with `plugin_id` (string).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`, `failed`
 
 ### `plugin.enable`
 
@@ -835,7 +835,7 @@ CLI: `herdr-live plugin enable <plugin_id>`
 
 Result: `plugin_info` with `plugin` (`plugin` object).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`, `failed`
 
 ### `plugin.disable`
 
@@ -849,7 +849,7 @@ CLI: `herdr-live plugin disable <plugin_id>`
 
 Result: `plugin_info` with `plugin` (`plugin` object).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `not_found`, `failed`
 
 ### `plugin.config_dir`
 
@@ -863,7 +863,7 @@ CLI: `herdr-live plugin config-dir <plugin_id>`
 
 Result: `plugin_dir` with `path` (string).
 
-Errors: `invalid_params`, `not_available`
+Errors: `invalid_params`, `failed`
 
 ### `plugin.action.list`
 

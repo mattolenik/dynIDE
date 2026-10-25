@@ -11,7 +11,8 @@ defmodule HerdrServer.Api.ConformanceTest do
   alias HerdrServer.App.Store
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Pane.Rows
-  alias HerdrServer.Test.ApiClient
+  alias HerdrServer.Plugins.{Install, Paths}
+  alias HerdrServer.Test.{ApiClient, PluginDirs}
 
   setup do
     Store.reset()
@@ -100,6 +101,33 @@ defmodule HerdrServer.Api.ConformanceTest do
        when method in ~w(server.agent_manifests server.reload_agent_manifests
                          pane.report_agent pane.release_agent),
        do: call(listen(ctx), method)
+
+  defp produce(method, :failed, ctx) when method in ~w(plugin.install plugin.link) do
+    base = PluginDirs.use_tmp()
+    call(listen(ctx), method, %{"source" => base <> "/none", "path" => base <> "/none"})
+  end
+
+  defp produce(method, :not_found, ctx)
+       when method in ~w(plugin.uninstall plugin.enable plugin.disable) do
+    PluginDirs.use_tmp()
+    call(listen(ctx), method)
+  end
+
+  # the registry cannot be written: its tmp file's name is taken by a directory
+  defp produce(method, :failed, ctx)
+       when method in ~w(plugin.uninstall plugin.enable plugin.disable) do
+    base = PluginDirs.use_tmp()
+    {:ok, _} = Install.link(PluginDirs.plugin(base <> "/p", "x"), true)
+    File.mkdir_p!(Paths.registry() <> ".tmp")
+    call(listen(ctx), method)
+  end
+
+  defp produce("plugin.config_dir", :failed, ctx) do
+    PluginDirs.use_tmp()
+    File.mkdir_p!(Paths.config_dir())
+    File.write!(Path.join(Paths.config_dir(), "plugins"), "")
+    call(listen(ctx), "plugin.config_dir")
+  end
 
   # published ahead of their M14 tasks
   defp produce("plugin." <> _ = method, :not_available, ctx), do: call(listen(ctx), method)

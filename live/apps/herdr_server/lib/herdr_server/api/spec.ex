@@ -633,8 +633,8 @@ defmodule HerdrServer.Api.Spec do
 
   # M14 publishes every plugin method now; until its task lands each answers
   # not_available, and that task narrows the error list
-  defp plugin(name, summary, params, result, cli),
-    do: method("plugin." <> name, "plugin", summary, params, result, [:not_available], cli)
+  defp plugin(name, summary, params, result, cli, errors \\ [:not_available]),
+    do: method("plugin." <> name, "plugin", summary, params, result, errors, cli)
 
   defp plugins do
     filter = opt("plugin_id", :string, "Only this plugin.")
@@ -647,7 +647,8 @@ defmodule HerdrServer.Api.Spec do
         "List installed and linked plugins.",
         [filter],
         "plugin_list",
-        "herdr-live plugin list [--plugin ID] [--json]"
+        "herdr-live plugin list [--plugin ID] [--json]",
+        []
       ),
       plugin(
         "install",
@@ -658,12 +659,14 @@ defmodule HerdrServer.Api.Spec do
           opt("yes", :boolean, "Confirm the install.")
         ],
         "plugin_info",
-        "herdr-live plugin install <source> [--ref REF] [--yes]"
+        "herdr-live plugin install <source> [--ref REF] [--yes]",
+        [:failed]
       )
       |> Map.put(
         :notes,
-        "Once served (M14 task 3): without `yes` the answer is `failed` with `data.reason` `confirmation_required` " <>
-          "and `data.preview` describing what would be installed."
+        "`source` may also be a local directory (absolute, `./`, `../` or `~`), copied without `.git`. " <>
+          "Without `yes` the answer is `failed` with `data.reason` `confirmation_required` " <>
+          "and `data.preview` describing what would be installed. Every error carries herdr's code in `data.reason`."
       ),
       plugin(
         "link",
@@ -673,35 +676,40 @@ defmodule HerdrServer.Api.Spec do
           opt("enabled", :boolean, "Enable it; default true.")
         ],
         "plugin_info",
-        "herdr-live plugin link <path> [--disabled]"
+        "herdr-live plugin link <path> [--disabled]",
+        [:failed]
       ),
       plugin(
         "uninstall",
         "Remove a plugin by id or by `owner/repo[/subdir]`.",
         [req("target", :string, "Plugin id or `owner/repo[/subdir]`.")],
         "plugin_removed",
-        "herdr-live plugin uninstall <target>"
+        "herdr-live plugin uninstall <target>",
+        [:not_found, :failed]
       ),
       plugin(
         "enable",
         "Enable a plugin.",
         [plugin_id],
         "plugin_info",
-        "herdr-live plugin enable <plugin_id>"
+        "herdr-live plugin enable <plugin_id>",
+        [:not_found, :failed]
       ),
       plugin(
         "disable",
         "Disable a plugin.",
         [plugin_id],
         "plugin_info",
-        "herdr-live plugin disable <plugin_id>"
+        "herdr-live plugin disable <plugin_id>",
+        [:not_found, :failed]
       ),
       plugin(
         "config_dir",
         "The plugin's config directory.",
         [plugin_id],
         "plugin_dir",
-        "herdr-live plugin config-dir <plugin_id>"
+        "herdr-live plugin config-dir <plugin_id>",
+        [:failed]
       ),
       plugin(
         "action.list",
