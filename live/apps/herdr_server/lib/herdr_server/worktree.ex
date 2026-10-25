@@ -40,11 +40,19 @@ defmodule HerdrServer.Worktree do
   def repo(cwd) do
     with {:ok, out} <- run(["-C", cwd, "rev-parse", "--show-toplevel", "--git-common-dir"]),
          [root, common] <- String.split(out, "\n", trim: true) do
-      {:ok, %{root: root, common: Path.expand(common, cwd), name: Path.basename(root)}}
+      common = Path.expand(common, cwd)
+      {:ok, %{root: root, common: common, name: repo_name(common)}}
     else
       {:error, _} = err -> err
       _ -> {:error, "unexpected git rev-parse output"}
     end
+  end
+
+  # herdr names a repo from its common dir, so linked worktrees share the main repo's name.
+  defp repo_name(common) do
+    if Path.basename(common) == ".git",
+      do: common |> Path.dirname() |> Path.basename(),
+      else: common |> Path.basename() |> String.replace_suffix(".git", "")
   end
 
   @doc "Worktrees of the repo at `root`."
@@ -82,6 +90,9 @@ defmodule HerdrServer.Worktree do
 
   @doc "Adds a worktree at `path`: checks out `branch` if it exists, else creates it from `base` (default HEAD)."
   @spec add(Path.t(), Path.t(), binary, binary | nil) :: :ok | {:error, binary}
+  def add(_root, _path, "-" <> _, _base), do: {:error, "invalid branch name"}
+  def add(_root, _path, _branch, "-" <> _), do: {:error, "invalid branch name"}
+
   def add(root, path, branch, base) do
     with {:ok, exists?} <- branch_exists?(root, branch) do
       args =
@@ -94,12 +105,8 @@ defmodule HerdrServer.Worktree do
   end
 
   defp branch_exists?(root, branch) do
-    case System.cmd(
-           "git",
-           ["-C", root, "show-ref", "--verify", "--quiet", "refs/heads/" <> branch],
-           stderr_to_stdout: true,
-           env: env()
-         ) do
+    case cmd(["-C", root, "show-ref", "--verify", "--quiet", "refs/heads/" <> branch], nil) do
+      {:error, _} = err -> err
       {_, 0} -> {:ok, true}
       {_, 1} -> {:ok, false}
       {out, _} -> {:error, String.trim(out)}
@@ -142,15 +149,18 @@ defmodule HerdrServer.Worktree do
   """
   @spec run([binary], keyword) :: {:ok, binary} | {:error, binary}
   def run(args, opts \\ []) do
-    case find_git(opts[:path]) do
-      nil ->
-        {:error, "git not found"}
+    case cmd(args, opts[:path]) do
+      {:error, _} = err -> err
+      {out, 0} -> {:ok, String.trim(out)}
+      {out, code} -> {:error, error_message(out, code)}
+    end
+  end
 
-      git ->
-        case System.cmd(git, args, stderr_to_stdout: true, env: env()) do
-          {out, 0} -> {:ok, String.trim(out)}
-          {out, code} -> {:error, error_message(out, code)}
-        end
+  # the one System.cmd site: {output, status}, or {:error, "git not found"}
+  defp cmd(args, path) do
+    case find_git(path) do
+      nil -> {:error, "git not found"}
+      git -> System.cmd(git, args, stderr_to_stdout: true, env: env())
     end
   end
 

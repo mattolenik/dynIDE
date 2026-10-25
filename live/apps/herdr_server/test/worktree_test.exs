@@ -93,7 +93,33 @@ defmodule HerdrServer.WorktreeTest do
     assert :ok = Worktree.remove(root, path, false)
   end
 
+  test "repo name comes from the common dir, even inside a linked worktree", %{
+    base: base,
+    root: root
+  } do
+    path = Worktree.default_path(base, "proj", "wt")
+    assert :ok = Worktree.add(root, path, "wt", nil)
+    assert {:ok, %{name: "proj"}} = Worktree.repo(path)
+  end
+
+  test "add rejects flag-like names" do
+    assert {:error, "invalid branch name"} = Worktree.add("/r", "/p", "-x", nil)
+    assert {:error, "invalid branch name"} = Worktree.add("/r", "/p", "ok", "--orphan")
+  end
+
   test "run without git on PATH", %{base: base} do
     assert {:error, "git not found"} = Worktree.run(["--version"], path: base)
+  end
+end
+
+defmodule HerdrServer.WorktreeNoGitTest do
+  # sync: it swaps the global PATH
+  use ExUnit.Case, async: false
+
+  test "add without git on PATH returns an error instead of raising" do
+    old = System.get_env("PATH")
+    System.put_env("PATH", System.tmp_dir!())
+    on_exit(fn -> System.put_env("PATH", old) end)
+    assert {:error, "git not found"} = HerdrServer.Worktree.add("/r", "/p", "b", nil)
   end
 end
