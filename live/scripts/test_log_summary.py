@@ -287,9 +287,14 @@ class LaunchIsolationTest(unittest.TestCase):
     def test_every_launch_sets_a_state_dir(self):
         found = dict(launchers())
         for known in ("scripts/launcher_smoke.sh", "scripts/attached_smoke.sh",
-                      "scripts/tty_harness.py", "bench/handoff/driver.exs", "bench/gate/glass.py"):
+                      "scripts/tty_harness.py", "bench/handoff/driver.exs", "bench/gate/glass.py",
+                      "scripts/release/release_smoke.sh"):
             self.assertIn(known, found, "launch detection missed a known launcher")
-        missing = sorted(p for p, code in found.items() if "HERDR_LIVE_STATE_DIR" not in code)
+        # install.sh only creates the bin/herdr-live symlink, it never launches it; the
+        # release checks isolate state with a temp XDG_STATE_HOME (the launcher's fallback)
+        found.pop("scripts/release/install.sh", None)
+        missing = sorted(p for p, code in found.items()
+                         if "HERDR_LIVE_STATE_DIR" not in code and "XDG_STATE_HOME=" not in code)
         self.assertEqual(missing, [], "these launch bin/herdr-live without HERDR_LIVE_STATE_DIR")
 
 
