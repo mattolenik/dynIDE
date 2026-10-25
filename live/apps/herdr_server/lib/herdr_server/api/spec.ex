@@ -24,6 +24,31 @@ defmodule HerdrServer.Api.Spec do
   @spec error_codes() :: [atom()]
   def error_codes, do: @error_codes
 
+  @doc "The CLI verbs that do not call the JSON API: they speak the client socket."
+  @spec client_verbs() :: [%{cli: String.t(), summary: String.t()}]
+  def client_verbs do
+    [
+      %{
+        cli: "herdr-live attach [<host>] [<session>]",
+        summary:
+          "Attach a terminal client to the session: the local client socket, or over ssh to <host> (needs key or agent auth)."
+      },
+      %{
+        cli: "herdr-live terminal attach <pane_id> [--host <host>]",
+        summary: "Attach to one pane with input (control)."
+      },
+      %{
+        cli: "herdr-live terminal observe <pane_id> [--host <host>]",
+        summary: "Watch one pane; input is dropped."
+      },
+      %{
+        cli: "herdr-live attach-relay [<session>]",
+        summary:
+          "Run on the server host over ssh: relays stdio to the client socket and sends the auth frame with the host's token."
+      }
+    ]
+  end
+
   @spec event_types() :: [String.t()]
   def event_types, do: Enum.map(events(), & &1.type)
 

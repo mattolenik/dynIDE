@@ -26,6 +26,14 @@
 # managers' shims defeat symlink resolution); the cache is redone when the dir is gone.
 # Exit codes: 0 ok (help and --help print usage to stdout), 1 API error (JSON on
 # stderr), not running, or an event stream the server closed, 2 usage.
+#
+# Remote attach (M16): `attach [<host>] [<session>]`, `terminal attach|observe <pane_id>
+# [--host <host>]` run a terminal client VM (mix run, HerdrTerm.Remote.main/1) with HERDR_LIVE_HEADLESS=1
+# and stdio sent to $HERDR_LIVE_CLIENT_LOG (default client.log beside the default server log).
+# It talks to the client socket (HERDR_LIVE_CLIENT_SOCK, else client.sock beside the API socket),
+# or over ssh to <host>, which runs `herdr-live attach-relay` there (HERDR_LIVE_SSH,
+# HERDR_LIVE_REMOTE_BIN; BatchMode, so ssh needs key or agent auth). The launcher checks the
+# argv shape and prints usage itself (the client VM's output goes to its log); ids are checked there.
 # `status` prints the broker's status, then the server's (key=value) when it answers.
 #
 # herdr-live rollback [n]: roll back the newest n live reload batches (default 1)
@@ -55,12 +63,44 @@ cli() { # runs in the caller's cwd, so a relative HERDR_LIVE_API keeps its meani
     printf '%s\n' "$exs" >"$cache.$$" && mv "$cache.$$" "$cache"
   fi
   # no crash dump in the caller's cwd if the VM cannot boot
-  ERL_CRASH_DUMP_SECONDS=0 exec erl -noinput -boot no_dot_erlang -pa "$exs" -pa "$ebin" -run Elixir.HerdrCli main_erl -extra "$@"
+  ERL_CRASH_DUMP_SECONDS=0 exec erl -noinput -boot no_dot_erlang -pa "$exs" -pa "$ebin" -pa "$root/_build/dev/lib/herdr_scene/ebin" -run Elixir.HerdrCli main_erl -extra "$@"
+}
+client_usage() {
+  cat <<'USAGE'
+usage:
+  herdr-live attach [<host>] [<session>]
+  herdr-live terminal attach <pane_id> [--host <host>]
+  herdr-live terminal observe <pane_id> [--host <host>]
+USAGE
+}
+client() { # attach | terminal: the remote client VM, stdio to its log (R18)
+  for a in "$@"; do
+    case $a in --help | -h) client_usage && exit 0 ;; esac
+  done
+  case $1:$# in
+    attach:[1-3]) ;;
+    terminal:3 | terminal:5)
+      case $2 in attach | observe) ;; *) client_usage >&2 && exit 2 ;; esac
+      [ $# -eq 3 ] || [ "$4" = --host ] || { client_usage >&2 && exit 2; }
+      ;;
+    *) client_usage >&2 && exit 2 ;;
+  esac
+  clog=${HERDR_LIVE_CLIENT_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/client.log}
+  case $clog in /*) ;; *) clog=$PWD/$clog ;; esac
+  case ${HERDR_LIVE_API:-} in /* | '') ;; *) HERDR_LIVE_API=$PWD/$HERDR_LIVE_API ;; esac
+  case ${HERDR_LIVE_CLIENT_SOCK:-} in /* | '') ;; *) HERDR_LIVE_CLIENT_SOCK=$PWD/$HERDR_LIVE_CLIENT_SOCK ;; esac
+  [ -z "${HERDR_LIVE_API:-}" ] || export HERDR_LIVE_API
+  [ -z "${HERDR_LIVE_CLIENT_SOCK:-}" ] || export HERDR_LIVE_CLIENT_SOCK
+  (umask 077 && mkdir -p "$(dirname "$clog")") || exit 1
+  cd "$root" || exit 1
+  exec </dev/null >>"$clog" 2>&1
+  MIX_ENV=dev HERDR_LIVE_HEADLESS=1 exec elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt --no-start -e 'HerdrTerm.Remote.main(System.argv())' -- "$@"
 }
 # dispatch on $#: only no argument at all starts a server (an empty verb is usage)
 if [ $# -gt 0 ]; then
   case $1 in
     kernel-restart | status) ;;
+    attach | terminal) client "$@" ;;
     *) cli "$@" ;;
   esac
 fi

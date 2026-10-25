@@ -1059,3 +1059,29 @@ An agent needs attention or finished.
 | `title` | string |
 | `body` | string |
 | `sound` | `request` or `done` |
+
+
+## Client verbs
+
+These verbs open a terminal client instead of calling the API. The client runs in its
+own VM (log: `$HERDR_LIVE_CLIENT_LOG`, default
+`${XDG_STATE_HOME:-~/.local/state}/herdr-live/client.log`).
+
+- `herdr-live attach [<host>] [<session>]`: Attach a terminal client to the session: the local client socket, or over ssh to <host> (needs key or agent auth).
+- `herdr-live terminal attach <pane_id> [--host <host>]`: Attach to one pane with input (control).
+- `herdr-live terminal observe <pane_id> [--host <host>]`: Watch one pane; input is dropped.
+- `herdr-live attach-relay [<session>]`: Run on the server host over ssh: relays stdio to the client socket and sends the auth frame with the host's token.
+
+## Client socket
+
+- Path: `$HERDR_LIVE_CLIENT_SOCK`, else `client.sock` beside the API socket. The token is
+  `client.token` beside it (mode 0600, created once, kept across restarts).
+- Framing: `<<len::32-big, term_to_binary(term)>>`, at most 32 MiB client to server and
+  64 MiB server to client. A frame that cannot be decoded closes that connection.
+- Auth: the first frame on every connection is `{:auth, token}`; otherwise the server
+  answers `{:refused, "bad token"}` and closes. `attach-relay` sends it from the server
+  host, so the token never crosses ssh.
+- Frames: client to server `{:auth, token}`, `{:attach, info}`, `{:input, wire_seq, event}`,
+  `{:caps, map}`, `{:detach}`; server to client `{:attached, info}`, `{:refused, reason}`
+  and the scene protocol messages (scene, rows, ack, notice, detached, ...). The
+  vocabulary and validators are `HerdrScene.Wire`.

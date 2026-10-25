@@ -28,7 +28,7 @@ defmodule HerdrServer.Api.Spec.Doc do
 
   @spec markdown() :: String.t()
   def markdown do
-    [header(), methods_section(), objects_section(), events_section()]
+    [header(), methods_section(), objects_section(), events_section(), client_section()]
     |> Enum.join("\n")
     |> String.trim_trailing()
     |> Kernel.<>("\n")
@@ -167,6 +167,35 @@ defmodule HerdrServer.Api.Spec.Doc do
     `id`) and is closed.
 
     """ <> body
+  end
+
+  defp client_section do
+    verbs = Enum.map_join(Spec.client_verbs(), "\n", &"- `#{&1.cli}`: #{&1.summary}")
+
+    """
+
+    ## Client verbs
+
+    These verbs open a terminal client instead of calling the API. The client runs in its
+    own VM (log: `$HERDR_LIVE_CLIENT_LOG`, default
+    `${XDG_STATE_HOME:-~/.local/state}/herdr-live/client.log`).
+
+    #{verbs}
+
+    ## Client socket
+
+    - Path: `$HERDR_LIVE_CLIENT_SOCK`, else `client.sock` beside the API socket. The token is
+      `client.token` beside it (mode 0600, created once, kept across restarts).
+    - Framing: `<<len::32-big, term_to_binary(term)>>`, at most 32 MiB client to server and
+      64 MiB server to client. A frame that cannot be decoded closes that connection.
+    - Auth: the first frame on every connection is `{:auth, token}`; otherwise the server
+      answers `{:refused, "bad token"}` and closes. `attach-relay` sends it from the server
+      host, so the token never crosses ssh.
+    - Frames: client to server `{:auth, token}`, `{:attach, info}`, `{:input, wire_seq, event}`,
+      `{:caps, map}`, `{:detach}`; server to client `{:attached, info}`, `{:refused, reason}`
+      and the scene protocol messages (scene, rows, ack, notice, detached, ...). The
+      vocabulary and validators are `HerdrScene.Wire`.
+    """
   end
 
   defp type(:string), do: "string"

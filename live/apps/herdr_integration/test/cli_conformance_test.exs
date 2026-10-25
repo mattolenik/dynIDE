@@ -8,6 +8,7 @@ defmodule HerdrIntegration.CliConformanceTest do
 
   alias HerdrCli.Argv
   alias HerdrServer.Api.Spec
+  alias HerdrTerm.Remote.Args
 
   @env %{"HERDR_PANE_ID" => "p4"}
 
@@ -123,5 +124,15 @@ defmodule HerdrIntegration.CliConformanceTest do
 
   test "the parser's event types are the Spec's" do
     assert Argv.event_types() == Spec.event_types()
+  end
+
+  test "client verbs are the remote client's usage lines, and the launcher prints them" do
+    clis = Spec.client_verbs() |> Enum.map(& &1.cli)
+    usage = Enum.map(Args.usage_lines(), &"herdr-live #{&1}")
+    assert usage -- clis == []
+    assert "herdr-live attach-relay [<session>]" in clis
+
+    launcher = File.read!(Path.expand("../../../bin/herdr-live", __DIR__))
+    for line <- usage, do: assert(launcher =~ line)
   end
 end
