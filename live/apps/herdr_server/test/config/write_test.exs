@@ -111,4 +111,28 @@ defmodule HerdrServer.Config.WriteTest do
     assert {:ok, %{"keys" => %{"command" => [%{"key" => "prefix+g"} | _]}}} =
              Toml.decode_file(path)
   end
+
+  test "a symlinked config is written through the link, which stays a link", %{tmp_dir: dir} do
+    real = Path.join([dir, "dotfiles", "herdr.toml"])
+    File.mkdir_p!(Path.dirname(real))
+    File.write!(real, "onboarding = true\n")
+    File.mkdir_p!(Path.join(dir, "conf"))
+    # a relative link to a relative link
+    File.ln_s!("../dotfiles/herdr.toml", Path.join(dir, "conf/mid.toml"))
+    link = Path.join(dir, "conf/config.toml")
+    File.ln_s!("mid.toml", link)
+
+    assert :ok = Write.upsert(link, [], %{"onboarding" => false})
+    assert {:ok, %File.Stat{type: :symlink}} = File.lstat(link)
+    assert File.read!(real) == "onboarding = false\n"
+    assert File.ls!(Path.join(dir, "conf")) |> Enum.sort() == ["config.toml", "mid.toml"]
+    assert File.ls!(Path.join(dir, "dotfiles")) == ["herdr.toml"]
+  end
+
+  test "the file mode is kept", %{tmp_dir: dir} do
+    path = write(dir, "onboarding = true\n")
+    File.chmod!(path, 0o600)
+    assert :ok = Write.upsert(path, [], %{"onboarding" => false})
+    assert Bitwise.band(File.stat!(path).mode, 0o777) == 0o600
+  end
 end

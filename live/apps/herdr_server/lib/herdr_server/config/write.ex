@@ -9,7 +9,8 @@ defmodule HerdrServer.Config.Write do
       several lines, a multi-line array, is replaced whole); a missing key is appended
       after the table's last non-blank line; a missing table is appended at the end of
       the file. A missing file and its directory are created. The file is replaced
-      atomically (written beside it, then renamed).
+      atomically (written beside it, then renamed, keeping its mode); a symlinked path
+      is resolved first and its target replaced, so the link stays.
     * Values: strings, booleans, integers and string arrays.
 
   Ponytail: line-based, not a TOML parser. A key set through a dotted key or inline table
@@ -23,13 +24,40 @@ defmodule HerdrServer.Config.Write do
 
   @spec upsert(Path.t(), [binary], %{binary => value}) :: :ok | {:error, term}
   def upsert(path, table, kv) do
+    path = resolve(path, 40)
+
     with {:ok, bin} <- read(path),
          :ok <- File.mkdir_p(Path.dirname(path)) do
       tmp = path <> ".tmp"
 
-      with :ok <- File.write(tmp, edit(bin, table, kv)), do: File.rename(tmp, path)
+      with {:error, _} = err <- swap(tmp, path, edit(bin, table, kv)) do
+        File.rm(tmp)
+        err
+      end
     end
   end
+
+  # a symlinked config (dotfiles) is written at its target, so the link stays a link
+  defp resolve(path, 0), do: path
+
+  defp resolve(path, n) do
+    case :file.read_link_all(path) do
+      {:ok, to} -> resolve(Path.expand(IO.chardata_to_string(to), Path.dirname(path)), n - 1)
+      {:error, _} -> path
+    end
+  end
+
+  # the new file keeps the old one's mode (a 0600 config stays private)
+  defp swap(tmp, path, bin) do
+    with :ok <- File.write(tmp, bin),
+         :ok <- keep_mode(tmp, File.stat(path)),
+         do: File.rename(tmp, path)
+  end
+
+  defp keep_mode(tmp, {:ok, %File.Stat{mode: mode}}),
+    do: File.chmod(tmp, Bitwise.band(mode, 0o7777))
+
+  defp keep_mode(_tmp, _no_file), do: :ok
 
   defp read(path) do
     case File.read(path) do
