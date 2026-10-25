@@ -175,7 +175,7 @@ defmodule HerdrServer.Api.Handlers.Topology do
   def handle("pane.swap", p), do: by_pane(p, "pane_swap", :swap_pane_dir, [])
 
   def handle("pane.resize", p),
-    do: by_pane(p, "pane_resize", :resize_pane_dir, [(p[:amount] || 5) / 100])
+    do: by_pane(p, "pane_resize", :resize_pane_dir, [min(abs(p[:amount] || 0.05) * 1.0, 0.5)])
 
   def handle("pane.close", %{pane_id: id}) do
     with {:ok, _before, aft, notes} <- run_on_pane(id, {Commands, :close_pane, [id]}) do
@@ -355,15 +355,18 @@ defmodule HerdrServer.Api.Handlers.Topology do
       {ws, tab} = tab_of(aft, id)
       {_, tab0} = tab_of(before, id)
       key = if type == "pane_resize", do: :pane_id, else: :source_pane_id
+      changed = tab0.layout != tab.layout
+      reason = if type == "pane_resize", do: "unchanged", else: "no_neighbor"
 
       {:ok,
        %{
          :type => type,
-         :changed => tab0.layout != tab.layout,
+         :changed => changed,
          key => Ids.pane(id),
          :focused_pane_id => Ids.pane(tab.layout.focus),
          :layout => View.layout(aft, ws, tab)
-       }}
+       }
+       |> then(&if changed, do: &1, else: Map.put(&1, :reason, reason))}
     end
   end
 
@@ -374,12 +377,35 @@ defmodule HerdrServer.Api.Handlers.Topology do
 
   # cwd must be an existing directory; env is name => value
   defp spawn_opts(p) do
-    cwd = p[:cwd]
-
-    if cwd && !File.dir?(cwd),
-      do: {:error, :invalid_params, "cwd is not an existing directory: #{cwd}"},
-      else: {:ok, Map.take(p, [:cwd, :env])}
+    with :ok <- check_cwd(p[:cwd]),
+         :ok <- check_env(p[:env] || %{}),
+         do: {:ok, Map.take(p, [:cwd, :env])}
   end
+
+  defp check_cwd(nil), do: :ok
+
+  defp check_cwd(cwd) do
+    cond do
+      nul?(cwd) or Path.type(cwd) != :absolute ->
+        {:error, :invalid_params, "cwd must be an absolute path"}
+
+      !File.dir?(cwd) ->
+        {:error, :invalid_params, "cwd is not an existing directory: #{cwd}"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp check_env(env) do
+    if Enum.any?(env, fn {k, v} -> k == "" or String.contains?(k, "=") or nul?(k) or nul?(v) end),
+      do:
+        {:error, :invalid_params,
+         "env names must be non-empty without = and no value may hold NUL"},
+      else: :ok
+  end
+
+  defp nul?(s), do: String.contains?(s, <<0>>)
 
   defp pane_reply(type, app, id) do
     case View.pane(app, id) do

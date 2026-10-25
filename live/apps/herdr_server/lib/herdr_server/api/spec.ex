@@ -487,7 +487,11 @@ defmodule HerdrServer.Api.Spec do
           opt_pane("Pane to split; default the focused pane."),
           req("direction", {:enum, ["right", "down"]}, "Where the new pane goes."),
           opt("ratio", {:number, 0.1, 0.9}, "Share of the space kept by the first pane."),
-          opt("cwd", :string, "Absolute working directory of the new pane; must exist."),
+          opt(
+            "cwd",
+            :string,
+            "Absolute working directory of the new pane; must be an existing directory."
+          ),
           opt("env", {:map, :string}, "Extra environment; herdr's own variables win."),
           focus("Focus the new pane.")
         ],
@@ -521,11 +525,15 @@ defmodule HerdrServer.Api.Spec do
         [
           opt_pane("Pane to resize; default the focused pane."),
           dir(),
-          opt("amount", {:integer, 1, 50}, "Percent of the tab; default 5.")
+          opt(
+            "amount",
+            {:number, -1.0e6, 1.0e6},
+            "Fraction of the tab; magnitude capped at 0.5; default 0.05."
+          )
         ],
         "pane_resize",
         [:not_found],
-        "herdr-live pane resize [<pane_id>] --direction left|right|up|down [--amount N]"
+        "herdr-live pane resize [<pane_id>] --direction left|right|up|down [--amount F]"
       ),
       method(
         "pane.report_agent",
@@ -1220,18 +1228,21 @@ defmodule HerdrServer.Api.Spec do
       "pane_closed" => [f("pane_id", :pane_id)],
       "pane_focus_direction" => [
         f("changed", :boolean),
+        f("reason", {:enum, ["no_neighbor"]}, false),
         f("source_pane_id", :pane_id),
         f("focused_pane_id", :pane_id),
         f("layout", {:ref, "layout"})
       ],
       "pane_swap" => [
         f("changed", :boolean),
+        f("reason", {:enum, ["no_neighbor"]}, false),
         f("source_pane_id", :pane_id),
         f("focused_pane_id", :pane_id),
         f("layout", {:ref, "layout"})
       ],
       "pane_resize" => [
         f("changed", :boolean),
+        f("reason", {:enum, ["unchanged"]}, false),
         f("pane_id", :pane_id),
         f("focused_pane_id", :pane_id),
         f("layout", {:ref, "layout"})

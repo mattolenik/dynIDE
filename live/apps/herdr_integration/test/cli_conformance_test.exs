@@ -80,7 +80,7 @@ defmodule HerdrIntegration.CliConformanceTest do
     "pane focus-direction --direction left",
     "pane focus-direction p1 --direction right",
     "pane swap p1 --direction down",
-    "pane resize p1 --direction up --amount 10",
+    "pane resize p1 --direction up --amount 0.1",
     "pane rename p1 logs",
     "pane rename p1",
     "pane link activate p1 --col 0 --row 2 --modifier ctrl",

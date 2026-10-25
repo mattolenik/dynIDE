@@ -198,6 +198,24 @@ defmodule HerdrServer.Api.TopologyTest do
     assert length(ok!(s, "pane.list")["panes"]) == 1
   end
 
+  test "pane.split validates cwd and env", %{s: s, dir: dir} do
+    ok!(s, "workspace.list")
+    base = %{"direction" => "right"}
+
+    for bad <- [
+          %{"cwd" => "relative"},
+          %{"cwd" => dir <> <<0>>},
+          %{"env" => %{"" => "x"}},
+          %{"env" => %{"A=B" => "x"}},
+          %{"env" => %{"A" => <<"x", 0>>}},
+          %{"env" => %{<<"A", 0>> => "x"}}
+        ] do
+      assert {"invalid_params", _} = err(s, "pane.split", Map.merge(base, bad))
+    end
+
+    assert length(ok!(s, "pane.list")["panes"]) == 1
+  end
+
   test "pane.focus_direction, swap and resize by id, each clearing zoom", %{s: s} do
     ok!(s, "workspace.list")
     ok!(s, "pane.split", %{"direction" => "right"})
@@ -217,9 +235,13 @@ defmodule HerdrServer.Api.TopologyTest do
     assert %{"changed" => false} = ok!(s, "pane.swap", %{"direction" => "right"})
 
     ok!(s, "pane.zoom", %{"pane_id" => "p1"})
-    r = ok!(s, "pane.resize", %{"pane_id" => "p1", "direction" => "left", "amount" => 10})
+    r = ok!(s, "pane.resize", %{"pane_id" => "p1", "direction" => "left", "amount" => 0.1})
     assert %{"changed" => true, "pane_id" => "p1"} = r
     assert zoom.() == nil
+
+    assert %{"changed" => false, "reason" => "no_neighbor"} =
+             ok!(s, "pane.focus_direction", %{"pane_id" => "p2", "direction" => "right"})
+
     assert {"not_found", _} = err(s, "pane.swap", %{"pane_id" => "p9", "direction" => "left"})
   end
 

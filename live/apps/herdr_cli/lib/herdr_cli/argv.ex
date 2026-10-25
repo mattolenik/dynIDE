@@ -316,9 +316,9 @@ defmodule HerdrCli.Argv do
         ~w(pane resize),
         "pane.resize",
         [opt_id],
-        Map.put(nav, "amount", {"amount", :int}),
+        Map.put(nav, "amount", {"amount", :number}),
         :json,
-        "pane resize [<pane_id>] --direction left|right|up|down [--amount N]"
+        "pane resize [<pane_id>] --direction left|right|up|down [--amount F]"
       ),
       cmd(
         ~w(pane rename),
