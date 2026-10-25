@@ -45,6 +45,12 @@ defmodule HerdrServer.Client.RemoteTest do
 
   defp typed(id), do: Fake.Pty.writes(pty(id)) |> Enum.join()
 
+  # bytes written so far, polled until `n` arrived or 10 s passed
+  defp drained(id, n, tries \\ 1000) do
+    got = byte_size(typed(id))
+    if got >= n or tries == 0, do: got, else: Process.sleep(10) && drained(id, n, tries - 1)
+  end
+
   defp put_cfg(key, value) do
     old = Application.get_env(:herdr_server, :client_socket, [])
     Application.put_env(:herdr_server, :client_socket, Keyword.put(old, key, value))
@@ -157,7 +163,8 @@ defmodule HerdrServer.Client.RemoteTest do
     big = :binary.copy("p", 2 * 1_048_576)
     :ok = send_frame(s, {:input, 1, {:paste, big}})
     assert {:ack, 1} = recv_until(s, &match?({:ack, _}, &1), 20_000)
-    assert byte_size(typed(1)) == byte_size(big)
+    # the paste is queued in Pane.Server (M9): the ack means accepted, the bytes follow
+    assert drained(1, byte_size(big)) == byte_size(big)
   end
 
   test "drop and resume keeps the session", ctx do
@@ -334,6 +341,6 @@ defmodule HerdrServer.Client.RemoteTest do
 
     attached!(s)
     assert {:ack, 1} = recv_until(s, &match?({:ack, _}, &1), 10_000)
-    assert byte_size(typed(1)) == byte_size(big)
+    assert drained(1, byte_size(big)) == byte_size(big)
   end
 end

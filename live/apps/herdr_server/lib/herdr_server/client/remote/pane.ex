@@ -64,11 +64,13 @@ defmodule HerdrServer.Client.Remote.Pane do
   defp control({:mouse, _} = ev, id), do: ok(Input.mouse(ev, id))
 
   defp control({:paste, bin}, id) do
-    case Input.paste(bin, id) do
-      {:error, {:truncated, n}} ->
-        {:notice, %{level: :warning, text: "paste truncated after #{n} bytes"}}
+    case Input.paste(bin, id, self()) do
+      {:error, {:too_large, n, max}} ->
+        {:notice, %{level: :warning, text: "paste rejected: #{n} bytes (max #{max})"}}
 
-      :ok ->
+      # queued: a later truncation notifies this conn (the origin); :closed is an exited pane, a
+      # handoff freeze never gets here (client_frame holds input while the phase is :begin)
+      _ok_or_closed ->
         :ok
     end
   end

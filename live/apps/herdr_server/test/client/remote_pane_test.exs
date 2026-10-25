@@ -138,10 +138,29 @@ defmodule HerdrServer.Client.RemotePaneTest do
     :ok = Fake.Pty.fail_once_after(pty(1), 0, :boom)
     :ok = send_frame(p, {:input, 1, {:paste, "abc"}})
 
-    assert {:notice, %{level: :warning, text: "paste truncated after 0 bytes"}} =
-             recv_until(p, &match?({:notice, _}, &1))
+    # the ack (paste queued) and the truncation notice (queue dropped) arrive in either order
+    frames = for _ <- 1..2, do: recv_until(p, &match?({tag, _} when tag in [:notice, :ack], &1))
+    assert {:ack, 1} in frames
 
-    ack!(p, 1)
+    assert {:notice, %{level: :warning, text: "paste truncated after 0 bytes"}} in frames
+  end
+
+  test "a paste over the cap gets a rejected notice", ctx do
+    old = Application.get_env(:herdr_server, :paste_max_bytes)
+    Application.put_env(:herdr_server, :paste_max_bytes, 2)
+
+    on_exit(fn ->
+      if old,
+        do: Application.put_env(:herdr_server, :paste_max_bytes, old),
+        else: Application.delete_env(:herdr_server, :paste_max_bytes)
+    end)
+
+    p = pane!(ctx, 1, :control)
+    scene!(p)
+    :ok = send_frame(p, {:input, 1, {:paste, "abc"}})
+
+    assert {:notice, %{level: :warning, text: "paste rejected: 3 bytes (max 2)"}} =
+             recv_until(p, &match?({:notice, _}, &1))
   end
 
   test "unknown pane refused", ctx do
