@@ -18,7 +18,8 @@ defmodule HerdrServer.App.Store do
     * After each event: panes of inactive tabs are hidden, active-tab panes are resized to
       their content rects (bumping `layout_gen`), an open popup's pane to its rect, and the
       fast-path term is republished if its value changed. A step that removed an open
-      popup's owner tab also closes the popup (`App.Modal.Popup.orphaned/1`). It carries no input mode: modes are per client.
+      popup's owner tab also closes the popup (`App.Modal.Popup.orphaned/1`). The fast
+      path carries no input mode: modes are per client.
     * A spawn that fails (keeper open or pane server start) sends the origin a warning
       notice and closes the pane again, as `{:pane_exited, id}`.
     * `app.session`, `app.focus`, `app.ui` and the bookkeeping are mirrored to
@@ -482,7 +483,7 @@ defmodule HerdrServer.App.Store do
 
   # a popup whose owner tab the step removed closes (`Popup.orphaned/1`)
   defp orphaned(app, effects, opts) do
-    case Guard.run_twice(Popup, :orphaned, [app], opts) do
+    case Guard.run_twice(Popup, :orphaned, [app], [scan: false] ++ opts) do
       {:ok, {app, fx}} -> {app, effects ++ fx}
       {:failed, _} -> {app, effects}
     end

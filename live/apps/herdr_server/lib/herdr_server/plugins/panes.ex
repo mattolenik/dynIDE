@@ -205,7 +205,7 @@ defmodule HerdrServer.Plugins.Panes do
 
   defp popup_free("popup", app) do
     if Popup.find(app),
-      do: err(:failed, "ui_busy", "a popup pane is already open"),
+      do: err(:ui_busy, "ui_busy", "a popup pane is already open"),
       else: :ok
   end
 

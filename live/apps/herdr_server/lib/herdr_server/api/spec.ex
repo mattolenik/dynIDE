@@ -18,7 +18,7 @@ defmodule HerdrServer.Api.Spec do
   alias HerdrServer.Api.Ids
 
   @error_codes ~w(parse_error invalid_request unknown_method invalid_params not_found
-                  not_available failed timeout backpressure events_lost internal)a
+                  not_available failed timeout backpressure events_lost ui_busy internal)a
 
   @sources ~w(visible recent)
   @agent_states ~w(idle working blocked done unknown)
@@ -1052,7 +1052,7 @@ defmodule HerdrServer.Api.Spec do
         "herdr-live plugin pane open --plugin ID --entrypoint ID [--placement P] [--width S] " <>
           "[--height S] [--workspace ID] [--target-pane PANE] [--direction right|down] " <>
           "[--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus]",
-        [:not_found, :failed]
+        [:not_found, :failed, :ui_busy]
       )
       |> Map.put(
         :notes,
@@ -1060,7 +1060,7 @@ defmodule HerdrServer.Api.Spec do
           "unless `cwd` is given. `split` splits the target pane (`direction` default `right`); " <>
           "`tab`, `overlay` and `zoomed` open a new tab in the workspace (herdr-live has no " <>
           "overlay or zoom). `popup` opens the session popup over the active tab (one at a " <>
-          "time: another is `failed` with reason `ui_busy`; it closes when its program " <>
+          "time: another is `ui_busy`, `data.reason` too; it closes when its program " <>
           "exits or on `popup.close`), sized by `width` / `height`, else the entry's, else " <>
           "half the pane area; its pane is not in any tab and the result's `tab_id` / " <>
           "`workspace_id` are the active tab's. The pane is named " <>

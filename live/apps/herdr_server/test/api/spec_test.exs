@@ -21,7 +21,7 @@ defmodule HerdrServer.Api.SpecTest do
 
     assert Spec.error_codes() ==
              ~w(parse_error invalid_request unknown_method invalid_params not_found
-                not_available failed timeout backpressure events_lost internal)a
+                not_available failed timeout backpressure events_lost ui_busy internal)a
   end
 
   test "popup sizes are herdr's: integer cells or a percent string" do

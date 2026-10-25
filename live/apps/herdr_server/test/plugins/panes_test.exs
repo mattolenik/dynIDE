@@ -124,7 +124,7 @@ defmodule HerdrServer.Plugins.PanesTest do
     assert {Fake.Keeper.last_spec().cols, Fake.Keeper.last_spec().rows} == {pane.cols, pane.rows}
 
     # one popup at a time (herdr's ui_busy)
-    assert {:error, :failed, _, %{reason: "ui_busy"}} = pop()
+    assert {:error, :ui_busy, _, %{reason: "ui_busy"}} = pop()
 
     {:ok, %{pty: pty}} = Fake.Keeper.lookup(Rows.kernel_id(next))
     Fake.Pty.kill(pty, :term)

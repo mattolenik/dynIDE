@@ -20,6 +20,7 @@ defmodule HerdrServer.Api.Spec.Doc do
     timeout: "The operation did not finish in time.",
     backpressure: "The pane's input queue is full; retry.",
     events_lost: "The event stream could not keep up and was closed.",
+    ui_busy: "A popup is already open (herdr's code); close it first.",
     internal: "A handler crashed; the server is still running."
   }
 

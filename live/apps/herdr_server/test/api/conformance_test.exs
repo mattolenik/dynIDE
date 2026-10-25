@@ -162,6 +162,19 @@ defmodule HerdrServer.Api.ConformanceTest do
     call(listen(ctx), "plugin.pane.open", %{"plugin_id" => "x", "entrypoint" => "p"})
   end
 
+  # a second popup while the first is open (herdr's ui_busy)
+  defp produce("plugin.pane.open", :ui_busy, ctx) do
+    base = PluginDirs.use_tmp()
+    toml = "[[panes]]\nid = \"p\"\ntitle = \"P\"\nplacement = \"popup\"\ncommand = [\"sh\"]\n"
+    {:ok, _} = Install.link(PluginDirs.plugin(base <> "/p", "x", toml), true)
+    s = listen(ctx)
+    params = %{"plugin_id" => "x", "entrypoint" => "p"}
+    %{"result" => _} = ApiClient.call(s, "plugin.pane.open", params)
+    reply = ApiClient.call(s, "plugin.pane.open", params)
+    %{"error" => %{"data" => %{"reason" => "ui_busy"}}} = reply
+    reply
+  end
+
   # p1 is not a plugin pane
   defp produce(method, :not_found, ctx) when method in ~w(plugin.pane.focus plugin.pane.close),
     do: call(listen(ctx), method)

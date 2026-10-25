@@ -8,10 +8,10 @@ defmodule HerdrServer.App.Store.Carry do
   `Store.flush_hold/0` (the Link's PREPARE) holds a pending one now. A new VM's
   `Store.init/1` that finds that entry adopts it (before looking at the mirror, which is
   empty in a new VM): it maps the panes the Keeper adopted in `:herdr_pane_kernel`, starts
-  their `Pane.Server`s (an open popup's pane included), and leaves every other keeper pane alone (they belong to whoever
-  opened them, e.g. ctl). A mapped pane the Keeper lost is closed as `{:pane_exited, id}`.
-  An unusable entry (its pure part runs through `HerdrReload.Guard`) is logged and
-  unclaimed, and the Store starts with an empty app.
+  their `Pane.Server`s (an open popup's pane included), and leaves every other keeper
+  pane alone (they belong to whoever opened them, e.g. ctl). A mapped pane the Keeper
+  lost is closed as `{:pane_exited, id}`. An unusable entry (its pure part runs through
+  `HerdrReload.Guard`) is logged and unclaimed, and the Store starts with an empty app.
   """
 
   require Logger
