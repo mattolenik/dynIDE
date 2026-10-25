@@ -15,7 +15,7 @@ value. The M6 targets are used as restated by its (b) rulings (design.md "Slice 
 | herdr reference | `bench/gate/herdr_ref.sh` (tag `herdr-reference` = `2be39ad9`, release build) | the same tag's `git archive`, built in the container with `cargo build --release --locked` (`HERDR_BIN`), since the export has no tags |
 | load | 1-min load 4.8-18.8, CPU 63-71 % idle (`top`) at every suite boundary | guest load 2.3-17.7; host macOS idle 11-68 % (sampled every 20-30 s; drops to 11-18 % are the desktop's) |
 
-Runs: `HERDR_LIVE_BIN=<prefix>/bin/herdr-live live/bench/gate_round.sh r1` (suites
+Runs: `HERDR_LIVE_BENCH_BIN=<prefix>/bin/herdr-live live/bench/gate_round.sh r1` (suites
 `m3fake m3real m3real120 osfloor reload handoff glass herdrref`), then
 `just live-bench-remote`. One suite at a time, nothing else of mine running. On Linux the same
 sequence ran inside one `linux_check.sh` call. The flood suites (`m3real m3real120 osfloor`)
@@ -25,8 +25,8 @@ recorded in r1. Logs (scratch, not committed): `.superpowers/sdd/m18/runs/gate-m
 
 Build per row (the "build" column):
 
-- **release**: the row drives the installed launcher (`HERDR_LIVE_BIN`, added to
-  `bench/handoff/driver.exs`, `bench/remote/bench.exs` and `bench/gate/glass.py` in `15bea547`).
+- **release**: the row drives the installed launcher (`HERDR_LIVE_BENCH_BIN`, added to
+  `bench/handoff/driver.exs`, `bench/remote/bench.exs` and `bench/gate/glass.py` in `15bea547` as `HERDR_LIVE_BIN`, renamed in the final review because pane shells export that name: a bench run from a pane would have driven the dogfood instance).
   The broker's VMs boot the release (`vm up 417 ms`, no Mix).
 - **in-VM**: `MIX_ENV=test mix herdr.bench` from the umbrella root. The bench task and its
   fakes exist only in `:test`. The release's prod-only compile difference is consolidated

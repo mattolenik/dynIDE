@@ -15,9 +15,9 @@ defmodule HandoffDriver do
 
   def live_dir, do: @live
 
-  @doc "The launcher under test: $HERDR_LIVE_BIN (an installed release) else live/bin/herdr-live."
+  @doc "The launcher under test: $HERDR_LIVE_BENCH_BIN (an installed release) else live/bin/herdr-live (not $HERDR_LIVE_BIN: a pane exports that, so a bench run inside a pane would drive the dogfood instance)."
   def bin do
-    case System.get_env("HERDR_LIVE_BIN") do
+    case System.get_env("HERDR_LIVE_BENCH_BIN") do
       b when b in [nil, ""] -> Path.join(@live, "bin/herdr-live")
       b -> Path.expand(b)
     end

@@ -17,7 +17,7 @@ pty master (the glass for both programs). Every 60 chars a `\\r`. A key with no 
 and exits 1 if fewer than n/2 samples were taken. herdr runs isolated (XDG_CONFIG_HOME
 and XDG_RUNTIME_DIR in a temp dir, config `onboarding = false`, `--session NAME`, stopped
 and deleted afterwards);
-herdr-live is launched like scripts/tty_harness.py's Herdr (--bin, else $HERDR_LIVE_BIN,
+herdr-live is launched like scripts/tty_harness.py's Herdr (--bin, else $HERDR_LIVE_BENCH_BIN,
 else bin/herdr-live; log in the temp dir), quit with prefix q. The process groups started here are SIGKILLed on exit.
 """
 import argparse
@@ -238,7 +238,7 @@ def main():
     cols, rows = int(m.group(1)), int(m.group(2))
     launch, default = {
         "herdr": (herdr, None),
-        "herdr-live": (herdr_live, os.environ.get("HERDR_LIVE_BIN") or os.path.join(LIVE, "bin", "herdr-live")),
+        "herdr-live": (herdr_live, os.environ.get("HERDR_LIVE_BENCH_BIN") or os.path.join(LIVE, "bin", "herdr-live")),
     }[args.impl]
     if default is None and not args.bin:
         # HERDR_BIN or the herdr-reference build (herdr_ref.sh)
