@@ -263,6 +263,8 @@ pub struct KittyImagePlacement {
     pub data: Vec<u8>,
     pub source_file: Option<Arc<OwnedExport>>,
     pub render: KittyPlacementRenderInfo,
+    /// Synthesized from unicode-placeholder cells (one per run), not a stored placement.
+    pub is_virtual: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -299,13 +301,14 @@ pub struct KittyPlacementRenderInfo {
     pub source_height: u32,
 }
 
+/// A stored virtual (unicode placeholder, `U=1`) placement as the child sent it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct KittyVirtualPlacementSpec {
-    image_id: u32,
-    placement_id: u32,
-    columns: u32,
-    rows: u32,
-    z: i32,
+pub struct KittyVirtualPlacementSpec {
+    pub image_id: u32,
+    pub placement_id: u32,
+    pub columns: u32,
+    pub rows: u32,
+    pub z: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1917,6 +1920,10 @@ impl Terminal {
         self.get_u16(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_ROWS)
     }
 
+    pub fn cursor_x(&self) -> Result<u16, Error> {
+        self.get_u16(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_CURSOR_X)
+    }
+
     pub fn cursor_y(&self) -> Result<u16, Error> {
         self.get_u16(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_CURSOR_Y)
     }
@@ -2046,6 +2053,47 @@ impl Terminal {
                 }))
             })
             .collect()
+    }
+
+    /// Every stored virtual placement, visible or not.
+    pub fn kitty_virtual_placements(&self) -> Result<Vec<KittyVirtualPlacementSpec>, Error> {
+        let graphics = self.kitty_graphics()?;
+        if graphics.is_null() {
+            return Ok(Vec::new());
+        }
+        kitty_virtual_placement_specs(graphics)
+    }
+
+    /// Image `image_id`'s payload as placements report it (decoded, PNG-forwarded or a
+    /// retained file's RGBA), whether or not it is visible; `None` when it is not stored
+    /// or still compressed.
+    pub fn kitty_image(
+        &self,
+        image_id: u32,
+    ) -> Result<Option<(KittyImageDescriptor, Vec<u8>)>, Error> {
+        let graphics = self.kitty_graphics()?;
+        if graphics.is_null() {
+            return Ok(None);
+        }
+        let image = unsafe { ffi::ghostty_kitty_graphics_image(graphics, image_id) };
+        if image.is_null()
+            || kitty_image_compression(image)?
+                != ffi::GhosttyKittyImageCompression_GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE
+        {
+            return Ok(None);
+        }
+        let width = kitty_image_u32(
+            image,
+            ffi::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_WIDTH,
+        )?;
+        let height = kitty_image_u32(
+            image,
+            ffi::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_HEIGHT,
+        )?;
+        let format = kitty_image_format(image)?;
+        let (descriptor, data, _) =
+            self.kitty_placement_payload(image, image_id, 0, width, height, format, &mut |_| true)?;
+        Ok(Some((descriptor, data)))
     }
 
     pub fn kitty_image_placements(&self) -> Result<Vec<KittyImagePlacement>, Error> {
@@ -2312,6 +2360,7 @@ impl Terminal {
             data_fingerprint,
             data,
             source_file,
+            is_virtual: false,
             render: KittyPlacementRenderInfo {
                 pixel_width: raw_info.pixel_width,
                 pixel_height: raw_info.pixel_height,
@@ -2437,6 +2486,7 @@ impl Terminal {
                 data,
                 source_file,
                 render: geometry.render,
+                is_virtual: true,
             });
         }
 

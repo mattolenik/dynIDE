@@ -1,10 +1,12 @@
 //! One ghostty terminal plus a snapshot of packed rows (`docs/herdr-live/packed-cells.md`).
 //! Parsing and encoding happen under the core lock; BEAM-facing reads use the snapshot.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 
+use base64::Engine as _;
 use ghostty_vt::{
     ActiveScreen, CellColor, CellStyle, CellWide, ColorScheme, CursorVisualStyle, DefaultColor,
     Dirty, KittyImageFormat, KittyImagePlacement, LinkTarget, RenderState, RgbColor, RowCells,
@@ -322,6 +324,106 @@ pub struct Image {
     pub data: Vec<u8>,
 }
 
+fn replay_graphics(t: &Terminal, cap: usize) -> Result<Vec<u8>, VtError> {
+    if !t.kitty_graphics_may_have_placements()? {
+        return Ok(Vec::new());
+    }
+    let virt = t.kitty_virtual_placements()?;
+    let sb = t.scrollbar()?;
+    // rows the viewport sits above the active area (user scrolled back)
+    let back = sb.total.saturating_sub(sb.len + sb.offset) as i32;
+    let rows = i32::from(t.rows()?);
+    let placed: Vec<KittyImagePlacement> = match t.mode_get(MODES[Mode::Origin as usize].2)? {
+        true => Vec::new(),
+        false => t
+            .kitty_image_placements_with_data_filter(|_| false)?
+            .into_iter()
+            .filter(|p| !p.is_virtual && p.render.viewport_col >= 0)
+            .filter(|p| (0..rows).contains(&(p.render.viewport_row - back)))
+            .collect(),
+    };
+
+    let mut out = Vec::new();
+    let mut carried = HashSet::new();
+    let mut budget = cap;
+    let ids = virt
+        .iter()
+        .map(|v| v.image_id)
+        .chain(placed.iter().map(|p| p.image_id));
+    for id in ids {
+        if carried.contains(&id) {
+            continue;
+        }
+        let Some((d, data)) = t.kitty_image(id)? else {
+            continue;
+        };
+        if data.is_empty() || data.len() > budget {
+            continue;
+        }
+        budget -= data.len();
+        carried.insert(id);
+        let (w, h) = (d.image_width, d.image_height);
+        let control = match d.format {
+            KittyImageFormat::Png => format!("a=t,q=2,f=100,i={id}"),
+            KittyImageFormat::Rgb => format!("a=t,q=2,f=24,s={w},v={h},i={id}"),
+            KittyImageFormat::Rgba => format!("a=t,q=2,f=32,s={w},v={h},i={id}"),
+        };
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+        let chunks: Vec<&[u8]> = b64.as_bytes().chunks(4096).collect();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let more = u8::from(i + 1 < chunks.len());
+            match i {
+                0 => out.extend_from_slice(format!("\x1b_G{control},m={more};").as_bytes()),
+                _ => out.extend_from_slice(format!("\x1b_Gm={more};").as_bytes()),
+            }
+            out.extend_from_slice(chunk);
+            out.extend_from_slice(b"\x1b\\");
+        }
+    }
+    if carried.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut cmd = String::new();
+    for v in virt.iter().filter(|v| carried.contains(&v.image_id)) {
+        let _ = write!(cmd, "\x1b_Ga=p,q=2,U=1,i={},z={}", v.image_id, v.z);
+        for (k, n) in [("p", v.placement_id), ("c", v.columns), ("r", v.rows)] {
+            if n > 0 {
+                let _ = write!(cmd, ",{k}={n}");
+            }
+        }
+        cmd.push_str("\x1b\\");
+    }
+    for p in placed.iter().filter(|p| carried.contains(&p.image_id)) {
+        let r = &p.render;
+        let _ = write!(
+            cmd,
+            "\x1b[{};{}H\x1b_Ga=p,q=2,C=1,i={},c={},r={},x={},y={},w={},h={},X={},Y={},z={}",
+            r.viewport_row - back + 1,
+            r.viewport_col + 1,
+            p.image_id,
+            r.grid_cols,
+            r.grid_rows,
+            r.source_x,
+            r.source_y,
+            r.source_width,
+            r.source_height,
+            p.x_offset,
+            p.y_offset,
+            p.z
+        );
+        // ghostty reports implicit placements by internal id from 0: replaying the 0 one
+        // implicitly gets 0 again in the fresh storage
+        if p.placement_id > 0 {
+            let _ = write!(cmd, ",p={}", p.placement_id);
+        }
+        cmd.push_str("\x1b\\");
+    }
+    let _ = write!(cmd, "\x1b[{};{}H", t.cursor_y()? + 1, t.cursor_x()? + 1);
+    out.extend_from_slice(cmd.as_bytes());
+    Ok(out)
+}
+
 fn placement(p: &KittyImagePlacement) -> Option<Placement> {
     let r = &p.render;
     if r.grid_cols == 0 || r.grid_rows == 0 || p.image_width == 0 || p.image_height == 0 {
@@ -583,6 +685,19 @@ impl Vt {
 
     pub fn encode_snapshot(&self) -> Result<Vec<u8>, VtError> {
         Ok(lock(&self.core).terminal.encode_snapshot()?)
+    }
+
+    /// VT bytes that re-create this terminal's kitty images in a `restore`d copy, which
+    /// ghostty's snapshot leaves out: each image a stored virtual placement or an on-screen
+    /// placement of the active screen uses, while their pixels total at most `cap`, then
+    /// those placements (with explicit `c`/`r`, as the restored copy has no cell pixel
+    /// size yet), then the cursor back where it was. Empty when there is nothing to carry.
+    // ponytail: placements partly scrolled off the top, in scrollback, on the inactive
+    // screen or under origin mode, and images with no placement, are not carried; the
+    // final CUP drops a pending wrap. Carry them with a ghostty snapshot record if missed.
+    pub fn graphics_replay(&self, cap: usize) -> Vec<u8> {
+        let core = lock(&self.core);
+        replay_graphics(&core.terminal, cap).unwrap_or_default()
     }
 
     fn from_terminal(mut terminal: Terminal) -> Result<Arc<Vt>, VtError> {
@@ -1638,6 +1753,76 @@ mod tests {
         let cells = row(&vt, 1);
         assert_eq!(cells[2].glyph, " ");
         assert_eq!(cells[3].glyph, " ");
+    }
+
+    /// What adopt does: restore, feed the carried bytes, then the next resize brings the
+    /// cell pixel size back.
+    fn adopt(vt: &Vt) -> Arc<Vt> {
+        let replay = vt.graphics_replay(16 << 20);
+        let vt2 = roundtrip(vt, 1000);
+        vt2.write(&replay);
+        vt2.resize(20, 10, Some((10, 20))).expect("resize");
+        vt2.refresh();
+        vt2
+    }
+
+    #[test]
+    fn snapshot_alone_drops_kitty_images() {
+        let vt = image_vt();
+        vt.write(RGB_APC);
+        vt.refresh();
+        assert_eq!(vt.graphics_placements().len(), 1);
+        let vt2 = roundtrip(&vt, 1000);
+        vt2.resize(20, 10, Some((10, 20))).expect("resize");
+        vt2.refresh();
+        assert!(vt2.graphics_placements().is_empty());
+        assert!(vt2.graphics_image(7).is_none());
+    }
+
+    #[test]
+    fn graphics_replay_carries_placements_and_pixels() {
+        let vt = image_vt();
+        vt.write(b"\x1b[3;5H");
+        vt.write(RGB_APC);
+        // explicit id, offsets, source rect and z; then a second implicit placement
+        vt.write(b"\x1b[6;2H\x1b_Ga=p,i=7,p=3,c=2,r=1,x=1,y=0,w=1,h=2,X=2,Y=3,z=-4\x1b\\");
+        vt.write(b"\x1b[8;12H\x1b_Ga=p,i=7,c=3,r=1\x1b\\");
+        // a unicode-placeholder image
+        vt.write(b"\x1b_Gq=2,a=t,t=d,f=32,s=1,v=1,i=1193046,m=0;/wAA/w==\x1b\\");
+        vt.write(b"\x1b_Gq=2,a=p,U=1,i=1193046,c=2,r=1\x1b\\");
+        vt.write(
+            "\x1b[2;3H\x1b[38;2;18;52;86m\u{10eeee}\u{0305}\u{0305}\u{10eeee}\u{0305}\u{030d}\x1b[0m\x1b[9;4H"
+                .as_bytes(),
+        );
+        vt.refresh();
+        let before = vt.graphics_placements();
+        assert_eq!(before.len(), 4);
+
+        let vt2 = adopt(&vt);
+        let sorted = |ps: &[Placement]| {
+            let mut v = ps.to_vec();
+            v.sort_by_key(|p| (p.image_id, p.placement_id, p.y, p.x));
+            v
+        };
+        assert_eq!(sorted(&vt2.graphics_placements()), sorted(&before));
+        assert_eq!(vt2.graphics_image(7), vt.graphics_image(7));
+        assert_eq!(vt2.graphics_image(1193046), vt.graphics_image(1193046));
+        assert_eq!(vt2.cursor().map(|c| (c.x, c.y)), Some((3, 8)));
+    }
+
+    #[test]
+    fn graphics_replay_respects_cap_and_skips_off_screen_tops() {
+        let vt = image_vt();
+        assert!(vt.graphics_replay(16 << 20).is_empty());
+        vt.write(RGB_APC);
+        vt.refresh();
+        assert!(vt.graphics_replay(11).is_empty());
+        assert!(!vt.graphics_replay(12).is_empty());
+        // scrolled one row off the top: not carried
+        vt.write(&b"\n".repeat(9));
+        vt.refresh();
+        assert_eq!(vt.graphics_placements()[0].y, -1);
+        assert!(vt.graphics_replay(16 << 20).is_empty());
     }
 
     fn roundtrip(vt: &Vt, max: usize) -> Arc<Vt> {

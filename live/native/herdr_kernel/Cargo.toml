@@ -10,6 +10,8 @@ crate-type = ["cdylib"]
 rustler = "=0.38.0"
 ghostty-vt = { path = "../../../crates/ghostty-vt" }
 libc = "0.2"
+# carried kitty images are re-sent as base64 APC on adopt (already in the tree via ghostty-vt)
+base64 = "0.22.1"
 herdr_fdpass = { path = "../herdr_fdpass" }
 portable-pty = "=0.9.0"
 

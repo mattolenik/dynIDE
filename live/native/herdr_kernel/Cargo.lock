@@ -165,6 +165,7 @@ dependencies = [
 name = "herdr_kernel"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "ghostty-vt",
  "herdr_fdpass",
  "libc",

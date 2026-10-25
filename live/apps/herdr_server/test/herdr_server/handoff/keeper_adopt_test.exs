@@ -31,9 +31,9 @@ defmodule HerdrServer.Handoff.KeeperAdoptTest do
   defp alive?(os_pid), do: match?({_, 0}, System.cmd("kill", ["-0", "#{os_pid}"]))
 
   # Hands pane `id` over as `new_id`: the original stays in the table, frozen and released.
-  defp hand_over(id, new_id, change \\ & &1) do
+  defp hand_over(id, new_id, change \\ & &1, opts \\ []) do
     {:ok, row} = Keeper.lookup(id)
-    blob = State.build(id, row, []) |> Map.put(:id, new_id) |> change.() |> State.encode()
+    blob = State.build(id, row, opts) |> Map.put(:id, new_id) |> change.() |> State.encode()
     {:ok, fd} = Pty.dup_fd(row.pty)
     Pty.freeze(row.pty)
     :ok = Pty.release(row.pty)
@@ -59,6 +59,29 @@ defmodule HerdrServer.Handoff.KeeperAdoptTest do
     assert {:ok, 501} = Keeper.open(spec())
     Keeper.close(501)
     Keeper.close(500)
+  end
+
+  test "kitty images cross the handoff: the same placements and pixels after adopt" do
+    {:ok, id} = Keeper.open(spec(%{cmd: "/bin/sleep", args: ["30"]}))
+    {:ok, %{vt: vt, os_pid: os_pid}} = Keeper.lookup(id)
+    :ok = Vt.resize(vt, 80, 24, {10, 20})
+    # 2x2 RGB at (4, 2) and an explicit second placement with a source rect (q=2: the
+    # child is not reading, so replies would echo onto the screen)
+    Vt.feed(vt, "\e[3;5H\e_Ga=T,q=2,f=24,s=2,v=2,i=7,c=4,r=2;AQIDBAUGBwgJCgsM\e\\")
+    Vt.feed(vt, "\e[6;2H\e_Ga=p,q=2,i=7,p=3,c=2,r=1,x=1,w=1,h=2,z=-4\e\\\e[10;1H")
+    before = Vt.graphics_placements(vt)
+    assert length(before) == 2
+    assert State.build(id, elem(Keeper.lookup(id), 1), []) |> Map.has_key?(:gfx) == false
+
+    hand_over(id, 420, & &1, gfx: true)
+
+    assert {:ok, %{vt: vt2}} = Keeper.lookup(420)
+    :ok = Vt.resize(vt2, 80, 24, {10, 20})
+    assert Enum.sort(Vt.graphics_placements(vt2)) == Enum.sort(before)
+    assert Vt.graphics_image(vt2, 7) == Vt.graphics_image(vt, 7)
+    assert %{x: 0, y: 9} = Vt.cursor(vt2)
+    :ok = Keeper.close(420)
+    System.cmd("kill", ["-9", "#{os_pid}"])
   end
 
   test "the blob carries the start time; a recycled pid is adopted as exited" do

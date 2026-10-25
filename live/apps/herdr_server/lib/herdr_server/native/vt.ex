@@ -96,6 +96,15 @@ defmodule HerdrServer.Native.Vt do
   @spec encode_snapshot(vt) :: binary
   def encode_snapshot(vt), do: Native.vt_encode_snapshot(vt)
 
+  @doc """
+  VT bytes that re-create the kitty images and placements ghostty's snapshot leaves out,
+  for `feed/2` into the `restore/2`d terminal; at most `cap` bytes of pixels, `""` when
+  there is nothing to carry. Only on-screen placements of the active screen and virtual
+  placements are carried.
+  """
+  @spec graphics_replay(vt, non_neg_integer) :: binary
+  def graphics_replay(vt, cap), do: Native.vt_graphics_replay(vt, cap)
+
   @doc "Rebuilds a terminal from `encode_snapshot/1` output; its size comes from the snapshot."
   @spec restore(binary, non_neg_integer) :: {:ok, vt} | {:error, binary}
   def restore(bytes, max_scrollback), do: Native.vt_restore(bytes, max_scrollback)

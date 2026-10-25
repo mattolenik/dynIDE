@@ -300,6 +300,12 @@ fn vt_encode_snapshot(env: Env, vt: ResourceArc<VtRes>) -> NifResult<Term> {
     Ok(bin(env, &bytes))
 }
 
+// DirtyCpu: copies and base64-encodes at most `cap` bytes of pixels under the core lock.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn vt_graphics_replay(env: Env, vt: ResourceArc<VtRes>, cap: usize) -> Term {
+    bin(env, &vt.0.graphics_replay(cap))
+}
+
 #[rustler::nif(schedule = "DirtyCpu")]
 fn vt_restore<'a>(env: Env<'a>, bytes: Binary, max_scrollback: usize) -> Term<'a> {
     match Vt::restore(bytes.as_slice(), max_scrollback) {

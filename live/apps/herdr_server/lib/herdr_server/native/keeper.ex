@@ -265,7 +265,7 @@ defmodule HerdrServer.Native.Keeper do
 
   # Sends and returns the final state of pane `id`.
   defp final_update(id, row, pending) do
-    st = State.build(id, row, pending_input: pending)
+    st = State.build(id, row, pending_input: pending, gfx: true)
     Link.update(key(id), State.encode(st))
     st
   rescue
@@ -301,6 +301,8 @@ defmodule HerdrServer.Native.Keeper do
 
   defp adopt_one(id, st, fd, reason) do
     vt = restore_vt(id, st)
+    # before Pty.adopt: no reader yet, and q=2 replies nothing to the child
+    with gfx when is_binary(gfx) and gfx != "" <- Map.get(st, :gfx), do: Vt.feed(vt, gfx)
 
     exited = st.exited != nil
     start = Map.get(st, :start_time)
