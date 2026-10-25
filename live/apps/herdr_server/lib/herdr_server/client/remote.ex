@@ -41,7 +41,7 @@ defmodule HerdrServer.Client.Remote do
   client sees EOF, reconnects and resumes (R9). A bad blob is unclaimed and its fd
   closed. The hold module is `config :herdr_server, :client_hold` (tests record).
 
-  Pane mode (R17, target `{:pane, id, :observe | :control}`): no `Client.Session`. The
+  Pane mode (R17, target `{:pane, id, :observe | :control}`, `Client.Remote.Pane`): no `Client.Session`. The
   conn registers under `HerdrServer.Client.Registry` `:clients` (so `{:pane_damage, id, _}`
   reaches it) and follows the Store; each damage of its pane is a `Client.PaneScene`
   through the outbox. `:control` writes keys, mouse and paste to `Pane.Input`, `:observe`
@@ -55,11 +55,10 @@ defmodule HerdrServer.Client.Remote do
   require Logger
 
   alias HerdrScene.{Protocol, Wire}
-  alias HerdrServer.App.Store
-  alias HerdrServer.Client.{Outbox, PaneScene, Socket}
+  alias HerdrServer.Client.{Outbox, Socket}
+  alias HerdrServer.Client.Remote.Pane
   alias HerdrServer.Handoff.Link
   alias HerdrServer.Native.Link, as: NLink
-  alias HerdrServer.Pane.{Input, Rows}
   alias HerdrServer.Persist.Schema
 
   @internal_seq 4_611_686_018_427_387_904
@@ -68,8 +67,6 @@ defmodule HerdrServer.Client.Remote do
   @immediate [:notice, :alert, :handoff, :clipboard, :bell, :open_url, :damage]
   # a pane conn's socket must arrive within the handshake time
   @pane_wait_ms 5000
-  @store_wait_ms 10
-  @store_tries 100
 
   defstruct id: nil,
             info: nil,
@@ -246,18 +243,16 @@ defmodule HerdrServer.Client.Remote do
 
   # Client.Socket checked the pane; one closed since is :ignore (the handshake retries)
   defp pane_attach(%{target: {:pane, id, _}} = info) do
-    case Rows.fetch(id) do
-      nil ->
+    case Pane.attach(id, info.size) do
+      :ignore ->
         :ignore
 
-      fetched ->
-        {:ok, _} = Registry.register(HerdrServer.Client.Registry, :clients, nil)
-        :ok = Store.subscribe(self())
+      {:ok, scene, store_ref} ->
         attach_event(info)
-        state = %{configured(info) | pane: id, store_ref: Process.monitor(Store)}
-        state = put_scene(state, fetched)
-        # no grace afterwards: a lost socket stops the conn at once
-        {:ok, %{away(%{state | grace_ms: @pane_wait_ms}) | grace_ms: 0}}
+        # no grace: once it had a socket, a drop stops the conn at once
+        state = %{configured(info) | pane: id, store_ref: store_ref, grace_ms: 0}
+        # the socket comes with resume/4 within the handshake time
+        {:ok, arm(put(state, scene), @pane_wait_ms)}
     end
   end
 
@@ -324,7 +319,9 @@ defmodule HerdrServer.Client.Remote do
     with %{v: 1, client_id: id, info: info, acked: acked, buffer: buf} = b
          when is_binary(id) and is_integer(acked) and is_binary(buf) <-
            :erlang.binary_to_term(blob, [:safe]),
-         :ok <- Wire.validate_client_frame({:attach, info}) do
+         :ok <- Wire.validate_client_frame({:attach, info}),
+         # pane conns are never held; such an entry is not ours to resume
+         :session <- info.target do
       {:ok, b}
     else
       _ -> :error
@@ -437,6 +434,8 @@ defmodule HerdrServer.Client.Remote do
       })
 
   defp hold(%{socket: nil} = state), do: state
+  # pane conns are not carried across a handoff (R17)
+  defp hold(%{pane: id} = state) when id != nil, do: state
 
   defp hold(state) do
     with true <- holding?(),
@@ -519,39 +518,36 @@ defmodule HerdrServer.Client.Remote do
 
   def handle_info({:scene, _} = msg, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, schedule(%{state | outbox: Outbox.put(state.outbox, msg)})}
+    {:noreply, schedule(put(state, msg))}
   end
 
   def handle_info({:pane_damage, id, _}, %{pane: id} = state) when id != nil do
     state = Map.merge(%__MODULE__{}, state)
 
-    case Rows.fetch(id) do
+    case Pane.scene(id, state.info.size) do
       nil -> pane_closed(state)
-      fetched -> {:noreply, schedule(put_scene(state, fetched))}
+      scene -> {:noreply, schedule(put(state, scene))}
     end
   end
 
   def handle_info({:app_changed, app}, %{pane: id} = state) when id != nil do
     state = Map.merge(%__MODULE__{}, state)
-    if open?(app, id), do: {:noreply, state}, else: pane_closed(state)
+    if Pane.open?(app, id), do: {:noreply, state}, else: pane_closed(state)
   end
 
   # the Store restarted from the mirror: follow the new one
   def handle_info({:DOWN, ref, :process, _, _}, %{store_ref: ref} = state) do
     state = Map.merge(%__MODULE__{}, state)
 
-    with pid when is_pid(pid) <- await_store(@store_tries),
-         {:ok, app} <- follow_store(),
-         true <- open?(app, state.pane) do
-      {:noreply, %{state | store_ref: Process.monitor(pid)}}
-    else
-      _ -> pane_closed(state)
+    case Pane.follow_store(state.pane) do
+      {:ok, ref} -> {:noreply, %{state | store_ref: ref}}
+      :error -> pane_closed(state)
     end
   end
 
   def handle_info({:rows, _, _, _} = msg, state) do
     state = Map.merge(%__MODULE__{}, state)
-    {:noreply, schedule(%{state | outbox: Outbox.put(state.outbox, msg)})}
+    {:noreply, schedule(put(state, msg))}
   end
 
   # our own resizes
@@ -609,13 +605,6 @@ defmodule HerdrServer.Client.Remote do
 
   # --- pane mode ---
 
-  defp put_scene(state, fetched) do
-    scene = PaneScene.build(state.pane, fetched, state.info.size)
-    %{state | outbox: Outbox.put(state.outbox, {:scene, scene})}
-  end
-
-  defp open?(app, id), do: match?(%{session: %{panes: %{^id => _}}}, app)
-
   defp pane_closed(state) do
     state = out(%{state | detached: true}, {:detached, :pane_closed})
     state = if state.socket, do: close(state), else: state
@@ -623,40 +612,13 @@ defmodule HerdrServer.Client.Remote do
     {:stop, :normal, state}
   end
 
-  # the new Store may die too while we call it
-  defp follow_store do
-    :ok = Store.subscribe(self())
-    {:ok, Store.snapshot()}
-  catch
-    :exit, _ -> :error
-  end
-
-  defp await_store(0), do: nil
-
-  defp await_store(n) do
-    with nil <- Process.whereis(Store) do
-      receive do
-      after
-        @store_wait_ms -> await_store(n - 1)
-      end
-    end
-  end
-
-  # observe drops input; control writes it straight to the pane, whatever has focus
-  defp pane_input(%{info: %{target: {:pane, id, :control}}}, ev), do: control(ev, id)
-  defp pane_input(_observe, _ev), do: :ok
-
-  defp control({:key, _} = ev, id), do: Input.key(ev, id)
-  defp control({:mouse, _} = ev, id), do: Input.mouse(ev, id)
-  defp control({:paste, bin}, id), do: Input.paste(bin, id)
-  defp control(_ev, _id), do: :ok
-
   # --- input ---
 
   defp received(state, data) do
     case Wire.decode(state.buf <> data, Wire.max_client_frame()) do
       {:ok, frames, rest} ->
-        state = Enum.reduce(frames, %{state | buf: rest}, &frame/2)
+        state = Enum.reduce_while(frames, %{state | buf: rest}, &connected_frame/2)
+
         if state.socket, do: :inet.setopts(state.socket, active: :once)
         state
 
@@ -664,6 +626,12 @@ defmodule HerdrServer.Client.Remote do
       {:error, _} ->
         drop(state)
     end
+  end
+
+  # a frame that closed the socket ({:detach}, a failed write) ends the read
+  defp connected_frame(f, state) do
+    state = frame(f, state)
+    if state.socket, do: {:cont, state}, else: {:halt, state}
   end
 
   defp frame(f, state) do
@@ -692,8 +660,14 @@ defmodule HerdrServer.Client.Remote do
         drop(state)
 
       true ->
-        _ = pane_input(state, ev)
         state = %{state | last_seq: w, acked: w}
+
+        state =
+          case Pane.input(state.info.target, ev) do
+            :ok -> state
+            notice -> out(state, notice)
+          end
+
         state = if match?({:resize, _}, ev), do: repaint(own_resize(state, ev)), else: state
         out(state, {:ack, w})
     end
@@ -752,11 +726,13 @@ defmodule HerdrServer.Client.Remote do
   end
 
   defp repaint(state) do
-    case Rows.fetch(state.pane) do
+    case Pane.scene(state.pane, state.info.size) do
       nil -> state
-      fetched -> put_scene(state, fetched)
+      scene -> put(state, scene)
     end
   end
+
+  defp put(state, msg), do: %{state | outbox: Outbox.put(state.outbox, msg)}
 
   # --- output ---
 
@@ -840,9 +816,12 @@ defmodule HerdrServer.Client.Remote do
     %{state | socket: nil, fd: nil}
   end
 
-  defp away(state) do
+  defp away(state), do: arm(state, state.grace_ms)
+
+  # {:grace, ref} in `ms` stops the conn unless a socket comes first
+  defp arm(state, ms) do
     ref = make_ref()
-    Process.send_after(self(), {:grace, ref}, state.grace_ms)
+    Process.send_after(self(), {:grace, ref}, ms)
     %{state | grace_ref: ref, away_since: now()}
   end
 

@@ -4,7 +4,7 @@ defmodule HerdrServer.Client.RemotePaneTest do
 
   import HerdrServer.Test.WireClient
 
-  alias HerdrScene.Event
+  alias HerdrScene.{Event, Wire}
   alias HerdrServer.Client.Remote
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Pane.Rows
@@ -38,6 +38,12 @@ defmodule HerdrServer.Client.RemotePaneTest do
   defp prefix!(s, seq, key) do
     :ok = send_frame(s, {:input, seq, Event.key("b", [:ctrl])})
     :ok = send_frame(s, {:input, seq + 1, Event.key(key)})
+  end
+
+  defp conn_pid(id, mode) do
+    [conn] = for %{target: {:pane, ^id, ^mode}} = c <- Remote.list(), do: c
+    [{pid, _}] = Registry.lookup(Remote.Registry, conn.id)
+    pid
   end
 
   defp panes(s, n), do: scene_until(s, &(length(&1.panes) == n))
@@ -109,6 +115,32 @@ defmodule HerdrServer.Client.RemotePaneTest do
     assert recv_closed(p) == :closed
   end
 
+  test "frames after a detach in the same read are not applied", ctx do
+    p = pane!(ctx, 1, :control)
+    scene!(p)
+
+    # one write: both frames arrive in the same read
+    both = [Wire.encode({:detach}), Wire.encode({:input, 1, Event.key("q")})]
+    ref = Process.monitor(conn_pid(1, :control))
+    :ok = :gen_tcp.send(p, both)
+    assert recv_closed(p) == :closed
+    # the conn has handled the whole read once it is down
+    assert_receive {:DOWN, ^ref, :process, _, :normal}, 2000
+    assert typed(1) == ""
+  end
+
+  test "a truncated paste gets a warning notice", ctx do
+    p = pane!(ctx, 1, :control)
+    scene!(p)
+    :ok = Fake.Pty.fail_once_after(pty(1), 0, :boom)
+    :ok = send_frame(p, {:input, 1, {:paste, "abc"}})
+
+    assert {:notice, %{level: :warning, text: "paste truncated after 0 bytes"}} =
+             recv_until(p, &match?({:notice, _}, &1))
+
+    ack!(p, 1)
+  end
+
   test "unknown pane refused", ctx do
     p = attach(ctx, target: {:pane, 99, :observe})
     assert recv_frame(p) == {:refused, "no pane p99"}
@@ -118,9 +150,7 @@ defmodule HerdrServer.Client.RemotePaneTest do
   test "a lost socket stops the conn at once", ctx do
     p = pane!(ctx, 1, :observe)
     scene!(p)
-    [conn] = for %{target: {:pane, 1, :observe}} = c <- Remote.list(), do: c
-    [{pid, _}] = Registry.lookup(Remote.Registry, conn.id)
-    ref = Process.monitor(pid)
+    ref = Process.monitor(conn_pid(1, :observe))
     :gen_tcp.close(p)
     assert_receive {:DOWN, ^ref, :process, _, :normal}, 2000
   end

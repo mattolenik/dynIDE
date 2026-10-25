@@ -257,6 +257,28 @@ defmodule HerdrServer.Client.RemoteHandoffTest do
     assert :closed = recv_closed(c)
   end
 
+  test "a pane conn is never held" do
+    ctx = setup_listener()
+    attached!(attach(ctx, client_id: "sess1"), false)
+    assert_receive {:hold, "client/sess1", _, 1}, 2000
+    attached!(attach(ctx, client_id: "pane1", target: {:pane, 1, :control}), false)
+    # its hold would come before its first scene
+    refute_received {:hold, "client/pane1", _, _}
+    :ok = Remote.prepare_all()
+    refute_received {:update, "client/pane1", _}
+  end
+
+  test "an adopted pane-target entry is unclaimed and closed" do
+    {c, fd} = socket_pair()
+    info = attach_info(client_id: "padopt", target: {:pane, 1, :observe})
+    :ok = Link.put_adopted_for_test([{"client/padopt", carried_blob("padopt", info, []), [fd]}])
+    _ctx = setup_listener()
+    :ok = Remote.Supervisor.adopt_all()
+    assert :closed = recv_closed(c)
+    assert :sys.get_state(Link).rejected == ["client/padopt"]
+    assert Registry.lookup(Remote.Registry, "padopt") == []
+  end
+
   test "bad blob is unclaimed and the fd closed" do
     {c, fd} = socket_pair()
     :ok = Link.put_adopted_for_test([{"client/bad", "not a term", [fd]}])
