@@ -19,6 +19,9 @@ defmodule HerdrServer.View do
       the top modal's `:modal` / `:menu` region (`App.Modal.view/2`) when the stack is
       non-empty. A prompt on top puts `focus.chrome` on its input and sets the scene
       `cursor` there (`View.Modal.cursor/1`); otherwise both are nil.
+    * An open popup (`App.Modal.Popup`) is the last pane, `layer: :popup`, sized by
+      `Popup.size/2` in this client's pane area (content rect, all-edges border with its
+      title), and holds `focus.pane`.
     * Divider rect choice: with borders on, a split's boundary is `pos`, the first cell of
       the second child. The divider is the 1-cell line at `pos` (second child's leading
       border column or row), spanning the split's area. A client resolves
@@ -32,6 +35,7 @@ defmodule HerdrServer.View do
   alias HerdrScene.Scene
   alias HerdrScene.Scene.{Node, Pane}
   alias HerdrServer.App.Modal
+  alias HerdrServer.App.Modal.Popup
   alias HerdrServer.Client.State
   alias HerdrServer.Layout
   alias HerdrServer.View.{Frame, Overlays, Sidebar, Status, Tabs, Toast, WindowTitle}
@@ -50,15 +54,16 @@ defmodule HerdrServer.View do
       |> Layout.rects(area, Layout.opts(tab, app.ui))
       |> Enum.map(&pane(&1, app, client))
 
+    popup = popup(app, area, client)
     modal = Modal.view(app, size)
     {chrome_focus, cursor} = ModalView.cursor(modal) || {nil, nil}
     chrome = chrome(app, client, ws, tab, regions)
 
     %Scene{
       size: %{cols: cols, rows: rows},
-      panes: panes,
+      panes: panes ++ List.wrap(popup),
       chrome: %{chrome | children: chrome.children ++ List.wrap(modal)},
-      focus: %{pane: app.focus.pane, chrome: chrome_focus},
+      focus: %{pane: if(popup, do: popup.id, else: app.focus.pane), chrome: chrome_focus},
       cursor: cursor
     }
   end
@@ -74,6 +79,23 @@ defmodule HerdrServer.View do
       overlays: Overlays.pane(id, rect, client),
       graphics: Map.get(client.graphics, id, [])
     }
+  end
+
+  # the open popup (`App.Modal.Popup`) in this client's pane area, nil when none fits
+  defp popup(app, area, %State{transport: transport} = client) do
+    with %{pane: id} = m <- Popup.find(app),
+         %{outer: outer, inner: inner} <- Popup.size(m, area) do
+      %Pane{
+        id: id,
+        rect: inner,
+        layer: :popup,
+        border: %{rect: outer, edges: [:top, :bottom, :left, :right], title: m.title},
+        rows: if(transport == :inline, do: {:inline, []}, else: {:ref, id, m.layout_gen}),
+        overlays: Overlays.pane(id, inner, client)
+      }
+    else
+      _ -> nil
+    end
   end
 
   defp chrome(app, client, ws, tab, %{panes: area} = regions) do

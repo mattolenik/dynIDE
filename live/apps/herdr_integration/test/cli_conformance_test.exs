@@ -62,6 +62,7 @@ defmodule HerdrIntegration.CliConformanceTest do
     "notification show hi --body there --pane p1",
     "title set hi",
     "title clear",
+    "popup close",
     "agent list",
     "agent get p1",
     "agent read p1 --source recent --lines 5",

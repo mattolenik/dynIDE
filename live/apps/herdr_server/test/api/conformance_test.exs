@@ -279,6 +279,7 @@ defmodule HerdrServer.Api.ConformanceTest do
   defp produce("worktree.open", :not_found, ctx),
     do: call(listen(ctx), "worktree.open", %{"workspace_id" => "w9", "branch" => "b"})
 
+  defp produce("popup.close", :not_found, ctx), do: call(listen(ctx), "popup.close")
   defp produce(method, :not_found, ctx), do: call(listen(ctx), method, missing(method))
 
   # params naming an id that does not exist: the method's own id param, else its scope

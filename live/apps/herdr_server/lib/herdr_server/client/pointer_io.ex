@@ -22,7 +22,11 @@ defmodule HerdrServer.Client.PointerIo do
   @doc "The resolve context for `ev` (a `{:mouse, m}` or nil for an autoscroll tick)."
   @spec context(Pointer.t(), tuple | nil, map | nil) :: map
   def context(p, ev, scene) do
-    panes = for pane <- (scene && scene.panes) || [], do: %{id: pane.id, rect: pane.rect}
+    # popup panes first (topmost last in the scene): they cover the panes under them
+    {popups, base} =
+      Enum.split_with((scene && scene.panes) || [], &(Map.get(&1, :layer) == :popup))
+
+    panes = for pane <- Enum.reverse(popups) ++ base, do: %{id: pane.id, rect: pane.rect}
     ids = Enum.uniq([hit(panes, ev) | active(p)]) -- [nil]
 
     %{

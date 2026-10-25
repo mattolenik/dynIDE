@@ -819,6 +819,15 @@ defmodule HerdrServer.Api.Spec do
         "ok",
         [],
         "herdr-live title clear"
+      ),
+      method(
+        "popup.close",
+        "popup",
+        "Close the open popup pane (its process is ended).",
+        [],
+        "ok",
+        [:not_found],
+        "herdr-live popup close"
       )
     ]
   end

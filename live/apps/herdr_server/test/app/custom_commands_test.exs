@@ -4,6 +4,7 @@ defmodule HerdrServer.App.CustomCommandsTest do
   @moduletag :capture_log
   @moduletag :tmp_dir
 
+  alias HerdrScene.Event
   alias HerdrScene.Scene.Node
   alias HerdrServer.Api.{Ids, SocketPath}
   alias HerdrServer.App.{Actions, CustomCommands, Keybinds, Modal, Store, Ui}
@@ -165,7 +166,14 @@ defmodule HerdrServer.App.CustomCommandsTest do
     assert CustomCommands.run(app, 1) ==
              {app, [{:plugin, {:invoke, "demo.act", %{source: "keybinding"}}}]}
 
-    assert {^app, [{:notice, %{level: :warning}}]} = CustomCommands.run(app, 2)
+    {app3, [{:spawn, 2, %{cols: c, rows: r}, opts}]} = CustomCommands.run(app, 2)
+    assert %{cmd: "/bin/sh", args: ["-c", "x"], identity: false} = opts
+    assert %{kind: :popup, pane: 2, title: "popup"} = Modal.top(app3)
+    assert app3.focus.pane == 1 and app3.session.next_id == 3 and c > 0 and r > 0
+    # one popup at a time: the binding does not run under a modal, the command refuses
+    assert {^app3, [{:notice, %{level: :warning, text: "popup: popup already open"}}]} =
+             CustomCommands.run(app3, 2)
+
     assert {^app, [{:notice, _}]} = CustomCommands.run(app, 9)
   end
 
@@ -197,6 +205,41 @@ defmodule HerdrServer.App.CustomCommandsTest do
     :ok = Store.run({CustomCommands, :run, [0]}, @size)
     ran = Path.join(work, "ran")
     assert Enum.any?(1..250, fn _ -> File.exists?(ran) or (Process.sleep(20) && false) end)
+  end
+
+  test "the Store opens a popup: keys reach its pane, its exit pops the modal", %{tmp_dir: dir} do
+    saved = Application.get_env(:herdr_server, :config_path)
+    path = Path.join(dir, "config.toml")
+    Application.put_env(:herdr_server, :config_path, path)
+
+    on_exit(fn ->
+      Application.put_env(:herdr_server, :config_path, saved)
+      Store.reset()
+    end)
+
+    File.write!(path, """
+    onboarding = false
+    [[keys.command]]
+    key = "prefix+o"
+    command = "lazygit"
+    type = "popup"
+    width = "50%"
+    """)
+
+    Store.reset()
+    :ok = Store.event({:resize, @size}, @size)
+    :ok = Store.run({CustomCommands, :run, [0]}, @size)
+    %{kind: :popup, pane: id} = Modal.top(Store.snapshot())
+    {:ok, %{pty: pty}} = Keeper.lookup(Rows.kernel_id(id))
+
+    :ok = Store.event(Event.key("q"), @size)
+    assert Enum.any?(1..100, fn _ -> Pty.writes(pty) != [] or (Process.sleep(10) && false) end)
+
+    Pty.kill(pty, :term)
+
+    assert Enum.any?(1..100, fn _ ->
+             Store.snapshot().focus.modal == [] or (Process.sleep(10) && false)
+           end)
   end
 
   test "exec logs only a bounded, valid UTF-8 excerpt of a failing command's output" do

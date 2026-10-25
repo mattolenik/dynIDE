@@ -17,12 +17,12 @@ defmodule HerdrServer.App.Actions do
   put the file over the ui (keybinds are always `Keybinds.default/0` plus the file); a
   loaded config with `onboarding` opens onboarding when no modal is open.
 
-  `{:pane_exited, id}` emits `{:close, id}`; the Store must treat closing an already-gone
+  `{:pane_exited, id}` emits `{:close, id}` (an open popup's pane also closes the popup); the Store must treat closing an already-gone
   pane as idempotent. Mouse `px` is passed through unchanged (not pane-relative) in M3.
   Keys arrive here already resolved by the client's `Client.Keys` and go to the focused
   pane; bindings are applied by the Store as `apply(m, f, [app | a])`. While the modal
   stack is non-empty, keys and pastes go to its top (`App.Modal`) and pane mouse events
-  are dropped.
+  are dropped, except inside an open popup's pane (`App.Modal.Popup`).
 
   Ponytail: panes' `layout_gen` is not bumped here; the Store owns resize bookkeeping.
   """
@@ -41,7 +41,7 @@ defmodule HerdrServer.App.Actions do
     Worktrees
   }
 
-  alias HerdrServer.App.Modal.Onboarding
+  alias HerdrServer.App.Modal.{Onboarding, Popup}
   alias HerdrServer.{Config, Layout}
   alias HerdrServer.View.Frame
 
@@ -90,10 +90,11 @@ defmodule HerdrServer.App.Actions do
   # --- events ---
 
   @spec apply(app(), tuple()) :: {app(), [effect()]}
-  # an open modal takes keys and pastes; pane mouse input waits until it closes
+  # an open modal takes keys and pastes; pane mouse input waits until it closes, except
+  # inside an open popup's pane
   def apply(%{focus: %{modal: [_ | _]}} = app, {:key, _} = event), do: Modal.key(app, event)
   def apply(%{focus: %{modal: [_ | _]}} = app, {:paste, bin}), do: Modal.paste(app, bin)
-  def apply(%{focus: %{modal: [_ | _]}} = app, {:mouse, _}), do: {app, []}
+  def apply(%{focus: %{modal: [_ | _]}} = app, {:mouse, _} = ev), do: Popup.mouse(app, ev)
 
   # key resolution (prefix, modes, consumed releases) is per-client, in `Client.Keys`
   def apply(app, {:key, _} = event), do: to_focused(app, :key, event)
@@ -124,7 +125,7 @@ defmodule HerdrServer.App.Actions do
 
   def apply(app, {:chrome, path, action}), do: Chrome.apply(app, path, action)
 
-  def apply(app, {:pane_exited, id}), do: Commands.close_pane(app, id)
+  def apply(app, {:pane_exited, id}), do: Popup.exited(app, id) || Commands.close_pane(app, id)
 
   def apply(app, {:pane_title, id, title}) do
     case app.session.panes do

@@ -11,7 +11,8 @@ defmodule HerdrServer.App.Modal.Kind do
     * `{:close, app, effects}`: the modal is gone; `app` is what remains.
 
   `node/3` builds the modal's chrome node (`View.Modal` has the shared pieces); its id
-  is set by `App.Modal.view/2`. `ignores_escape?/1` (optional, default false): Esc and
+  is set by `App.Modal.view/2`; nil draws no chrome (`Popup`). `ignores_escape?/1`
+  (optional, default false): Esc and
   backdrop clicks reach `key/3` / `chrome/4` instead of closing the modal.
   """
 
@@ -27,7 +28,7 @@ defmodule HerdrServer.App.Modal.Kind do
 
   @callback key(modal, tuple, app) :: result
   @callback chrome(modal, [term], {atom, map}, app) :: result
-  @callback node(modal, app, %{cols: pos_integer, rows: pos_integer}) :: Node.t()
+  @callback node(modal, app, %{cols: pos_integer, rows: pos_integer}) :: Node.t() | nil
   @callback ignores_escape?(modal) :: boolean
   @optional_callbacks ignores_escape?: 1
 end
@@ -37,26 +38,29 @@ defmodule HerdrServer.App.Modal do
   The modal stack (`App.Focus.modal`, top first) and the routing into its top modal
   (pure). A modal is a plain map `%{kind: atom, id: pos_integer, ...kind fields}`; the
   kind names its module (`:confirm`, `:prompt`, `:menu`, `:settings`, `:onboarding`,
-  `:keybinds`, `:goto`, or a module implementing
+  `:keybinds`, `:goto`, `:popup`, or a module implementing
   `App.Modal.Kind` itself). Callbacks inside modals are `{M, F, A}`, never funs.
 
-    * `key/2`: releases are dropped; Esc closes the top modal (unless its kind
+    * `key/2`: a top `:popup` gets every key, releases included (`Popup`); otherwise
+      releases are dropped; Esc closes the top modal (unless its kind
       `ignores_escape?`), every other key goes to the kind.
-    * `paste/2`: a top `:prompt`'s field gets the text; other kinds ignore it.
+    * `paste/2`: a top `:prompt`'s field gets the text, a top `:popup`'s pane the paste;
+      other kinds ignore it.
     * `chrome/3`: `[{:modal | :menu, id} | rest]` for the top's id only (a stale id is a
       no-op); `[_, :backdrop]` clicks close like Esc; other paths go to the kind's
       `chrome/4` with `rest`.
     * `view/2`: the top modal's node (ids `{:modal, id}` / `{:menu, id}`), or nil.
 
+  Keys never reach a tiled pane while the stack is non-empty (a popup pane is not one).
+
   Ids come from `App.Focus.next_modal_id` and are never reused while the app lives, so a
   click from another client's stale scene cannot land on a later modal at the same depth.
 
-  Keys never reach a pane while the stack is non-empty: `App.Actions` routes them here,
-  and the Store's fast path needs `modal == []`.
+  `App.Actions` routes keys here, and the Store's fast path needs `modal == []`.
   """
 
   alias HerdrScene.Scene.Node
-  alias HerdrServer.App.Modal.{Confirm, Goto, Keybinds, Menu, Onboarding, Prompt, Settings}
+  alias HerdrServer.App.Modal.{Confirm, Goto, Keybinds, Menu, Onboarding, Popup, Prompt, Settings}
   alias HerdrServer.App.Modal.TextField
 
   @kinds %{
@@ -66,7 +70,8 @@ defmodule HerdrServer.App.Modal do
     settings: Settings,
     onboarding: Onboarding,
     keybinds: Keybinds,
-    goto: Goto
+    goto: Goto,
+    popup: Popup
   }
 
   @type modal :: HerdrServer.App.Modal.Kind.modal()
@@ -93,6 +98,9 @@ defmodule HerdrServer.App.Modal do
   def capturing?(_focus), do: false
 
   @spec key(map, tuple) :: {map, [tuple]}
+  def key(%{focus: %{modal: [%{kind: :popup} = m | _]}} = app, ev),
+    do: run(app, &Popup.key(m, ev, &1))
+
   def key(app, {:key, %{event: :release}}), do: {app, []}
 
   def key(%{focus: %{modal: [m | _]}} = app, {:key, %{key: :escape, mods: []}} = ev) do
@@ -105,6 +113,9 @@ defmodule HerdrServer.App.Modal do
   @spec paste(map, binary) :: {map, [tuple]}
   def paste(%{focus: %{modal: [%{kind: :prompt} = m | rest]}} = app, bin),
     do: {put_in(app.focus.modal, [%{m | field: TextField.insert(m.field, bin)} | rest]), []}
+
+  def paste(%{focus: %{modal: [%{kind: :popup, pane: id} | _]}} = app, bin),
+    do: {app, [{:paste, id, bin}]}
 
   def paste(app, _bin), do: {app, []}
 
@@ -123,9 +134,10 @@ defmodule HerdrServer.App.Modal do
 
   @spec view(map, %{cols: pos_integer, rows: pos_integer}) :: Node.t() | nil
   def view(%{focus: %{modal: [m | _]}} = app, size) do
-    node = mod(m).node(m, app, size)
-    tag = if node.role == :menu, do: :menu, else: :modal
-    %{node | id: {tag, m.id}}
+    case mod(m).node(m, app, size) do
+      nil -> nil
+      %Node{role: role} = node -> %{node | id: {if(role == :menu, do: :menu, else: :modal), m.id}}
+    end
   end
 
   def view(_app, _size), do: nil

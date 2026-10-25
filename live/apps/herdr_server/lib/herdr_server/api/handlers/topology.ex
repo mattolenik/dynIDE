@@ -12,6 +12,7 @@ defmodule HerdrServer.Api.Handlers.Topology do
   alias HerdrServer.AgentResume
   alias HerdrServer.Api.{Ids, View}
   alias HerdrServer.App.{Commands, Metadata, Store}
+  alias HerdrServer.App.Modal.Popup
   alias HerdrServer.Kernel
   alias HerdrServer.Layout
   alias HerdrServer.Pane.Rows
@@ -201,6 +202,15 @@ defmodule HerdrServer.Api.Handlers.Topology do
       if gone?(aft, [id]),
         do: {:ok, %{type: "pane_closed", pane_id: Ids.pane(id)}},
         else: unchanged(notes)
+    end
+  end
+
+  # herdr's popup_not_open is not_found here (the error codes are a closed set)
+  def handle("popup.close", _params) do
+    with {:ok, before, _aft, _notes} <- run({Popup, :close, []}) do
+      if Popup.find(before),
+        do: {:ok, %{type: "ok"}},
+        else: {:error, :not_found, "no popup is open"}
     end
   end
 

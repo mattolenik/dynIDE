@@ -74,6 +74,7 @@ defmodule HerdrServer.App.Store do
     Worktrees
   }
 
+  alias HerdrServer.App.Modal.Popup
   alias HerdrServer.App.Store.{Carry, Mirror}
   alias HerdrServer.App.Store.Config, as: StoreConfig
   alias HerdrServer.Handoff.Link
@@ -542,7 +543,7 @@ defmodule HerdrServer.App.Store do
     spec = %{
       cmd: Map.get(opts, :cmd) || System.get_env("SHELL", "/bin/sh"),
       args: Map.get(opts, :args, []),
-      env: pane_env(state, id, Map.get(opts, :env, [])),
+      env: pane_env(state, id, Map.get(opts, :env, []), Map.get(opts, :identity, true)),
       cwd: cwd || File.cwd!(),
       cols: c,
       rows: r,
@@ -639,11 +640,16 @@ defmodule HerdrServer.App.Store do
          do: Kernel.keeper().open(%{spec | cwd: File.cwd!()})
   end
 
-  # herdr's pane variables come last and win over :pane_env and the caller's env
-  defp pane_env(state, id, extra) do
+  # herdr's pane variables come last and win over :pane_env and the caller's env; a
+  # popup (`identity: false`) gets no pane or place variables
+  defp pane_env(state, id, extra, identity?) do
+    own =
+      if identity?,
+        do: [{"HERDR_PANE_ID", "p#{id}"} | place_env(state.app, id)],
+        else: []
+
     env =
-      Application.get_env(:herdr_server, :pane_env, []) ++
-        extra ++ [{"HERDR_ENV", "1"}, {"HERDR_PANE_ID", "p#{id}"}] ++ place_env(state.app, id)
+      Application.get_env(:herdr_server, :pane_env, []) ++ extra ++ [{"HERDR_ENV", "1"} | own]
 
     env |> Enum.reverse() |> Enum.uniq_by(&elem(&1, 0)) |> Enum.reverse()
   end
@@ -737,10 +743,18 @@ defmodule HerdrServer.App.Store do
         state =
           Enum.reduce(Map.keys(s.panes), state, &hide(&2, &1, not MapSet.member?(visible, &1)))
 
-        Enum.reduce(rects, state, &resize/2)
+        Enum.reduce(rects ++ popup_rects(state.app, g), state, &resize/2)
 
       {:failed, _} ->
         state
+    end
+  end
+
+  # an open popup's pane (`App.Modal.Popup`): sized like a tiled pane, never hidden
+  defp popup_rects(app, g) do
+    case Guard.run_twice(Popup, :rects, [app], g) do
+      {:ok, rects} -> rects
+      {:failed, _} -> []
     end
   end
 
@@ -758,11 +772,20 @@ defmodule HerdrServer.App.Store do
     case state.sizes do
       %{^id => old} when old != {w, h} and w > 0 and h > 0 ->
         Server.resize(id, w, h, state.driver && Map.get(state.driver, :cell_px))
-        state = put_in(state.sizes[id], {w, h})
-        update_in(state.app.session.panes[id].layout_gen, &(&1 + 1))
+        bump(put_in(state.sizes[id], {w, h}), id)
 
       _ ->
         state
+    end
+  end
+
+  defp bump(%{app: %{session: %{panes: panes}}} = state, id) when is_map_key(panes, id),
+    do: update_in(state.app.session.panes[id].layout_gen, &(&1 + 1))
+
+  defp bump(state, id) do
+    case Guard.run_twice(Popup, :bump, [state.app, id], scan: false, server: reload_server()) do
+      {:ok, app} -> %{state | app: app}
+      {:failed, _} -> state
     end
   end
 

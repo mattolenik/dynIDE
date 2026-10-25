@@ -11,7 +11,9 @@ defmodule HerdrServer.App.CustomCommands do
     * `"pane"`: splits the focused pane side by side; the new pane runs `/bin/sh -c cmd`
       in the focused pane's cwd.
     * `"plugin_action"`: the plugin keybind `HerdrServer.Plugins.Keybind.mfa/1` names.
-    * `"popup"`: a notice until popups land.
+    * `"popup"`: opens `App.Modal.Popup` (`width` / `height` as herdr's config values)
+      running `/bin/sh -c cmd` in the focused pane's cwd, with no pane identity; a bad
+      size, an open popup or a too small area is a warning notice.
 
   `env` is `HERDR_LIVE_BIN` (when the VM has it), `HERDR_LIVE_API` (the API socket),
   `HERDR_ACTIVE_WORKSPACE_ID`, `HERDR_ACTIVE_TAB_ID`, `HERDR_ACTIVE_PANE_ID` (`p<n>`) and
@@ -54,6 +56,7 @@ defmodule HerdrServer.App.CustomCommands do
   alias HerdrServer.Api.{Ids, SocketPath}
   alias HerdrServer.App.{Actions, Commands}
   alias HerdrServer.App.CustomCommands.Excerpt
+  alias HerdrServer.App.Modal.Popup
   alias HerdrServer.Persist.Facts
   alias HerdrServer.Plugins.Keybind
 
@@ -70,6 +73,7 @@ defmodule HerdrServer.App.CustomCommands do
   def run(app, index) do
     case Enum.at(app.ui.custom_commands, index) do
       nil -> notice(app, "custom command #{index} is gone; reload the config")
+      %{type: "popup"} = c -> popup(app, c)
       %{type: type, command: cmd} -> run(app, type, cmd)
     end
   end
@@ -98,7 +102,29 @@ defmodule HerdrServer.App.CustomCommands do
     apply(m, f, [app | a])
   end
 
-  defp run(app, "popup", _cmd), do: notice(app, "popup commands are not supported yet")
+  # herdr's spawn_popup_shell_command: the focused pane's cwd, no pane identity
+  defp popup(app, %{command: cmd} = c) do
+    with {:ok, width} <- Popup.parse(Map.get(c, :width)),
+         {:ok, height} <- Popup.parse(Map.get(c, :height)),
+         id = app.session.next_id,
+         {:ok, app, size} <-
+           Popup.open(put_in(app.session.next_id, id + 1), id, %{width: width, height: height}) do
+      {env, cwd} = with_cwd(env(app), app.focus.pane)
+
+      opts = %{
+        cwd: cwd,
+        replay: nil,
+        cmd: "/bin/sh",
+        args: ["-c", cmd],
+        env: env,
+        identity: false
+      }
+
+      {app, [{:spawn, id, size, opts}]}
+    else
+      {:error, why} -> notice(app, "popup: #{why}")
+    end
+  end
 
   @doc "The command environment for `app`'s focused pane, without its cwd (see moduledoc)."
   @spec env(map) :: [{binary, binary}]

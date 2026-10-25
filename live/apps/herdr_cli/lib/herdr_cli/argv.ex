@@ -492,7 +492,8 @@ defmodule HerdrCli.Argv do
         :json,
         "title set <title>"
       ),
-      cmd(~w(title clear), "client.window_title.clear", [], %{}, :json, "title clear")
+      cmd(~w(title clear), "client.window_title.clear", [], %{}, :json, "title clear"),
+      cmd(~w(popup close), "popup.close", [], %{}, :json, "popup close")
     ]
   end
 

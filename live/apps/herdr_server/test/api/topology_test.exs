@@ -3,7 +3,8 @@ defmodule HerdrServer.Api.TopologyTest do
   @moduletag :capture_log
 
   alias HerdrServer.Api.{Listener, Spec}
-  alias HerdrServer.App.Store
+  alias HerdrServer.App.{Modal, Store}
+  alias HerdrServer.App.Modal.Popup
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Pane.Rows
   alias HerdrServer.Test.ApiClient
@@ -31,6 +32,12 @@ defmodule HerdrServer.Api.TopologyTest do
     {:ok, m} = Spec.fetch(method)
     assert String.to_existing_atom(code) in (m.errors ++ [:internal]), "#{method}: #{code}"
     {code, msg}
+  end
+
+  @doc false
+  def open_popup(app) do
+    {:ok, app, _size} = Popup.open(app, 50, %{})
+    {app, []}
   end
 
   defp focused_ws(s) do
@@ -136,6 +143,15 @@ defmodule HerdrServer.Api.TopologyTest do
 
     assert ok!(s, "pane.close", %{"pane_id" => "p3"})["pane_id"] == "p3"
     assert length(ok!(s, "pane.list")["panes"]) == 2
+  end
+
+  test "popup.close closes the open popup, then is not_found", %{s: s} do
+    _ = ok!(s, "workspace.list")
+    {:ok, _, app} = Store.request({__MODULE__, :open_popup, []})
+    assert %{kind: :popup, pane: 50} = Modal.top(app)
+    assert ok!(s, "popup.close") == %{"type" => "ok"}
+    assert Store.snapshot().focus.modal == []
+    assert err(s, "popup.close", nil) == {"not_found", "no popup is open"}
   end
 
   test "pane.rename sets and clears the pane's name", %{s: s} do

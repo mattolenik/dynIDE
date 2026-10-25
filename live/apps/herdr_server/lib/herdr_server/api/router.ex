@@ -42,6 +42,8 @@ defmodule HerdrServer.Api.Router do
                         pane.report_agent_session),
       do: Handlers.Topology.handle(method, params)
 
+  def handle("popup.close", params, _ctx), do: Handlers.Topology.handle("popup.close", params)
+
   def handle("pane.wait_for_output", params, ctx),
     do: Handlers.PaneIo.wait_for_output(params, ctx)
 

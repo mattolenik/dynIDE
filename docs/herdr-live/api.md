@@ -833,6 +833,20 @@ Result: `ok` (no fields).
 
 Errors: `invalid_params`
 
+## Methods: popup
+
+### `popup.close`
+
+Close the open popup pane (its process is ended).
+
+CLI: `herdr-live popup close`
+
+Params: none.
+
+Result: `ok` (no fields).
+
+Errors: `invalid_params`, `not_found`
+
 ## Methods: events
 
 ### `events.subscribe`
