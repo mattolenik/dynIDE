@@ -70,6 +70,13 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   and the API. No plugin code is ever loaded into the VM (human ruling).
   `vendor/herdr-plugin-examples/` holds two upstream examples for the
   install smoke; they have no upstream licence and must go before any publish.
+- Kitty graphics (M10): ghostty computes placements in the kernel; the
+  server publishes them through `Pane.Facts` into `Scene.Pane.graphics`; the
+  pure `Render.Graphics` pass runs after Compose (never inside `Overlays`),
+  clips to the pane, crops around top-layer chrome, overlays and popup panes,
+  and `Native.Blit` writes the kitty ops inside synchronized output. A new
+  overlay type needs an occluder clause in `Render.Graphics`. Images are not
+  persisted and do not survive a kernel handoff (M17/M18).
 - Chrome: 19 node roles with required props in `HerdrScene.Chrome`; golden
   fixtures in `live/apps/herdr_scene/priv/fixtures/scenes` (every role must
   have one and render in both the terminal client and the HTML renderer).
