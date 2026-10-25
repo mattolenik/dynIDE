@@ -107,22 +107,6 @@ defmodule HerdrServer.Api.Listener do
     {:reply, conn, log_connect(state)}
   end
 
-  defp log_connect(state) do
-    now = System.monotonic_time(:millisecond)
-    last = state.connect_logged_at
-
-    if last == nil or now - last >= @connect_log_ms do
-      HerdrReload.Telemetry.event(:api_connect,
-        conns: MapSet.size(state.conns),
-        count: state.connects
-      )
-
-      %{state | connects: 0, connect_logged_at: now}
-    else
-      state
-    end
-  end
-
   def handle_call(:conns, _from, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:reply, MapSet.size(state.conns), state}
@@ -147,6 +131,22 @@ defmodule HerdrServer.Api.Listener do
 
   @impl true
   def code_change(_old, state, _extra), do: {:ok, Map.merge(%__MODULE__{}, state)}
+
+  defp log_connect(state) do
+    now = System.monotonic_time(:millisecond)
+    last = state.connect_logged_at
+
+    if last == nil or now - last >= @connect_log_ms do
+      HerdrReload.Telemetry.event(:api_connect,
+        conns: MapSet.size(state.conns),
+        count: state.connects
+      )
+
+      %{state | connects: 0, connect_logged_at: now}
+    else
+      state
+    end
+  end
 
   @doc false
   # A remote call per loop, with a 1 s accept timeout, so a reload of this module moves

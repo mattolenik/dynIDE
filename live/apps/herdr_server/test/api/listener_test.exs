@@ -322,8 +322,9 @@ defmodule HerdrServer.Api.ListenerTest do
         wait_until(fn -> :sys.get_state(pid).connects == 2 end)
       end)
 
-    assert length(String.split(log, "api_connect")) == 2
+    assert length(String.split(log, "herdr-event api_connect")) == 2
     assert log =~ "count=1"
+    assert log =~ "conns="
 
     :sys.replace_state(pid, fn st -> %{st | connect_logged_at: st.connect_logged_at - 61_000} end)
 
