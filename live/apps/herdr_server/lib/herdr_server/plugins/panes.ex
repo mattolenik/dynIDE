@@ -76,12 +76,10 @@ defmodule HerdrServer.Plugins.Panes do
   @doc "Places the pane `spec` describes; a vanished target changes nothing."
   @spec open(map(), map()) :: {map(), list()}
   def open(app, %{placement: "popup"} = spec) do
-    id = app.session.next_id
-    app2 = put_in(app.session.next_id, id + 1)
     size = %{width: spec.width, height: spec.height, title: spec.title}
 
-    case Popup.open(app2, id, size) do
-      {:ok, app2, size} ->
+    case Popup.open(app, size) do
+      {:ok, app2, id, size} ->
         opts = %{
           cwd: spec.cwd,
           replay: nil,

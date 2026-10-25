@@ -36,7 +36,7 @@ defmodule HerdrServer.Api.TopologyTest do
 
   @doc false
   def open_popup(app) do
-    {:ok, app, _size} = Popup.open(app, 50, %{})
+    {:ok, app, 2, _size} = Popup.open(app, %{})
     {app, []}
   end
 
@@ -148,7 +148,7 @@ defmodule HerdrServer.Api.TopologyTest do
   test "popup.close closes the open popup, then is not_found", %{s: s} do
     _ = ok!(s, "workspace.list")
     {:ok, _, app} = Store.request({__MODULE__, :open_popup, []})
-    assert %{kind: :popup, pane: 50} = Modal.top(app)
+    assert %{kind: :popup, pane: 2} = Modal.top(app)
     assert ok!(s, "popup.close") == %{"type" => "ok"}
     assert Store.snapshot().focus.modal == []
     assert err(s, "popup.close", nil) == {"not_found", "no popup is open"}

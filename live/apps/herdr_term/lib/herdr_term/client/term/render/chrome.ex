@@ -14,6 +14,8 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
       are hits with `drag: true` and draw no cells (pane borders draw them).
     * `dim`: the top-of-stack `:modal` has `props.dim`.
 
+  `layout/4` takes the scene's panes (only `layer: :popup` ones matter, as `popups/1`).
+
   Segments and hits are clipped to `size`. One module per region role (`:modal` and
   `:menu` share `Chrome.Modal`, which adds a whole-screen backdrop hit; `:toast` is
   `Chrome.Toast`); a region role without its own module draws a blank box of its rect
@@ -59,12 +61,12 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
           Node.t() | nil,
           %{cols: non_neg_integer, rows: non_neg_integer},
           Theme.t(),
-          [%{id: pos_integer, rect: Scene.rect()}]
+          [map]
         ) :: t
-  def layout(chrome, size, theme, popups \\ [])
-  def layout(nil, _size, _theme, _popups), do: empty()
+  def layout(chrome, size, theme, panes \\ [])
+  def layout(nil, _size, _theme, _panes), do: empty()
 
-  def layout(%Node{children: children, props: props}, size, theme, popups) do
+  def layout(%Node{children: children, props: props}, size, theme, panes) do
     ind = Map.get(props, :indicators, :dots)
 
     {base, top} =
@@ -76,7 +78,9 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
     {top_rows, top_hits} = layer(top, theme, ind, size)
     base_hits = Enum.map(base_hits, &tag(&1, :base))
     top_hits = Enum.map(top_hits, &tag(&1, :top))
-    popup_hits = for %{id: id, rect: r} <- Enum.reverse(popups), do: hit(r, [{:pane, id}], :pane)
+
+    popup_hits =
+      for %{id: id, rect: r} <- Enum.reverse(popups(panes)), do: hit(r, [{:pane, id}], :pane)
 
     %{
       base: base_rows,

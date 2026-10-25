@@ -15,7 +15,8 @@ defmodule HerdrServer.App.Reconcile do
       `{:adopt, id}`: the pane is already in the keeper and mapped, only its
       `Pane.Server` may be missing.
 
-  An open popup's pane (`App.Modal.Popup`) is kept while live, else its modal is dropped.
+  An open popup's pane (`App.Modal.Popup`) is kept while live (effect `{:adopt, id}`, so
+  its `Pane.Server` runs and the next settle sizes it), else its modal is dropped.
 
   Focus follows the active tab's layout focus (`Layout.close/2` moves it within the tab).
   """
@@ -38,15 +39,15 @@ defmodule HerdrServer.App.Reconcile do
     {app, popup_fx ++ fx}
   end
 
-  # an open popup's pane is not in `session.panes`: kept (and not adopted) while live, its
-  # modal dropped when it is gone
+  # an open popup's pane is not in `session.panes`: kept while live (not adopted into a
+  # tab; `{:adopt, id}` ensures its server and sizing), its modal dropped when it is gone
   defp popup(app, live) do
     case Popup.find(app) do
       nil ->
         {app, [], live}
 
       %{pane: id} when is_map_key(live, id) ->
-        {app, [], Map.delete(live, id)}
+        {app, [{:adopt, id}], Map.delete(live, id)}
 
       %{pane: id} ->
         {app, fx} = Popup.exited(app, id)

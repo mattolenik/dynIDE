@@ -1,6 +1,7 @@
 defmodule HerdrServer.App.ReconcileTest do
   use ExUnit.Case, async: true
   alias HerdrServer.App.{Actions, Reconcile}
+  alias HerdrServer.App.Modal.Popup
   alias HerdrServer.Layout
 
   defp fresh, do: elem(Actions.init(%{cols: 100, rows: 25}), 0)
@@ -19,6 +20,15 @@ defmodule HerdrServer.App.ReconcileTest do
     assert app.focus.pane == active(app).layout.focus
     assert Enum.all?(in_layouts, &(&1 < app.session.next_id))
     app
+  end
+
+  test "an open popup's live pane is kept (adopted in place), a dead one pops the popup" do
+    {:ok, app, id, _} = Popup.open(fresh(), %{})
+    assert Reconcile.run(app, live([1, id])) == {app, [{:adopt, id}]}
+
+    {gone, fx} = Reconcile.run(app, live([1]))
+    assert gone.focus.modal == [] and fx == [{:close, id}]
+    consistent!(gone)
   end
 
   test "no-op when the app and the keeper agree" do

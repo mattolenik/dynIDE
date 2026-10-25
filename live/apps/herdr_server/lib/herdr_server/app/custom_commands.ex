@@ -106,9 +106,7 @@ defmodule HerdrServer.App.CustomCommands do
   defp popup(app, %{command: cmd} = c) do
     with {:ok, width} <- Popup.parse(Map.get(c, :width)),
          {:ok, height} <- Popup.parse(Map.get(c, :height)),
-         id = app.session.next_id,
-         {:ok, app, size} <-
-           Popup.open(put_in(app.session.next_id, id + 1), id, %{width: width, height: height}) do
+         {:ok, app, id, size} <- Popup.open(app, %{width: width, height: height}) do
       {env, cwd} = with_cwd(env(app), app.focus.pane)
 
       opts = %{

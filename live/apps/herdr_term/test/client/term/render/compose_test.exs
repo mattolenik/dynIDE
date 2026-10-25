@@ -330,7 +330,7 @@ defmodule HerdrTerm.Client.Term.Render.ComposeTest do
 
   test "the chrome layout puts a popup's box between the top and base hits" do
     sc = with_modal(%{scene() | panes: scene().panes ++ [popup()]}, %{kind: :confirm})
-    hits = Chrome.layout(sc.chrome, sc.size, @theme, Chrome.popups(sc.panes)).hits
+    hits = Chrome.layout(sc.chrome, sc.size, @theme, sc.panes).hits
     i = Enum.find_index(hits, &(&1.role == :pane))
     assert %{path: [{:pane, 9}], rect: %{x: 14, y: 1, w: 12, h: 5}} = Enum.at(hits, i)
     assert Enum.all?(Enum.take(hits, i), &(&1.layer == :top))

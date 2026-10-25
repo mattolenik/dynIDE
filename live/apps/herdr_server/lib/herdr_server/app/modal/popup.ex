@@ -1,13 +1,19 @@
 defmodule HerdrServer.App.Modal.Popup do
   @moduledoc """
   herdr's popup pane (D4): a floating terminal over the active tab that does not touch
-  the layout. `%{kind: :popup, pane: id, width, height, title, layout_gen}`; at most one
-  is open (herdr: "popup already open").
+  the layout. `%{kind: :popup, pane: id, owner: {ws_id, tab_id}, width, height, title,
+  layout_gen}`; at most one is open (herdr: "popup already open").
 
-    * `open/3` (plain function, also the entry point for plugin popups): pushes the
-      modal for an already allocated pane id and returns the pane's terminal size; the
-      caller spawns the pane (`{:spawn, id, size, opts}`, `identity: false`: herdr gives
-      a popup no pane identity).
+    * `open/2` (plain function, also the entry point for plugin popups): allocates the
+      pane id (`session.next_id`), pushes the modal owned by the active tab and returns
+      the id and the pane's terminal size; the caller spawns the pane
+      (`{:spawn, id, size, opts}` with `identity: false`). herdr gives a popup no pane
+      identity; here `identity: false` only keeps the Store from setting
+      `HERDR_PANE_ID` / `HERDR_TAB_ID` / `HERDR_WORKSPACE_ID`: the kernel can only set
+      variables, so one the VM itself inherited stays (kernel env removal is deferred).
+    * `orphaned/1` (the Store, after every step; herdr's
+      `reconcile_client_shell_locations`): closes the popup once its owner tab is gone
+      (a tab or workspace close by key, menu or API).
     * Every key (prefix and Esc included, `capture: true`) and every paste goes to the
       popup pane (`App.Modal` routes them before its release / Esc handling); a mouse
       event inside the popup's content rect goes to it, pane-relative.
@@ -77,12 +83,12 @@ defmodule HerdrServer.App.Modal.Popup do
   defp resolve({:percent, p}, avail, _default), do: div(avail * p, 100)
 
   @doc """
-  Opens a popup for pane `pane` (an id the caller allocated) sized by `spec` (`width`,
-  `height`, optional `title`) in the app's pane area. Returns the terminal size to spawn.
+  Opens a popup sized by `spec` (`width`, `height`, optional `title`) in the app's pane
+  area, over the active tab. Returns the new pane id and the terminal size to spawn.
   """
-  @spec open(map, pos_integer, map) ::
-          {:ok, map, %{cols: pos_integer, rows: pos_integer}} | {:error, binary}
-  def open(app, pane, spec) do
+  @spec open(map, map) ::
+          {:ok, map, pos_integer, %{cols: pos_integer, rows: pos_integer}} | {:error, binary}
+  def open(app, spec) do
     spec = Map.merge(%{width: nil, height: nil, title: nil}, spec)
     geo = size(spec, app.session.area)
 
@@ -94,9 +100,14 @@ defmodule HerdrServer.App.Modal.Popup do
         {:error, "terminal area too small for popup"}
 
       true ->
+        pane = app.session.next_id
+        app = put_in(app.session.next_id, pane + 1)
+        ws = Enum.find(app.session.workspaces, &(&1.id == app.session.active_workspace))
+
         modal = %{
           kind: :popup,
           pane: pane,
+          owner: {ws.id, ws.active_tab},
           width: spec.width,
           height: spec.height,
           title: spec.title || "popup",
@@ -104,7 +115,7 @@ defmodule HerdrServer.App.Modal.Popup do
           capture: true
         }
 
-        {:ok, Modal.push(app, modal), %{cols: geo.inner.w, rows: geo.inner.h}}
+        {:ok, Modal.push(app, modal), pane, %{cols: geo.inner.w, rows: geo.inner.h}}
     end
   end
 
@@ -121,6 +132,25 @@ defmodule HerdrServer.App.Modal.Popup do
       m -> {drop(app, m.pane), [{:close, m.pane}]}
     end
   end
+
+  @doc "Closes the open popup when its owner tab no longer exists; else unchanged."
+  @spec orphaned(map) :: {map, [tuple]}
+  def orphaned(app) do
+    case find(app) do
+      %{owner: {w, t}} = m ->
+        if tab?(app, w, t), do: {app, []}, else: {drop(app, m.pane), [{:close, m.pane}]}
+
+      _ ->
+        {app, []}
+    end
+  end
+
+  defp tab?(app, w, t),
+    do:
+      Enum.any?(
+        app.session.workspaces,
+        &(&1.id == w and Enum.any?(&1.tabs, fn x -> x.id == t end))
+      )
 
   @doc "Pane `id` exited: the app without its popup when `id` is the popup's, else nil."
   @spec exited(map, pos_integer) :: {map, [tuple]} | nil

@@ -22,12 +22,23 @@ defmodule HerdrServer.Client.PointerIo do
   @doc "The resolve context for `ev` (a `{:mouse, m}` or nil for an autoscroll tick)."
   @spec context(Pointer.t(), tuple | nil, map | nil) :: map
   def context(p, ev, scene) do
-    # popup panes first (topmost last in the scene): they cover the panes under them
+    # popup panes first (topmost last in the scene): they cover the panes under them. Each
+    # popup's whole box follows its content as a `{:popup_box, id}` entry: a press on its
+    # border or blank column hits no pane info, so it is forwarded (and dropped by the
+    # Store) instead of reaching the pane underneath
     {popups, base} =
       Enum.split_with((scene && scene.panes) || [], &(Map.get(&1, :layer) == :popup))
 
-    panes = for pane <- Enum.reverse(popups) ++ base, do: %{id: pane.id, rect: pane.rect}
-    ids = Enum.uniq([hit(panes, ev) | active(p)]) -- [nil]
+    boxes =
+      for pane <- Enum.reverse(popups),
+          entry <- [
+            %{id: pane.id, rect: pane.rect},
+            %{id: {:popup_box, pane.id}, rect: box(pane)}
+          ],
+          do: entry
+
+    panes = boxes ++ for(pane <- base, do: %{id: pane.id, rect: pane.rect})
+    ids = Enum.filter(Enum.uniq([hit(panes, ev) | active(p)]), &is_integer/1)
 
     %{
       panes: panes,
@@ -46,6 +57,9 @@ defmodule HerdrServer.Client.PointerIo do
   end
 
   defp hit(_panes, _ev), do: nil
+
+  defp box(%{border: %{rect: r}}), do: r
+  defp box(%{rect: r}), do: r
 
   defp active(p) do
     for %{pane: id} <- [p.press, p.drag, p.autoscroll], do: id

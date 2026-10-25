@@ -306,7 +306,7 @@ defmodule HerdrIntegration.ArchitectureTest do
       menu_pane: &elem(Modal.Menu.open(&1, :pane, &1.focus.pane, at), 0),
       menu_global: &elem(Modal.Menu.open(&1, :global, nil, at), 0),
       goto: &elem(Modal.Goto.open(&1), 0),
-      popup: &elem(Modal.Popup.open(&1, 99, %{title: "p"}), 1)
+      popup: &elem(Modal.Popup.open(&1, %{title: "p"}), 1)
     ]
 
     scenes =

@@ -61,7 +61,7 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   end
 
   defp layout(scene, theme),
-    do: Chrome.layout(scene.chrome, scene.size, theme, Chrome.popups(scene.panes))
+    do: Chrome.layout(scene.chrome, scene.size, theme, scene.panes)
 
   # per screen row, its segments in pane order then chrome; a pane is visited only
   # for the rows its rect or border spans

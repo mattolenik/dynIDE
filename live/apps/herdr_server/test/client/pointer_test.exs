@@ -2,7 +2,8 @@ defmodule HerdrServer.Client.PointerTest do
   use ExUnit.Case, async: true
 
   alias HerdrScene.{Cell, Event}
-  alias HerdrServer.Client.{Pointer, Selection}
+  alias HerdrScene.Scene
+  alias HerdrServer.Client.{Pointer, PointerIo, Selection}
 
   # pane 1: 20x5 at (0, 1); pane 2: 20x5 at (21, 1)
   @r1 %{x: 0, y: 1, w: 20, h: 5}
@@ -53,6 +54,39 @@ defmodule HerdrServer.Client.PointerTest do
 
   defp run(p, events, c) do
     Enum.reduce(events, {p, []}, fn ev, {p, _} -> Pointer.resolve(p, ev, c) end)
+  end
+
+  test "a press on a popup's border or blank column is forwarded, not given to the pane under it" do
+    base = %Scene.Pane{id: 1, rect: %{x: 0, y: 0, w: 40, h: 10}, rows: {:ref, 1, 0}}
+
+    popup = %Scene.Pane{
+      id: 9,
+      layer: :popup,
+      rect: %{x: 11, y: 3, w: 9, h: 3},
+      border: %{
+        rect: %{x: 10, y: 2, w: 12, h: 5},
+        edges: [:top, :bottom, :left, :right],
+        title: nil
+      },
+      rows: {:ref, 9, 0}
+    }
+
+    scene = %Scene{
+      size: %{cols: 40, rows: 10},
+      panes: [base, popup],
+      focus: %{pane: 9, chrome: nil}
+    }
+
+    for {x, y} <- [{10, 3}, {20, 3}, {15, 2}] do
+      ev = m(:press, :left, x, y)
+      c = %{PointerIo.context(%Pointer{}, ev, scene) | info: %{1 => info([]), 9 => info([])}}
+      assert {_, [{:forward, ^ev}]} = Pointer.resolve(%Pointer{}, ev, c)
+    end
+
+    # outside the box the base pane takes the press (focus, a selection press)
+    ev = m(:press, :left, 2, 8)
+    c = %{PointerIo.context(%Pointer{}, ev, scene) | info: %{1 => info([]), 9 => info([])}}
+    assert {%Pointer{press: %{pane: 1}}, [focus: 1]} = Pointer.resolve(%Pointer{}, ev, c)
   end
 
   describe "wheel" do

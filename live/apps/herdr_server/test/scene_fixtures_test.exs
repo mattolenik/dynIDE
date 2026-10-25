@@ -102,7 +102,7 @@ defmodule HerdrServer.SceneFixturesTest do
 
   defp step(:popup, app) do
     spec = %{width: {:percent, 60}, height: {:percent, 50}, title: "lazygit"}
-    {:ok, app, _size} = Popup.open(app, app.session.next_id, spec)
+    {:ok, app, _id, _size} = Popup.open(app, spec)
     app
   end
 end

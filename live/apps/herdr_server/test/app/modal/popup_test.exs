@@ -48,17 +48,40 @@ defmodule HerdrServer.App.Modal.PopupTest do
 
   defp open do
     {app, _} = Actions.init(%{cols: 100, rows: 30})
-    {:ok, app, size} = Popup.open(app, 9, %{width: {:percent, 80}, height: nil})
+    app = put_in(app.session.next_id, 9)
+    {:ok, app, 9, size} = Popup.open(app, %{width: {:percent, 80}, height: nil})
     {app, size}
   end
 
   test "open pushes a capturing modal; a second open is refused" do
     {app, %{cols: c, rows: r}} = open()
-    assert %{kind: :popup, pane: 9, capture: true, layout_gen: 0} = Modal.top(app)
+    assert %{kind: :popup, pane: 9, capture: true, layout_gen: 0, owner: {1, 1}} = Modal.top(app)
+    # the id is allocated
+    assert app.session.next_id == 10
     assert Modal.capturing?(app.focus)
     [%{id: 9, rect: inner}] = Popup.rects(app)
     assert {inner.w, inner.h} == {c, r}
-    assert Popup.open(app, 10, %{}) == {:error, "popup already open"}
+    assert Popup.open(app, %{}) == {:error, "popup already open"}
+  end
+
+  test "the popup closes once its owner tab is gone, not before" do
+    {app, _} = open()
+    assert Popup.orphaned(app) == {app, []}
+    # another tab of the workspace is not the owner
+    {app2, _} = Popup.close(app)
+    {app2, _} = Actions.new_tab(app2)
+    {:ok, app2, id, _} = Popup.open(app2, %{})
+    {other, _} = Actions.switch_tab(app2, 1)
+    assert Popup.orphaned(other) == {other, []}
+    ws = hd(app2.session.workspaces)
+
+    gone =
+      put_in(app2.session.workspaces, [
+        %{ws | tabs: Enum.reject(ws.tabs, &(&1.id == 2)), active_tab: 1}
+      ])
+
+    assert {closed, [{:close, ^id}]} = Popup.orphaned(gone)
+    assert closed.focus.modal == []
   end
 
   test "keys (releases, Esc and prefix keys included) and pastes reach the popup pane" do

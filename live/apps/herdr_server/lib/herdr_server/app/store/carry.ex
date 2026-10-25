@@ -8,7 +8,7 @@ defmodule HerdrServer.App.Store.Carry do
   `Store.flush_hold/0` (the Link's PREPARE) holds a pending one now. A new VM's
   `Store.init/1` that finds that entry adopts it (before looking at the mirror, which is
   empty in a new VM): it maps the panes the Keeper adopted in `:herdr_pane_kernel`, starts
-  their `Pane.Server`s, and leaves every other keeper pane alone (they belong to whoever
+  their `Pane.Server`s (an open popup's pane included), and leaves every other keeper pane alone (they belong to whoever
   opened them, e.g. ctl). A mapped pane the Keeper lost is closed as `{:pane_exited, id}`.
   An unusable entry (its pure part runs through `HerdrReload.Guard`) is logged and
   unclaimed, and the Store starts with an empty app.
@@ -18,6 +18,7 @@ defmodule HerdrServer.App.Store.Carry do
 
   alias HerdrReload.Guard
   alias HerdrServer.App.Actions
+  alias HerdrServer.App.Modal.Popup
   alias HerdrServer.App.Store
   alias HerdrServer.App.Upgrade
   alias HerdrServer.Handoff.Link
@@ -83,7 +84,11 @@ defmodule HerdrServer.App.Store.Carry do
       :erlang.binary_to_term(blob, [:safe])
 
     kids = Map.new(kids)
-    {Upgrade.app(app), Enum.map(Map.keys(panes), &{&1, Map.get(kids, &1)})}
+    app = Upgrade.app(app)
+    # an open popup's pane is not in session.panes; adopting it (or closing it as
+    # {:pane_exited, id}, which pops the popup) keeps its captured input reachable
+    popup = for %{pane: id} <- List.wrap(Popup.find(app)), do: id
+    {app, Enum.map(Map.keys(panes) ++ popup, &{&1, Map.get(kids, &1)})}
   end
 
   @doc false

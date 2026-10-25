@@ -530,7 +530,7 @@ defmodule HerdrTerm.Client.Term.Render do
   defp chrome(%{scene: nil} = state), do: state
 
   defp chrome(%{scene: scene, theme: theme} = state) do
-    key = {scene.chrome, scene.size, theme, popups(scene.panes)}
+    key = {scene.chrome, scene.size, theme, popup_panes(scene.panes)}
 
     cond do
       key == state.chrome_key -> %{state | chrome_key: key}
@@ -539,16 +539,15 @@ defmodule HerdrTerm.Client.Term.Render do
     end
   end
 
-  # `Chrome.popups/1`, here so the per-scene key needs no guarded call
-  defp popups(panes) do
-    for %{layer: :popup} = p <- panes,
-        do: %{id: p.id, rect: if(p.border, do: p.border.rect, else: p.rect)}
+  # the popup panes' placement only (their rows change every inline scene)
+  defp popup_panes(panes) do
+    for %{layer: :popup} = p <- panes, do: Map.take(p, [:id, :layer, :rect, :border])
   end
 
   # A failing layout (logged by the Guard) keeps the old layout and key; it is
   # re-attempted by `:chrome_retry` after @retry_frame_ms (one failure log each).
-  defp relayout(state, {chrome, size, theme, popups} = key) do
-    case Guard.run_twice(Chrome, :layout, [chrome, size, theme, popups], @compose) do
+  defp relayout(state, {chrome, size, theme, panes} = key) do
+    case Guard.run_twice(Chrome, :layout, [chrome, size, theme, panes], @compose) do
       {:ok, layout} ->
         if layout.hits != state.chrome.hits, do: send_input(state, {:chrome_hits, layout.hits})
         %{state | chrome: layout, chrome_key: key}

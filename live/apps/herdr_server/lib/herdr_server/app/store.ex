@@ -16,8 +16,9 @@ defmodule HerdrServer.App.Store do
     * Subscribers get `{:app_changed, app}` after each event that changed the app. The
       Store only ever `send`s to sessions, so there is no call cycle.
     * After each event: panes of inactive tabs are hidden, active-tab panes are resized to
-      their content rects (bumping `layout_gen`), and the fast-path term is republished if
-      its value changed. It carries no input mode: modes are per client.
+      their content rects (bumping `layout_gen`), an open popup's pane to its rect, and the
+      fast-path term is republished if its value changed. A step that removed an open
+      popup's owner tab also closes the popup (`App.Modal.Popup.orphaned/1`). It carries no input mode: modes are per client.
     * A spawn that fails (keeper open or pane server start) sends the origin a warning
       notice and closes the pane again, as `{:pane_exited, id}`.
     * `app.session`, `app.focus`, `app.ui` and the bookkeeping are mirrored to
@@ -463,6 +464,7 @@ defmodule HerdrServer.App.Store do
 
     case result do
       {:ok, {app, effects}} ->
+        {app, effects} = orphaned(app, effects, opts)
         {:cont, {:ok, Enum.reduce(effects, %{state | app: app}, &effect(&2, &1, origin))}}
 
       {:failed, reason, batch} ->
@@ -475,6 +477,14 @@ defmodule HerdrServer.App.Store do
             notice(origin, %{level: :error, text: "action failed: #{Guard.message(reason)}"})
             {:halt, :failed}
         end
+    end
+  end
+
+  # a popup whose owner tab the step removed closes (`Popup.orphaned/1`)
+  defp orphaned(app, effects, opts) do
+    case Guard.run_twice(Popup, :orphaned, [app], opts) do
+      {:ok, {app, fx}} -> {app, effects ++ fx}
+      {:failed, _} -> {app, effects}
     end
   end
 
