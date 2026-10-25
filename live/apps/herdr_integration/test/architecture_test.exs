@@ -39,4 +39,28 @@ defmodule HerdrIntegration.ArchitectureTest do
   test "herdr_scene references neither" do
     assert refs(:herdr_scene, ["Elixir.HerdrServer", "Elixir.HerdrTerm"]) == []
   end
+
+  # M16 R7: a remote client decodes server frames with [:safe], so every atom the server
+  # puts in a frame must exist in the client VM: OTP's and Elixir's plus these apps' (it
+  # preloads them); a module's atoms chunk stands for its atoms once loaded
+  test "the remote client's apps know every handoff phase the server broadcasts" do
+    {:ok, types} = Code.Typespec.fetch_types(HerdrServer.Handoff.Notice)
+    [ast] = for {:type, {:event, ast, []}} <- types, do: ast
+    {_, phases} = Macro.prewalk(Code.Typespec.type_to_quoted({:event, ast, []}), [], &atoms/2)
+
+    client =
+      for app <- [:kernel, :stdlib, :elixir, :logger, :herdr_scene, :herdr_reload, :herdr_term],
+          {:ok, mods} = :application.get_key(app, :modules),
+          mod <- mods,
+          {:ok, {_, [atoms: atoms]}} <- [:beam_lib.chunks(:code.which(mod), [:atoms])],
+          {_, a} <- atoms,
+          into: MapSet.new(),
+          do: a
+
+    assert :adopted in phases
+    assert Enum.reject(phases, &(&1 in client)) == []
+  end
+
+  defp atoms(a, acc) when is_atom(a) and a not in [nil, true, false], do: {a, [a | acc]}
+  defp atoms(node, acc), do: {node, acc}
 end

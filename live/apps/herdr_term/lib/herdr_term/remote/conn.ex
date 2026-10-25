@@ -14,8 +14,9 @@ defmodule HerdrTerm.Remote.Conn do
   stays pending until the server's `{:ack, wire_seq}`, which goes back to `from` as
   `{:ack, seq}`. Pending input is sent while attached and not held; every
   `{:attached, _}` resends all pending input in wire order. `{:handoff, %{phase:
-  :begin | :released}}` holds input, `:aborted` releases it (R12). Pane targets filter
-  keys through `HerdrTerm.Remote.Keys` (ctrl+b q detaches the VM).
+  :begin | :released}}` holds input, `:aborted` releases it (R12), `:adopted` is
+  ignored. Pane targets filter keys through `HerdrTerm.Remote.Keys` (ctrl+b q detaches
+  the VM).
 
   Every other server frame goes to Render; the last scene is kept with its inline rows
   dropped, to show a client-local notice (`HerdrTerm.Remote.Notice`): while
@@ -305,6 +306,10 @@ defmodule HerdrTerm.Remote.Conn do
     to_render(state, msg)
     flush(%{state | hold: false})
   end
+
+  # the new VM's notice after a handoff; its {:attached, %{resumed: :handoff}} already
+  # released input. Naming the phase here also puts the atom in this VM (R7: [:safe])
+  defp frame(state, {:handoff, %{phase: :adopted}}), do: state
 
   defp frame(state, {:scene, %Scene{} = scene} = msg) do
     to_render(state, msg)
