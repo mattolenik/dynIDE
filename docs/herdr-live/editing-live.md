@@ -318,6 +318,7 @@ lists are comma-joined.
 | `broker_handoff`, `broker_handoff_failed` | broker, per handoff | `kind` `from` `to` `entries` `ms` / `reason` `from` `to` |
 | `session_lost` | broker: children not carried (`reason` `gen`); Store: live panes closed or orphaned (`proc=store`, `reason` `fresh_restart`/`reconcile_failed`/`carry_unusable`, `panes`) | `reason` and `gen` or `proc` `panes` |
 | `broker_vm_exit`, `broker_start`, `broker_stop` | broker lifecycle | `gen` `status` `role` / `pid` |
+| `broker_killed` | `tty_guard.sh` (attached launches): the broker died of a signal the guard did not forward, e.g. `kill -9` | `signal` |
 | `api_connect` | API connection accepted | `conns` (open count) |
 | `api_denied` | API request refused before a handler ran | `method` `code` |
 | `api_error` | API handler failed (`internal`/`timeout`/`backpressure`/`events_lost`) | `method` `code` `msg` |
@@ -326,14 +327,17 @@ lists are comma-joined.
 
 Summary: `just live-log-summary [LOG ...] [--since ISO8601] [--json]`, which runs
 `python3 live/scripts/log_summary.py`. It reports reloads, rollbacks, handoffs, test
-runs, API connects/denials/errors and session losses. Exit status is 0 unless a log is unreadable.
+runs, API connects/denials/errors, operator kills and session losses. Exit status is 0 unless a log is unreadable.
 
 The dogfooding exit criterion counts exactly: session_losses = `session_lost` lines
 (broker fallback restore, Store closing or orphaning live panes) + unclean broker
 restarts (a `broker_start` with no `broker_stop` since the previous `broker_start`, i.e.
 the broker died and its children with it). `store_restarts` (`crash proc=store
 action=restored`: the Store restarted from the mirror and kept the layout) are reported
-separately and are not losses.
+separately and are not losses. Neither are operator kills: `operator_kills` counts
+`broker_killed` lines (the operator SIGKILLed the broker, e.g. checklist F7); the next
+`broker_start` is not an unclean restart, and a `session_lost` from 2 s before to 5 s
+after the kill is part of it and not counted.
 
 ## Troubleshooting by log grep
 

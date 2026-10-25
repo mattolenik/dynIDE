@@ -67,7 +67,8 @@ class LogSummaryTest(unittest.TestCase):
             "compile_errors", "rollbacks", "rollback_reasons", "guard_failures", "tests",
             "syncs", "handoffs", "handoff_ms_p50", "handoff_ms_p95", "handoff_ms_max",
             "crashes", "store_restarts", "restores", "persist_writes",
-            "persist_scrollback_writes", "persist_errors", "api", "clients", "session_losses", "unparsed",
+            "persist_scrollback_writes", "persist_errors", "api", "clients", "operator_kills",
+            "session_losses", "unparsed",
             "exit_criterion"])
         self.assertIn("rollbacks: manual 1, auto 1", out)
         self.assertIn("handoffs: crash 2, graceful 1, failed 1", out)
@@ -99,6 +100,34 @@ class LogSummaryTest(unittest.TestCase):
             got = json.loads(run(f.name, "--json").stdout)
         self.assertEqual(got["session_losses"], 0)
         self.assertEqual(got["store_restarts"], 1)
+
+    def summary(self, text):
+        with tempfile.NamedTemporaryFile("w", suffix=".log") as f:
+            f.write(text)
+            f.flush()
+            return json.loads(run(f.name, "--json").stdout)
+
+    def test_operator_kill_is_not_a_loss(self):
+        got = self.summary("herdr-event broker_start ts=100000 pid=1\n"
+                           "herdr-event session_lost ts=109900 reason=broker_died\n"
+                           "herdr-event broker_killed ts=110000 signal=9\n"
+                           "herdr-event broker_start ts=120000 pid=2\n")
+        self.assertEqual(got["session_losses"], 0)
+        self.assertEqual(got["operator_kills"], 1)
+
+    def test_kill_far_from_loss_still_counts(self):
+        got = self.summary("herdr-event broker_start ts=100000 pid=1\n"
+                           "herdr-event session_lost ts=110000 reason=fallback_restore\n"
+                           "herdr-event broker_killed ts=170000 signal=9\n"
+                           "herdr-event broker_start ts=180000 pid=2\n")
+        self.assertEqual(got["session_losses"], 1)
+        self.assertEqual(got["operator_kills"], 1)
+
+    def test_unclean_restart_without_kill_still_counts(self):
+        got = self.summary("herdr-event broker_start ts=1 pid=1\n"
+                           "herdr-event broker_start ts=2 pid=2\n")
+        self.assertEqual(got["session_losses"], 1)
+        self.assertEqual(got["operator_kills"], 0)
 
     def test_persist_events(self):
         with tempfile.NamedTemporaryFile("w", suffix=".log") as f:

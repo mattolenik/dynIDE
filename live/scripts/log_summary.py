@@ -86,7 +86,10 @@ def summarize(events, unparsed=0):
     detaches, refused, reconnect_ms = Counter(), Counter(), []
     syncs = 0
     broker_up = False
-    for kind, _ts, f in events:
+    # an operator kill (broker_killed, from tty_guard.sh) ends the session on purpose:
+    # the session_lost lines it causes, just before or after it, are not losses
+    kills = [ts for kind, ts, _f in events if kind == "broker_killed"]
+    for kind, ts, f in events:
         if kind == "vm_start":
             c["vm_starts"] += 1
         elif kind == "reload":
@@ -123,7 +126,11 @@ def summarize(events, unparsed=0):
             if f.get("proc") == "store" and f.get("action") == "restored":
                 c["store_restarts"] += 1
         elif kind == "session_lost":
-            c["session_losses"] += 1
+            if not any(k - 2000 <= ts <= k + 5000 for k in kills):
+                c["session_losses"] += 1
+        elif kind == "broker_killed":
+            c["operator_kills"] += 1
+            broker_up = False
         elif kind == "broker_start":
             # a start with no broker_stop since the last start: the broker died, and its
             # children with it (reason broker_died)
@@ -196,6 +203,7 @@ def summarize(events, unparsed=0):
                     "refused": dict(sorted(refused.items())), "held": c["cl_held"],
                     "held_carried": c["cl_carried"], "held_not_carried": c["cl_not_carried"],
                     "freezes": c["cl_freezes"]},
+        "operator_kills": c["operator_kills"],
         "session_losses": c["session_losses"],
         "unparsed": unparsed,
     }
@@ -237,6 +245,7 @@ def render_text(s):
                     f"refused {kv(cl['refused'])}, held {cl['held']} "
                     f"(carried {cl['held_carried']}, not carried {cl['held_not_carried']}), "
                     f"freezes {cl['freezes']}"),
+        ("operator_kills", s["operator_kills"]),
         ("session_losses", n),
         ("unparsed", s["unparsed"]),
         ("exit_criterion", f"session_losses=0 -> {'OK' if n == 0 else f'FAIL ({n})'}"),
