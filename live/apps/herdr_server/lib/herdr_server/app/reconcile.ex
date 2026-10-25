@@ -40,7 +40,8 @@ defmodule HerdrServer.App.Reconcile do
     {wss, {s, spawns}} =
       Enum.map_reduce(s.workspaces, {s, []}, fn ws, acc ->
         adopt = if ws.id == s.active_workspace, do: adopted, else: []
-        ws |> drop(dropped) |> adopt(adopt) |> ensure_tab(acc)
+        {ws, acc} = ws |> drop(dropped) |> adopt(adopt, acc)
+        ensure_tab(ws, acc)
       end)
 
     s = %{s | workspaces: wss}
@@ -82,20 +83,24 @@ defmodule HerdrServer.App.Reconcile do
     end
   end
 
-  defp adopt(ws, []), do: ws
+  defp adopt(ws, [], acc), do: {ws, acc}
 
-  defp adopt(ws, ids) do
+  defp adopt(ws, ids, {s, spawns} = acc) do
     case Enum.find(ws.tabs, &(&1.name == "scratch")) do
       nil ->
         [first | rest] = ids
-        tab = %{id: next_tab_id(ws), name: "scratch", layout: splits(Layout.new(first), rest)}
-        %{ws | tabs: ws.tabs ++ [tab], active_tab: ws.active_tab || tab.id}
+        {tab_id, s} = take_tab_id(s)
+        tab = %{id: tab_id, name: "scratch", layout: splits(Layout.new(first), rest)}
+        {%{ws | tabs: ws.tabs ++ [tab], active_tab: ws.active_tab || tab.id}, {s, spawns}}
 
       scratch ->
         tab = %{scratch | layout: splits(scratch.layout, ids)}
-        %{ws | tabs: Enum.map(ws.tabs, &if(&1.id == tab.id, do: tab, else: &1))}
+        {%{ws | tabs: Enum.map(ws.tabs, &if(&1.id == tab.id, do: tab, else: &1))}, acc}
     end
   end
+
+  # tab ids come from the session counter, like `App.Actions` (never a closed tab's id)
+  defp take_tab_id(s), do: {s.next_tab_id, %{s | next_tab_id: s.next_tab_id + 1}}
 
   # alternating directions keep repeated splits from getting thin
   defp splits(l, ids) do
@@ -108,13 +113,12 @@ defmodule HerdrServer.App.Reconcile do
 
   defp ensure_tab(%{tabs: []} = ws, {s, spawns}) do
     id = s.next_id
-    tab = %{id: 1, name: "1", layout: Layout.new(id)}
+    {tab_id, s} = take_tab_id(s)
+    tab = %{id: tab_id, name: "1", layout: Layout.new(id)}
     s = %{s | next_id: id + 1, panes: Map.put(s.panes, id, @meta)}
     spawn = {:spawn, id, %{cols: s.area.w, rows: s.area.h}}
-    {%{ws | tabs: [tab], active_tab: 1}, {s, spawns ++ [spawn]}}
+    {%{ws | tabs: [tab], active_tab: tab_id}, {s, spawns ++ [spawn]}}
   end
 
   defp ensure_tab(ws, acc), do: {ws, acc}
-
-  defp next_tab_id(ws), do: Enum.max([0 | Enum.map(ws.tabs, & &1.id)]) + 1
 end

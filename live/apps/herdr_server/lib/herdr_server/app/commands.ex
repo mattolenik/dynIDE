@@ -47,7 +47,8 @@ defmodule HerdrServer.App.Commands do
       {app, fx} = Workspaces.within(app, ws_id, &Actions.new_tab/1)
       %{tabs: tabs} = new_ws = find_ws(app, ws_id)
       tab = List.last(tabs)
-      tab = if label, do: %{tab | name: label}, else: tab
+      # an unlabeled API tab is named after its id, as API workspaces are
+      tab = %{tab | name: label || Integer.to_string(tab.id)}
       active = if focus?, do: tab.id, else: ws.active_tab
       new_ws = %{new_ws | tabs: List.replace_at(tabs, -1, tab), active_tab: active}
       {sync(put_ws(app, new_ws)), fx}

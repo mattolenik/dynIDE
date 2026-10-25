@@ -58,7 +58,11 @@ defmodule HerdrServer.App.Store.Config do
   @doc "A new subscriber gets the standing diagnostics."
   @spec subscribed(map, pid) :: :ok
   def subscribed(%{diag: nil}, _pid), do: :ok
-  def subscribed(%{diag: n}, pid), do: send(pid, {:notice, n}) && :ok
+
+  def subscribed(%{diag: n}, pid) do
+    send(pid, {:notice, n})
+    :ok
+  end
 
   defp warning(text), do: %{level: :warning, text: text}
 end

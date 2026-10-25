@@ -100,4 +100,18 @@ defmodule HerdrServer.App.ReconcileTest do
     assert new.focus.pane == 3
     consistent!(new)
   end
+
+  test "tabs made by reconcile take counter ids: a later new_tab never repeats one" do
+    # restart recovery adopts pane 5 into a scratch tab, then the user opens a tab
+    {app, _} = Reconcile.run(fresh(), live([1, 5]))
+    {app, _} = Actions.new_tab(app)
+    ids = Enum.map(ws(app).tabs, & &1.id)
+    assert ids == Enum.uniq(ids) and length(ids) == 3
+
+    # a workspace emptied by drops gets a fresh tab with a counter id too
+    {app, _} = Reconcile.run(fresh(), live([]))
+    {app, _} = Actions.new_tab(app)
+    ids = Enum.map(ws(app).tabs, & &1.id)
+    assert ids == Enum.uniq(ids) and 1 not in ids
+  end
 end
