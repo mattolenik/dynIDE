@@ -72,7 +72,8 @@ defmodule HerdrServer.View do
       rect: rect,
       border: border && %{border | title: meta.title || Map.get(meta, :name)},
       rows: if(transport == :inline, do: {:inline, []}, else: {:ref, id, meta.layout_gen}),
-      overlays: Overlays.pane(id, rect, client)
+      overlays: Overlays.pane(id, rect, client),
+      graphics: Map.get(client.graphics, id, [])
     }
   end
 

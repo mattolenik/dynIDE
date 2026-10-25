@@ -14,7 +14,9 @@ defmodule HerdrServer.Client.State do
   (`PointerIo.scene_facts/2`) before `View.compute`, only for scrolled panes and the
   selection's pane, so the pure View reads no ETS. `copy` is this client's
   `Client.CopyMode` while its mode is `:copy` (not mirrored). `facts_tick` throttles
-  repaints for `{:pane_facts, id}`.
+  repaints for `{:pane_facts, id}`. `graphics` is `pane_id => [placement]`
+  (`Pane.Facts.graphics/1`) the session gathers for the active tab's panes before
+  `View.compute`, panes without placements left out.
   """
 
   defstruct [
@@ -42,7 +44,8 @@ defmodule HerdrServer.Client.State do
     pointer_refs: %{},
     facts: %{},
     copy: nil,
-    facts_tick: nil
+    facts_tick: nil,
+    graphics: %{}
   ]
 
   @type t :: %__MODULE__{
@@ -70,6 +73,7 @@ defmodule HerdrServer.Client.State do
           pointer_refs: map(),
           facts: map(),
           copy: HerdrServer.Client.CopyMode.t() | nil,
-          facts_tick: HerdrServer.Throttle.t()
+          facts_tick: HerdrServer.Throttle.t(),
+          graphics: %{optional(pos_integer()) => [HerdrScene.Scene.Graphic.t()]}
         }
 end

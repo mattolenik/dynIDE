@@ -4,7 +4,8 @@ defmodule HerdrServer.Pane.State do
   `title` (sanitized), `stripped_title` and `progress` are the pane's terminal facts
   (`Pane.Facts`); `colors` the host colours last applied to the vt; `pending` the
   write queue (`{binary, nil | {paste_origin, bytes_written}}`, oldest first) and
-  `write_retry` its backpressure retry state; `facts_tick` the scroll-facts throttle.
+  `write_retry` its backpressure retry state; `facts_tick` the scroll-facts throttle; `graphics` the kitty placements last
+  written to `Pane.Facts`.
   """
 
   defstruct [
@@ -26,7 +27,8 @@ defmodule HerdrServer.Pane.State do
     pending: :queue.new(),
     write_retry: nil,
     colors: nil,
-    facts_tick: nil
+    facts_tick: nil,
+    graphics: []
   ]
 
   @type t :: %__MODULE__{
@@ -52,6 +54,7 @@ defmodule HerdrServer.Pane.State do
           pending: :queue.queue({binary(), nil | {pid(), non_neg_integer()}}),
           write_retry: nil | {:timer | :wait, pos_integer()},
           colors: map() | nil,
-          facts_tick: HerdrServer.Throttle.t()
+          facts_tick: HerdrServer.Throttle.t(),
+          graphics: [HerdrScene.Scene.Graphic.t()]
         }
 end

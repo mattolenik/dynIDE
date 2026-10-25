@@ -2,7 +2,8 @@ defmodule HerdrServer.Client.Endpoint do
   @moduledoc """
   Client discovery (contract decision 5): registered as `HerdrScene.Protocol.endpoint()`.
   `{:attach, info}` starts a `Client.Session` and replies
-  `{:ok, session_pid, %{rows: {HerdrServer.Pane.Rows, :fetch, []}}}` or `{:error, reasons}`.
+  `{:ok, session_pid, %{rows: {HerdrServer.Pane.Rows, :fetch, []}, images:
+  {HerdrServer.Client.Images, :fetch, []}}}` or `{:error, reasons}`.
   A client pid that re-attaches gets its mirrored presentation state back
   (`HerdrServer.Mirror.client/1`, passed to the session as `info.mirrored`).
 
@@ -19,6 +20,11 @@ defmodule HerdrServer.Client.Endpoint do
 
   # sessions: session monitor ref -> client pid; orphans: client monitor ref -> client pid
   defstruct sessions: %{}, orphans: %{}
+
+  @reply %{
+    rows: {HerdrServer.Pane.Rows, :fetch, []},
+    images: {HerdrServer.Client.Images, :fetch, []}
+  }
 
   def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: Protocol.endpoint())
 
@@ -43,7 +49,7 @@ defmodule HerdrServer.Client.Endpoint do
         # a session already dead here still gets a :DOWN (:noproc), handled like a crash
         ref = Process.monitor(pid)
         state = %{state | sessions: Map.put(state.sessions, ref, info.client)}
-        {{:ok, pid, %{rows: {HerdrServer.Pane.Rows, :fetch, []}}}, state}
+        {{:ok, pid, @reply}, state}
       else
         {:error, why} when is_binary(why) -> {{:error, [why]}, state}
         other -> {{:error, ["attach failed: #{inspect(other)}"]}, state}

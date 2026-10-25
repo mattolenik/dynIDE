@@ -16,7 +16,9 @@ defmodule HerdrServer.Pane.Server do
   resize or init. Facts are written when `scrolled`, the scroll values while scrolled,
   or a non-scroll fact change; sessions get `{:pane_facts, id}` only when the pane becomes
   scrolled or unscrolled (at once), or its scroll values change while scrolled (at most
-  once per 16 ms, `HerdrServer.Throttle`, the last change trailing). Scroll requests
+  once per 16 ms, `HerdrServer.Throttle`, the last change trailing). Kitty placements are
+  re-read on every damage and publish (one snapshot read); a change is written to
+  `Pane.Facts.put_graphics/2` and sent as `{:pane_facts, id}` at once. Scroll requests
   already queued fold into one move and one repaint (a scrollbar drag). Raw titles, OSC 7
   and the `:osc` codes are parsed by `Pane.Osc`; bells and child OSC 52 go to the
   foreground client (`Client.Foreground`). Host colours (`Pane.Facts.host_colors/0`)
@@ -109,6 +111,7 @@ defmodule HerdrServer.Pane.Server do
       # a restart keeps the visibility the Store last set (the pty kept it too)
       hidden = match?(%{hidden: true}, Mirror.pane(id))
       state = %State{id: id, kernel_id: kid, vt: vt, pty: pty, hidden: hidden}
+      state = %{state | graphics: Facts.graphics(id)}
       # a restart keeps what the child reported (cwd, title, progress)
       state = struct(state, Map.take(Facts.get(id) || %{}, @kept))
       scroll = Kernel.vt().scrollbar(vt)
@@ -188,7 +191,10 @@ defmodule HerdrServer.Pane.Server do
         cursor = read_cursor(state.vt)
 
         {:noreply,
-         if(cursor == state.cursor, do: state, else: publish(%{state | gen: gen}, cursor))}
+         if(cursor == state.cursor,
+           do: put_graphics(state),
+           else: publish(%{state | gen: gen}, cursor)
+         )}
 
       {gen, dirty} ->
         state = scroll_facts(state, true)
@@ -516,7 +522,20 @@ defmodule HerdrServer.Pane.Server do
     cursor = cursor || read_cursor(state.vt)
     :ok = Rows.put(state.id, state.gen, state.rows, cursor)
     dispatch({:pane_damage, state.id, state.gen})
-    %{state | cursor: cursor}
+    put_graphics(%{state | cursor: cursor})
+  end
+
+  # kitty placements: written and announced only when they change
+  defp put_graphics(state) do
+    case Kernel.vt().graphics_placements(state.vt) do
+      same when same == state.graphics ->
+        state
+
+      placements ->
+        :ok = Facts.put_graphics(state.id, placements)
+        dispatch({:pane_facts, state.id})
+        %{state | graphics: placements}
+    end
   end
 
   defp dispatch(msg) do

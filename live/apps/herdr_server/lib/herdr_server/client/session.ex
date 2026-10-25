@@ -82,7 +82,7 @@ defmodule HerdrServer.Client.Session do
   alias HerdrServer.Handoff.Notice
   alias HerdrServer.Layout
   alias HerdrServer.Mirror
-  alias HerdrServer.Pane.{Colors, Rows}
+  alias HerdrServer.Pane.{Colors, Facts, Rows}
   alias HerdrServer.Throttle
   alias HerdrServer.View
 
@@ -839,6 +839,8 @@ defmodule HerdrServer.Client.Session do
 
   # the budget copies args into a worker: pass only what View reads, never last_scene
   defp view(state, app) do
+    ids = active_ids(app)
+
     view_state = %State{
       size: state.size,
       transport: state.transport,
@@ -848,7 +850,8 @@ defmodule HerdrServer.Client.Session do
       toasts: state.toasts,
       pointer: state.pointer,
       copy: state.copy,
-      facts: facts(state, app)
+      facts: facts(state, ids),
+      graphics: graphics(ids)
     }
 
     Guard.run_twice(View, :compute, [app, view_state],
@@ -858,18 +861,24 @@ defmodule HerdrServer.Client.Session do
     )
   end
 
+  defp active_ids(app) do
+    with %{session: %{workspaces: wss, active_workspace: aw}} <- app,
+         %{tabs: tabs, active_tab: at} <- Enum.find(wss, &(&1.id == aw)),
+         %{layout: layout} <- Enum.find(tabs, &(&1.id == at)) do
+      Layout.pane_ids(layout)
+    else
+      _ -> []
+    end
+  end
+
+  # the active tab's kitty placements, one Facts read per pane (hidden tabs have none)
+  defp graphics(ids) do
+    for id <- ids, g = Facts.graphics(id), g != [], into: %{}, do: {id, g}
+  end
+
   # scrolled panes (scrollbar), the selection's and copy mode's pane (offset), one Facts
   # read per pane
-  defp facts(state, app) do
-    ids =
-      with %{session: %{workspaces: wss, active_workspace: aw}} <- app,
-           %{tabs: tabs, active_tab: at} <- Enum.find(wss, &(&1.id == aw)),
-           %{layout: layout} <- Enum.find(tabs, &(&1.id == at)) do
-        Layout.pane_ids(layout)
-      else
-        _ -> []
-      end
-
+  defp facts(state, ids) do
     sel = state.pointer.selection
     live = for %{pane: id} <- [sel, state.copy], do: id
 

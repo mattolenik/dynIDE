@@ -35,6 +35,30 @@ defmodule HerdrServer.ViewTest do
     assert child(s, :hint).text == "ctrl+b"
   end
 
+  test "a pane's graphics come from the client's graphics map" do
+    g = %{
+      image: {7, 42},
+      placement: 3,
+      x: 0,
+      y: -1,
+      cols: 4,
+      rows: 2,
+      x_off: 0,
+      y_off: 0,
+      src: {0, 0, 0, 0},
+      px: {0, 0},
+      z: 0,
+      size: {2, 1},
+      format: :rgba,
+      bytes: 8
+    }
+
+    app = pfx(fresh(120, 40), "v")
+    s = View.compute(app, %{client(120, 40) | graphics: %{1 => [g]}})
+    assert :ok = Scene.validate(s)
+    assert [%{id: 1, graphics: [^g]}, %{id: 2, graphics: []}] = s.panes
+  end
+
   test "two panes side by side" do
     s = View.compute(pfx(fresh(120, 40), "v"), client(120, 40))
     assert :ok = Scene.validate(s)

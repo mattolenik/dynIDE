@@ -6,7 +6,9 @@ defmodule HerdrServer.Pane.Facts do
   Keys: a pane id -> `t:facts/0`, written only by that pane's `Pane.Server`;
   `:host_colors` -> the foreground client's colour caps (`%{colors, scheme}`, either
   key optional), applied by every `Pane.Server` on init; `:foreground` -> the
-  foreground client session pid (`Client.Foreground`).
+  foreground client session pid (`Client.Foreground`); `{:graphics, id}` -> pane `id`'s
+  kitty placements (`put_graphics/2`, written by its `Pane.Server` on change, dropped by
+  `delete/1`).
 
   `scroll` is the vt's scrollbar (`total`, `viewport`, `offset` = top row of the
   viewport); `scrolled` is true while the viewport is above the bottom. `scroll` is
@@ -35,7 +37,7 @@ defmodule HerdrServer.Pane.Facts do
           progress: binary | nil
         }
 
-  @spec get(pos_integer | atom) :: term | nil
+  @spec get(pos_integer | atom | tuple) :: term | nil
   def get(key) do
     case lookup(key) do
       [row] -> elem(row, 1)
@@ -43,7 +45,7 @@ defmodule HerdrServer.Pane.Facts do
     end
   end
 
-  @spec put(pos_integer | atom, term) :: :ok
+  @spec put(pos_integer | atom | tuple, term) :: :ok
   def put(key, value) do
     if :ets.whereis(@table) == :undefined, do: wake_owner(), else: put_value(key, value)
     :ok
@@ -64,9 +66,20 @@ defmodule HerdrServer.Pane.Facts do
 
   @spec delete(pos_integer) :: :ok
   def delete(id) do
-    if :ets.whereis(@table) != :undefined, do: :ets.delete(@table, id)
+    if :ets.whereis(@table) != :undefined do
+      :ets.delete(@table, id)
+      :ets.delete(@table, {:graphics, id})
+    end
+
     :ok
   end
+
+  @doc "Pane `id`'s kitty placements (`HerdrScene.Scene.Graphic` maps), `[]` when none."
+  @spec graphics(pos_integer) :: [HerdrScene.Scene.Graphic.t()]
+  def graphics(id), do: get({:graphics, id}) || []
+
+  @spec put_graphics(pos_integer, [HerdrScene.Scene.Graphic.t()]) :: :ok
+  def put_graphics(id, placements), do: put({:graphics, id}, placements)
 
   @doc "Whether pane `id` is scrolled back (one ETS lookup; the input fast path uses it)."
   @spec scrolled?(pos_integer) :: boolean
