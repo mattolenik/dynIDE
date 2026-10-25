@@ -30,6 +30,11 @@ defmodule HerdrServer.App.Modal.Popup do
 
   @type spec_size :: nil | {:cells, non_neg_integer} | {:percent, 1..100}
   @type rect :: %{x: integer, y: integer, w: non_neg_integer, h: non_neg_integer}
+  @type sized :: %{
+          required(:width) => spec_size,
+          required(:height) => spec_size,
+          optional(atom) => term
+        }
 
   @size_error "must be a number of cells or a percentage like 80%"
 
@@ -51,7 +56,7 @@ defmodule HerdrServer.App.Modal.Popup do
   def parse(_), do: {:error, @size_error}
 
   @doc "Outer and inner (terminal) rects in `area`, or nil when the area is too small."
-  @spec size(%{width: spec_size, height: spec_size}, rect) :: %{outer: rect, inner: rect} | nil
+  @spec size(sized, rect) :: %{outer: rect, inner: rect} | nil
   def size(%{width: width, height: height}, area) do
     w = width |> resolve(area.w, max(div(area.w, 2), 6)) |> max(6) |> min(area.w)
     h = height |> resolve(area.h, max(div(area.h, 2), 4)) |> max(4) |> min(area.h)

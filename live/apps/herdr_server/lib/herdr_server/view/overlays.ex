@@ -14,7 +14,12 @@ defmodule HerdrServer.View.Overlays do
   alias HerdrScene.Scene.Overlay
   alias HerdrServer.Client.{CopyMode, Selection}
 
-  @spec pane(term, %{w: integer, h: integer}, map) :: [Overlay.t()]
+  @spec pane(
+          term,
+          %{required(:w) => integer, required(:h) => integer, optional(atom) => term},
+          map
+        ) ::
+          [Overlay.t()]
   def pane(id, rect, client) do
     facts = Map.get(client.facts, id)
     copy? = match?(%{copy: %CopyMode{pane: ^id}}, client)
