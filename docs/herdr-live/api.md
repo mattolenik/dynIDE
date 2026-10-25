@@ -535,7 +535,9 @@ CLI: `herdr-live pane run <pane_id> <command>`
 
 Result: `ok` (no fields).
 
-Errors: `invalid_params`, `not_found`, `backpressure`, `failed`
+Errors: `invalid_params`, `not_found`
+
+The command and its Enter join the pane's input queue, which retries until the pane takes them: `ok` means queued, not yet read by the program.
 
 ### `pane.read`
 

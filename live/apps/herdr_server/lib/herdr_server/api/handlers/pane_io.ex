@@ -26,6 +26,9 @@ defmodule HerdrServer.Api.Handlers.PaneIo do
     end
   end
 
+  # The command is a paste: it goes to the pane's retrying write queue (`Pane.Input`), and
+  # the Enter queues behind it, so `ok` means queued and neither can answer
+  # `backpressure`; a later kernel failure drops the queue and is logged by the pane.
   def handle("pane.run", %{pane_id: id, command: cmd}) do
     with {:ok, _} <- lookup(id) do
       case Input.paste(cmd, id) do
@@ -154,6 +157,10 @@ defmodule HerdrServer.Api.Handlers.PaneIo do
   defp send_err({:error, :backpressure}), do: {:error, :backpressure, "pane input is backed up"}
   defp send_err({:error, {:truncated, _}}), do: {:error, :backpressure, "pane input is backed up"}
   defp send_err({:error, :closed}), do: {:error, :not_found, "pane has exited"}
+
+  defp send_err({:error, {:too_large, n, max}}),
+    do: {:error, :invalid_params, "input is #{n} bytes, over the #{max} byte paste limit"}
+
   defp send_err({:error, r}), do: {:error, :failed, "write failed: #{inspect(r)}"}
 
   defp ok(nil), do: {:ok, %{type: "ok"}}

@@ -95,9 +95,13 @@ defmodule HerdrServer.Api.PaneIoTest do
     assert e["data"] == %{"written" => 0}
     Fake.Pty.fail_once_after(pty, 0, :too_large)
     assert {"failed", _} = err(s, "pane.send_keys", Map.put(@p, "keys", ["a"]))
-    # the command goes out, the Enter after it does not
-    Fake.Pty.fail_once_after(pty, 1, :too_large)
-    assert {"failed", _} = err(s, "pane.run", Map.put(@p, "command", "cmd"))
+  end
+
+  test "run queues through backpressure and answers ok", %{s: s, pty: pty} do
+    Fake.Pty.set_backpressure(pty, true)
+    ok!(s, "pane.run", Map.put(@p, "command", "cmd"))
+    Fake.Pty.set_backpressure(pty, false)
+    wait_until(fn -> writes(pty) == "cmd\r" end, 80)
   end
 
   test "send_keys writes nothing when any key is bad", %{s: s, pty: pty} do
@@ -121,12 +125,13 @@ defmodule HerdrServer.Api.PaneIoTest do
   } do
     Fake.Vt.set_mode(vt, :bracketed_paste, true)
     ok!(s, "pane.run", Map.put(@p, "command", "cmd"))
-    assert writes(pty) == "\e[200~cmd\e[201~\r"
+    # the paste queue writes after the reply
+    wait_until(fn -> writes(pty) == "\e[200~cmd\e[201~\r" end, 80)
   end
 
   test "run without bracketed paste", %{s: s, pty: pty} do
     ok!(s, "pane.run", Map.put(@p, "command", "cmd"))
-    assert writes(pty) == "cmd\r"
+    wait_until(fn -> writes(pty) == "cmd\r" end, 80)
   end
 
   test "read visible and lines", %{s: s, pty: pty} do

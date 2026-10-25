@@ -455,8 +455,13 @@ defmodule HerdrServer.Api.Spec do
         "Write a command line to a pane and press Enter.",
         [pid, req("command", :string, "Command line.")],
         "ok",
-        send_errors,
+        [:not_found],
         "herdr-live pane run <pane_id> <command>"
+      )
+      |> Map.put(
+        :notes,
+        "The command and its Enter join the pane's input queue, which retries until the " <>
+          "pane takes them: `ok` means queued, not yet read by the program."
       ),
       method(
         "pane.read",

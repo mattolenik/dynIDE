@@ -93,7 +93,11 @@ defmodule HerdrServer.Api.View do
     }
   end
 
-  # The one place a per-pane fact is read, so M9's `Pane.Facts` can replace it.
+  # The one place a per-pane fact is read. `title` stays the session's: `Pane.Server`
+  # puts the same sanitized title in `Pane.Facts` and sends it to the Store
+  # (`:pane_title`), and reading the snapshot keeps this module pure, so `EventDiff`
+  # still sees a title change between two snapshots. The pane object has no cwd or
+  # scroll field; add them from `Pane.Facts.get/1` (read by the caller) if it gains them.
   defp facts(app, id), do: %{title: get_in(app.session.panes, [id, :title])}
 
   defp ws_focused?(app, ws), do: app.session.active_workspace == ws.id

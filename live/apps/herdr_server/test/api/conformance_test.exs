@@ -134,16 +134,15 @@ defmodule HerdrServer.Api.ConformanceTest do
   end
 
   defp produce(method, :backpressure, ctx)
-       when method in ~w(pane.send_text pane.send_keys pane.run) do
+       when method in ~w(pane.send_text pane.send_keys) do
     s = listen(ctx)
     Fake.Pty.set_backpressure(pty(), true)
     call(s, method)
   end
 
-  defp produce(method, :failed, ctx) when method in ~w(pane.send_text pane.send_keys pane.run) do
+  defp produce(method, :failed, ctx) when method in ~w(pane.send_text pane.send_keys) do
     s = listen(ctx)
-    # pane.run: the command is written, the Enter after it is refused
-    Fake.Pty.fail_once_after(pty(), if(method == "pane.run", do: 1, else: 0), :too_large)
+    Fake.Pty.fail_once_after(pty(), 0, :too_large)
     call(s, method)
   end
 
