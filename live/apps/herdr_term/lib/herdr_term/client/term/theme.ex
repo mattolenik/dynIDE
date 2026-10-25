@@ -6,6 +6,7 @@ defmodule HerdrTerm.Client.Term.Theme do
 
   alias HerdrScene.Cell
   alias HerdrTerm.Cells
+  alias HerdrTerm.Client.Term.Theme.Palettes
 
   @type glyphs :: %{atom => binary | %{atom => binary}}
   @type t :: %{styles: %{atom => Cell.t()}, glyphs: glyphs}
@@ -56,6 +57,45 @@ defmodule HerdrTerm.Client.Term.Theme do
         state_dots: @state_dots,
         state_symbols: @state_symbols
       }
+    }
+  end
+
+  @doc """
+  The theme for the scene's root `theme` props and the host appearance. With
+  `auto_switch` the `light`/`dark` name is picked by `appearance` (nil is dark),
+  else `name`; unknown names give catppuccin; nil props give `default/0`.
+  """
+  @spec for_scene(map | nil, :dark | :light | nil) :: t
+  def for_scene(nil, _appearance), do: default()
+
+  def for_scene(props, appearance) when is_map(props) do
+    name =
+      if props[:auto_switch],
+        do: if(appearance == :light, do: props[:light], else: props[:dark]),
+        else: props[:name]
+
+    resolve(Palettes.get(name))
+  end
+
+  @doc "Token styles built from a palette (slot map); glyphs are the shared set."
+  @spec resolve(map) :: t
+  def resolve(p) do
+    %{
+      default()
+      | styles: %{
+          default: Cells.style(fg: p.text),
+          accent: Cells.style(fg: p.accent, attrs: [:bold]),
+          muted: Cells.style(fg: p.overlay0),
+          focus: Cells.style(fg: p.accent),
+          warning: Cells.style(fg: p.yellow),
+          error: Cells.style(fg: p.red),
+          inverse: Cells.style(attrs: [:inverse]),
+          success: Cells.style(fg: p.green),
+          info: Cells.style(fg: p.teal),
+          strong: Cells.style(fg: p.text, attrs: [:bold]),
+          selected: Cells.style(fg: p.panel_bg, bg: p.accent),
+          surface: Cells.style(fg: p.text, bg: p.surface0)
+        }
     }
   end
 

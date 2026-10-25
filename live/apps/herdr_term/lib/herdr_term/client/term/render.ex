@@ -38,6 +38,7 @@ defmodule HerdrTerm.Client.Term.Render do
   alias HerdrTerm.{Client, Kernel}
   alias HerdrTerm.Client.Term.Render.{Chrome, Compose}
   alias HerdrTerm.Client.Term.Theme
+  alias HerdrTerm.Client.Term.Theme.Detect
   alias HerdrTerm.Tty.Owner
 
   @retry_ms 50
@@ -57,9 +58,13 @@ defmodule HerdrTerm.Client.Term.Render do
     :timer,
     :notice,
     :theme,
+    :theme_key,
+    :colorfgbg,
     :chrome_key,
     :chrome_retry,
     transport: :ref,
+    caps: nil,
+    appearance: :dark,
     chrome: %{base: %{}, top: %{}, hits: [], dim: false},
     rows: %{},
     cursors: %{},
@@ -75,6 +80,7 @@ defmodule HerdrTerm.Client.Term.Render do
   @impl true
   def init(opts) do
     send(self(), :attach)
+    colorfgbg = System.get_env("COLORFGBG")
 
     {:ok,
      %__MODULE__{
@@ -82,6 +88,8 @@ defmodule HerdrTerm.Client.Term.Render do
        endpoint: Keyword.get(opts, :endpoint, Protocol.endpoint()),
        tty: Owner.tty(Client.via(opts[:id], :tty_owner)),
        theme: Theme.default(),
+       colorfgbg: colorfgbg,
+       appearance: Detect.appearance(nil, colorfgbg),
        transport: Keyword.get(opts, :transport, :ref)
      }}
   end
@@ -128,6 +136,14 @@ defmodule HerdrTerm.Client.Term.Render do
 
     cursors = Map.take(state.cursors, ids)
     state = %{state | scene: scene, rows: rows, dirty: dirty, refs: refs, cursors: cursors}
+    {:noreply, state |> refresh_theme() |> chrome() |> schedule()}
+  end
+
+  # the client's host caps (protocol shape): scheme, else background luminance
+  def handle_info({:caps, caps}, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    appearance = Detect.appearance(caps, state.colorfgbg)
+    state = refresh_theme(%{state | caps: caps, appearance: appearance})
     {:noreply, state |> chrome() |> schedule()}
   end
 
@@ -234,6 +250,24 @@ defmodule HerdrTerm.Client.Term.Render do
 
   defp send_input(state, msg) do
     if pid = Client.whereis(state.id, :input), do: send(pid, msg)
+  end
+
+  # The theme follows the root theme props and the appearance; recomputed only when
+  # either changes, so the chrome layout key (which holds the theme) stays stable.
+  defp refresh_theme(%{scene: nil} = state), do: state
+
+  defp refresh_theme(%{scene: scene, appearance: appearance} = state) do
+    props = scene.chrome && scene.chrome.props[:theme]
+    key = {props, appearance}
+
+    if key == state.theme_key,
+      do: state,
+      else: %{
+        state
+        | theme: Theme.for_scene(props, appearance),
+          theme_key: key,
+          repaint: true
+      }
   end
 
   # chrome layout, once per chrome/size/theme change

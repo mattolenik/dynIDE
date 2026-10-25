@@ -45,6 +45,8 @@ defmodule HerdrTerm.Client.Term.RenderTest do
   test "a failing Compose drops the frame and keeps the render state", %{render: render} do
     # a broken theme fails the chrome layout, which keeps the (here broken) old one
     broken = %{base: :broken, top: %{}, hits: [], dim: false}
+    send(render, {:scene, Fixture.load("single_pane_80x24")})
+    assert_receive {:frame, _, _}
     :sys.replace_state(render, &%{&1 | theme: :broken, chrome: broken})
     send(render, {:scene, Fixture.load("single_pane_80x24")})
     refute_receive {:frame, _, _}, 100
@@ -114,6 +116,39 @@ defmodule HerdrTerm.Client.Term.RenderTest do
       f.() -> true
       n == 0 -> false
       true -> Process.sleep(10) && eventually(f, n - 1)
+    end
+  end
+
+  describe "theme" do
+    defp with_theme(sc, props),
+      do: %{sc | chrome: %{sc.chrome | props: Map.put(sc.chrome.props, :theme, props)}}
+
+    @latte %{name: "catppuccin-latte", auto_switch: false, light: "x", dark: "x"}
+
+    test "root theme props pick the palette; caps switch auto_switch names", %{render: render} do
+      auto = %{name: "nord", auto_switch: true, light: "catppuccin-latte", dark: "dracula"}
+      send(render, {:scene, with_theme(Fixture.load("single_pane_80x24"), @latte)})
+      assert_receive {:frame, _, _}
+      assert Theme.style(:sys.get_state(render).theme, :accent).fg == {:rgb, 30, 102, 245}
+
+      send(render, {:scene, with_theme(Fixture.load("single_pane_80x24"), auto)})
+      assert_receive {:frame, _, _}
+      assert Theme.style(:sys.get_state(render).theme, :accent).fg != {:rgb, 30, 102, 245}
+
+      send(render, {:caps, %{colors: %{bg: {250, 250, 250}}, scheme: nil}})
+      assert_receive {:frame, _, _}
+      assert %{appearance: :light} = st = :sys.get_state(render)
+      assert Theme.style(st.theme, :accent).fg == {:rgb, 30, 102, 245}
+    end
+
+    test "an unchanged theme and appearance keep the theme term", %{render: render} do
+      send(render, {:scene, with_theme(Fixture.load("single_pane_80x24"), @latte)})
+      assert_receive {:frame, _, _}
+      %{theme: theme, chrome_key: key} = :sys.get_state(render)
+      send(render, {:caps, %{scheme: :dark}})
+      send(render, {:scene, with_theme(Fixture.load("single_pane_80x24"), @latte)})
+      st = :sys.get_state(render)
+      assert st.theme == theme and st.chrome_key == key
     end
   end
 
