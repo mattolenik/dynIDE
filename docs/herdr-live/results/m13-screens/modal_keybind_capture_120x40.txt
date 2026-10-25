@@ -1,0 +1,40 @@
+ spaces                  │   1     +                                                                                    
+                         │                                                                                              
+ · 1                     │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                      ┌──────────────────────────────────────────────────────────────────────────┐                      
+                      │ keybinds                                                                 │                      
+                      │ press a key for rename_tab · esc cancels                                 │                      
+                      │                                                                          │                      
+                      │ prefix+q         detach                                                  │                      
+                      │ prefix+shift+r   reload config                                           │                      
+                      │ navigation                                                               │                      
+                      │ prefix+h         focus pane left                                         │                      
+                      │ prefix+j         focus pane down                                         │                      
+                      │ prefix+k         focus pane up                                           │                      
+ new                 m│ prefix+l         focus pane right                                        │                      
+──────────────────────│ prefix+tab       cycle pane next                                         │                      
+ agents               │ prefix+shift+tab cycle pane previous                                     │                      
+ · 1                  │ workspaces / tabs                                                        │                      
+   terminal           │ prefix+shift+n   new workspace                                           │                      
+                      │ prefix+shift+w   rename workspace                                        │                      
+                      │ prefix+shift+d   close workspace                                         │                      
+                      │ prefix+c         new tab                                                 │                      
+                      │ prefix+shift+t   rename tab                                              │                      
+                      │ search / · scroll j/k/↑↓/pgup/pgdn · rebind enter · close esc            │                      
+                      │                                esc close                                 │                      
+                      └──────────────────────────────────────────────────────────────────────────┘                      
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                        «│                                                                                              
+TERMINAL                                                                                                          ctrl+b

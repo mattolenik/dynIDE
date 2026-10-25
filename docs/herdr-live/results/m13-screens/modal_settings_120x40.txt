@@ -1,0 +1,40 @@
+ spaces                  │   1     +                                                                                    
+                         │                                                                                              
+ · 1                     │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                      ┌──────────────────────────────────────────────────────────────────────────┐                      
+                      │ settings                                                                 │                      
+                      │ theme   indicators   sound   toasts                                      │                      
+                      │──────────────────────────────────────────────────────────────────────────│                      
+                      │                                                                          │                      
+                      │ agent status indicators                                                  │                      
+                      │ choose color dots or distinct symbols for each state                     │                      
+                      │                                                                          │                      
+                      │ ▸ color dots  ● ● ● ○ · ✓                                                │                      
+                      │   distinct symbols  × ◐ ✓ ○ ·                                            │                      
+ new                 m│                                                                          │                      
+──────────────────────│                                                                          │                      
+ agents               │                                                                          │                      
+ · 1                  │                                                                          │                      
+   terminal           │                                                                          │                      
+                      │                                                                          │                      
+                      │                                                                          │                      
+                      │                                                                          │                      
+                      │                                                                          │                      
+                      │ ↑↓ select  tab section                                                   │                      
+                      │                           ↵ apply    esc close                           │                      
+                      └──────────────────────────────────────────────────────────────────────────┘                      
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                        «│                                                                                              
+TERMINAL                                                                                                          ctrl+b

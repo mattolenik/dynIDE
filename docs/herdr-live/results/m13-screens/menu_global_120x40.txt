@@ -1,0 +1,40 @@
+ spaces                  │   1     +                                                                                    
+                         │                                                                                              
+ · 1                     │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+ new                 menu│                                                                                              
+─────────────────────────│                                                                                              
+ agents                  │                                                                                              
+ · 1                     │                                                                                              
+   terminal              │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                    ┌───────────────┐                                                                                   
+                    │ settings      │                                                                                   
+                    │ keybinds      │                                                                                   
+                    │ reload config │                                                                                   
+                    │ detach        │                                                                                   
+TERMINAL            └───────────────┘                                                                             ctrl+b

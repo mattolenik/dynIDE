@@ -1,0 +1,24 @@
+ spaces                  │   1     +                                            
+                         │                                                      
+ · 1                     │                                                      
+                         │                                                      
+        ┌──────────────────────────────────────────────────────────────┐        
+        │ herdr-live                                                   │        
+        │ terminal workspace manager for coding agents                 │        
+        │                                                              │        
+        │ this is a mouse-first terminal.                              │        
+        │ click the sidebar to switch workspaces, drag pane            │        
+        │ borders to resize, right-click for context menus.            │        
+ new    │                                                              │        
+────────│ ctrl+b enters prefix mode · ? shows keybinds and settings    │        
+ agents │ next: install optional agent integrations for more reliable s│        
+ · 1    │                                                              │        
+   termi│                                                              │        
+        │                                                              │        
+        │                                                              │        
+        │                          ↵ continue                          │        
+        └──────────────────────────────────────────────────────────────┘        
+                         │                                                      
+                         │                                                      
+                        «│                                                      
+TERMINAL                                                                  ctrl+b

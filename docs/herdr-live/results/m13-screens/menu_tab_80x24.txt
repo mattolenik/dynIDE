@@ -1,0 +1,24 @@
+ spaces                  │   1      ┌────────────┐                              
+                         │          │ New tab    │                              
+ · 1                     │          │ Rename     │                              
+                         │          │ Close      │                              
+                         │          └────────────┘                              
+                         │                                                      
+                         │                                                      
+                         │                                                      
+                         │                                                      
+                         │                                                      
+                         │                                                      
+ new                 menu│                                                      
+─────────────────────────│                                                      
+ agents                  │                                                      
+ · 1 · 1                 │                                                      
+   terminal              │                                                      
+ · 1 · 2                 │                                                      
+   terminal              │                                                      
+                         │                                                      
+                         │                                                      
+                         │                                                      
+                         │                                                      
+                        «│                                                      
+TERMINAL                                                                  ctrl+b

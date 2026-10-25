@@ -1,0 +1,40 @@
+ spaces                  │   1     +                                                                                    
+                         │                                                                                              
+ · 1                     │                                                                                              
+ · two                   │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+ new                 menu│                                                                                              
+─────────────────────────│                                                                                              
+ agents                  │                                                                                              
+ · 1 · 1                 │                                                                                              
+   terminal              │                                                                                              
+ · 1 · 2                 │                                                                                              
+   terminal              │                                                                                              
+ · two                   │                                                                                              
+   terminal              │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                        «│                                                                                              
+TERMINAL                                                                                                          ctrl+b

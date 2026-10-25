@@ -1,0 +1,40 @@
+ spaces                  │   1     +                                                                                    
+                         │                                                                                              
+ · 1                     │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                      ┌──────────────────────────────────────────────────────────────────────────┐                      
+                      │ keybinds                                                                 │                      
+                      │ press / to filter by command or shortcut                                 │                      
+                      │                                                                          │                      
+                      │ global                                                                   │                      
+                      │ prefix+?         keybinds                                                │                      
+                      │ prefix+s         settings                                                │                      
+                      │ prefix+q         detach                                                  │                      
+                      │ prefix+shift+r   reload config                                           │                      
+                      │ navigation                                                               │                      
+ new                 m│ prefix+h         focus pane left                                         │                      
+──────────────────────│ prefix+j         focus pane down                                         │                      
+ agents               │ prefix+k         focus pane up                                           │                      
+ · 1                  │ prefix+l         focus pane right                                        │                      
+   terminal           │ prefix+tab       cycle pane next                                         │                      
+                      │ prefix+shift+tab cycle pane previous                                     │                      
+                      │ workspaces / tabs                                                        │                      
+                      │ prefix+shift+n   new workspace                                           │                      
+                      │ prefix+shift+w   rename workspace                                        │                      
+                      │ search / · scroll j/k/↑↓/pgup/pgdn · rebind enter · close esc            │                      
+                      │                                esc close                                 │                      
+                      └──────────────────────────────────────────────────────────────────────────┘                      
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                         │                                                                                              
+                        «│                                                                                              
+TERMINAL                                                                                                          ctrl+b
