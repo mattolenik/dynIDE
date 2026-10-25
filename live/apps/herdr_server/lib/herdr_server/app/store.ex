@@ -346,6 +346,12 @@ defmodule HerdrServer.App.Store do
     {:noreply, if(state.app, do: sweep(state, System.system_time(:millisecond)), else: state)}
   end
 
+  # a restored pane's agent resume (`Persist.Load`), due now
+  def handle_info({:paste_raw, _id, _bin} = w, state) do
+    state = Map.merge(%__MODULE__{}, state)
+    {:noreply, effect(state, w, nil)}
+  end
+
   def handle_info(_other, state) do
     state = Map.merge(%__MODULE__{}, state)
     {:noreply, state}
@@ -659,6 +665,9 @@ defmodule HerdrServer.App.Store do
          do: notice(origin, %{level: :warning, text: "paste rejected: #{n} bytes (max #{max})"})
   end
 
+  # raw bytes to the pane's write queue, as `pane.send_text`: no bracketing; a closed pane
+  # drops them
+  defp io({:paste_raw, id, bin}, _), do: Server.write(id, bin)
   defp io({:focus_report, id, f}, _), do: Input.focus(f, id)
   defp io({:notice, n}, origin), do: notice(origin, n)
   # the originating session tells its client {:detached, :requested} and stops

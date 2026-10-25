@@ -363,6 +363,25 @@ defmodule HerdrServer.Api.TopologyTest do
              err(s, "tab.move", %{"tab_id" => "w1:t1", "insert_index" => -1})
   end
 
+  test "pane.report_agent_session records, clears and rejects", %{s: s} do
+    base = %{"pane_id" => "p1", "source" => "herdr:claude", "agent" => "claude"}
+    rep = &ok!(s, "pane.report_agent_session", Map.merge(base, &1))
+    sess = fn -> Store.snapshot().session.panes[1][:agent_session] end
+
+    assert %{"type" => "ok"} = rep.(%{"agent_session_id" => "abc", "seq" => 1})
+    assert sess.() == %{agent: "claude", kind: :id, value: "abc"}
+    rep.(%{"resume_argv" => ["claude", "-c"]})
+    assert sess.() == %{agent: "claude", kind: :argv, value: ["claude", "-c"]}
+    rep.(%{})
+    assert sess.() == nil
+
+    assert {"invalid_params", "resume_argv must not contain apostrophes"} =
+             err(s, "pane.report_agent_session", Map.put(base, "resume_argv", ["x", "'"]))
+
+    assert {"not_found", _} =
+             err(s, "pane.report_agent_session", %{base | "pane_id" => "p9"})
+  end
+
   describe "report_metadata" do
     test "pane and workspace tokens round trip; null clears; stale seq dropped", %{s: s} do
       rep =

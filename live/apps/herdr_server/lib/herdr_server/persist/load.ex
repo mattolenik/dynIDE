@@ -6,8 +6,12 @@ defmodule HerdrServer.Persist.Load do
 
   `Disk.read/1`, then the pure parts through `HerdrReload.Guard`: `Schema.restore/1`,
   `App.Upgrade.app/1` (before the app is adopted, as for mirror and rollback restores),
-  `RestorePlan.spawns/4`; `Disk.read/1` itself runs under `Guard.run/4`, so a raise there
-  cannot crash-loop the Store. The spawns run through the Store's own effect handler.
+  `RestorePlan.spawns/4` and `RestorePlan.resumes/2` (with the config file read now, so
+  `[session]` applies before the Store's own config load; a failure there only skips the
+  resumes); `Disk.read/1` itself runs under `Guard.run/4`, so a raise there cannot
+  crash-loop the Store. The spawns run through the Store's own effect handler;
+  each resume write of a pane that spawned goes to the Store (`self()`) with
+  `Process.send_after/3`, which writes it to the pane's queue when it fires.
 
   Telemetry: `persist_restore source=disk reason=.. panes=N scrollback=K ms=T` after a
   restore (N and K count the panes that actually spawned), `persist_restore source=none
@@ -26,6 +30,7 @@ defmodule HerdrServer.Persist.Load do
 
   alias HerdrReload.{Guard, Telemetry}
   alias HerdrServer.App.{Store, Upgrade}
+  alias HerdrServer.App.Store.Config, as: StoreConfig
   alias HerdrServer.Handoff.Link
   alias HerdrServer.Persist.{Disk, RestorePlan, Schema}
 
@@ -88,10 +93,14 @@ defmodule HerdrServer.Persist.Load do
 
   defp restore(state, cfg, snap, effect, t0) do
     case plan(cfg, snap) do
-      {:ok, app, spawns} ->
+      {:ok, app, spawns, resumes} ->
         :persistent_term.put(@attempt, Disk.session_path(cfg))
         state = Enum.reduce(spawns, %{state | app: app}, &effect.(&2, &1))
         spawned = Enum.filter(spawns, fn {:spawn, id, _, _} -> state.sizes[id] end)
+
+        for {ms, {:paste_raw, id, _} = w} <- resumes,
+            state.sizes[id],
+            do: Process.send_after(self(), w, ms)
 
         Telemetry.event(:persist_restore,
           source: :disk,
@@ -117,10 +126,17 @@ defmodule HerdrServer.Persist.Load do
          sb = scrollback(cfg, Map.keys(facts)),
          {:ok, spawns} <-
            Guard.run_twice(RestorePlan, :spawns, [app, facts, sb, &File.dir?/1], g) do
-      {:ok, app, spawns}
+      {:ok, app, spawns, resumes(app, g)}
     else
       {:ok, {:error, reason}} -> {:error, inspect(reason)}
       {:failed, reason} -> {:error, Guard.message(reason)}
+    end
+  end
+
+  defp resumes(app, g) do
+    case Guard.run_twice(RestorePlan, :resumes, [app, StoreConfig.load()], g) do
+      {:ok, resumes} -> resumes
+      {:failed, _logged_by_guard} -> []
     end
   end
 

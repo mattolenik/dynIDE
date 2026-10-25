@@ -391,6 +391,24 @@ defmodule HerdrCli.ArgvTest do
       assert {:usage, _} = p("pane report-agent p1 --source s --agent a --state done")
       assert {:usage, _} = p("pane release-agent p1 --source s")
 
+      assert p(
+               "pane report-agent-session p1 --source s --agent a --agent-session-id x -- a --go 'b c'"
+             ) ==
+               {:call, "pane.report_agent_session",
+                %{
+                  "pane_id" => "p1",
+                  "source" => "s",
+                  "agent" => "a",
+                  "agent_session_id" => "x",
+                  "resume_argv" => ["a", "--go", "b c"]
+                }, :json}
+
+      assert p("pane report-agent-session p1 --source s --agent a") ==
+               {:call, "pane.report_agent_session",
+                %{"pane_id" => "p1", "source" => "s", "agent" => "a"}, :json}
+
+      assert {:usage, _} = p("pane report-agent-session p1 --agent a")
+
       # herdr's flags: --token K=V and --clear-token K share one tokens map
       assert p("pane report-metadata p1 --source s --token a=x=y --token e= --clear-token b") ==
                {:call, "pane.report_metadata",

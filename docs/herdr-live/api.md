@@ -544,6 +544,27 @@ Result: `ok` (no fields).
 
 Errors: `invalid_params`, `not_available`
 
+### `pane.report_agent_session`
+
+Report the agent session a pane holds, so a restore with `session.resume_agents_on_restore` can resume it.
+
+CLI: `herdr-live pane report-agent-session <pane_id> --source S --agent A [--seq N] [--agent-session-id ID] [--agent-session-path PATH] [--session-start-source S] [-- <resume_arg>...]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | yes | Target pane. |
+| `source` | string | yes | Reporting integration; an id or path counts only from `herdr:<agent>`. |
+| `agent` | string | yes | Agent label. |
+| `seq` | integer 0..9007199254740991 | no | Report sequence number; accepted and ignored. |
+| `agent_session_id` | string | no | Agent session id, at most 512 bytes. |
+| `agent_session_path` | string | no | Absolute session path (pi, omp), at most 4096 bytes. |
+| `session_start_source` | string | no | How the session started; accepted and ignored. |
+| `resume_argv` | list of string | no | Command that resumes the session; starts with a plain command name. Wins over an id or path. |
+
+Result: `ok` (no fields).
+
+Errors: `invalid_params`, `not_found`
+
 ### `pane.report_metadata`
 
 Set or clear a pane's metadata tokens (at most 32), shown under its agent line.

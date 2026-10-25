@@ -9,7 +9,7 @@ defmodule HerdrCli.Argv do
 
   Positional kinds: `{:req, name}`; `{:opt, name}` (a string, may be omitted); `{:pane, name, :required | :optional}` (when
   omitted, `HERDR_PANE_ID` from env, else usage / left out); `{:keys, name}` (one or
-  more); `{:int, name}`; `{:opt_int, name}`; `{:opt_enum, name, values}`. Option kinds: `:string`,
+  more); `{:rest, name}` (zero or more, left out when none); `{:int, name}`; `{:opt_int, name}`; `{:opt_enum, name, values}`. Option kinds: `:string`,
   `:int`, `:number`, `:flag`, `{:const, value}` (a flag that sets `value`), `{:enum, values}`,
   `{:many, values}` (repeatable), `:file` (a path; becomes `{:file, path}` for the caller to read into the param), `{:kv_many}` (repeatable `KEY=VALUE`, collected into a map), `{:clear_many}` (repeatable `KEY`, put in the same map as nil).
   An atom key is consumed by `finish/3` (`:json` is accepted and dropped). A row with
@@ -410,6 +410,23 @@ defmodule HerdrCli.Argv do
         },
         :json,
         "pane report-agent <pane_id> --source S --agent A --state S [--message T] [--seq N]"
+      ),
+      cmd(
+        ~w(pane report-agent-session),
+        "pane.report_agent_session",
+        [id, {:rest, "resume_argv"}],
+        %{
+          "source" => {"source", :string},
+          "agent" => {"agent", :string},
+          "seq" => {"seq", :int},
+          "agent-session-id" => {"agent_session_id", :string},
+          "agent-session-path" => {"agent_session_path", :string},
+          "session-start-source" => {"session_start_source", :string}
+        },
+        :json,
+        "pane report-agent-session <pane_id> --source S --agent A [--seq N] " <>
+          "[--agent-session-id ID] [--agent-session-path PATH] [--session-start-source S] " <>
+          "[-- <resume_arg>...]"
       ),
       cmd(
         ~w(pane report-metadata),
@@ -935,6 +952,8 @@ defmodule HerdrCli.Argv do
 
   defp positionals([{:keys, name}], [_ | _] = vs, _env, acc), do: {:ok, Map.put(acc, name, vs)}
   defp positionals([{:keys, name}], [], _env, _acc), do: {:error, "missing <#{name}>"}
+  defp positionals([{:rest, _}], [], _env, acc), do: {:ok, acc}
+  defp positionals([{:rest, name}], vs, _env, acc), do: {:ok, Map.put(acc, name, vs)}
 
   defp positionals([{:opt, _} | spec], [], env, acc), do: positionals(spec, [], env, acc)
 
@@ -976,6 +995,10 @@ defmodule HerdrCli.Argv do
   end
 
   defp check("pane.report_agent", params), do: require_opts(params, ~w(source agent state))
+
+  defp check("pane.report_agent_session", params),
+    do: require_opts(params, ~w(source agent))
+
   defp check("pane.release_agent", params), do: require_opts(params, ~w(source agent))
 
   defp check(m, params) when m in ~w(pane.report_metadata workspace.report_metadata) do

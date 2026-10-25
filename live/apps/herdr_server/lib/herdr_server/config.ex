@@ -4,7 +4,7 @@ defmodule HerdrServer.Config do
 
     * `path/0`: `config :herdr_server, :config_path`, else `$HERDR_LIVE_CONFIG`, else
       `${XDG_CONFIG_HOME:-$HOME/.config}/herdr-live/config.toml`.
-    * `load/1` reads and decodes the file into its raw `keys`, `ui`, `theme` and `worktrees` tables
+    * `load/1` reads and decodes the file into its raw `keys`, `ui`, `theme`, `worktrees` and `session` tables
       plus `onboarding` (true unless the file sets `onboarding = false`). A missing file
       is the defaults with onboarding and no diagnostics; a file that does not decode or
       cannot be read is the defaults, no onboarding, one `"config: <reason>"` diagnostic
@@ -29,7 +29,9 @@ defmodule HerdrServer.Config do
   `[ui.toast]` `delivery`
   (`off | herdr | terminal | system`), `delay_seconds` (0..3600); `[theme]` `name`,
   `auto_switch`, `light_name`, `dark_name`; `[worktrees]` `directory` (new checkouts go
-  under it, default `~/.herdr-live/worktrees`); top-level `onboarding`.
+  under it, default `~/.herdr-live/worktrees`); `[session]` `resume_agents_on_restore`
+  (default false) and `startup_per_agent_delay_ms` (0..60000, default 500), read by a
+  disk restore (`Persist.RestorePlan.resumes/2`); top-level `onboarding`.
 
   `[[keys.command]]` (herdr's custom commands): `key` (a spec), `command`, `type`
   (`shell`, the default, | `pane` | `popup` | `plugin_action`), optional `description`,
@@ -50,6 +52,7 @@ defmodule HerdrServer.Config do
           ui: map,
           theme: map,
           worktrees: map,
+          session: map,
           onboarding: boolean,
           diagnostics: [binary],
           failed: boolean
@@ -77,7 +80,9 @@ defmodule HerdrServer.Config do
     {:theme, ["auto_switch"], :bool, [:theme, :auto_switch]},
     {:theme, ["light_name"], :string, [:theme, :light]},
     {:theme, ["dark_name"], :string, [:theme, :dark]},
-    {:worktrees, ["directory"], :string, [:worktrees_dir]}
+    {:worktrees, ["directory"], :string, [:worktrees_dir]},
+    {:session, ["resume_agents_on_restore"], :bool, [:session, :resume_agents_on_restore]},
+    {:session, ["startup_per_agent_delay_ms"], :delay_ms, [:session, :startup_per_agent_delay_ms]}
   ]
 
   @spec path() :: Path.t()
@@ -103,8 +108,8 @@ defmodule HerdrServer.Config do
   defp decode(bin) do
     case Toml.decode(bin) do
       {:ok, t} ->
-        {[keys, ui, theme, worktrees], diags} =
-          Enum.map_reduce(~w(keys ui theme worktrees), [], &table(t, &1, &2))
+        {[keys, ui, theme, worktrees, session], diags} =
+          Enum.map_reduce(~w(keys ui theme worktrees session), [], &table(t, &1, &2))
 
         {onboarding, diags} = onboarding(Map.get(t, "onboarding", true), diags)
 
@@ -113,6 +118,7 @@ defmodule HerdrServer.Config do
           ui: ui,
           theme: theme,
           worktrees: worktrees,
+          session: session,
           onboarding: onboarding,
           diagnostics: diags,
           failed: false
@@ -172,6 +178,7 @@ defmodule HerdrServer.Config do
       ui: %{},
       theme: %{},
       worktrees: %{},
+      session: %{},
       onboarding: onboarding,
       diagnostics: diags,
       failed: true
@@ -365,6 +372,7 @@ defmodule HerdrServer.Config do
   defp cast(:pos_int, v) when is_integer(v) and v > 0, do: {:ok, v}
   defp cast(:string, v) when is_binary(v), do: {:ok, v}
   defp cast(:delay, v) when is_integer(v) and v in 0..3600, do: {:ok, v * 1000}
+  defp cast(:delay_ms, v) when is_integer(v) and v in 0..60_000, do: {:ok, v}
 
   # to_atom, not to_existing_atom: a value may name an atom no loaded module holds yet
   # (`always`), and `vals` is a fixed whitelist, so config cannot grow the atom table

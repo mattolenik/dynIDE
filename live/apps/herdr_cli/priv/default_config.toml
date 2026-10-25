@@ -34,6 +34,10 @@ dark_name = "catppuccin"
 [worktrees]
 # directory = "~/.herdr-live/worktrees"   # new checkouts go to <directory>/<repo>/<branch>
 
+[session]
+# resume_agents_on_restore = false   # after a restore, type each pane's reported agent resume command into its shell
+# startup_per_agent_delay_ms = 500   # 0..60000; the n-th pane's resume is typed n * this after the restore
+
 # Custom commands go after [keys], one [[keys.command]] table each. type is "shell" (the
 # default, runs in the background), "pane" (runs in a new split) or "plugin_action"; the
 # command sees HERDR_ACTIVE_WORKSPACE_ID, HERDR_ACTIVE_TAB_ID, HERDR_ACTIVE_PANE_ID and

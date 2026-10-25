@@ -584,6 +584,43 @@ defmodule HerdrServer.Api.Spec do
         "herdr-live pane report-agent <pane_id> --source S --agent A --state S [--message T] [--seq N]"
       ),
       method(
+        "pane.report_agent_session",
+        g,
+        "Report the agent session a pane holds, so a restore with " <>
+          "`session.resume_agents_on_restore` can resume it.",
+        [
+          pid,
+          req(
+            "source",
+            :string,
+            "Reporting integration; an id or path counts only from `herdr:<agent>`."
+          ),
+          req("agent", :string, "Agent label."),
+          opt(
+            "seq",
+            {:integer, 0, 9_007_199_254_740_991},
+            "Report sequence number; accepted and ignored."
+          ),
+          opt("agent_session_id", :string, "Agent session id, at most 512 bytes."),
+          opt(
+            "agent_session_path",
+            :string,
+            "Absolute session path (pi, omp), at most 4096 bytes."
+          ),
+          opt("session_start_source", :string, "How the session started; accepted and ignored."),
+          opt(
+            "resume_argv",
+            {:list, :string},
+            "Command that resumes the session; starts with a plain command name. Wins over an id or path."
+          )
+        ],
+        "ok",
+        [:not_found],
+        "herdr-live pane report-agent-session <pane_id> --source S --agent A [--seq N] " <>
+          "[--agent-session-id ID] [--agent-session-path PATH] [--session-start-source S] " <>
+          "[-- <resume_arg>...]"
+      ),
+      method(
         "pane.report_metadata",
         g,
         "Set or clear a pane's metadata tokens (at most 32), shown under its agent line.",

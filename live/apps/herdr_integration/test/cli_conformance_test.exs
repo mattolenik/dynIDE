@@ -71,6 +71,9 @@ defmodule HerdrIntegration.CliConformanceTest do
     "server reload-agent-manifests",
     "pane report-agent p1 --source s --agent claude --state idle --message hi --seq 1",
     "pane release-agent p1 --source s --agent claude --seq 2",
+    "pane report-agent-session p1 --source herdr:claude --agent claude --agent-session-id x",
+    "pane report-agent-session p1 --source s --agent a --seq 1 --agent-session-path /x " <>
+      "--session-start-source resume -- a --resume x",
     "pane report-metadata --source s --token pr=#12 --clear-token old --seq 3 --ttl-ms 500",
     "workspace report-metadata w1 --source s --token build=ok",
     "agent wait p1 --until idle --until done --timeout 100",

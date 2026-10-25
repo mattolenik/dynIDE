@@ -22,12 +22,12 @@ defmodule HerdrServer.Persist.SchemaTest do
   end
 
   describe "capture/2" do
-    test "an initial app has exactly the v4 shape" do
-      assert Schema.version() == 4
+    test "an initial app has exactly the v5 shape" do
+      assert Schema.version() == 5
 
       assert Schema.capture(fresh(), %{1 => %{cwd: "/tmp", command: ["/bin/zsh"], hidden: true}}) ==
                %{
-                 v: 4,
+                 v: 5,
                  session: %{
                    workspaces: [
                      %{
@@ -54,14 +54,28 @@ defmodule HerdrServer.Persist.SchemaTest do
                  focus: %{pane: 1},
                  ui: Map.delete(Map.from_struct(%Ui{}), :keybinds),
                  panes: %{
-                   1 => %{title: nil, name: nil, cwd: "/tmp", command: ["/bin/zsh"], hidden: true}
+                   1 => %{
+                     title: nil,
+                     name: nil,
+                     cwd: "/tmp",
+                     command: ["/bin/zsh"],
+                     hidden: true,
+                     agent_session: nil
+                   }
                  }
                }
     end
 
     test "missing facts are nil, nil, false" do
       assert Schema.capture(fresh(), %{}).panes == %{
-               1 => %{title: nil, name: nil, cwd: nil, command: nil, hidden: false}
+               1 => %{
+                 title: nil,
+                 name: nil,
+                 cwd: nil,
+                 command: nil,
+                 hidden: false,
+                 agent_session: nil
+               }
              }
     end
 
@@ -189,6 +203,32 @@ defmodule HerdrServer.Persist.SchemaTest do
       refute Map.has_key?(hd(Schema.capture(a, %{}).session.workspaces), :cwd)
     end
 
+    test "agent_session round-trips; a v4 snapshot restores with none; a bad one is invalid" do
+      sess = %{agent: "claude", kind: :id, value: "abc"}
+      {app, []} = HerdrServer.AgentResume.put(three(), 2, sess)
+      s = Schema.capture(app, %{})
+      assert s.panes[2].agent_session == sess
+      assert {:ok, a, facts} = Schema.restore(s)
+      assert a.session.panes[2].agent_session == sess
+      refute Map.has_key?(a.session.panes[1], :agent_session)
+      refute Map.has_key?(facts[2], :agent_session)
+      assert Schema.capture(a, %{}) == s
+
+      v4 = %{
+        s
+        | v: 4,
+          panes: Map.new(s.panes, fn {id, p} -> {id, Map.delete(p, :agent_session)} end)
+      }
+
+      assert {:ok, a4, _} = Schema.restore(v4)
+      refute Enum.any?(Map.values(a4.session.panes), &Map.has_key?(&1, :agent_session))
+
+      argv = %{agent: "x", kind: :argv, value: ["x", "--go"]}
+      assert {:ok, _, _} = Schema.restore(put_in(s.panes[2].agent_session, argv))
+      bad = put_in(s.panes[2].agent_session, %{agent: "x", kind: :argv, value: "x"})
+      assert {:error, {:invalid, :panes}} = Schema.restore(bad)
+    end
+
     test "a v2 snapshot gets id counters above every workspace and tab id" do
       s = Schema.capture(three(), %{})
       [ws] = s.session.workspaces
@@ -242,7 +282,8 @@ defmodule HerdrServer.Persist.SchemaTest do
           name: nil,
           cwd: nil,
           command: nil,
-          hidden: false
+          hidden: false,
+          agent_session: nil
         })
 
       assert {:error, {:invalid, :panes_mismatch}} = Schema.restore(s)
@@ -377,7 +418,7 @@ defmodule HerdrServer.Persist.SchemaTest do
     def up(%{v: 0} = m), do: m |> Map.delete(:old) |> Map.put(:v, 1)
 
     test "a newer version is refused" do
-      assert Schema.migrate(%{v: 5}) == {:error, {:newer, 5}}
+      assert Schema.migrate(%{v: 6}) == {:error, {:newer, 6}}
     end
 
     test "a non-integer or missing version is unknown" do
@@ -390,12 +431,19 @@ defmodule HerdrServer.Persist.SchemaTest do
     end
 
     test "the current version is unchanged" do
-      assert Schema.migrate(%{v: 4, x: 2}) == {:ok, %{v: 4, x: 2}}
+      assert Schema.migrate(%{v: 5, x: 2}) == {:ok, %{v: 5, x: 2}}
     end
 
     test "a synthetic chain is applied in order" do
-      chain = %{0 => {__MODULE__, :up}, 1 => :v1_to_v2, 2 => :v2_to_v3, 3 => :v3_to_v4}
-      assert Schema.migrate(%{v: 0, old: true, x: 1}, chain) == {:ok, %{v: 4, x: 1}}
+      chain = %{
+        0 => {__MODULE__, :up},
+        1 => :v1_to_v2,
+        2 => :v2_to_v3,
+        3 => :v3_to_v4,
+        4 => :v4_to_v5
+      }
+
+      assert Schema.migrate(%{v: 0, old: true, x: 1}, chain) == {:ok, %{v: 5, x: 1}}
     end
   end
 

@@ -9,6 +9,7 @@ defmodule HerdrServer.Api.Handlers.Topology do
   `internal`.
   """
 
+  alias HerdrServer.AgentResume
   alias HerdrServer.Api.{Ids, View}
   alias HerdrServer.App.{Commands, Metadata, Store}
   alias HerdrServer.Kernel
@@ -182,6 +183,18 @@ defmodule HerdrServer.Api.Handlers.Topology do
 
   def handle("pane.report_metadata", %{pane_id: id} = p),
     do: report_metadata(p, {:pane, id}, &run_on_pane(id, &1))
+
+  # herdr's report: the pane's resumable agent session (`AgentResume.from_report/1`); a
+  # report with nothing resumable clears it
+  def handle("pane.report_agent_session", %{pane_id: id} = p) do
+    with {:report, {:ok, session}} <- {:report, AgentResume.from_report(p)},
+         {:ok, _before, _aft, _notes} <- run_on_pane(id, {AgentResume, :put, [id, session]}) do
+      {:ok, %{type: "ok"}}
+    else
+      {:report, {:error, msg}} -> {:error, :invalid_params, msg}
+      err -> err
+    end
+  end
 
   def handle("pane.close", %{pane_id: id}) do
     with {:ok, _before, aft, notes} <- run_on_pane(id, {Commands, :close_pane, [id]}) do

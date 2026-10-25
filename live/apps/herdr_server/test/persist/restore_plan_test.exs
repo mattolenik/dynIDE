@@ -1,7 +1,9 @@
 defmodule HerdrServer.Persist.RestorePlanTest do
   use ExUnit.Case, async: true
 
+  alias HerdrServer.AgentResume
   alias HerdrServer.App.Actions
+  alias HerdrServer.Config
   alias HerdrServer.Layout
   alias HerdrServer.Persist.RestorePlan
 
@@ -50,5 +52,54 @@ defmodule HerdrServer.Persist.RestorePlanTest do
     spawns = RestorePlan.spawns(app(), %{}, %{2 => "hi\e[31m"}, fn _ -> true end)
     replays = Map.new(spawns, &{elem(&1, 1), elem(&1, 3).replay})
     assert replays == %{1 => nil, 2 => "hi\e[31m\e[0m\r\n", 3 => nil, 4 => nil}
+  end
+
+  describe "resumes/2" do
+    defp with_sessions(app) do
+      {app, []} = AgentResume.put(app, 1, %{agent: "claude", kind: :id, value: "s 1"})
+      {app, []} = AgentResume.put(app, 3, %{agent: "x", kind: :argv, value: ["x", "--go"]})
+      # not resumable: an unknown agent's id
+      {app, []} = AgentResume.put(app, 4, %{agent: "nope", kind: :id, value: "z"})
+      app
+    end
+
+    defp on(app, delay),
+      do:
+        put_in(app.ui.session, %{
+          resume_agents_on_restore: true,
+          startup_per_agent_delay_ms: delay
+        })
+
+    test "off (the default) emits no write" do
+      assert RestorePlan.resumes(with_sessions(app()), nil) == []
+    end
+
+    test "on: one raw write per resumable pane, n * delay apart" do
+      assert RestorePlan.resumes(app() |> with_sessions() |> on(250), nil) == [
+               {250, {:paste_raw, 1, "'claude' '--resume' 's 1'\r"}},
+               {500, {:paste_raw, 3, "'x' '--go'\r"}}
+             ]
+    end
+
+    test "the config file's [session] wins over the app's" do
+      path = Path.join(System.tmp_dir!(), "rp#{System.unique_integer([:positive])}.toml")
+
+      File.write!(
+        path,
+        "[session]\nresume_agents_on_restore = true\nstartup_per_agent_delay_ms = 0\n"
+      )
+
+      on_exit(fn -> File.rm(path) end)
+      cfg = Config.load(path)
+
+      assert [{0, {:paste_raw, 1, _}}, {0, {:paste_raw, 3, _}}] =
+               RestorePlan.resumes(with_sessions(app()), cfg)
+
+      File.write!(path, "[session]\nstartup_per_agent_delay_ms = 60001\n")
+      cfg = Config.load(path)
+      {_, ui, [diag]} = Config.apply(cfg, app().ui.keybinds, app().ui)
+      assert ui.session.startup_per_agent_delay_ms == 500 and diag =~ "startup_per_agent_delay_ms"
+      assert RestorePlan.resumes(app() |> with_sessions() |> on(9), cfg) |> hd() |> elem(0) == 9
+    end
   end
 end

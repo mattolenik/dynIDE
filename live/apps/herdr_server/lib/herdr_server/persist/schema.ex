@@ -4,16 +4,19 @@ defmodule HerdrServer.Persist.Schema do
   runtime facts into a plain, versioned snapshot; `restore/1` migrates, validates and
   rebuilds the app. `restore(capture(app, facts))` captures back to the same snapshot.
 
-  Snapshot (v4):
+  Snapshot (v5):
 
-      %{v: 4,
+      %{v: 5,
         session: %{workspaces: [%{id, name, auto_name, active_tab,
                                   tabs: [%{id, name, layout: %{root, focus, prev_focus}}]}],
                    active_workspace, next_id, next_workspace_id, next_tab_id,
                    size: %{cols, rows}, area: %{x, y, w, h}},
         focus: %{pane: id | nil},
         ui: Map.from_struct(ui) without :keybinds, plain values only,
-        panes: %{id => %{title, name, cwd, command, hidden}}}
+        panes: %{id => %{title, name, cwd, command, hidden, agent_session}}}
+
+  `agent_session` is nil or `%{agent, kind: :id | :path | :argv, value}`
+  (`HerdrServer.AgentResume`).
 
   Not persisted: keybinds (restored as `Keybinds.default/0`), the modal stack (`[]`),
   pane `layout_gen` (0). The recorded command is metadata, never re-run.
@@ -28,14 +31,14 @@ defmodule HerdrServer.Persist.Schema do
   adds the id counters `session.next_workspace_id` and `next_tab_id`, just above the
   snapshot's workspace and tab ids, and `name: nil` to every pane; v3 -> v4
   (`v3_to_v4/1`) adds `auto_name: false` to every workspace, so a restore keeps the names
-  users saw. A restore never puts a counter at or below an existing id. A workspace's
+  users saw; v4 -> v5 (`v4_to_v5/1`) adds `agent_session: nil` to every pane. A restore never puts a counter at or below an existing id. A workspace's
   `cwd` is not persisted.
   """
 
   alias HerdrServer.App.{Keybinds, Upgrade}
 
-  @version 4
-  @migrations %{1 => :v1_to_v2, 2 => :v2_to_v3, 3 => :v3_to_v4}
+  @version 5
+  @migrations %{1 => :v1_to_v2, 2 => :v2_to_v3, 3 => :v3_to_v4, 4 => :v4_to_v5}
 
   @session HerdrServer.App.Session
   @focus HerdrServer.App.Focus
@@ -109,7 +112,8 @@ defmodule HerdrServer.Persist.Schema do
       name: Map.get(meta, :name),
       cwd: Map.get(fact, :cwd),
       command: Map.get(fact, :command),
-      hidden: Map.get(fact, :hidden, false) == true
+      hidden: Map.get(fact, :hidden, false) == true,
+      agent_session: Map.get(meta, :agent_session)
     }
   end
 
@@ -126,7 +130,7 @@ defmodule HerdrServer.Persist.Schema do
          {:ok, snap} <- shape(snap),
          :ok <- validate(snap) do
       {:ok, build(snap),
-       Map.new(snap.panes, fn {id, p} -> {id, Map.drop(p, [:title, :name])} end)}
+       Map.new(snap.panes, fn {id, p} -> {id, Map.drop(p, [:title, :name, :agent_session])} end)}
     end
   end
 
@@ -189,12 +193,22 @@ defmodule HerdrServer.Persist.Schema do
 
   defp tree?(_), do: false
 
-  defp pane?({id, %{title: t, name: n, cwd: c, command: cmd, hidden: h}}) do
+  defp pane?({id, %{title: t, name: n, cwd: c, command: cmd, hidden: h, agent_session: a}}) do
     id?(id) and Enum.all?([t, n, c], &(is_nil(&1) or is_binary(&1))) and
-      (is_nil(cmd) or (is_list(cmd) and Enum.all?(cmd, &is_binary/1))) and is_boolean(h)
+      (is_nil(cmd) or strings?(cmd)) and is_boolean(h) and agent_session?(a)
   end
 
   defp pane?(_), do: false
+
+  defp strings?(l), do: is_list(l) and Enum.all?(l, &is_binary/1)
+
+  defp agent_session?(nil), do: true
+  defp agent_session?(%{agent: a, kind: :argv, value: v}), do: is_binary(a) and strings?(v)
+
+  defp agent_session?(%{agent: a, kind: k, value: v}) when k in [:id, :path],
+    do: is_binary(a) and is_binary(v)
+
+  defp agent_session?(_), do: false
 
   defp area?(%{x: x, y: y, w: w, h: h}),
     do: Enum.all?([x, y], &(is_integer(&1) and &1 >= 0)) and id?(w) and id?(h)
@@ -275,9 +289,15 @@ defmodule HerdrServer.Persist.Schema do
     }
   end
 
-  # a pane meta has :name only once renamed
-  defp build_pane(%{name: nil} = p), do: %{title: p.title, layout_gen: 0}
-  defp build_pane(p), do: %{title: p.title, name: p.name, layout_gen: 0}
+  # a pane meta has :name only once renamed, :agent_session only once reported
+  defp build_pane(p) do
+    %{title: p.title, layout_gen: 0}
+    |> put_set(:name, p.name)
+    |> put_set(:agent_session, p.agent_session)
+  end
+
+  defp put_set(m, _k, nil), do: m
+  defp put_set(m, k, v), do: Map.put(m, k, v)
 
   defp build_ws(ws) do
     %{
@@ -354,6 +374,20 @@ defmodule HerdrServer.Persist.Schema do
   end
 
   def v3_to_v4(map), do: map
+
+  @doc false
+  # v4 had no agent sessions
+  @spec v4_to_v5(map()) :: map()
+  def v4_to_v5(%{panes: panes} = map) when is_map(panes),
+    do: %{
+      map
+      | panes:
+          Map.new(panes, fn {id, p} ->
+            {id, if(is_map(p), do: Map.put_new(p, :agent_session, nil), else: p)}
+          end)
+    }
+
+  def v4_to_v5(map), do: map
 
   defp ids?(%{id: id, tabs: tabs}) when is_integer(id) and is_list(tabs),
     do: Enum.all?(tabs, &match?(%{id: t} when is_integer(t), &1))

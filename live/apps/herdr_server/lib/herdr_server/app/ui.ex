@@ -37,7 +37,9 @@ defmodule HerdrServer.App.Ui do
     pane_borders: :auto,
     window_title: "{hostname}: {workspace}",
     custom_commands: [],
-    worktrees_dir: nil
+    worktrees_dir: nil,
+    # config `[session]`: read by a disk restore (`Persist.RestorePlan.resumes/2`)
+    session: %{resume_agents_on_restore: false, startup_per_agent_delay_ms: 500}
   ]
 
   @type t :: %__MODULE__{
@@ -68,6 +70,7 @@ defmodule HerdrServer.App.Ui do
           prompt_new_tab_name: boolean(),
           pane_borders: :auto | :always | :off,
           window_title: binary(),
-          custom_commands: [HerdrServer.App.CustomCommands.entry()]
+          custom_commands: [HerdrServer.App.CustomCommands.entry()],
+          session: %{resume_agents_on_restore: boolean(), startup_per_agent_delay_ms: 0..60_000}
         }
 end

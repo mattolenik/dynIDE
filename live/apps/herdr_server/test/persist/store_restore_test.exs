@@ -3,6 +3,7 @@ defmodule HerdrServer.Persist.StoreRestoreTest do
 
   import ExUnit.CaptureLog
 
+  alias HerdrServer.AgentResume
   alias HerdrServer.App.{Actions, Store, Ui}
   alias HerdrServer.Kernel.Fake
   alias HerdrServer.Pane.Rows
@@ -91,6 +92,38 @@ defmodule HerdrServer.Persist.StoreRestoreTest do
 
     assert after_event.session.area ==
              Frame.regions(%{cols: 100, rows: 30}, %Ui{}).panes
+  end
+
+  test "[session] resume_agents_on_restore types each reported resume, spaced", %{
+    cfg: cfg,
+    tmp: tmp
+  } do
+    toml = Path.join(tmp, "config.toml")
+    old = Application.get_env(:herdr_server, :config_path)
+    Application.put_env(:herdr_server, :config_path, toml)
+    on_exit(fn -> Application.put_env(:herdr_server, :config_path, old) end)
+
+    {app, []} = AgentResume.put(app(), 1, %{agent: "claude", kind: :id, value: "s1"})
+    {app, []} = AgentResume.put(app, 3, %{agent: "x", kind: :argv, value: ["x", "a b"]})
+    write!(cfg, app, %{})
+    written = fn id -> res(id).pty |> Fake.Pty.writes() |> IO.iodata_to_binary() end
+
+    File.write!(toml, "[session]\nstartup_per_agent_delay_ms = 0\n")
+    restart_store()
+    Process.sleep(50)
+    assert Enum.all?([1, 2, 3], &(written.(&1) == ""))
+
+    File.write!(
+      toml,
+      "[session]\nresume_agents_on_restore = true\nstartup_per_agent_delay_ms = 150\n"
+    )
+
+    restart_store()
+    assert Store.snapshot().session.panes[1].agent_session.value == "s1"
+    assert eventually(fn -> written.(1) == "'claude' '--resume' 's1'\r" end)
+    assert written.(3) == ""
+    assert eventually(fn -> written.(3) == "'x' 'a b'\r" end)
+    assert written.(2) == ""
   end
 
   test "no file: an empty Store, initialised lazily by the first event", %{cfg: cfg} do
