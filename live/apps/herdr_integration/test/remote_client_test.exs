@@ -88,11 +88,12 @@ defmodule HerdrIntegration.RemoteClientTest do
     Driver.type(remote, "one")
     assert has?(remote, "one")
 
+    # terminate + restart, not a kill: a kill spends HerdrServer.Supervisor's restart budget
+    # (3 in 5 s), which the umbrella VM shares with herdr_server's own kill tests just before
     old = Process.whereis(Store)
-    ref = Process.monitor(old)
-    Process.exit(old, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^old, _}, @wait
-    assert eventually(fn -> (pid = Process.whereis(Store)) && pid != old end)
+    :ok = Supervisor.terminate_child(HerdrServer.Supervisor, Store)
+    {:ok, _} = Supervisor.restart_child(HerdrServer.Supervisor, Store)
+    assert Process.whereis(Store) not in [nil, old]
 
     Driver.type(remote, "two")
     assert has?(remote, "two")
