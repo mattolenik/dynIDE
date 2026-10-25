@@ -4,7 +4,8 @@
 Usage: fidelity.py [-v] [CHECK ...]
 
 Launches bin/herdr-live like scripts/tty_harness.py's `herdr` mode (imported by path:
-its Herdr launch, Screen and probe answers) with SSH_TTY=1 (clipboard writes go to the
+its Herdr launch with an isolated log, API socket, HERDR_LIVE_RUNTIME_DIR and
+HERDR_LIVE_STATE_DIR, its Screen and probe answers) with SSH_TTY=1 (clipboard writes go to the
 host as OSC 52, never to this machine's clipboard). The host also answers the client's
 colour queries: OSC 10 fg rgb:dddd/eeee/ffff, OSC 11 bg rgb:1111/2222/3333, OSC 4 palette,
 `CSI ? 996 n` (dark) and the `CSI 5 n` sentinel. Each check runs in a new tab (prefix c)
