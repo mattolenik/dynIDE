@@ -49,11 +49,13 @@ defmodule HerdrServer.App.Modal.Goto do
   def key(m, {:key, %{key: k, mods: []}}, app) when k in [:up, :down] do
     n = length(rows(app, m.field.text))
     d = if k == :up, do: -1, else: 1
-    {:keep, %{m | selected: if(n == 0, do: 0, else: Integer.mod(m.selected + d, n))}}
+    {:keep, %{m | selected: if(n == 0, do: 0, else: Integer.mod(clamp(m, n) + d, n))}}
   end
 
   def key(m, {:key, %{key: :enter, mods: []}}, app) do
-    case Enum.at(rows(app, m.field.text), m.selected) do
+    found = rows(app, m.field.text)
+
+    case Enum.at(found, clamp(m, length(found))) do
       nil -> {:keep, m}
       {id, _} -> go(app, id)
     end
@@ -75,6 +77,7 @@ defmodule HerdrServer.App.Modal.Goto do
     rect = V.panel(size, 72, 20)
     rows = max(V.inner_rows(rect) - 4, 0)
     found = rows(app, m.field.text)
+    sel = clamp(m, length(found))
 
     items =
       case found do
@@ -85,17 +88,20 @@ defmodule HerdrServer.App.Modal.Goto do
           found
           |> Enum.with_index()
           |> Enum.map(fn {{id, text}, i} ->
-            V.choice({:pane, id}, text, i == m.selected, id == app.focus.pane)
+            V.choice({:pane, id}, text, i == sel, id == app.focus.pane)
           end)
       end
 
     V.modal(:goto, rect, :default, [
       V.title("go to"),
       V.input(m.field, rect.w),
-      V.list(items, rows, V.window(m.selected, length(items), rows)),
+      V.list(items, rows, V.window(sel, length(items), rows)),
       V.text(:hint, @hint, :muted)
     ])
   end
+
+  # panes may close while the modal is open: the selection stays on the last row
+  defp clamp(m, n), do: min(m.selected, max(n - 1, 0))
 
   defp go(app, id) do
     {app, effects} = Workspaces.focus_pane(app, id)

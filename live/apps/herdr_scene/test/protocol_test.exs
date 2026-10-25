@@ -84,6 +84,7 @@ defmodule HerdrScene.ProtocolTest do
           {:input_mode, :prefix},
           {:input_mode, :resize},
           {:input_mode, :copy},
+          {:input_mode, :navigate},
           {:clipboard, %{text: "x", source: :selection}},
           {:clipboard, %{text: "x", source: :pane}},
           {:bell, 1},

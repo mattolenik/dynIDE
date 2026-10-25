@@ -68,4 +68,24 @@ defmodule HerdrServer.App.Modal.GotoTest do
     assert closed.focus.modal == [] and closed.focus.pane == 3
     assert closed.session.active_workspace == 2
   end
+
+  test "panes closing under the selection clamp it to the last row" do
+    app = pfx(two(), "g") |> press(:down) |> press(:down)
+    assert Modal.top(app).selected == 2
+    app = update_in(app.session.workspaces, &Enum.take(&1, 1))
+
+    assert [%{props: %{selected: false}}, %{id: {:pane, 2}, props: %{selected: true}}] = list(app)
+    assert Modal.top(press(app, :up)).selected == 0
+    assert (app |> press(:enter)).focus.pane == 2
+  end
+
+  test "Enter on a pane hidden by a zoom focuses it and clears the zoom" do
+    app = fresh() |> pfx("v") |> pfx("z")
+    ws = hd(app.session.workspaces)
+    assert Map.get(hd(ws.tabs), :zoom) == 2
+
+    app = app |> pfx("g") |> press(:enter)
+    assert app.focus.pane == 1
+    refute Map.has_key?(hd(hd(app.session.workspaces).tabs), :zoom)
+  end
 end
