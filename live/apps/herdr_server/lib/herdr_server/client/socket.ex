@@ -11,8 +11,8 @@ defmodule HerdrServer.Client.Socket do
   token in constant time, validates the attach (plain data, `Wire.validate_client_frame/1`,
   protocol version, session name per R16) and answers `{:refused, why}` plus a close on
   failure. A session target is served by a `Client.Remote` conn: the one registered under
-  `client_id` (a resume) or a new one under `Client.Remote.Supervisor`. Pane targets are
-  refused until pane mode exists.
+  `client_id` (a resume) or a new one under `Client.Remote.Supervisor`; so is a pane target
+  (R17), refused with `"no pane p<id>"` when the pane has no rows.
 
   Handoff (R11): adopted `client/` entries are claimed by
   `Client.Remote.Supervisor.adopt_all/0` at application start, not here: THAW restarts
@@ -28,8 +28,9 @@ defmodule HerdrServer.Client.Socket do
   require Logger
 
   alias HerdrScene.Wire
-  alias HerdrServer.Api.{Listener, SocketPath}
+  alias HerdrServer.Api.{Ids, Listener, SocketPath}
   alias HerdrServer.Client.Remote
+  alias HerdrServer.Pane.Rows
   alias HerdrServer.Persist.{Disk, Schema}
 
   @handshake_ms 5000
@@ -182,6 +183,7 @@ defmodule HerdrServer.Client.Socket do
              :ok <- auth(auth, ctx.token),
              {:ok, attach, buf} <- frame(s, buf, deadline),
              {:ok, info} <- attach(attach, ctx.session),
+             :ok <- target(info.target),
              false <- Remote.handoff?() do
           serve(s, info, buf)
         else
@@ -238,9 +240,6 @@ defmodule HerdrServer.Client.Socket do
         info.session not in [nil, session] ->
           {:refused, "no session #{info.session} here (this server runs #{session})"}
 
-        info.target != :session ->
-          {:refused, "pane targets are not supported by this server"}
-
         true ->
           {:ok, info}
       end
@@ -249,6 +248,11 @@ defmodule HerdrServer.Client.Socket do
       _ -> {:refused, "expected attach"}
     end
   end
+
+  defp target(:session), do: :ok
+
+  defp target({:pane, id, _mode}),
+    do: if(Rows.gen(id), do: :ok, else: {:refused, "no pane #{Ids.pane(id)}"})
 
   defp valid(:ok), do: :ok
   defp valid({:error, why}), do: {:refused, why}

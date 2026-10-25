@@ -58,12 +58,6 @@ defmodule HerdrServer.Client.SocketTest do
     assert closed?(s)
   end
 
-  test "pane targets are refused (not yet supported)", ctx do
-    s = attach(ctx, target: {:pane, 1, :observe})
-    assert {:refused, _} = recv_frame(s)
-    assert closed?(s)
-  end
-
   test "invalid frame gets a notice and the connection stays", ctx do
     s = attached!(attach(ctx))
     :ok = send_frame(s, {:input, 1, {:bogus}})

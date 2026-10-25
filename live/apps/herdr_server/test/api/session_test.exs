@@ -3,7 +3,7 @@ defmodule HerdrServer.Api.SessionTest do
   @moduletag :capture_log
 
   import HerdrServer.Test.WireClient,
-    only: [setup_listener: 0, attach: 2, recv_frame: 1, send_frame: 2]
+    only: [setup_listener: 0, attach: 2, recv_frame: 1, recv_until: 2, send_frame: 2]
 
   alias HerdrServer.Api.{Listener, Spec}
   alias HerdrServer.Test.ApiClient
@@ -72,6 +72,20 @@ defmodule HerdrServer.Api.SessionTest do
                client(s, "abcdefgh")
 
       assert ok!(s, "session.get")["session"]["clients"] >= 1
+    end
+
+    test "a pane conn shows its target and is not a session client", %{s: s} = ctx do
+      c = attach(ctx, client_id: "sessionclient")
+      assert {:attached, _} = recv_frame(c)
+      # pane 1 exists once the session client has a scene
+      recv_until(c, &match?({:scene, _}, &1))
+      assert ok!(s, "session.get")["session"]["clients"] == 1
+
+      p = attach(ctx, client_id: "paneclient1", target: {:pane, 1, :observe})
+      assert {:attached, _} = recv_frame(p)
+
+      assert wait(fn -> client(s, "paneclie") end, &(&1["target"] == "pane:p1:observe"))
+      assert ok!(s, "session.get")["session"]["clients"] == 1
     end
   end
 
