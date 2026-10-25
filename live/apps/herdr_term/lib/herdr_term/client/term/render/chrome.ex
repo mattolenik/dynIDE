@@ -8,6 +8,8 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
     * `top`: modal, menu and toast regions, spliced over the assembled rows in tree
       order (later wins).
     * `hits`: `%{rect, path, role, drag}`, topmost first (top layer, later nodes first,
+      then each popup pane's outer box as a `:pane` hit (`[{:pane, id}]`, topmost first:
+      `Hit` passes events over it through, so the base hits under a popup never fire),
       then base; within a region its children before the region itself). Pane dividers
       are hits with `drag: true` and draw no cells (pane borders draw them).
     * `dim`: the top-of-stack `:modal` has `props.dim`.
@@ -46,10 +48,23 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
   @spec empty() :: t
   def empty, do: %{base: %{}, top: %{}, hits: [], dim: false}
 
-  @spec layout(Node.t() | nil, %{cols: non_neg_integer, rows: non_neg_integer}, Theme.t()) :: t
-  def layout(nil, _size, _theme), do: empty()
+  @doc "The `layer: :popup` panes' outer boxes (`%{id, rect}`), scene order."
+  @spec popups([HerdrScene.Scene.Pane.t()]) :: [%{id: pos_integer, rect: Scene.rect()}]
+  def popups(panes) do
+    for %{layer: :popup} = p <- panes,
+        do: %{id: p.id, rect: if(p.border, do: p.border.rect, else: p.rect)}
+  end
 
-  def layout(%Node{children: children, props: props}, size, theme) do
+  @spec layout(
+          Node.t() | nil,
+          %{cols: non_neg_integer, rows: non_neg_integer},
+          Theme.t(),
+          [%{id: pos_integer, rect: Scene.rect()}]
+        ) :: t
+  def layout(chrome, size, theme, popups \\ [])
+  def layout(nil, _size, _theme, _popups), do: empty()
+
+  def layout(%Node{children: children, props: props}, size, theme, popups) do
     ind = Map.get(props, :indicators, :dots)
 
     {base, top} =
@@ -61,11 +76,12 @@ defmodule HerdrTerm.Client.Term.Render.Chrome do
     {top_rows, top_hits} = layer(top, theme, ind, size)
     base_hits = Enum.map(base_hits, &tag(&1, :base))
     top_hits = Enum.map(top_hits, &tag(&1, :top))
+    popup_hits = for %{id: id, rect: r} <- Enum.reverse(popups), do: hit(r, [{:pane, id}], :pane)
 
     %{
       base: base_rows,
       top: top_rows,
-      hits: Enum.concat(Enum.reverse(top_hits) ++ base_hits),
+      hits: Enum.concat(Enum.reverse(top_hits) ++ [clip_hits(popup_hits, size)] ++ base_hits),
       dim: dim?(top)
     }
   end

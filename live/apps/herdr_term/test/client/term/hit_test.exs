@@ -33,6 +33,16 @@ defmodule HerdrTerm.Client.Term.HitTest do
     assert {[{:chrome, [:tabs], {:click, %{x: 30, y: 0}}}], _} = route(m(:press, :left, 30, 0))
   end
 
+  test "a popup pane's box hides the hits under it and passes events through" do
+    pop = %{rect: %{x: 35, y: 3, w: 10, h: 5}, path: [{:pane, 9}], role: :pane, drag: false}
+    hits = [@tab, pop, @div, @tabs]
+    press = m(:press, :left, 40, 5)
+    assert route(press, nil, 1000, hits) == {[press], :pass}
+    assert Hit.hover(hits, 40, 5) == nil
+    # outside the box the divider still grabs
+    assert {[], %{held: true}} = route(m(:press, :left, 40, 10), nil, 1000, hits)
+  end
+
   test "right and middle press" do
     assert {[{:chrome, [:tabs, {:tab, 1}], {:right_click, %{x: 12, y: 0}}}], _} =
              route(m(:press, :right, 12, 0))

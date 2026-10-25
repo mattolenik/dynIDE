@@ -12,8 +12,8 @@ defmodule HerdrTerm.Client.Term.Render do
   composing, so a burst of damage costs one fetch per frame and a keystroke one fetch.
   The host cursor is the focused pane's cached cursor placed in its rect.
 
-  Chrome: the layout (`Render.Chrome.layout/3`, guarded) is cached and recomputed only
-  when the scene's chrome or size or the theme changed; a failing layout keeps the old
+  Chrome: the layout (`Render.Chrome.layout/4`, guarded) is cached and recomputed only
+  when the scene's chrome, size, popup pane boxes or the theme changed; a failing layout keeps the old
   one and is re-attempted every 500ms until it succeeds (then a full repaint). When its hits change they go to Input as `{:chrome_hits, hits}`.
 
   Rows (inline): the rows listed in a scene's `{:inline, rows}` replace those rows of the
@@ -530,7 +530,7 @@ defmodule HerdrTerm.Client.Term.Render do
   defp chrome(%{scene: nil} = state), do: state
 
   defp chrome(%{scene: scene, theme: theme} = state) do
-    key = {scene.chrome, scene.size, theme}
+    key = {scene.chrome, scene.size, theme, popups(scene.panes)}
 
     cond do
       key == state.chrome_key -> %{state | chrome_key: key}
@@ -539,10 +539,16 @@ defmodule HerdrTerm.Client.Term.Render do
     end
   end
 
+  # `Chrome.popups/1`, here so the per-scene key needs no guarded call
+  defp popups(panes) do
+    for %{layer: :popup} = p <- panes,
+        do: %{id: p.id, rect: if(p.border, do: p.border.rect, else: p.rect)}
+  end
+
   # A failing layout (logged by the Guard) keeps the old layout and key; it is
   # re-attempted by `:chrome_retry` after @retry_frame_ms (one failure log each).
-  defp relayout(state, {chrome, size, theme} = key) do
-    case Guard.run_twice(Chrome, :layout, [chrome, size, theme], @compose) do
+  defp relayout(state, {chrome, size, theme, popups} = key) do
+    case Guard.run_twice(Chrome, :layout, [chrome, size, theme, popups], @compose) do
       {:ok, layout} ->
         if layout.hits != state.chrome.hits, do: send_input(state, {:chrome_hits, layout.hits})
         %{state | chrome: layout, chrome_key: key}

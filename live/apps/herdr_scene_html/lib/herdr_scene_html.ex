@@ -7,7 +7,8 @@ defmodule HerdrSceneHtml do
   Cell rects become absolutely positioned boxes in `ch` (columns) and `em`
   (rows). Every chrome node is an element with `data-role`, `data-id` and
   `class="tok-<token>"`. Panes are grey boxes labelled with their id; inline
-  rows are decoded to plain text. Widgets are native HTML.
+  rows are decoded to plain text. Widgets are native HTML. `layer: :popup` panes come
+  after the chrome, over the base panes and under modals, menus and toasts.
   """
 
   alias HerdrScene.{Cell, Scene}
@@ -28,13 +29,15 @@ defmodule HerdrSceneHtml do
   def render(%Scene{} = scene, opts \\ []) do
     theme = Keyword.get(opts, :theme, :dark)
     %{cols: cols, rows: rows} = scene.size
+    {popups, base} = Enum.split_with(scene.panes, &(Map.get(&1, :layer) == :popup))
 
     [
       "<!doctype html><html><head><meta charset=\"utf-8\"><title>scene</title><style>",
       css(theme),
       "</style></head><body><div class=\"scene\" style=\"width:#{cols}ch;height:#{em(rows)}\">",
-      Enum.map(scene.panes, &pane(&1, scene.focus)),
+      Enum.map(base, &pane(&1, scene.focus)),
       chrome_node(scene.chrome, {0, 0}),
+      Enum.map(popups, &pane(&1, scene.focus)),
       "</div></body></html>"
     ]
   end
@@ -48,6 +51,8 @@ defmodule HerdrSceneHtml do
       ".scene>*,[data-rect]{position:absolute;box-sizing:border-box}",
       ".pane{background:#666;color:#eee;overflow:hidden;white-space:pre}",
       ".pane.focused{outline:2px solid var(--focus)}",
+      ".pane.popup{z-index:1;background:var(--surface);outline:2px solid var(--accent)}",
+      "[data-role=modal],[data-role=menu],[data-role=toast]{z-index:2}",
       "[data-role]{display:flex;flex-wrap:wrap;gap:0 1ch;align-items:center}",
       "[data-role=list],[data-role=section],[data-role=sidebar],[data-role=modal],",
       "[data-role=menu],[data-role=item],[data-role=toast]{flex-direction:column;align-items:stretch}",
@@ -69,11 +74,21 @@ defmodule HerdrSceneHtml do
 
   # panes
 
-  defp pane(%Pane{id: id, rect: rect, rows: rows}, focus) do
+  # a popup pane is its outer box (border title as the label), drawn after the chrome
+  # and under the top roles (z-index)
+  defp pane(%Pane{id: id, rect: rect, rows: rows} = p, focus) do
+    popup? = Map.get(p, :layer) == :popup
     cls = if Map.get(focus, :pane) == id, do: "pane focused", else: "pane"
+    cls = if popup?, do: cls <> " popup", else: cls
+
+    {rect, label} =
+      case p.border do
+        %{rect: outer, title: t} when popup? -> {outer, t || "pane #{id}"}
+        _ -> {rect, "pane #{id}"}
+      end
 
     [
-      "<div class=\"#{cls}\" data-pane=\"#{esc(id)}\" style=\"#{box(rect)}\"><b>pane #{id}</b>\n",
+      "<div class=\"#{cls}\" data-pane=\"#{esc(id)}\" style=\"#{box(rect)}\"><b>#{esc(label)}</b>\n",
       esc(inline_text(rows)),
       "</div>"
     ]

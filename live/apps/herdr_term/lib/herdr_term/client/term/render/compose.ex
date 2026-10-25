@@ -5,12 +5,15 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
   pieces (borders, `Cells.fit` slices of pane rows, the chrome layout's base
   segments) and joined once (plain pieces as sub-binaries, else
   `Cells.concat/1`); pane content is never touched per cell except where an
-  overlay applies. The chrome layout (`Render.Chrome.layout/3`) is passed in
+  overlay applies. The chrome layout (`Render.Chrome.layout/4`) is passed in
   precomputed; the forms without it compute it.
 
   Pieces on a row are expected to be disjoint (borders win over the content
-  they overlap; otherwise the leftmost piece wins). Top-layer segments are
-  then spliced over the row; with `dim`, every cell outside them gets `:faint`.
+  they overlap; otherwise the leftmost piece wins). Then, in order: with `dim` every
+  cell gets `:faint`; each `layer: :popup` pane (scene order, later on top) is spliced
+  over its outer box (border, content, blank fill), never dimmed; top-layer chrome
+  segments are spliced last. Kitty placements are not drawn on this branch; their
+  renderer must clip `:base` panes' placements out of `Chrome.popups/1` rects.
   """
 
   alias HerdrScene.Cell
@@ -45,15 +48,20 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
 
   @spec frame(Scene.t(), rows_by_pane, Theme.t(), Chrome.t()) :: [{non_neg_integer, binary}]
   def frame(%Scene{size: %{cols: cols, rows: rows}} = scene, rows_by_pane, theme, chrome) do
-    {panes, _cache} =
-      Enum.map_reduce(scene.panes, %{}, &prep_pane(&1, &2, scene, rows_by_pane, theme))
+    {popups, base} = Enum.split_with(scene.panes, &(Map.get(&1, :layer) == :popup))
+    prep = &prep_pane(&1, &2, scene, rows_by_pane, theme)
+    {panes, cache} = Enum.map_reduce(base, %{}, prep)
+    {pops, _cache} = Enum.map_reduce(popups, cache, prep)
 
     panes
     |> segs_by_row(chrome.base, rows)
-    |> Enum.with_index(fn segs, y -> {y, segs |> assemble(cols) |> top(chrome, y, cols)} end)
+    |> Enum.with_index(fn segs, y ->
+      {y, segs |> assemble(cols) |> top(chrome, pops, y, cols)}
+    end)
   end
 
-  defp layout(scene, theme), do: Chrome.layout(scene.chrome, scene.size, theme)
+  defp layout(scene, theme),
+    do: Chrome.layout(scene.chrome, scene.size, theme, Chrome.popups(scene.panes))
 
   # per screen row, its segments in pane order then chrome; a pane is visited only
   # for the rows its rect or border spans
@@ -66,17 +74,33 @@ defmodule HerdrTerm.Client.Term.Render.Compose do
     end
   end
 
-  # top layer: dim the assembled row (bit-patched, no decode; only while a dimming modal
-  # is open), then splice each top segment over it, later segments win
-  defp top(row, %{dim: false, top: top}, _y, _cols) when map_size(top) == 0, do: row
+  # over the assembled row: dim it (bit-patched, no decode; only while a dimming modal
+  # is open), then splice each popup's piece and each top segment over it, later wins
+  defp top(row, %{dim: false, top: top}, [], _y, _cols) when map_size(top) == 0, do: row
 
-  defp top(row, %{dim: dim, top: top}, y, cols) do
+  defp top(row, %{dim: dim, top: top}, pops, y, cols) do
     row = if dim, do: Cells.faint(row), else: row
+    pieces = Enum.flat_map(pops, &popup_piece(&1, y)) ++ Map.get(top, y, [])
 
-    Enum.reduce(Map.get(top, y, []), row, fn {x, w, piece}, row ->
+    Enum.reduce(pieces, row, fn {x, w, piece}, row ->
       Cell.concat([Cells.fit(row, 0, x), piece, Cells.fit(row, x + w, cols - x - w)])
     end)
   end
+
+  # a popup's row across its whole outer box: its own pieces, gaps blank
+  defp popup_piece(p, y) do
+    {x0, y0, w, h} = extent(p)
+
+    if y < y0 or y >= y0 + h or w == 0 do
+      []
+    else
+      segs = for {sx, sw, bin} <- pane_segs(p, y), do: {sx - x0, sw, bin}
+      [{x0, w, assemble(segs, w)}]
+    end
+  end
+
+  defp extent(%{border: nil} = p), do: {p.cx, p.cy, p.cw, p.ch}
+  defp extent(%{border: b}), do: {b.ox, b.oy, b.ow, b.oh}
 
   defp span(%{cy: cy, ch: ch, border: nil}), do: {cy, cy + ch}
   defp span(%{cy: cy, ch: ch, border: b}), do: {min(cy, b.oy), max(cy + ch, b.oy + b.oh)}

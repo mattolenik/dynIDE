@@ -29,6 +29,8 @@ defmodule HerdrTerm.Client.Term.Hit do
       every pane the server only uses it to clear a link hover); other events over a hit
       are swallowed.
     * Other events over no hit pass through unchanged.
+    * A `:pane` hit (a popup pane's box, `Render.Chrome`) counts as no hit: it only
+      hides the hits under it.
   """
 
   @double_ms 350
@@ -61,7 +63,7 @@ defmodule HerdrTerm.Client.Term.Hit do
   @doc "The path of the topmost hit under `{x, y}` when its role is hoverable, else nil."
   @spec hover([map], integer, integer) :: [term] | nil
   def hover(hits, x, y) do
-    case Enum.find(hits, &inside?(&1.rect, x, y)) do
+    case at(hits, x, y) do
       %{role: role, path: path} when role in [:item, :tab] -> path
       _ -> nil
     end
@@ -86,7 +88,7 @@ defmodule HerdrTerm.Client.Term.Hit do
   defp held(%{down: true} = g, %{kind: :release}, _ev, _hits, _now), do: {[], %{g | down: false}}
 
   defp held(grab, m, ev, hits, now) do
-    case Enum.find(hits, &inside?(&1.rect, m.x, m.y)) do
+    case at(hits, m.x, m.y) do
       nil when m.kind == :press and m.button == :left -> {[ev], :pass}
       nil -> {[ev], grab}
       _hit when m.kind == :move -> {[ev], grab}
@@ -134,13 +136,21 @@ defmodule HerdrTerm.Client.Term.Hit do
 
   # only a reorder drag names the hit under the pointer
   defp over(%{reorder: true}, hits, m) do
-    case Enum.find(hits, &inside?(&1.rect, m.x, m.y)) do
+    case at(hits, m.x, m.y) do
       %{path: p} -> p
       nil -> nil
     end
   end
 
   defp over(_grab, _hits, _m), do: :none
+
+  # the topmost hit under the point; a popup pane's box hides the ones under it
+  defp at(hits, x, y) do
+    case Enum.find(hits, &inside?(&1.rect, x, y)) do
+      %{role: :pane} -> nil
+      hit -> hit
+    end
+  end
 
   defp inside?(r, x, y), do: x >= r.x and x < r.x + r.w and y >= r.y and y < r.y + r.h
 end

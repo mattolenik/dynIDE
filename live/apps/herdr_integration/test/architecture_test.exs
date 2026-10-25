@@ -240,14 +240,6 @@ defmodule HerdrIntegration.ArchitectureTest do
         {"pane scene #{n}", {:scene, PaneScene.build(1, {0, {row, row}, c}, size)}}
       end ++ [{"pane scene empty", {:scene, PaneScene.build(1, nil, size)}}]
 
-    # every pane layer (the popup scene itself lands with App.Modal.Popup)
-    base = View.compute(app, state.(:terminal, []))
-
-    layers =
-      for l <- ScenePane.layers() do
-        {"pane layer #{l}", {:scene, %{base | panes: Enum.map(base.panes, &%{&1 | layer: l})}}}
-      end
-
     handoffs =
       for phase <- handoff_phases() do
         {"handoff #{phase}", {:handoff, %{phase: phase, gen: 2, panes: [1, 2]}}}
@@ -259,7 +251,7 @@ defmodule HerdrIntegration.ArchitectureTest do
       statuses ++
       graphics(split, state.(:terminal, [])) ++
       modal_scenes(split, state.(:terminal, [])) ++
-      pane_scenes ++ layers ++ handoffs ++ simple_messages(row)
+      pane_scenes ++ handoffs ++ simple_messages(row)
   end
 
   # a pane with a kitty placement, its image and a withheld one (decision 8)
@@ -313,10 +305,16 @@ defmodule HerdrIntegration.ArchitectureTest do
       menu_workspace: &elem(Modal.Menu.open(&1, :workspace, ws, at), 0),
       menu_pane: &elem(Modal.Menu.open(&1, :pane, &1.focus.pane, at), 0),
       menu_global: &elem(Modal.Menu.open(&1, :global, nil, at), 0),
-      goto: &elem(Modal.Goto.open(&1), 0)
+      goto: &elem(Modal.Goto.open(&1), 0),
+      popup: &elem(Modal.Popup.open(&1, 99, %{title: "p"}), 1)
     ]
 
-    for {n, open} <- opens, do: {"scene modal #{n}", {:scene, View.compute(open.(app), st)}}
+    scenes =
+      for {n, open} <- opens, do: {"scene modal #{n}", {:scene, View.compute(open.(app), st)}}
+
+    {_, {:scene, popup}} = List.last(scenes)
+    true = Enum.map(popup.panes, & &1.layer) |> Enum.uniq() |> Enum.sort() == Pane.layers()
+    scenes
   end
 
   defp settings(app, tabs) do
