@@ -168,7 +168,7 @@ defmodule DynideServer.Api.Handlers.Topology do
              {Commands, :split_pane, [id, dir, ratio, Map.get(p, :focus, false), spawn]}
            ) do
       case Map.keys(aft.session.panes) -- Map.keys(before.session.panes) do
-        [new | _] -> pane_reply("pane_split", aft, new)
+        [new | _] -> split_reply(aft, new, p[:right_click])
         [] -> unchanged(notes)
       end
     end
@@ -223,6 +223,16 @@ defmodule DynideServer.Api.Handlers.Topology do
     with {:ok, _before, aft, _notes} <-
            run_on_pane(id, {Commands, :rename_pane, [id, p[:label]]}),
          do: pane_reply("pane_info", aft, id)
+  end
+
+  # herdr's `right_click`: `pane` sends plain right-clicks to a mouse-tracking program,
+  # `herdr` opens the pane menu
+  def handle("pane.input.set", %{pane_id: id, right_click: rc}) do
+    target = if rc == "pane", do: :pane, else: :menu
+
+    with {:ok, _before, _aft, _notes} <-
+           run_on_pane(id, {Commands, :set_right_click, [id, target]}),
+         do: {:ok, %{type: "ok"}}
   end
 
   def handle("pane.zoom", p) do
@@ -303,6 +313,15 @@ defmodule DynideServer.Api.Handlers.Topology do
       _ -> not_found(Ids.pane(id))
     end
   end
+
+  # herdr's `right_click: pane` on the new pane, as `pane.input.set` would
+  defp split_reply(_aft, id, "pane") do
+    with {:ok, _before, aft, _notes} <-
+           run_on_pane(id, {Commands, :set_right_click, [id, :pane]}),
+         do: pane_reply("pane_split", aft, id)
+  end
+
+  defp split_reply(aft, id, _right_click), do: pane_reply("pane_split", aft, id)
 
   # --- workspace and tab helpers ---
 

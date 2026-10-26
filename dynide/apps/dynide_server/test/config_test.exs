@@ -235,6 +235,23 @@ defmodule DynideServer.ConfigTest do
     assert ui.sidebar.collapsed
   end
 
+  test "right_click_passthrough_modifier: herdr's names and + lists, off is none, shift is invalid",
+       %{tmp_dir: dir} do
+    mod = fn v ->
+      {_kb, ui, diags} =
+        apply_cfg(load(dir, ~s([ui]\nright_click_passthrough_modifier = "#{v}"\n)))
+
+      {Map.get(ui, :right_click_passthrough_modifier), diags}
+    end
+
+    assert mod.("ctrl") == {[:ctrl], []}
+    assert mod.("Option + cmd") == {[:alt, :super], []}
+    assert mod.("off") == {nil, []}
+    assert mod.("") == {nil, []}
+    assert {nil, [_]} = mod.("shift")
+    assert {nil, [_]} = mod.("ctrl+bogus")
+  end
+
   test "sound paths: ~ expands, a non-mp3 warns, a reload without them drops them",
        %{tmp_dir: dir} do
     wav = Path.join(dir, "a.wav")

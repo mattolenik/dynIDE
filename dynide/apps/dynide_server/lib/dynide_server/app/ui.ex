@@ -39,6 +39,8 @@ defmodule DynideServer.App.Ui do
     prompt_new_tab_name: true,
     pane_borders: :auto,
     window_title: "{hostname}: {workspace}",
+    # config: right-clicks with exactly these mods go to a mouse-tracking program
+    right_click_passthrough_modifier: nil,
     custom_commands: [],
     worktrees_dir: nil,
     # config `[session]`: read by a disk restore (`Persist.RestorePlan.resumes/2`)
@@ -74,6 +76,7 @@ defmodule DynideServer.App.Ui do
           prompt_new_tab_name: boolean(),
           pane_borders: :auto | :always | :off,
           window_title: binary(),
+          right_click_passthrough_modifier: [atom()] | nil,
           custom_commands: [DynideServer.App.CustomCommands.entry()],
           session: %{resume_agents_on_restore: boolean(), startup_per_agent_delay_ms: 0..60_000}
         }

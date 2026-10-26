@@ -37,7 +37,7 @@ defmodule DynideServer.Api.Router do
 
   def handle(method, params, _ctx)
       when method in ~w(pane.list pane.get pane.current pane.split pane.close pane.focus
-                        pane.zoom pane.layout pane.process_info pane.rename
+                        pane.zoom pane.layout pane.process_info pane.rename pane.input.set
                         pane.focus_direction pane.swap pane.resize pane.neighbor pane.move
                         pane.report_metadata pane.report_agent_session),
       do: Handlers.Topology.handle(method, params)

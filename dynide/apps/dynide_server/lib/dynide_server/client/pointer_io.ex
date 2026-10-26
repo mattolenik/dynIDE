@@ -11,6 +11,7 @@ defmodule DynideServer.Client.PointerIo do
   """
 
   alias DynideServer.App.{Actions, Store}
+  alias DynideServer.App.Modal.Menu
   alias DynideServer.Client.{Links, Pointer}
   alias DynideServer.Kernel
   alias DynideServer.Pane.{Facts, Input, Rows, Server}
@@ -39,14 +40,20 @@ defmodule DynideServer.Client.PointerIo do
 
     panes = boxes ++ for(pane <- base, do: %{id: pane.id, rect: pane.rect})
     ids = Enum.filter(Enum.uniq([hit(panes, ev) | active(p)]), &is_integer/1)
+    {targets, modifier} = right_click(ev)
 
     %{
       panes: panes,
       focused: scene && scene.focus.pane,
-      info: ids |> Enum.map(&{&1, info(&1)}) |> Enum.reject(&(elem(&1, 1) == nil)) |> Map.new(),
+      info:
+        ids
+        |> Enum.map(&{&1, info(&1)})
+        |> Enum.reject(&(elem(&1, 1) == nil))
+        |> Map.new(fn {id, info} -> {id, Map.put(info, :right_click, targets[id])} end),
       now_ms: System.monotonic_time(:millisecond),
       scroll_lines: 3,
-      copy_on_select: true
+      copy_on_select: true,
+      right_click_modifier: modifier
     }
   end
 
@@ -57,6 +64,22 @@ defmodule DynideServer.Client.PointerIo do
   end
 
   defp hit(_panes, _ev), do: nil
+
+  # `{pane_id => :pane, modifier}`: the panes whose plain right-clicks go to the program
+  # (`Menu.right_click/3`) and the config's `right_click_passthrough_modifier`; a Store
+  # read, so only for a right press
+  defp right_click({:mouse, %{kind: :press, button: :right}}) do
+    case Store.snapshot() do
+      %{session: %{panes: panes}, ui: ui} ->
+        {for({id, %{right_click: :pane}} <- panes, into: %{}, do: {id, :pane}),
+         Map.get(ui, :right_click_passthrough_modifier)}
+
+      _ ->
+        {%{}, nil}
+    end
+  end
+
+  defp right_click(_ev), do: {%{}, nil}
 
   defp box(%{border: %{rect: r}}), do: r
   defp box(%{rect: r}), do: r
@@ -185,6 +208,7 @@ defmodule DynideServer.Client.PointerIo do
 
   defp act({:forward, ev}, _p, io), do: Store.event(ev, io.size)
   defp act({:focus, id}, _p, io), do: Store.run({Actions, :focus_pane, [id]}, io.size)
+  defp act({:menu, id, at}, _p, io), do: Store.run({Menu, :open, [:pane, id, at]}, io.size)
   defp act({:scroll, id, delta}, _p, _io), do: Server.scroll(id, {:delta, delta})
   defp act({:scroll_top, id, row}, _p, _io), do: Server.scroll(id, {:top, row})
   defp act({:scroll_bottom, id}, _p, _io), do: Server.scroll(id, :bottom)

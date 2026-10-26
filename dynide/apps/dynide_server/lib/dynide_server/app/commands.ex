@@ -172,6 +172,10 @@ defmodule DynideServer.App.Commands do
   def rename_pane(app, pane, label) when label in [nil, ""], do: Menu.clear_name(app, pane)
   def rename_pane(app, pane, label), do: Workspaces.rename_pane(app, pane, label)
 
+  @doc "Where `pane`'s plain right-clicks go (`pane.input.set`, `Menu.right_click/3`)."
+  @spec set_right_click(app(), integer(), :pane | :menu) :: result()
+  defdelegate set_right_click(app, pane, target), to: Menu, as: :right_click
+
   @spec focus_pane(app(), integer()) :: result()
   defdelegate focus_pane(app, pane), to: Workspaces
 

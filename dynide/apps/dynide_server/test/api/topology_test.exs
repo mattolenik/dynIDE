@@ -188,6 +188,31 @@ defmodule DynideServer.Api.TopologyTest do
     assert zoom.() == nil
   end
 
+  test "pane.input.set and pane.split right_click set where plain right-clicks go", %{s: s} do
+    ok!(s, "workspace.list")
+    target = fn id -> Map.get(Store.snapshot().session.panes[id], :right_click) end
+
+    assert ok!(s, "pane.input.set", %{"pane_id" => "p1", "right_click" => "pane"}) == %{
+             "type" => "ok"
+           }
+
+    assert target.(1) == :pane
+    ok!(s, "pane.input.set", %{"pane_id" => "p1", "right_click" => "herdr"})
+    assert target.(1) == nil
+
+    assert %{"error" => %{"code" => "not_found"}} =
+             ApiClient.call(s, "pane.input.set", %{"pane_id" => "p99", "right_click" => "pane"})
+
+    assert %{"error" => %{"code" => "invalid_params"}} =
+             ApiClient.call(s, "pane.input.set", %{"pane_id" => "p1", "right_click" => "menu"})
+
+    r = ok!(s, "pane.split", %{"direction" => "right", "right_click" => "pane"})
+    assert r["pane"]["pane_id"] == "p2"
+    assert target.(2) == :pane
+    ok!(s, "pane.split", %{"direction" => "down"})
+    assert target.(3) == nil
+  end
+
   test "pane.split with cwd and env spawns there; HERDR_* stay authoritative", %{s: s, dir: dir} do
     ok!(s, "workspace.list")
 

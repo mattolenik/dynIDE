@@ -155,6 +155,19 @@ defmodule DynideCli.ArgvTest do
       assert {:usage, _} = p("pane zoom --on --off")
     end
 
+    test "input: optional pane (HERDR_PANE_ID), --right-click herdr|pane; split takes it too" do
+      assert p("pane input p2 --right-click pane") ==
+               {:call, "pane.input.set", %{"pane_id" => "p2", "right_click" => "pane"}, :json}
+
+      assert p("pane input --right-click herdr", %{"HERDR_PANE_ID" => "p4"}) ==
+               {:call, "pane.input.set", %{"pane_id" => "p4", "right_click" => "herdr"}, :json}
+
+      assert {:usage, _} = p("pane input p2 --right-click menu")
+
+      assert {:call, "pane.split", %{"right_click" => "pane"}, :json} =
+               p("pane split --direction right --right-click pane")
+    end
+
     test "close, focus, layout, process-info" do
       assert p("pane close p2") == {:call, "pane.close", %{"pane_id" => "p2"}, :json}
       assert p("pane focus p2") == {:call, "pane.focus", %{"pane_id" => "p2"}, :json}

@@ -95,6 +95,8 @@ defmodule DynideIntegration.CliConformanceTest do
     "pane move p1 --new-workspace --label w --tab-label t",
     "pane rename p1 logs",
     "pane rename p1",
+    "pane input p1 --right-click pane",
+    "pane split p1 --direction down --right-click pane",
     "pane link activate p1 --col 0 --row 2 --modifier ctrl",
     "plugin list --plugin a --json",
     "plugin install o/r --ref main --yes",

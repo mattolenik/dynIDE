@@ -14,6 +14,7 @@ status_indicators = "dots"   # "dots" | "symbols"
 prompt_new_tab_name = true
 # hide_tab_bar_when_single_tab = false
 # tab_bar_position = "top"   # "top" | "bottom"
+# right_click_passthrough_modifier = ""   # e.g. "ctrl": that + right-click goes to mouse apps
 
 [ui.sound]
 enabled = true

@@ -483,7 +483,7 @@ Errors: `invalid_params`, `not_found`
 
 Split a pane; the new pane is created beside it.
 
-CLI: `dynide pane split [<pane_id>] --direction right|down [--ratio R] [--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus]`
+CLI: `dynide pane split [<pane_id>] --direction right|down [--ratio R] [--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus] [--right-click herdr|pane]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -493,6 +493,7 @@ CLI: `dynide pane split [<pane_id>] --direction right|down [--ratio R] [--cwd PA
 | `cwd` | string | no | Absolute working directory of the new pane; must be an existing directory. |
 | `env` | object of strings | no | Extra environment; herdr's own variables win. |
 | `focus` | boolean | no | Focus the new pane. |
+| `right_click` | `herdr` or `pane` | no | Where the new pane's plain right-clicks go; default herdr. |
 
 Result: `pane_split` with `pane` (`pane` object).
 
@@ -649,6 +650,21 @@ CLI: `dynide pane rename <pane_id> [<label>]`
 | `label` | string | no | New name; absent or empty clears it. |
 
 Result: `pane_info` with `pane` (`pane` object).
+
+Errors: `invalid_params`, `not_found`
+
+### `pane.input.set`
+
+Route a pane's plain right-clicks: pane sends them to a mouse-tracking program, herdr opens the pane menu.
+
+CLI: `dynide pane input [<pane_id>] --right-click herdr|pane`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | yes | Target pane. |
+| `right_click` | `herdr` or `pane` | yes | Where plain right-clicks go. |
+
+Result: `ok` (no fields).
 
 Errors: `invalid_params`, `not_found`
 

@@ -172,6 +172,11 @@ Added by M17 (herdr's names and defaults unless noted):
   `{hostname}`, `{workspace}`, `{tab}`, `{pane}`, `{terminal_title}`; written as OSC 0,
   `dynide title set|clear` overrides it per client), `hide_tab_bar_when_single_tab`,
   `tab_bar_position` (`top`/`bottom`).
+- Right-click on a pane opens herdr's pane menu (rename, swap, split, zoom, close). Its
+  `Send right-clicks to pane` item (or `dynide pane input [<pane_id>] --right-click
+  pane|herdr`, `pane split --right-click pane`) gives plain right-clicks to a
+  mouse-tracking program instead; `[ui] right_click_passthrough_modifier` (e.g. `"ctrl"`)
+  does that for one modifier, stripped from the gesture. Neither is persisted.
 - `[ui.sound]`: with no `command` the built-in done/request sounds play (`afplay`;
   `paplay`/`pw-play` on Linux), else BEL; `done_path`/`request_path` replace them
   (relative to the config dir, `~` expanded; in-VM client only). `[ui.toast] delivery =

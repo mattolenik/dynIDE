@@ -48,7 +48,15 @@ defmodule DynideServer.App.Modal.MenuTest do
     assert labels(app) == ["Rename", "Close"]
 
     {app, []} = chrome(fresh(), [:sidebar, :agents, :list, {:pane, 1}], :right_click)
-    assert labels(app) == ["Rename pane", "Split right", "Split down", "Close pane"]
+
+    assert labels(app) == [
+             "Rename pane",
+             "Split right",
+             "Split down",
+             "Zoom",
+             "Send right-clicks to pane",
+             "Close pane"
+           ]
 
     {named, []} = Actions.rename_pane(pfx(fresh(), "v"), 1, "db")
     {app, []} = chrome(named, [:sidebar, :agents, :list, {:pane, 1}], :right_click)
@@ -59,6 +67,8 @@ defmodule DynideServer.App.Modal.MenuTest do
              "Swap with focused pane",
              "Split right",
              "Split down",
+             "Zoom",
+             "Send right-clicks to pane",
              "Close pane"
            ]
 
@@ -89,6 +99,27 @@ defmodule DynideServer.App.Modal.MenuTest do
     assert Layout.pane_ids(layout(swapped)) == [2, 1]
     {split, [{:spawn, 3, _}]} = chrome(app, [{:menu, 1}, {:entry, :split_down}], :click)
     assert Layout.pane_ids(layout(split)) == [1, 3, 2]
+  end
+
+  test "pane menu Zoom focuses and zooms the target pane, again unzooms" do
+    app = pfx(fresh(), "v")
+    {app, []} = chrome(app, [:sidebar, :agents, :list, {:pane, 1}], :right_click)
+    {zoomed, []} = chrome(app, [{:menu, 1}, {:entry, :zoom}], :click)
+    tab = &Enum.find(ws(&1).tabs, fn t -> t.id == ws(&1).active_tab end)
+    assert zoomed.focus.pane == 1 and tab.(zoomed).zoom == 1
+    {zoomed, []} = chrome(zoomed, [:sidebar, :agents, :list, {:pane, 1}], :right_click)
+    {unzoomed, []} = chrome(zoomed, [{:menu, Modal.top(zoomed).id}, {:entry, :zoom}], :click)
+    refute Map.has_key?(tab.(unzoomed), :zoom)
+  end
+
+  test "pane menu toggles where right-clicks go, and the label follows" do
+    {app, []} = chrome(fresh(), [:sidebar, :agents, :list, {:pane, 1}], :right_click)
+    {app, []} = chrome(app, [{:menu, Modal.top(app).id}, {:entry, :right_click}], :click)
+    assert app.session.panes[1].right_click == :pane
+    {app, []} = chrome(app, [:sidebar, :agents, :list, {:pane, 1}], :right_click)
+    assert "Use dynIDE right-click menu" in labels(app)
+    {app, []} = chrome(app, [{:menu, Modal.top(app).id}, {:entry, :right_click}], :click)
+    refute Map.has_key?(app.session.panes[1], :right_click)
   end
 
   test "global menu from the sidebar menu button lists the landed items" do

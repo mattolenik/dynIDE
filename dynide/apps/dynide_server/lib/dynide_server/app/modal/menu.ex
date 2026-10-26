@@ -12,7 +12,8 @@ defmodule DynideServer.App.Modal.Menu do
   Items (exact labels; items whose task has not landed are omitted): tab `New tab`,
   `Rename`, `Close`; workspace `Rename`, `Close`; pane `Rename pane`, `Clear pane name`
   (when named), `Swap with focused pane` (another pane of the same tab is focused),
-  `Split right`, `Split down`, `Close pane`; global `settings`, `keybinds`,
+  `Split right`, `Split down`, `Zoom`, `Send right-clicks to pane` (or `Use dynIDE
+  right-click menu` once set, `right_click/3`), `Close pane`; global `settings`, `keybinds`,
   `reload config`, `detach`.
 
   `open_worktree/1` (the `open_worktree` binding) asks git for the active workspace's
@@ -114,6 +115,15 @@ defmodule DynideServer.App.Modal.Menu do
           [
             {:split_right, "Split right", {__MODULE__, :split, [id, :horizontal]}},
             {:split_down, "Split down", {__MODULE__, :split, [id, :vertical]}},
+            {:zoom, "Zoom", {__MODULE__, :zoom, [id]}},
+            if(Map.get(meta, :right_click) == :pane,
+              do:
+                {:right_click, "Use dynIDE right-click menu",
+                 {__MODULE__, :right_click, [id, :menu]}},
+              else:
+                {:right_click, "Send right-clicks to pane",
+                 {__MODULE__, :right_click, [id, :pane]}}
+            ),
             {:close, "Close pane", {Confirm, :close_pane, [id]}}
           ]
 
@@ -137,6 +147,25 @@ defmodule DynideServer.App.Modal.Menu do
     case app.session.panes do
       %{^id => meta} -> {put_in(app.session.panes[id], Map.delete(meta, :name)), []}
       _ -> {app, []}
+    end
+  end
+
+  @doc """
+  Where plain right-clicks on pane `id` go (herdr's per-pane `right_click_passthrough`):
+  `:pane` sends them to a mouse-tracking program, `:menu` opens this menu. Session
+  metadata, not persisted (as in herdr).
+  """
+  @spec right_click(map, term, :pane | :menu) :: {map, [tuple]}
+  def right_click(app, id, target) do
+    case app.session.panes do
+      %{^id => meta} when target == :pane ->
+        {put_in(app.session.panes[id], Map.put(meta, :right_click, :pane)), []}
+
+      %{^id => meta} ->
+        {put_in(app.session.panes[id], Map.delete(meta, :right_click)), []}
+
+      _ ->
+        {app, []}
     end
   end
 
@@ -166,6 +195,13 @@ defmodule DynideServer.App.Modal.Menu do
   def split(app, id, dir) do
     {app, []} = Workspaces.focus_pane(app, id)
     Actions.split(app, dir)
+  end
+
+  @doc "Focuses pane `id` and toggles the zoom (herdr's pane menu `Zoom`)."
+  @spec zoom(map, term) :: {map, [tuple]}
+  def zoom(app, id) do
+    {app, []} = Workspaces.focus_pane(app, id)
+    Actions.toggle_zoom(app)
   end
 
   defp swappable?(app, id) do

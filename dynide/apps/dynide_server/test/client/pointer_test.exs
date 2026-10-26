@@ -403,4 +403,43 @@ defmodule DynideServer.Client.PointerTest do
       assert Pointer.prune(p, scene, moved) == p
     end
   end
+
+  test "a plain right press opens the pane menu and swallows its release; passthrough forwards" do
+    {p, actions} =
+      Pointer.resolve(%Pointer{}, m(:press, :right, 25, 2), ctx(p2: [tracking: true]))
+
+    assert actions == [{:menu, 2, %{x: 25, y: 2}}]
+    assert {%{swallow_up: nil}, []} = Pointer.resolve(p, m(:release, :right, 25, 2), ctx())
+
+    pass = ctx(p2: [tracking: true, right_click: :pane])
+    ev = m(:press, :right, 25, 2)
+
+    assert {%{swallow_up: nil}, [{:focus, 2}, {:forward, ^ev}]} =
+             Pointer.resolve(%Pointer{}, ev, pass)
+
+    # passthrough needs a mouse-tracking program
+    assert {_, [{:menu, 2, _}]} = Pointer.resolve(%Pointer{}, ev, ctx(p2: [right_click: :pane]))
+
+    # herdr: a modified right-click without the config's modifier still opens the menu
+    alt = m(:press, :right, 25, 2, [:alt])
+    assert {_, [{:menu, 2, _}]} = Pointer.resolve(%Pointer{}, alt, ctx(p2: [tracking: true]))
+  end
+
+  test "the configured passthrough modifier forwards the gesture to a tracking pane, stripped" do
+    c = Map.put(ctx(p2: [tracking: true]), :right_click_modifier, [:ctrl])
+    {p, actions} = Pointer.resolve(%Pointer{}, m(:press, :right, 25, 2, [:ctrl]), c)
+    assert actions == [{:focus, 2}, {:forward, m(:press, :right, 25, 2)}]
+
+    {p, [{:forward, drag}]} = Pointer.resolve(p, m(:drag, :right, 26, 2, [:ctrl, :shift]), c)
+    assert drag == m(:drag, :right, 26, 2, [:shift])
+    {p, [{:forward, up}]} = Pointer.resolve(p, m(:release, :right, 26, 2, [:ctrl]), c)
+    assert up == m(:release, :right, 26, 2) and p.strip == nil
+
+    # other mods, or a pane that does not track the mouse: the menu
+    assert {_, [{:menu, 2, _}]} = Pointer.resolve(%Pointer{}, m(:press, :right, 25, 2, [:alt]), c)
+    no_track = Map.put(ctx(), :right_click_modifier, [:ctrl])
+
+    assert {_, [{:menu, 2, _}]} =
+             Pointer.resolve(%Pointer{}, m(:press, :right, 25, 2, [:ctrl]), no_track)
+  end
 end

@@ -70,6 +70,10 @@ defmodule DynideServer.Api.Spec do
       req("insert_index", {:integer, 0, 65_535}, "Gap to insert at, 0-based; past the end fails.")
 
   defp focus(doc), do: opt("focus", :boolean, doc)
+
+  defp right_click(doc, required?),
+    do: %{name: "right_click", type: {:enum, ~w(herdr pane)}, required: required?, doc: doc}
+
   defp source, do: opt("source", {:enum, @sources}, "Text source; default `visible`.")
   defp lines, do: opt("lines", {:integer, 1, 10_000}, "Maximum number of lines.")
   defp target, do: req("target", :string, "Agent target (pane id or agent name).")
@@ -520,12 +524,13 @@ defmodule DynideServer.Api.Spec do
             "Absolute working directory of the new pane; must be an existing directory."
           ),
           opt("env", {:map, :string}, "Extra environment; herdr's own variables win."),
-          focus("Focus the new pane.")
+          focus("Focus the new pane."),
+          right_click("Where the new pane's plain right-clicks go; default herdr.", false)
         ],
         "pane_split",
         [:not_found, :failed],
         "dynide pane split [<pane_id>] --direction right|down [--ratio R] [--cwd PATH] " <>
-          "[--env KEY=VALUE]... [--focus|--no-focus]"
+          "[--env KEY=VALUE]... [--focus|--no-focus] [--right-click herdr|pane]"
       ),
       method(
         "pane.focus_direction",
@@ -660,6 +665,16 @@ defmodule DynideServer.Api.Spec do
         "pane_info",
         [:not_found],
         "dynide pane rename <pane_id> [<label>]"
+      ),
+      method(
+        "pane.input.set",
+        g,
+        "Route a pane's plain right-clicks: pane sends them to a mouse-tracking program, " <>
+          "herdr opens the pane menu.",
+        [pid, right_click("Where plain right-clicks go.", true)],
+        "ok",
+        [:not_found],
+        "dynide pane input [<pane_id>] --right-click herdr|pane"
       ),
       method(
         "pane.link.activate",

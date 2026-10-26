@@ -17,22 +17,26 @@ defmodule DynideServer.Client.Pointer do
       `%{pane, x, row, at, word: nil | {first, last, row}, moved: boolean}`
     * `last_click` - `%{pane, x, row, at}` of the last plain click (double-click)
     * `drag` - `%{kind: :scrollbar, pane, grab}` while dragging a scrollbar thumb
-    * `swallow_up` - `%{pane, local, tracking}`: a consumed ctrl+click press; its drags
-      and release are dropped. When the kernel finds no link, `PointerIo` replays
+    * `swallow_up` - `%{pane, local, tracking}`: a consumed ctrl+click or menu press; its
+      drags and release are dropped. When the kernel finds no link, `PointerIo` replays
       `local` (the pane-relative press) to a tracking child and stops swallowing; a
       non-tracking pane drops the click.
     * `autoscroll` - `%{pane, dir: :up | :down}` while a drag holds an edge
+    * `strip` - the config's right-click passthrough mods while that gesture runs; they
+      are removed from its drags and release
     * `alt` - `{pane, alt_screen?}` of the selection's (or hover's) pane when last seen;
       `facts/3` clears both when it toggles
 
   `ctx`: `%{panes: [%{id, rect}], focused, info: %{id => %{tracking, any_motion,
-  alt_screen, alternate_scroll, scroll: %{total, viewport, offset}, rows}}, now_ms,
-  scroll_lines, copy_on_select}`; `info` holds the pane under the pointer and the
-  gesture's pane (a pane without info is treated as gone: the event is forwarded).
+  alt_screen, alternate_scroll, scroll: %{total, viewport, offset}, rows, right_click}},
+  now_ms, scroll_lines, copy_on_select, right_click_modifier}`; `info` holds the pane
+  under the pointer and the gesture's pane (a pane without info is treated as gone: the
+  event is forwarded).
 
   Actions: `{:forward, ev}`, `{:focus, id}`, `{:scroll, id, delta}`,
   `{:scroll_top, id, row}`, `{:keys, id, [key_event]}`, `{:copy, id, from, to}`,
-  `{:open, id, %{id, x, y} | %{url}}`, `{:autoscroll, id, dir}`, `:autoscroll_stop`,
+  `{:open, id, %{id, x, y} | %{url}}`, `{:menu, id, %{x, y}}` (a right press opens the
+  pane menu), `{:autoscroll, id, dir}`, `:autoscroll_stop`,
   `{:expire_selection, ms}` (clear the kept word highlight after `ms` if unchanged)
   and `:repaint` (selection or hover changed).
 
@@ -51,7 +55,8 @@ defmodule DynideServer.Client.Pointer do
             drag: nil,
             swallow_up: nil,
             autoscroll: nil,
-            alt: nil
+            alt: nil,
+            strip: nil
 
   @type t :: %__MODULE__{}
 
@@ -179,6 +184,12 @@ defmodule DynideServer.Client.Pointer do
        when s != nil and k in [:drag, :release],
        do: {if(k == :release, do: %{p | swallow_up: nil}, else: p), []}
 
+  defp route(%{strip: mods} = p, _ev, %{kind: k} = m, _ctx)
+       when mods != nil and k in [:drag, :release],
+       do:
+         {if(k == :release, do: %{p | strip: nil}, else: p),
+          [{:forward, {:mouse, %{m | mods: m.mods -- mods}}}]}
+
   defp route(%{drag: %{kind: :scrollbar}} = p, ev, %{kind: k} = m, ctx)
        when k in [:drag, :release],
        do: scrollbar_drag(p, ev, m, ctx)
@@ -235,6 +246,26 @@ defmodule DynideServer.Client.Pointer do
 
       true ->
         press(p, m, id, info, vx, vy, ctx)
+    end
+  end
+
+  # herdr: a right-click opens the pane menu unless it goes to a mouse-tracking program:
+  # plain on a pane set to `:pane`, or with exactly the config's modifier, which is
+  # stripped from the press and the gesture that follows. The menu press's drags and
+  # release are swallowed.
+  defp on_pane(p, ev, %{kind: :press, button: :right} = m, id, _rect, info, ctx) do
+    mod = ctx[:right_click_modifier]
+
+    cond do
+      info.tracking and m.mods == [] and Map.get(info, :right_click) == :pane ->
+        {p, focus(id, ctx) ++ [{:forward, ev}]}
+
+      info.tracking and mod != nil and m.mods == mod ->
+        {%{p | strip: mod}, focus(id, ctx) ++ [{:forward, {:mouse, %{m | mods: []}}}]}
+
+      true ->
+        {%{p | swallow_up: %{pane: id, local: nil, tracking: false}},
+         [{:menu, id, %{x: m.x, y: m.y}}]}
     end
   end
 

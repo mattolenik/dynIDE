@@ -296,7 +296,8 @@ defmodule DynideCli.Argv do
       "cwd" => {"cwd", :string},
       "env" => {"env", {:kv_many}},
       "focus" => {"focus", :flag},
-      "no-focus" => {"focus", {:const, false}}
+      "no-focus" => {"focus", {:const, false}},
+      "right-click" => {"right_click", {:enum, ~w(herdr pane)}}
     }
 
     nav = %{"direction" => {"direction", {:enum, ~w(left right up down)}}}
@@ -346,7 +347,7 @@ defmodule DynideCli.Argv do
         split,
         :json,
         "pane split [<pane_id>] --direction right|down [--ratio R] [--cwd PATH] " <>
-          "[--env KEY=VALUE]... [--focus|--no-focus]"
+          "[--env KEY=VALUE]... [--focus|--no-focus] [--right-click herdr|pane]"
       ),
       cmd(
         ~w(pane focus-direction),
@@ -387,6 +388,14 @@ defmodule DynideCli.Argv do
         %{},
         :json,
         "pane rename <pane_id> [<label>]"
+      ),
+      cmd(
+        ~w(pane input),
+        "pane.input.set",
+        [env_id],
+        %{"right-click" => {"right_click", {:enum, ~w(herdr pane)}}},
+        :json,
+        "pane input [<pane_id>] --right-click herdr|pane"
       ),
       cmd(
         ~w(pane link activate),

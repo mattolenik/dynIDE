@@ -20,7 +20,10 @@ defmodule DynideServer.Config do
   `sidebar_start_collapsed`, `confirm_close`, `status_indicators` (`"dots"` |
   `"symbols"`), `prompt_new_tab_name`, `agent_panel_sort` (`"spaces"` | `"priority"`,
   herdr's alias `"workspaces"` is `"spaces"`), `window_title` (template of `{hostname}`,
-  `{workspace}`, `{tab}`, `{pane}`, `{terminal_title}`); `[ui.sound]` `enabled`,
+  `{workspace}`, `{tab}`, `{pane}`, `{terminal_title}`), `right_click_passthrough_modifier`
+  (herdr's: `ctrl`, `alt`, `cmd`, `meta`, `hyper` or a `+` list, no `shift`; `off`, `none`,
+  `disabled` or empty is none, the default; held on a right-click over a mouse-tracking
+  program, it sends the gesture to the program without it); `[ui.sound]` `enabled`,
   `command` (run by an in-VM terminal client with the sound name as its last argument;
   never sent to a socket client, which runs its own `DYNIDE_SOUND_COMMAND`),
   `done_path`, `request_path` (sound files played instead of the built-in ones, same
@@ -70,6 +73,7 @@ defmodule DynideServer.Config do
     {:ui, ["tab_bar_position"], {:enum, ~w(top bottom)}, [:tab_bar, :position]},
     {:ui, ["pane_borders"], {:enum, ~w(auto always off)}, [:pane_borders]},
     {:ui, ["window_title"], :string, [:window_title]},
+    {:ui, ["right_click_passthrough_modifier"], :mods, [:right_click_passthrough_modifier]},
     {:ui, ["agent_panel_sort"], :agent_sort, [:agent_panel_sort]},
     {:ui, ["sound", "enabled"], :bool, [:sound, :enabled]},
     {:ui, ["sound", "command"], :string, [:sound, :command]},
@@ -346,6 +350,28 @@ defmodule DynideServer.Config do
   defp cast(:string, v) when is_binary(v), do: {:ok, v}
   defp cast(:delay, v) when is_integer(v) and v in 0..3600, do: {:ok, v * 1000}
   defp cast(:delay_ms, v) when is_integer(v) and v in 0..60_000, do: {:ok, v}
+
+  # herdr: "" | off | none | disabled is no modifier, else a `+` list without shift
+  @right_click_mods %{
+    "ctrl" => :ctrl,
+    "control" => :ctrl,
+    "alt" => :alt,
+    "option" => :alt,
+    "cmd" => :super,
+    "command" => :super,
+    "super" => :super,
+    "meta" => :meta,
+    "hyper" => :hyper
+  }
+
+  defp cast(:mods, v) when is_binary(v) do
+    if String.downcase(String.trim(v)) in ["", "off", "none", "disabled"] do
+      {:ok, nil}
+    else
+      mods = for t <- String.split(v, "+"), do: @right_click_mods[String.downcase(String.trim(t))]
+      if nil in mods, do: :error, else: {:ok, mods |> Enum.uniq() |> Enum.sort()}
+    end
+  end
 
   defp cast(:agent_sort, "workspaces"), do: {:ok, :spaces}
   defp cast(:agent_sort, v), do: cast({:enum, ~w(spaces priority)}, v)
