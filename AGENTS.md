@@ -266,7 +266,7 @@ Full guide: `docs/dynide/editing-live.md`. Human checks: `docs/dynide/results/m7
   list|create|open|remove`, `pane zoom|focus-direction|swap|resize`, `pane split
   --cwd/--env`, `tab move`, `workspace move`, `pane|workspace report-metadata`,
   `pane report-agent-session`, `notification show`, `title set|clear`, `popup
-  close`; `dynIDE --default-config` prints the commented defaults and
+  close`; `dynide --default-config` prints the commented defaults and
   `completion bash|zsh|fish` a completion script.
 - Metrics: `just dynide-bench-reload|handoff|glass|os-floor`;
   `dynide/bench/gate_round.sh <tag>` runs the whole slice-1 table. Self-hosted

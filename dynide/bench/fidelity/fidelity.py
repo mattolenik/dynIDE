@@ -4,7 +4,7 @@
 Usage: fidelity.py [-v] [CHECK ...]
 
 Launches bin/dynide like scripts/tty_harness.py's `dynide` mode (imported by path:
-its Herdr launch with an isolated log, API socket, DYNIDE_RUNTIME_DIR and
+its Dynide launch with an isolated log, API socket, DYNIDE_RUNTIME_DIR and
 DYNIDE_STATE_DIR, its Screen and probe answers) with SSH_TTY=1 (clipboard writes go to the
 host as OSC 52, never to this machine's clipboard). The host also answers the client's
 colour queries: OSC 10 fg rgb:dddd/eeee/ffff, OSC 11 bg rgb:1111/2222/3333, OSC 4 palette,
@@ -48,8 +48,8 @@ th.fail = _fail  # the harness's waits raise instead of exiting
 th.ok = lambda cond, msg: cond or _fail(msg)  # and print no PASS lines of their own
 
 
-class Host(th.Herdr):
-    """th.Herdr whose host also answers the colour queries."""
+class Host(th.Dynide):
+    """th.Dynide whose host also answers the colour queries."""
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
@@ -413,7 +413,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="fid", dir="/var/tmp") as tmp:
         th.compile_then_start_clock(tmp)
         th.DEADLINE = time.monotonic() + 3600
-        os.environ["SSH_TTY"] = "1"  # Herdr copies os.environ: OSC 52, never the local clipboard
+        os.environ["SSH_TTY"] = "1"  # Dynide copies os.environ: OSC 52, never the local clipboard
         h = Host(tmp, 120, 40)
         try:
             h.start()

@@ -4,7 +4,7 @@ it needs authenticated claude/codex/opencode on PATH and spends model tokens.
 
     python3 scripts/agent_live_smoke.py [-v] [OUT_DIR] [AGENT...]
 
-Launches bin/dynide attached at 120x40 (tty_harness.Herdr: its own log, API
+Launches bin/dynide attached at 120x40 (tty_harness.Dynide: its own log, API
 socket, runtime, state and config under OUT_DIR, default
 ../.superpowers/sdd/m11/tmp/smoke/run), DYNIDE_PERSIST=0. Per agent: pane split,
 pane run the CLI in a scratch cwd, then agent wait idle -> prompt -> working -> idle
@@ -232,7 +232,7 @@ def main():
     for k in [k for k in os.environ if k.startswith(("HERDR_", "CLAUDE")) or k == "TERM_PROGRAM"]:
         del os.environ[k]
     os.environ["DYNIDE_PERSIST"] = "0"
-    # th.Herdr sets its own DYNIDE_STATE_DIR per run; this default keeps any other launch isolated too
+    # th.Dynide sets its own DYNIDE_STATE_DIR per run; this default keeps any other launch isolated too
     os.environ["DYNIDE_STATE_DIR"] = os.path.join(tmp, "state")
     th.compile_then_start_clock(tmp)
     th.DEADLINE = time.monotonic() + 3600

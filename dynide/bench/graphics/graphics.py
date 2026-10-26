@@ -65,7 +65,7 @@ def _pack(fmt, *v):
     return struct.pack(fmt, *v)
 
 
-# glass.Term and th.Herdr size their pty with struct.pack("HHHH", rows, cols, 0, 0)
+# glass.Term and th.Dynide size their pty with struct.pack("HHHH", rows, cols, 0, 0)
 glass.struct = th.struct = types.SimpleNamespace(pack=_pack)
 
 
