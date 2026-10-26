@@ -7,7 +7,7 @@ defmodule DynideServer.Client.Drag do
   under the pointer) is another node of the same kind: a tab over a tab
   (`[:tabs, {:tab, _}]`), a workspace item over a workspace item
   (`[:sidebar, :spaces, :list, {:workspace, _}]`). Anything else, malformed terms from a
-  socket client included, is nil. `dynide/2` keeps a drag while its `from` still exists in
+  socket client included, is nil. `live/2` keeps a drag while its `from` still exists in
   the app, else nil (closed mid-drag).
   """
 

@@ -5,7 +5,7 @@ defmodule DynideServer.App.Restore do
 
   In a VM that adopted panes from the handoff broker (`Handoff.Link.adopt_reason/0` not
   nil) a keeper pane nothing maps may be an adopted child (ctl-opened, or spawned just
-  before the crash): `dynide/0` and `close_all/0` never close one there.
+  before the crash): `live/0` and `close_all/0` never close one there.
   """
 
   alias DynideServer.Handoff.Link
