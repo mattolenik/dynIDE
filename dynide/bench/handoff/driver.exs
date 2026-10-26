@@ -153,7 +153,7 @@ defmodule HandoffDriver do
           String.to_integer(ms)
 
       d =
-        if String.starts_with?(rest, "herdr-broker:"),
+        if String.starts_with?(rest, "dynide-broker:"),
           do: wrap(t - kill_ms, 86_400_000),
           else: wrap(rem(t, 3_600_000) - rem(kill_ms, 3_600_000), 3_600_000)
 
@@ -317,7 +317,7 @@ defmodule HandoffDriver do
   def vm_pids(b) do
     case File.read(b.log) do
       {:ok, text} ->
-        for [_, p] <- Regex.scan(~r/herdr-broker: started vm .* pid=(\d+) /, text), do: p
+        for [_, p] <- Regex.scan(~r/dynide-broker: started vm .* pid=(\d+) /, text), do: p
 
       _ ->
         []

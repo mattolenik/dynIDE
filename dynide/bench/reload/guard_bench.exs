@@ -1,5 +1,5 @@
 # Guard overhead bench. Run: cd dynide && mix run bench/reload/guard_bench.exs
-alias HerdrReload.{Guard, Server}
+alias DynideReload.{Guard, Server}
 
 defmodule GuardBench do
   def id(x), do: x

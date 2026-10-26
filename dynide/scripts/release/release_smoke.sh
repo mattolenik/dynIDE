@@ -19,7 +19,7 @@ tmp=$(cd "$tmp" && pwd -P)
 # leftover detection only (a FAIL, never a kill): every process of this run has $tmp in its argv
 ours() { pgrep -f -- "$tmp"; }
 pid='' spid=''
-vm_pids() { sed -n 's/.*herdr-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$tmp/state/herdr-live/herdr-live.log" 2>/dev/null; }
+vm_pids() { sed -n 's/.*dynide-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$tmp/state/herdr-live/herdr-live.log" 2>/dev/null; }
 # shellcheck disable=SC2329 # invoked via trap
 cleanup() { # only pids this run holds: broker, attach wrapper and launcher, the broker's VMs
   for p in $pid $spid $(cat "$tmp/attach.pid" 2>/dev/null) $(vm_pids); do kill -KILL "$p" 2>/dev/null; done
@@ -217,7 +217,7 @@ rc=$?
 [ "$rc" = 0 ] || fail "broker exit status $rc (wanted 0)"
 echo "PASS: SIGTERM stops the broker with status 0"
 
-[ -n "$vms" ] || fail "log has no 'herdr-broker: started vm' line"
+[ -n "$vms" ] || fail "log has no 'dynide-broker: started vm' line"
 for p in $vms; do ! kill -0 "$p" 2>/dev/null || fail "vm pid $p still running"; done
 left=$(ours)
 [ -z "$left" ] || fail "processes left: $(ps -o pid= -o command= -p "$(echo "$left" | paste -sd, -)")"

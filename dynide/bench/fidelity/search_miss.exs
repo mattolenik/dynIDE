@@ -9,9 +9,9 @@
 #   cd dynide && t=$(mktemp -d) && HERDR_LIVE_HEADLESS=1 HERDR_LIVE_LOG=$t/log HERDR_LIVE_API=$t/api.sock \
 #     HERDR_LIVE_RUNTIME_DIR=$t/rt HERDR_LIVE_STATE_DIR=$t/state mix run bench/fidelity/search_miss.exs [--runs N]
 # Prints `SEARCH_MISS dir=<..> rows=<total> runs=N min_ms= median_ms= max_ms= load=<uptime>`.
-alias HerdrScene.Event
-alias HerdrServer.Client.CopyMode
-alias HerdrServer.Native.Vt
+alias DynideScene.Event
+alias DynideServer.Client.CopyMode
+alias DynideServer.Native.Vt
 
 {opts, _, _} = OptionParser.parse(System.argv(), strict: [runs: :integer])
 runs = Keyword.get(opts, :runs, 5)

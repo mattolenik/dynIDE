@@ -1,0 +1,60 @@
+defmodule DynideServer.Pane.State do
+  @moduledoc """
+  State of one pane process (used by `Pane.Server`). `scroll`, `alt_screen`, `cwd`,
+  `title` (sanitized), `stripped_title` and `progress` are the pane's terminal facts
+  (`Pane.Facts`); `colors` the host colours last applied to the vt; `pending` the
+  write queue (`{binary, nil | {paste_origin, bytes_written}}`, oldest first) and
+  `write_retry` its backpressure retry state; `facts_tick` the scroll-facts throttle;
+  `graphics` the kitty placements last written to `Pane.Facts`.
+  """
+
+  defstruct [
+    :id,
+    kernel_id: nil,
+    pty: nil,
+    vt: nil,
+    gen: 0,
+    layout_gen: 0,
+    rows: {},
+    cursor: nil,
+    hidden: false,
+    title: nil,
+    scroll: %{total: 0, viewport: 0, offset: 0},
+    alt_screen: false,
+    cwd: nil,
+    progress: nil,
+    stripped_title: nil,
+    pending: :queue.new(),
+    write_retry: nil,
+    colors: nil,
+    facts_tick: nil,
+    graphics: []
+  ]
+
+  @type t :: %__MODULE__{
+          id: pos_integer() | nil,
+          kernel_id: pos_integer() | nil,
+          pty: term(),
+          vt: term(),
+          gen: non_neg_integer(),
+          layout_gen: non_neg_integer(),
+          rows: tuple(),
+          cursor: map() | nil,
+          hidden: boolean(),
+          title: binary() | nil,
+          scroll: %{
+            total: non_neg_integer(),
+            viewport: non_neg_integer(),
+            offset: non_neg_integer()
+          },
+          alt_screen: boolean(),
+          cwd: binary() | nil,
+          progress: binary() | nil,
+          stripped_title: binary() | nil,
+          pending: :queue.queue({binary(), nil | {pid(), non_neg_integer()}}),
+          write_retry: nil | {:timer | :wait, pos_integer()},
+          colors: map() | nil,
+          facts_tick: DynideServer.Throttle.t(),
+          graphics: [DynideScene.Scene.Graphic.t()]
+        }
+end

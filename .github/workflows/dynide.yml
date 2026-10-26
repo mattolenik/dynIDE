@@ -114,8 +114,8 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            dynide/native/herdr_kernel/target
-            dynide/native/herdr_term/target
+            dynide/native/dynide_kernel/target
+            dynide/native/dynide_term/target
           key: dynide-native-${{ runner.os }}-${{ env.RUST_TOOLCHAIN_VERSION }}-${{ hashFiles('dynide/native/*/Cargo.lock') }}
           restore-keys: dynide-native-${{ runner.os }}-${{ env.RUST_TOOLCHAIN_VERSION }}-
 

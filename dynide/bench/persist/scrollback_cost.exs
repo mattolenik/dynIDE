@@ -10,8 +10,8 @@
 # Then write amplification for 15 panes changing every minute at the 60 s cadence.
 # Usage: cd dynide && HERDR_LIVE_HEADLESS=1 mix run bench/persist/scrollback_cost.exs
 # (no broker, so persistence is off). Timings on a loaded host are upper bounds.
-alias HerdrServer.Native.Vt
-alias HerdrServer.Persist.Disk
+alias DynideServer.Native.Vt
+alias DynideServer.Persist.Disk
 
 max_sb = 10_000_000
 cols = 80

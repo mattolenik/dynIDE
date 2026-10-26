@@ -4,9 +4,9 @@
 # Part 2: Keeper.open/1 for 15 panes with a 1000-row SGR replay each (the restore path).
 # Usage: cd dynide && HERDR_LIVE_HEADLESS=1 mix run bench/persist/writer_cost.exs
 # (dev env, no broker, so the app's own Writer is off). Timings on a loaded host are upper bounds.
-alias HerdrServer.App.{Actions, Store}
-alias HerdrServer.Native.Keeper
-alias HerdrServer.Persist.{Disk, Facts, Schema}
+alias DynideServer.App.{Actions, Store}
+alias DynideServer.Native.Keeper
+alias DynideServer.Persist.{Disk, Facts, Schema}
 
 iters = 50
 target = 15

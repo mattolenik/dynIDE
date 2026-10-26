@@ -31,7 +31,7 @@ log=$tmp/state/herdr-live/herdr-live.log
 pid='' hpid='' pid2=''
 log2=$tmp/state2/herdr-live/herdr-live.log
 # shellcheck disable=SC2329 # invoked via cleanup
-vm_pids() { sed -n 's/.*herdr-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$log" "$log2" 2>/dev/null; }
+vm_pids() { sed -n 's/.*dynide-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$log" "$log2" 2>/dev/null; }
 # shellcheck disable=SC2329 # invoked via trap
 cleanup() {
   for p in $pid $pid2 $hpid $(vm_pids); do kill -KILL "$p" 2>/dev/null; done

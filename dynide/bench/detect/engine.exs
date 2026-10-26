@@ -1,6 +1,6 @@
 # Detection engine bench. Run: cd dynide && mix run bench/detect/engine.exs
 # Bundled claude, codex and opencode manifests against synthetic 120x40 screens.
-alias HerdrServer.Detect.{Engine, Manifests}
+alias DynideServer.Detect.{Engine, Manifests}
 
 defmodule EngineBench do
   @cols 120

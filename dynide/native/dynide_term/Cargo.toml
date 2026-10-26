@@ -1,0 +1,23 @@
+[package]
+name = "dynide_term"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+libc = "0.2"
+rustler = "=0.38.0"
+
+[dev-dependencies]
+serde_json = "1"
+
+# Independent of the repo-root workspace.
+[workspace]
+
+[profile.dev]
+panic = "unwind"
+
+[profile.release]
+panic = "unwind"

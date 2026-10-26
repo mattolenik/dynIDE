@@ -1,5 +1,5 @@
 # Reload latency bench. Run: cd dynide && mix run bench/reload/reload_bench.exs
-alias HerdrReload.{Notices, Server, Watcher}
+alias DynideReload.{Notices, Server, Watcher}
 
 defmodule ReloadBench do
   @app :toy_bench
@@ -55,8 +55,8 @@ defmodule ReloadBench do
 
   def await_loaded(timeout \\ 5000) do
     receive do
-      {:herdr_reload, {:loaded, _, mods}} -> length(mods)
-      {:herdr_reload, {:compile_error, d}} -> raise "compile error #{inspect(d)}"
+      {:dynide_reload, {:loaded, _, mods}} -> length(mods)
+      {:dynide_reload, {:compile_error, d}} -> raise "compile error #{inspect(d)}"
     after
       timeout -> raise "no :loaded notice in #{timeout}ms"
     end
@@ -69,7 +69,7 @@ defmodule ReloadBench do
   def settle do
     Process.sleep(250)
     receive do
-      {:herdr_reload, _} -> settle()
+      {:dynide_reload, _} -> settle()
     after
       0 -> :ok
     end
@@ -96,7 +96,7 @@ paths = Path.join(dir, "lib")
 Process.sleep(500)
 # initial load of the whole toy
 {:ok, _} = Server.reload(name, Path.wildcard(paths <> "/*.ex"))
-flush = fn -> receive do {:herdr_reload, _} -> :ok after 0 -> :ok end end
+flush = fn -> receive do {:dynide_reload, _} -> :ok after 0 -> :ok end end
 Stream.repeatedly(flush) |> Enum.take(5)
 
 ind = ReloadBench.ind_path(dir)
@@ -138,8 +138,8 @@ direct.("(b) add field to Toy.Core", fn i -> File.write!(core, ReloadBench.core(
 File.rm_rf!(dir)
 
 # ---- real umbrella: default Server/Watcher started by the app in dev ----
-IO.puts("\n== real umbrella: HerdrScene one-module edit via default watcher ==")
-scene = Path.expand("apps/herdr_scene/lib/herdr_scene.ex")
+IO.puts("\n== real umbrella: DynideScene one-module edit via default watcher ==")
+scene = Path.expand("apps/dynide_scene/lib/dynide_scene.ex")
 orig = File.read!(scene)
 
 try do
@@ -153,7 +153,7 @@ try do
       File.write!(scene, String.replace(orig, ~r/\nend\n\z/, "\n  def bench_dummy_#{dummy}, do: :ok\nend\n"))
     end)
 
-  ReloadBench.stats("umbrella HerdrScene", Enum.map(rs, &elem(&1, 0)))
+  ReloadBench.stats("umbrella DynideScene", Enum.map(rs, &elem(&1, 0)))
   IO.puts("    fan-out per iteration: #{inspect(Enum.map(rs, &elem(&1, 1)))}")
 after
   File.write!(scene, orig)

@@ -9,16 +9,16 @@ if config_env() == :test do
       do: System.delete_env(v)
 end
 
-# Handoff (M5): a VM under herdr_broker (HERDR_BROKER_SOCK set) may be a warm standby.
-# Its reload pipeline must not watch and compile beside the primary's, so herdr_server
-# starts it (HerdrReload.Application.start_deferred/0) once this VM is the primary.
+# Handoff (M5): a VM under dynide_broker (HERDR_BROKER_SOCK set) may be a warm standby.
+# Its reload pipeline must not watch and compile beside the primary's, so dynide_server
+# starts it (DynideReload.Application.start_deferred/0) once this VM is the primary.
 if config_env() != :test and System.get_env("HERDR_BROKER_SOCK") not in [nil, ""],
-  do: config(:herdr_reload, HerdrReload, defer: true)
+  do: config(:dynide_reload, DynideReload, defer: true)
 
 # M8: persistence only in a bin/herdr-live VM (broker socket set), never in test, and not
 # with HERDR_LIVE_PERSIST=0. dir and name are raw env values (nil when unset);
-# HerdrServer.Persist.Disk.config/0 applies the XDG fallback and validates the name.
-config :herdr_server, HerdrServer.Persist,
+# DynideServer.Persist.Disk.config/0 applies the XDG fallback and validates the name.
+config :dynide_server, DynideServer.Persist,
   enabled:
     config_env() != :test and System.get_env("HERDR_BROKER_SOCK") not in [nil, ""] and
       System.get_env("HERDR_LIVE_PERSIST") != "0",
@@ -28,7 +28,7 @@ config :herdr_server, HerdrServer.Persist,
 # M7: run the changed module's tests before each reload (adds seconds per save).
 # `herdr-live test-on-save on|off` flips it at runtime.
 if System.get_env("HERDR_LIVE_TEST_ON_SAVE") == "1" do
-  config :herdr_reload, HerdrReload, test_on_save: :gate
+  config :dynide_reload, DynideReload, test_on_save: :gate
 end
 
 # M18: a release VM (bin/herdr_live) records its version for the API, then gives every
@@ -42,7 +42,7 @@ end
 # that System.put_env/delete_env do not reach, so they get the same list as :pane_env
 # (a nil value: the kernel removes the name).
 if config_env() == :prod do
-  config :herdr_server, :version, System.get_env("RELEASE_VSN")
+  config :dynide_server, :version, System.get_env("RELEASE_VSN")
 
   unset =
     for {k, _} <- System.get_env(),
@@ -59,5 +59,5 @@ if config_env() == :prod do
   for {k, v} <- child_env,
       do: if(v, do: System.put_env(k, v), else: System.delete_env(k))
 
-  config :herdr_server, :pane_env, child_env
+  config :dynide_server, :pane_env, child_env
 end

@@ -1,12 +1,12 @@
 # herdr-live recipes (imported from the root justfile)
 
 dynide_dir := source_directory()
-dynide_crates := "herdr_fdpass herdr_kernel herdr_term herdr_broker"
+dynide_crates := "dynide_fdpass dynide_kernel dynide_term dynide_broker"
 
 # Elixir and Rust tests
 dynide-test:
     cd '{{dynide_dir}}' && mix test
-    cd '{{dynide_dir}}/apps/herdr_integration' && mix test --only real_kernel
+    cd '{{dynide_dir}}/apps/dynide_integration' && mix test --only real_kernel
     for c in {{dynide_crates}}; do (cd '{{dynide_dir}}/native'/$c && cargo test --locked) || exit 1; done
     python3 -m unittest discover -s '{{dynide_dir}}/scripts' -p 'test_log_summary.py'
 
@@ -49,11 +49,11 @@ dynide-demo:
     exec '{{dynide_dir}}/bin/dynide-demo'
 
 # M3 benchmarks against the fake kernel (Elixir side only; judged at M6).
-# Real server kernel: MIX_ENV=test mix herdr.bench --kernel real [--flood-mb N].
+# Real server kernel: MIX_ENV=test mix dynide.bench --kernel real [--flood-mb N].
 # The client side always blits to Fake.Blit (no real tty in CI); the real
 # blitter's frame cost is M2's (docs/herdr-live/results/m2.md).
 dynide-bench:
-    cd '{{dynide_dir}}' && MIX_ENV=test mix herdr.bench
+    cd '{{dynide_dir}}' && MIX_ENV=test mix dynide.bench
 
 # M6 gate: keystroke -> glass in a real pty, herdr (the herdr-reference tag build, or HERDR_BIN) then herdr-live (GLASS lines)
 dynide-bench-glass:

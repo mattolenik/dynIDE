@@ -38,9 +38,9 @@ run() {
 for s in $suites; do
   case $s in
     env) envinfo > "$out/env.txt" 2>&1 ;;
-    m3fake) run m3fake env MIX_ENV=test mix herdr.bench ;;
-    m3real) run m3real env MIX_ENV=test mix herdr.bench --kernel real ;;
-    m3real120) run m3real120 env MIX_ENV=test mix herdr.bench --kernel real --size 120x40 ;;
+    m3fake) run m3fake env MIX_ENV=test mix dynide.bench ;;
+    m3real) run m3real env MIX_ENV=test mix dynide.bench --kernel real ;;
+    m3real120) run m3real120 env MIX_ENV=test mix dynide.bench --kernel real --size 120x40 ;;
     osfloor) run osfloor "$dynide/bench/gate/os_floor.sh" ;;
     reload) run reload just --justfile "$root/justfile" dynide-bench-reload ;;
     handoff) run handoff just --justfile "$root/justfile" dynide-bench-handoff ;;

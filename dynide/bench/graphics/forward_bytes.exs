@@ -3,7 +3,7 @@
 # Server on the fake kernel: one pane whose Fake.Vt placement gets a new image (new fp, new
 # 200x200 rgba data, 160000 bytes) every 1/60 s via Fake.Vt.set_graphics plus one byte of
 # pane output (the damage that republishes the pane's facts), for `secs` seconds per path.
-#   local: a terminal client on the real HerdrTerm.Native.Tty/Blit over a pty held by
+#   local: a terminal client on the real DynideTerm.Native.Tty/Blit over a pty held by
 #          `script` (pixel size set with TIOCSWINSZ, output relayed to this VM and dropped);
 #          bytes = Tty.stats(tty).graphics_bytes delta (kitty escapes actually written,
 #          direct t=d base64: TERM_PROGRAM is unset so the file transport is off).
@@ -11,11 +11,11 @@
 #          bytes = sum of 4 + byte_size(term_to_binary(msg)) over every {:image, ...} the
 #          client's Render receives (traced), i.e. the Wire frames.
 # Prints one RESULT line per path, with uptime load before and after.
-alias HerdrServer.Client.Socket
-alias HerdrServer.Kernel.Fake.{Keeper, Pty, Vt}
-alias HerdrServer.Pane.Rows
-alias HerdrTerm.Client
-alias HerdrTerm.Remote.Conn
+alias DynideServer.Client.Socket
+alias DynideServer.Kernel.Fake.{Keeper, Pty, Vt}
+alias DynideServer.Pane.Rows
+alias DynideTerm.Client
+alias DynideTerm.Remote.Conn
 
 defmodule ForwardBytes do
   @w 200
@@ -146,17 +146,17 @@ secs =
 
 ms = secs * 1000
 System.delete_env("TERM_PROGRAM")
-HerdrServer.App.Store.reset()
+DynideServer.App.Store.reset()
 
 # -- local: real Tty/Blit on a pty ---------------------------------------------------
-Application.put_env(:herdr_term, :kernel,
-  tty: HerdrTerm.Native.Tty,
-  blit: HerdrTerm.Native.Blit,
-  desktop: HerdrTerm.Kernel.Fake.Desktop,
+Application.put_env(:dynide_term, :kernel,
+  tty: DynideTerm.Native.Tty,
+  blit: DynideTerm.Native.Blit,
+  desktop: DynideTerm.Kernel.Fake.Desktop,
   sigwinch: false
 )
 
-HerdrTerm.Kernel.load()
+DynideTerm.Kernel.load()
 {port, script_pid, path} = ForwardBytes.pty_path()
 {:ok, local} = Client.start_link(id: make_ref(), tty_opts: %{path: path})
 tty = Client.tty(local)
@@ -164,23 +164,23 @@ render = Client.render(local)
 ForwardBytes.until(fn -> :sys.get_state(render).scene != nil end)
 [%{id: id}] = :sys.get_state(render).scene.panes
 load0 = ForwardBytes.load()
-b0 = HerdrTerm.Native.Tty.stats(tty).graphics_bytes
+b0 = DynideTerm.Native.Tty.stats(tty).graphics_bytes
 n = ForwardBytes.replace(id, ms)
-b1 = HerdrTerm.Native.Tty.stats(tty).graphics_bytes
+b1 = DynideTerm.Native.Tty.stats(tty).graphics_bytes
 ForwardBytes.result("local-tty", b1 - b0, ms, n, load0)
 Supervisor.stop(local)
 System.cmd("kill", [script_pid])
 if Port.info(port), do: Port.close(port)
 
 # -- socket: inline remote client -----------------------------------------------------
-Application.put_env(:herdr_term, :kernel,
-  tty: HerdrTerm.Kernel.Fake.Tty,
-  blit: HerdrTerm.Kernel.Fake.Blit,
-  desktop: HerdrTerm.Kernel.Fake.Desktop,
+Application.put_env(:dynide_term, :kernel,
+  tty: DynideTerm.Kernel.Fake.Tty,
+  blit: DynideTerm.Kernel.Fake.Blit,
+  desktop: DynideTerm.Kernel.Fake.Desktop,
   sigwinch: false
 )
 
-HerdrTerm.Kernel.load()
+DynideTerm.Kernel.load()
 dir = Path.join(File.cwd!(), "_build/bench/fwd#{System.unique_integer([:positive])}")
 File.mkdir_p!(dir)
 sock = Path.join(dir, "c.sock")

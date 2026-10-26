@@ -1,0 +1,32 @@
+[package]
+name = "dynide_kernel"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "=0.38.0"
+ghostty-vt = { path = "../../../crates/ghostty-vt" }
+libc = "0.2"
+# carried kitty images are re-sent as base64 APC on adopt (already in the tree via ghostty-vt)
+base64 = "0.22.1"
+dynide_fdpass = { path = "../dynide_fdpass" }
+portable-pty = "=0.9.0"
+
+# The repo-root `[patch.crates-io]` is not inherited by this independent workspace.
+[patch.crates-io]
+portable-pty = { path = "../../../vendor/portable-pty" }
+
+# Independent of the repo-root workspace.
+[workspace]
+
+[profile.dev]
+panic = "unwind"
+
+[profile.release]
+panic = "unwind"
+
+[dev-dependencies]
+serde_json = "1"

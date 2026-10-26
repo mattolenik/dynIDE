@@ -9,14 +9,14 @@
 #     mix run bench/fidelity/scrolled_stream.exs
 # Prints `SCROLLED_STREAM secs=5 client_a_pushes_per_s= client_b_pushes_per_s=
 #   snapshots_per_s= scrolled_at_end= load=<uptime>`.
-alias HerdrScene.Protocol
-alias HerdrServer.App.Store
-alias HerdrServer.Kernel
-alias HerdrServer.Pane.{Facts, Rows, Server}
+alias DynideScene.Protocol
+alias DynideServer.App.Store
+alias DynideServer.Kernel
+alias DynideServer.Pane.{Facts, Rows, Server}
 
 secs = 5
 load = fn -> System.cmd("uptime", []) |> elem(0) |> String.trim() end
-Application.put_env(:herdr_server, :pane_env, [{"PS1", "$ "}, {"HISTFILE", "/dev/null"}])
+Application.put_env(:dynide_server, :pane_env, [{"PS1", "$ "}, {"HISTFILE", "/dev/null"}])
 
 # an in-VM client: counts scene pushes, reports and resets on {:count, from}
 client = fn ->

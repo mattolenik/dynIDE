@@ -9,15 +9,15 @@
 #     mix run bench/detect/poll.exs
 # Prints `DETECT_POLL_REAL panes= ticks= scans_per_tick= probes_per_tick= p50_us= p95_us=
 #   max_us= load=<uptime>`.
-alias HerdrScene.Protocol
-alias HerdrServer.App.{Actions, Store}
-alias HerdrServer.Detect.Poller
-alias HerdrServer.{Mirror, Pane.Facts, Pane.Server}
+alias DynideScene.Protocol
+alias DynideServer.App.{Actions, Store}
+alias DynideServer.Detect.Poller
+alias DynideServer.{Mirror, Pane.Facts, Pane.Server}
 
 panes = 15
 size = %{cols: 120, rows: 40}
 load = fn -> System.cmd("uptime", []) |> elem(0) |> String.trim() end
-Application.put_env(:herdr_server, :pane_env, [{"PS1", "$ "}, {"HISTFILE", "/dev/null"}])
+Application.put_env(:dynide_server, :pane_env, [{"PS1", "$ "}, {"HISTFILE", "/dev/null"}])
 
 wait = fn f, ms ->
   Enum.find_value(1..div(ms, 10), fn _ -> f.() || (Process.sleep(10) && nil) end) ||
@@ -42,7 +42,7 @@ wait.(fn -> Enum.all?(ids, &Facts.get/1) end, 5000)
 Process.sleep(500)
 for id <- ids, do: Server.write(id, "sh -c 'while :; do date; sleep 0.1; done'\r")
 
-:ok = Supervisor.terminate_child(HerdrServer.Supervisor, Poller)
+:ok = Supervisor.terminate_child(DynideServer.Supervisor, Poller)
 {:ok, p} = Poller.start_link(name: :bench_poller, window_ms: 3_600_000)
 for id <- ids, do: :ok = Poller.force_agent(id, "claude", p)
 

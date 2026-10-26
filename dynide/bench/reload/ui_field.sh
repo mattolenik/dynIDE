@@ -9,5 +9,5 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 # compile first: a task recompiled by its own run keeps running old code (blocks purges)
 MIX_ENV=test mix compile
-MIX_ENV=test mix herdr.reload_bench ui_field "$@"
+MIX_ENV=test mix dynide.reload_bench ui_field "$@"
 git diff --quiet -- apps || { echo "reload bench ui_field: dynide/apps left dirty" >&2; git diff --stat -- apps >&2; exit 1; }

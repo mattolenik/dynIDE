@@ -17,7 +17,7 @@ runs =
     _ -> 3
   end
 
-src = Path.join(D.dynide_dir(), "apps/herdr_server/lib/herdr_server/handoff/ctl.ex")
+src = Path.join(D.dynide_dir(), "apps/dynide_server/lib/dynide_server/handoff/ctl.ex")
 orig = File.read!(src)
 needle = "def handle(:ping), do: :pong\n"
 String.contains?(orig, needle) || raise "#{src} has no `#{String.trim(needle)}`"

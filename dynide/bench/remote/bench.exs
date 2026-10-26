@@ -106,7 +106,7 @@ defmodule RemoteBench do
     open_ssh(b, exe, target, System.get_env("HERDR_LIVE_REMOTE_BIN", "herdr-live"))
   end
 
-  # same argv as HerdrTerm.Remote.Args.ssh_command/2
+  # same argv as DynideTerm.Remote.Args.ssh_command/2
   defp open_ssh(b, ssh, host, bin) do
     [exe | pre] = String.split(ssh)
     exe = System.find_executable(exe) || exe

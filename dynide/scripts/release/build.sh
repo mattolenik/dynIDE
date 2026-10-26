@@ -5,7 +5,7 @@
 # Writes DIR/herdr-live-<V>-<os>-<arch>.tar.gz (os macos|linux, arch aarch64|x86_64) and
 # its .sha256 (`shasum -a 256 -c` format), and prints the tarball path last on stdout
 # (build output goes to stderr). The tarball's top dir herdr-live-<V>/ is a release root:
-# bin/herdr-live (the launcher), bin/herdr_broker, bin/herdr_live (the Mix release
+# bin/herdr-live (the launcher), bin/dynide_broker, bin/herdr_live (the Mix release
 # script), scripts/tty_guard.sh, erts-*/, lib/, releases/<V>/ (see mix.exs `releases`).
 # releases/<V>/update-keys/ gets $HERDR_LIVE_UPDATE_PUBKEY, else with --dev-key (or
 # HERDR_LIVE_DEV_KEY=1) the dev key from keygen.sh (local checks only), else nothing (that

@@ -45,8 +45,8 @@ done <"$list"
 echo "sign_macos.sh: $n Mach-O files$([ $dry -eq 1 ] && echo ' (dry run, nothing signed)')" >&2
 
 if [ $dry -eq 1 ]; then
-  echo "+ spctl --assess --type execute --verbose $root/bin/herdr_broker   (read-only)"
-  spctl --assess --type execute --verbose "$root/bin/herdr_broker" 2>&1 | sed 's/^/    /' || true
+  echo "+ spctl --assess --type execute --verbose $root/bin/dynide_broker   (read-only)"
+  spctl --assess --type execute --verbose "$root/bin/dynide_broker" 2>&1 | sed 's/^/    /' || true
 else
   while read -r _ f; do codesign --verify --strict --verbose=1 "$f"; done <"$list"
 fi

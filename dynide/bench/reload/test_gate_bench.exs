@@ -2,18 +2,18 @@
 # (dev env: the app's own reload pipeline and watcher run). Gate on, adds a marker function to
 # view.ex (it has test/view_test.exs), times save -> {:tests, :passed} and save -> {:loaded}, 5
 # iterations, restores the file byte for byte, prints a RESULT line with medians.
-alias HerdrReload.{Notices, TestGate}
+alias DynideReload.{Notices, TestGate}
 
 n = 5
-file = Path.expand("apps/herdr_server/lib/herdr_server/view.ex")
+file = Path.expand("apps/dynide_server/lib/dynide_server/view.ex")
 original = File.read!(file)
-true = is_pid(Process.whereis(HerdrReload.Server)) || raise "reload pipeline not running (run in dev)"
+true = is_pid(Process.whereis(DynideReload.Server)) || raise "reload pipeline not running (run in dev)"
 Notices.subscribe()
 Process.sleep(1000)
 
 wait = fn pattern_fun ->
   receive do
-    {:herdr_reload, ev} = m -> if pattern_fun.(ev), do: m, else: :skip
+    {:dynide_reload, ev} = m -> if pattern_fun.(ev), do: m, else: :skip
   after
     180_000 -> raise "timeout waiting for notice"
   end
@@ -29,9 +29,9 @@ measure = fn i ->
   true = body != original
   File.write!(file, body)
   t0 = System.monotonic_time(:millisecond)
-  {:herdr_reload, {:tests, :passed, _}} = await.(&match?({:tests, r, _} when r != :running, &1))
+  {:dynide_reload, {:tests, :passed, _}} = await.(&match?({:tests, r, _} when r != :running, &1))
   t1 = System.monotonic_time(:millisecond)
-  {:herdr_reload, {:loaded, _, _}} = await.(&match?({:loaded, _, _}, &1))
+  {:dynide_reload, {:loaded, _, _}} = await.(&match?({:loaded, _, _}, &1))
   t2 = System.monotonic_time(:millisecond)
   IO.puts("iter #{i}: tests passed #{t1 - t0} ms, loaded #{t2 - t0} ms")
   {t1 - t0, t2 - t0}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end host tty checks for HerdrTerm.Native.Tty under a real pty.
+"""End-to-end host tty checks for DynideTerm.Native.Tty under a real pty.
 
 Usage: tty_harness.py destructor|demo|herdr|herdr-stress|selfhost|persist|agent|plugins|remote|broker-kill [-v]
 
@@ -33,7 +33,7 @@ then quits.
 
 selfhost: the self-hosting loop through the real launcher. The same launch
 (120x40), prefix v, then writes a new module file
-apps/herdr_server/lib/herdr_server/selfhost_probe.ex and waits for the
+apps/dynide_server/lib/dynide_server/selfhost_probe.ex and waits for the
 status row to show `r<n> 1m` (rewritten every 2 s until a batch shows, as a
 defense: since b30f3505 the status bridge subscribes at once and seeds from
 the newest batch, so the first write normally shows); `bin/herdr-live rollback` shows
@@ -43,7 +43,7 @@ focus), and a pane shell has HERDR_LIVE_API set and no HERDR_BROKER_SOCK; the pr
 log_summary.py on the run's log reports reloads >= 1, rollbacks manual 1,
 handoffs graceful 1, session_losses 0. The probe file is removed in a
 `finally` (also on Ctrl-C); afterwards no probe beam is left in
-_build/dev/lib/herdr_server/ebin and `git status --porcelain -- dynide/apps`
+_build/dev/lib/dynide_server/ebin and `git status --porcelain -- dynide/apps`
 equals its value at the start.
 
 persist: M8's exit criterion (stop, start, identical layout and cwds). Run 1
@@ -138,7 +138,7 @@ import unicodedata
 LIVE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUN_SECONDS = 120
 # remote mode: outlasts the client's longest reconnect/resync backoff (the max of `backoff`
-# in apps/herdr_term/lib/herdr_term/remote/conn.ex, 5 s) plus slack; keep above it
+# in apps/dynide_term/lib/dynide_term/remote/conn.ex, 5 s) plus slack; keep above it
 REMOTE_BACKOFF_WINDOW = 6
 COMPILE_TIMEOUT = 600
 DEADLINE = None
@@ -876,9 +876,9 @@ def herdr_stress():
         print("--- screen", h.screen.text(), sep="\n")
 
 
-PROBE_SRC = os.path.join(LIVE, "apps", "herdr_server", "lib", "herdr_server", "selfhost_probe.ex")
-PROBE_BEAM = os.path.join(LIVE, "_build", "dev", "lib", "herdr_server", "ebin",
-                          "Elixir.HerdrServer.SelfhostProbe.beam")
+PROBE_SRC = os.path.join(LIVE, "apps", "dynide_server", "lib", "dynide_server", "selfhost_probe.ex")
+PROBE_BEAM = os.path.join(LIVE, "_build", "dev", "lib", "dynide_server", "ebin",
+                          "Elixir.DynideServer.SelfhostProbe.beam")
 
 
 def settle(h, quiet=3.0, timeout=30):
@@ -899,7 +899,7 @@ def write_probe(n):
     """Writes the probe atomically: the watcher ignores the .tmp name, then sees one .ex event."""
     tmp = PROBE_SRC + ".tmp"
     with open(tmp, "w") as f:
-        f.write(f"defmodule HerdrServer.SelfhostProbe, do: def(v, do: {n})\n")
+        f.write(f"defmodule DynideServer.SelfhostProbe, do: def(v, do: {n})\n")
     os.replace(tmp, PROBE_SRC)
 
 
@@ -985,7 +985,7 @@ def selfhost():
         ok(s["rollbacks"]["manual"] == 1, f"selfhost: log summary rollbacks manual 1 ({s['rollbacks']})")
         ok(s["handoffs"]["graceful"] == 1, f"selfhost: log summary handoffs graceful 1 ({s['handoffs']})")
         ok(s["session_losses"] == 0, f"selfhost: log summary session_losses 0 ({s['session_losses']})")
-    ok(not os.path.exists(PROBE_BEAM), "selfhost: no probe beam left in _build/dev/lib/herdr_server/ebin")
+    ok(not os.path.exists(PROBE_BEAM), "selfhost: no probe beam left in _build/dev/lib/dynide_server/ebin")
     after = git_apps()
     ok(after == before and not os.path.exists(PROBE_SRC),
        f"selfhost: the harness must leave dynide/apps as it found it (git status before {before.strip()!r},"

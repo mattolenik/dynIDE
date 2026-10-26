@@ -4,7 +4,7 @@
 #   bad_frame   inspect of Blit.frame/3 on an invalid packed row
 #   suspend_restored  inspect of Tty.suspend/1 after restore/1
 #   suspend     ok | inspect of the failure (the harness drives SIGSTOP/SIGCONT)
-alias HerdrTerm.Native.{Blit, Tty}
+alias DynideTerm.Native.{Blit, Tty}
 
 defmodule TtyDestructor do
   # Port programs run in their own session (no /dev/tty), so stty gets the path.
@@ -23,7 +23,7 @@ defmodule TtyDestructor do
     end
   end
 
-  def frame(tty), do: Blit.frame(tty, [{0, HerdrScene.Cell.blank_row(4)}], opts())
+  def frame(tty), do: Blit.frame(tty, [{0, DynideScene.Cell.blank_row(4)}], opts())
   def opts, do: %{cursor: nil, shape: :default, repaint: false}
 
   def written(tty, n, tries \\ 100) do

@@ -1,0 +1,17 @@
+[package]
+name = "dynide_broker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libc = "0.2"
+dynide_fdpass = { path = "../dynide_fdpass" }
+
+# Independent of the repo-root workspace.
+[workspace]
+
+[profile.dev]
+panic = "unwind"
+
+[profile.release]
+panic = "unwind"

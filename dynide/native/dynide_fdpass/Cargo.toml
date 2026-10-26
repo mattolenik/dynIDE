@@ -1,0 +1,16 @@
+[package]
+name = "dynide_fdpass"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libc = "0.2"
+
+# Independent of the repo-root workspace.
+[workspace]
+
+[profile.dev]
+panic = "unwind"
+
+[profile.release]
+panic = "unwind"

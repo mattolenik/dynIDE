@@ -1,6 +1,6 @@
 # herdr-live socket API
 
-Generated from `HerdrServer.Api.Spec` by `mix herdr.api.docs`. Do not edit by hand.
+Generated from `DynideServer.Api.Spec` by `mix dynide.api.docs`. Do not edit by hand.
 
 ## Transport
 
@@ -1645,4 +1645,4 @@ own VM (log: `$HERDR_LIVE_CLIENT_LOG`, default
 - Frames: client to server `{:auth, token}`, `{:attach, info}`, `{:input, wire_seq, event}`,
   `{:caps, map}`, `{:detach}`; server to client `{:attached, info}`, `{:refused, reason}`
   and the scene protocol messages (scene, rows, ack, notice, detached, ...). The
-  vocabulary and validators are `HerdrScene.Wire`.
+  vocabulary and validators are `DynideScene.Wire`.

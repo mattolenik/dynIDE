@@ -22,7 +22,7 @@ printf 'onboarding = false\n' >"$tmp/config.toml"
 timeout=${SMOKE_TIMEOUT:-600}
 
 # VM pids from the broker's 'started vm' log lines
-vm_pids() { sed -n 's/.*herdr-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$@" 2>/dev/null; }
+vm_pids() { sed -n 's/.*dynide-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$@" 2>/dev/null; }
 # shellcheck disable=SC2329 # invoked via trap
 cleanup() {
   for f in "$tmp"/pid.*; do [ -s "$f" ] && kill -KILL "$(cat "$f")" 2>/dev/null; done
@@ -110,7 +110,7 @@ if [ "\$2" = KILL ]; then
   echo "\$vm" >"$tmp/vm.\$run"
   kill -KILL "\$vm"
   i=0
-  until grep -qs 'herdr-broker: handoff crash' "\$log" && [ "\$(grep -c 'terminal client started' "\$log")" -ge 2 ]; do
+  until grep -qs 'dynide-broker: handoff crash' "\$log" && [ "\$(grep -c 'terminal client started' "\$log")" -ge 2 ]; do
     i=\$((i + 1))
     [ "\$i" -gt 120 ] && break
     sleep 0.5
@@ -170,7 +170,7 @@ cmp -s "$tmp/before.term" "$tmp/after.term" || fail "term: stty changed: $(diff 
 echo "PASS: SIGTERM: tty settings unchanged"
 [ "$(cat "$tmp/restart_status.term" 2>/dev/null)" = 0 ] && grep -q '^ok' "$tmp/restart.term" ||
   fail "kernel-restart: status $(cat "$tmp/restart_status.term" 2>/dev/null): $(cat "$tmp/restart.term" 2>/dev/null)"
-grep -q 'herdr-broker: handoff graceful' "$log" || fail "kernel-restart: log lacks 'herdr-broker: handoff graceful'"
+grep -q 'dynide-broker: handoff graceful' "$log" || fail "kernel-restart: log lacks 'dynide-broker: handoff graceful'"
 [ "$(grep -c 'terminal client started' "$log")" -ge 2 ] || fail "kernel-restart: the new VM started no terminal client"
 adopted_app "$log" kernel-restart
 echo "PASS: kernel-restart: graceful handoff, app adopted, the new VM's client started"
@@ -185,7 +185,7 @@ echo "PASS: kernel-restart: no vm left"
 in_pty kill KILL
 log="$tmp/log.kill"
 [ -n "$(cat "$tmp/vm.kill" 2>/dev/null)" ] || fail "kill: no primary_pid in the broker status"
-grep -q 'herdr-broker: handoff crash' "$log" || fail "kill: log lacks 'herdr-broker: handoff crash'"
+grep -q 'dynide-broker: handoff crash' "$log" || fail "kill: log lacks 'dynide-broker: handoff crash'"
 [ "$(grep -c 'terminal client started' "$log")" -ge 2 ] || fail "kill: the new VM started no terminal client"
 adopted_app "$log" kill
 [ "$(cat "$tmp/status.kill")" = 0 ] || fail "kill: exit status $(cat "$tmp/status.kill") (wanted 0); log: $(tail -n 20 "$log" 2>&1)"

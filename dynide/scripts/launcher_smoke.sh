@@ -13,7 +13,7 @@ tmp=$(mktemp -d)
 printf 'onboarding = false\n' >"$tmp/config.toml"
 timeout=${SMOKE_TIMEOUT:-600}
 
-vm_pids() { sed -n 's/.*herdr-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$tmp/log/herdr-live.log" 2>/dev/null; }
+vm_pids() { sed -n 's/.*dynide-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$tmp/log/herdr-live.log" 2>/dev/null; }
 # shellcheck disable=SC2329 # invoked via trap
 cleanup() {
   if [ -s "$tmp/pid" ]; then kill -KILL "$(cat "$tmp/pid")" 2>/dev/null; fi
@@ -98,12 +98,12 @@ echo "PASS: herdr-live rollback after stop exits 1, socket removed"
 # Darwin script(1) echoes "^D" plus backspaces when its own stdin hits EOF; that is script, not the VM.
 [ -z "$(tr -d '\r\n\b' <"$tmp/transcript" | sed 's/^\^D//')" ] || fail "terminal output: $(cat "$tmp/transcript")"
 echo "PASS: terminal transcript empty"
-grep -q 'herdr-broker: vm gen=1 is primary' "$log" || fail "log lacks 'herdr-broker: vm gen=1 is primary'"
+grep -q 'dynide-broker: vm gen=1 is primary' "$log" || fail "log lacks 'dynide-broker: vm gen=1 is primary'"
 echo "PASS: broker ran the vm"
-grep -q 'herdr-broker: stopped' "$log" || fail "log lacks 'herdr-broker: stopped'"
-! grep -q 'herdr-broker: handoff' "$log" || fail "sigterm ran a handoff: $(grep 'herdr-broker: handoff' "$log")"
+grep -q 'dynide-broker: stopped' "$log" || fail "log lacks 'dynide-broker: stopped'"
+! grep -q 'dynide-broker: handoff' "$log" || fail "sigterm ran a handoff: $(grep 'dynide-broker: handoff' "$log")"
 echo "PASS: sigterm stopped without handoff"
-[ -n "$(vm_pids)" ] || fail "log has no 'herdr-broker: started vm' line"
+[ -n "$(vm_pids)" ] || fail "log has no 'dynide-broker: started vm' line"
 for p in $(vm_pids); do
   ! kill -0 "$p" 2>/dev/null || fail "vm pid $p still running"
 done

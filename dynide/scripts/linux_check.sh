@@ -4,7 +4,7 @@
 # without host build outputs, so macOS artifacts never mix with Linux ones.
 #   dynide/scripts/linux_check.sh                       # just dynide-check
 #   dynide/scripts/linux_check.sh just dynide-bench-handoff
-#   dynide/scripts/linux_check.sh 'cd dynide/native/herdr_kernel && cargo test --locked'
+#   dynide/scripts/linux_check.sh 'cd dynide/native/dynide_kernel && cargo test --locked'
 # LINUX_CHECK_OUT=<host dir> mounts it writable at /out (bench logs).
 # LINUX_CHECK_IMAGE (default localhost/herdr-m6-check) and LINUX_CHECK_VOLUME_PREFIX
 # (default herdr-m6: <prefix>-cargo, <prefix>-hex) name the image and cache volumes.
