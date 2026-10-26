@@ -245,6 +245,54 @@ defmodule DynideServer.Api.Handlers.Topology do
     end
   end
 
+  def handle("pane.neighbor", p) do
+    app = app!()
+    id = p[:pane_id] || app.focus.pane
+    nav = String.to_existing_atom(p.direction)
+
+    with {ws_id, tab_id} <- Commands.locate(app, id),
+         {ws, tab} <- View.find_tab(app, ws_id, tab_id) do
+      neighbor = Layout.find_in_direction(tab.layout, app.session.area, id, nav)
+
+      {:ok,
+       %{
+         type: "pane_neighbor",
+         pane_id: Ids.pane(id),
+         direction: p.direction,
+         neighbor_pane_id: neighbor && Ids.pane(neighbor),
+         layout: View.layout(app, ws, tab)
+       }}
+    else
+      _ -> not_found(Ids.pane(id))
+    end
+  end
+
+  def handle("pane.move", %{pane_id: id} = p) do
+    app = app!()
+
+    with {sws, stab} <- Commands.locate(app, id),
+         {_, src_tab} <- View.find_tab(app, sws, stab) do
+      cond do
+        Map.get(src_tab, :zoom) != nil ->
+          unchanged_move(app, id, sws, stab, "zoomed_tab")
+
+        true ->
+          case parse_dest(app, sws, stab, p.destination) do
+            {:ok, dest} ->
+              move(id, sws, stab, dest, Map.get(p, :focus, true))
+
+            {:unchanged, reason} ->
+              unchanged_move(app, id, sws, stab, reason)
+
+            {:error, msg} ->
+              {:error, :invalid_params, msg}
+          end
+      end
+    else
+      _ -> not_found(Ids.pane(id))
+    end
+  end
+
   def handle("pane.process_info", %{pane_id: id}) do
     app = app!()
 
@@ -403,6 +451,145 @@ defmodule DynideServer.Api.Handlers.Topology do
     {w, t} = Commands.locate(app, id)
     View.find_tab(app, w, t)
   end
+
+  # --- pane.move ---
+
+  # The destination object, resolved to a Commands.move_pane/4 tuple; `:unchanged` when
+  # the move is a same-tab or zoomed no-op, `{:error, msg}` for a malformed destination.
+  defp parse_dest(app, sws, stab, %{"type" => "tab"} = d) do
+    with {:ok, {tw, tt}} <- Ids.parse_tab(d["tab_id"]),
+         {_, ttab} <- View.find_tab(app, tw, tt) do
+      cond do
+        tw == sws and tt == stab ->
+          {:unchanged, "same_tab"}
+
+        Map.get(ttab, :zoom) != nil ->
+          {:unchanged, "zoomed_tab"}
+
+        true ->
+          with {:ok, target} <- target_pane(app, tw, tt, d["target_pane_id"]),
+               {:ok, split} <- split_dir(d["split"]) do
+            {:ok, {:tab, {tw, tt}, target, split, d["ratio"] || 0.5}}
+          end
+      end
+    else
+      _ -> {:error, "destination tab not found"}
+    end
+  end
+
+  defp parse_dest(app, sws, _stab, %{"type" => "new_tab"} = d) do
+    with {:ok, tw} <- parse_ws(d["workspace_id"], sws) do
+      if View.find_workspace(app, tw),
+        do: {:ok, {:new_tab, tw, d["label"]}},
+        else: {:error, "destination workspace not found"}
+    end
+  end
+
+  defp parse_dest(_app, _sws, _stab, %{"type" => "new_workspace"} = d),
+    do: {:ok, {:new_workspace, d["label"], d["tab_label"]}}
+
+  defp parse_dest(_app, _sws, _stab, _d),
+    do: {:error, "destination must have type tab, new_tab or new_workspace"}
+
+  defp parse_ws(nil, default), do: {:ok, default}
+  defp parse_ws(s, _default), do: Ids.parse_workspace(s)
+
+  defp split_dir(nil), do: {:ok, "right"}
+  defp split_dir("right"), do: {:ok, "right"}
+  defp split_dir("down"), do: {:ok, "down"}
+  defp split_dir(_), do: {:error, "split must be right or down"}
+
+  defp target_pane(app, tw, tt, nil), do: {:ok, elem(View.find_tab(app, tw, tt), 1).layout.focus}
+
+  defp target_pane(app, tw, tt, target_str) do
+    with {:ok, target} <- Ids.parse_pane(target_str),
+         {_, tab} <- View.find_tab(app, tw, tt),
+         true <- target in Layout.pane_ids(tab.layout) do
+      {:ok, target}
+    else
+      _ -> {:error, "target pane is not in the destination tab"}
+    end
+  end
+
+  defp move(id, sws, stab, dest, focus?) do
+    with {:ok, before, aft, notes} <-
+           run_on_pane(id, {Commands, :move_pane, [id, dest, focus?]}) do
+      moved_reply(before, aft, id, sws, stab, notes)
+    end
+  end
+
+  defp moved_reply(before, aft, id, sws, stab, notes) do
+    {tw, tt} = Commands.locate(aft, id)
+    {ws, tab} = View.find_tab(aft, tw, tt)
+
+    base = %{
+      type: "pane_move",
+      changed: true,
+      pane: View.pane(aft, id),
+      previous_pane_id: Ids.pane(id),
+      previous_workspace_id: Ids.workspace(sws),
+      previous_tab_id: Ids.tab(sws, stab),
+      target_layout: View.layout(aft, ws, tab),
+      focused_pane_id: Ids.pane(tab.layout.focus)
+    }
+
+    base =
+      case View.find_tab(aft, sws, stab) do
+        nil -> Map.put(base, :closed_tab_id, Ids.tab(sws, stab))
+        {ws, src_tab} -> Map.put(base, :source_layout, View.layout(aft, ws, src_tab))
+      end
+
+    base =
+      if View.find_workspace(aft, sws) == nil,
+        do: Map.put(base, :closed_workspace_id, Ids.workspace(sws)),
+        else: base
+
+    base = maybe_put(base, :created_workspace, created_ws(before, aft))
+    base = maybe_put(base, :created_tab, created_tab(before, aft))
+
+    if notes == [], do: {:ok, base}, else: {:error, :failed, hd(notes)}
+  end
+
+  defp unchanged_move(app, id, sws, stab, reason) do
+    {ws, tab} = View.find_tab(app, sws, stab)
+    layout = View.layout(app, ws, tab)
+
+    {:ok,
+     %{
+       type: "pane_move",
+       changed: false,
+       reason: reason,
+       pane: View.pane(app, id),
+       previous_pane_id: Ids.pane(id),
+       previous_workspace_id: Ids.workspace(sws),
+       previous_tab_id: Ids.tab(sws, stab),
+       source_layout: layout,
+       target_layout: layout,
+       focused_pane_id: Ids.pane(tab.layout.focus)
+     }}
+  end
+
+  defp created_ws(before, aft) do
+    ids = MapSet.new(before.session.workspaces, & &1.id)
+
+    case Enum.find(aft.session.workspaces, &(&1.id not in ids)) do
+      nil -> nil
+      ws -> View.workspace(aft, ws)
+    end
+  end
+
+  defp created_tab(before, aft) do
+    before_ids = MapSet.new(for(ws <- before.session.workspaces, t <- ws.tabs, do: {ws.id, t.id}))
+
+    Enum.find_value(aft.session.workspaces, fn ws ->
+      Enum.find_value(ws.tabs, fn t ->
+        if {ws.id, t.id} not in before_ids, do: View.tab(aft, ws, t)
+      end)
+    end)
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, val), do: Map.put(map, key, val)
 
   # cwd must be an existing directory; env is name => value
   defp spawn_opts(p) do

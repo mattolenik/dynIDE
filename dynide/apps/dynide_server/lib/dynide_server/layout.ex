@@ -50,11 +50,21 @@ defmodule DynideServer.Layout do
   end
 
   @spec close(t(), id()) :: {:ok, t()} | :last
-  def close(l, id) do
+  def close(l, id), do: take(l, id)
+
+  @doc """
+  Removes `id`: `{:ok, l}` with the pane gone (focus moved off it), or `:last` when it
+  was the only pane. An id not in the layout is unchanged (`{:ok, l}`).
+  """
+  @spec take(t(), id()) :: {:ok, t()} | :last
+  def take(l, id) do
     ids = pane_ids(l)
 
     cond do
-      length(ids) <= 1 or id not in ids ->
+      id not in ids ->
+        {:ok, l}
+
+      length(ids) <= 1 ->
         :last
 
       id == l.focus ->

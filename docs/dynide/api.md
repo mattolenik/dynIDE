@@ -544,6 +544,21 @@ Result: `pane_resize` with `changed` (boolean), `reason` (`unchanged`), `pane_id
 
 Errors: `invalid_params`, `not_found`
 
+### `pane.neighbor`
+
+The neighbour of a pane in a direction, without moving focus.
+
+CLI: `dynide pane neighbor [<pane_id>] --direction left|right|up|down`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | no | Pane to start from; default the focused pane. |
+| `direction` | `left`, `right`, `up` or `down` | yes | Which way. |
+
+Result: `pane_neighbor` with `pane_id` (pane id), `direction` (`left`, `right`, `up` or `down`), `neighbor_pane_id` (string or null), `layout` (`layout` object).
+
+Errors: `invalid_params`, `not_found`
+
 ### `pane.report_agent`
 
 Report an agent's state for a pane from an integration (hook).
@@ -710,6 +725,22 @@ CLI: `dynide pane layout [<pane_id>]`
 Result: `pane_layout` with `layout` (`layout` object).
 
 Errors: `invalid_params`, `not_found`
+
+### `pane.move`
+
+Move a pane into another tab, a new tab, or a new workspace.
+
+CLI: `dynide pane move <pane_id> --tab <tab_id> [--target-pane <pane_id>] [--split right|down] [--ratio R] [--focus|--no-focus] | --new-tab [--workspace <workspace_id>] [--label L] | --new-workspace [--label L] [--tab-label L]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `pane_id` | pane id | yes | Target pane. |
+| `destination` | object | yes | Where to move it: `{type: "tab", tab_id, target_pane_id?, split, ratio?}`, `{type: "new_tab", workspace_id?, label?}`, or `{type: "new_workspace", label?, tab_label?}`. |
+| `focus` | boolean | no | Focus the moved pane. |
+
+Result: `pane_move` with `changed` (boolean), `reason` (`same_tab` or `zoomed_tab`), `pane` (`pane` object), `previous_pane_id` (pane id), `previous_workspace_id` (workspace id), `previous_tab_id` (tab id), `source_layout` (`layout` object), `target_layout` (`layout` object), `created_workspace` (`workspace` object), `created_tab` (`tab` object), `closed_workspace_id` (workspace id), `closed_tab_id` (tab id), `focused_pane_id` (pane id).
+
+Errors: `invalid_params`, `not_found`, `failed`
 
 ### `pane.process_info`
 
@@ -884,6 +915,21 @@ CLI: `dynide events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] [--w
 Result: `subscription_started` with `subscriptions` (integer).
 
 Errors: `invalid_params`, `not_found`, `not_available`, `events_lost`
+
+### `events.wait`
+
+Wait for the next event matching `match_event`, or time out.
+
+CLI: `dynide events wait <type> [--pane <pane_id>] [--tab <tab_id>] [--workspace <workspace_id>] [--timeout MS]`
+
+| param | type | required | description |
+| --- | --- | --- | --- |
+| `match_event` | object {event: `workspace.created`, `workspace.closed`, `workspace.focused`, `workspace.renamed`, `workspace.metadata_updated`, `workspace.moved`, `tab.created`, `tab.closed`, `tab.focused`, `tab.renamed`, `tab.moved`, `pane.created`, `pane.closed`, `pane.focused`, `pane.updated`, `pane.agent_detected`, `pane.agent_status_changed`, `layout.updated` or `notification.shown`, pane_id?: pane id, tab_id?: tab id, workspace_id?: workspace id} | yes | The event to wait for. |
+| `timeout_ms` | integer 1..3600000 | no | Give up after this many milliseconds. |
+
+Result: `event_wait` with `event` (string), `data` (object).
+
+Errors: `invalid_params`, `not_found`, `timeout`, `not_available`, `events_lost`
 
 ## Methods: agent
 

@@ -460,7 +460,7 @@ defmodule DynideServer.App.Actions do
     do: Layout.size(l, app.session.area, Layout.opts(tab, app.ui), id)
 
   # Close pane `id` wherever it lives, clearing its tab's zoom; unknown ids are a no-op
-  # (Layout.close/2 returns :last for them too, so membership is checked first).
+  # (membership is checked first, so `Layout.close/2` never sees an id that is not here).
   defp close_pane_id(app, id) do
     tab = Enum.find(ws(app).tabs, &(id in Layout.pane_ids(&1.layout)))
     close_in(app, tab, id)

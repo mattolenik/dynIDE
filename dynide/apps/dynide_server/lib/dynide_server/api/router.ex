@@ -38,8 +38,8 @@ defmodule DynideServer.Api.Router do
   def handle(method, params, _ctx)
       when method in ~w(pane.list pane.get pane.current pane.split pane.close pane.focus
                         pane.zoom pane.layout pane.process_info pane.rename
-                        pane.focus_direction pane.swap pane.resize pane.report_metadata
-                        pane.report_agent_session),
+                        pane.focus_direction pane.swap pane.resize pane.neighbor pane.move
+                        pane.report_metadata pane.report_agent_session),
       do: Handlers.Topology.handle(method, params)
 
   def handle("popup.close", params, _ctx), do: Handlers.Topology.handle("popup.close", params)
@@ -57,6 +57,7 @@ defmodule DynideServer.Api.Router do
     do: Handlers.Client.handle(method, params)
 
   def handle("events.subscribe", params, ctx), do: Events.request(params, ctx.conn)
+  def handle("events.wait", params, ctx), do: Events.wait(params, ctx.conn)
 
   def handle("agent.wait", params, ctx), do: Handlers.Agents.wait(params, ctx)
   def handle("agent." <> _ = method, params, _ctx), do: Handlers.Agents.handle(method, params)

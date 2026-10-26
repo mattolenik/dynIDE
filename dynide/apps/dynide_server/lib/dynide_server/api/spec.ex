@@ -563,6 +563,15 @@ defmodule DynideServer.Api.Spec do
         "dynide pane resize [<pane_id>] --direction left|right|up|down [--amount F]"
       ),
       method(
+        "pane.neighbor",
+        g,
+        "The neighbour of a pane in a direction, without moving focus.",
+        [opt_pane("Pane to start from; default the focused pane."), dir()],
+        "pane_neighbor",
+        [:not_found],
+        "dynide pane neighbor [<pane_id>] --direction left|right|up|down"
+      ),
+      method(
         "pane.report_agent",
         g,
         "Report an agent's state for a pane from an integration (hook).",
@@ -706,6 +715,28 @@ defmodule DynideServer.Api.Spec do
         "dynide pane layout [<pane_id>]"
       ),
       method(
+        "pane.move",
+        g,
+        "Move a pane into another tab, a new tab, or a new workspace.",
+        [
+          pid,
+          req(
+            "destination",
+            :object,
+            "Where to move it: `{type: \"tab\", tab_id, target_pane_id?, split, ratio?}`, " <>
+              "`{type: \"new_tab\", workspace_id?, label?}`, or " <>
+              "`{type: \"new_workspace\", label?, tab_label?}`."
+          ),
+          focus("Focus the moved pane.")
+        ],
+        "pane_move",
+        [:not_found, :failed],
+        "dynide pane move <pane_id> --tab <tab_id> [--target-pane <pane_id>] " <>
+          "[--split right|down] [--ratio R] [--focus|--no-focus] | " <>
+          "--new-tab [--workspace <workspace_id>] [--label L] | " <>
+          "--new-workspace [--label L] [--tab-label L]"
+      ),
+      method(
         "pane.process_info",
         g,
         "OS process facts of a pane.",
@@ -840,6 +871,13 @@ defmodule DynideServer.Api.Spec do
       opt("workspace_id", :workspace_id, "Only events of this workspace.")
     ]
 
+    match = [
+      req("event", {:enum, event_types()}, "Event type."),
+      opt("pane_id", :pane_id, "Only events of this pane."),
+      opt("tab_id", :tab_id, "Only events of this tab."),
+      opt("workspace_id", :workspace_id, "Only events of this workspace.")
+    ]
+
     [
       method(
         "events.subscribe",
@@ -855,6 +893,16 @@ defmodule DynideServer.Api.Spec do
         "subscription_started",
         [:not_found, :not_available, :events_lost],
         "dynide events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] [--workspace <workspace_id>]"
+      ),
+      method(
+        "events.wait",
+        "events",
+        "Wait for the next event matching `match_event`, or time out.",
+        [req("match_event", {:object, match}, "The event to wait for."), timeout_ms()],
+        "event_wait",
+        [:not_found, :timeout, :not_available, :events_lost],
+        "dynide events wait <type> [--pane <pane_id>] [--tab <tab_id>] " <>
+          "[--workspace <workspace_id>] [--timeout MS]"
       )
     ]
   end
@@ -1375,7 +1423,28 @@ defmodule DynideServer.Api.Spec do
         f("focused_pane_id", :pane_id),
         f("layout", {:ref, "layout"})
       ],
+      "pane_neighbor" => [
+        f("pane_id", :pane_id),
+        f("direction", {:enum, ~w(left right up down)}),
+        f("neighbor_pane_id", :null_or_string),
+        f("layout", {:ref, "layout"})
+      ],
       "pane_layout" => [f("layout", {:ref, "layout"})],
+      "pane_move" => [
+        f("changed", :boolean),
+        f("reason", {:enum, ["same_tab", "zoomed_tab"]}, false),
+        f("pane", pane),
+        f("previous_pane_id", :pane_id),
+        f("previous_workspace_id", :workspace_id),
+        f("previous_tab_id", :tab_id),
+        f("source_layout", {:ref, "layout"}, false),
+        f("target_layout", {:ref, "layout"}),
+        f("created_workspace", ws, false),
+        f("created_tab", tab, false),
+        f("closed_workspace_id", :workspace_id, false),
+        f("closed_tab_id", :tab_id, false),
+        f("focused_pane_id", :pane_id)
+      ],
       "process_info" => [
         f("pane_id", :pane_id),
         f("os_pid", :integer),
@@ -1390,6 +1459,7 @@ defmodule DynideServer.Api.Spec do
       ],
       "output_matched" => [f("pane_id", :pane_id), f("line", :string)],
       "subscription_started" => [f("subscriptions", :integer)],
+      "event_wait" => [f("event", :string), f("data", :object)],
       "agent_list" => [f("agents", {:list, {:ref, "agent"}})],
       "agent_info" => [f("agent", {:ref, "agent"})],
       "agent_read" => [f("target", :string), f("text", :string)],

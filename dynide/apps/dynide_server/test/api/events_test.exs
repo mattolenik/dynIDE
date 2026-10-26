@@ -87,6 +87,32 @@ defmodule DynideServer.Api.EventsTest do
     assert %{"event" => "pane.focused", "data" => %{"pane_id" => "p1"}} = event!(s)
   end
 
+  test "events.wait answers on a matching event, or times out", %{path: path, ctl: ctl} do
+    s = ApiClient.connect(path)
+
+    spawn(fn ->
+      Process.sleep(100)
+      ApiClient.call(ctl, "pane.split", %{"pane_id" => "p1", "direction" => "right"})
+    end)
+
+    reply = ApiClient.call(s, "events.wait", %{"match_event" => %{"event" => "pane.created"}})
+
+    assert %{"result" => %{"type" => "event_wait", "event" => "pane.created", "data" => data}} =
+             reply
+
+    assert data["pane_id"] == "p2"
+
+    reply2 =
+      ApiClient.call(s, "events.wait", %{
+        "match_event" => %{"event" => "tab.closed"},
+        "timeout_ms" => 200
+      })
+
+    assert %{"error" => %{"code" => "timeout"}} = reply2
+
+    :gen_tcp.close(s)
+  end
+
   test "notification.show reaches the Store's subscribers and notification.shown", %{
     path: path,
     ctl: ctl

@@ -57,6 +57,28 @@ defmodule DynideServer.App.CommandsTest do
     assert b.focus.pane == 1
   end
 
+  test "move_pane with a target pane outside the destination tab leaves the pane in place" do
+    a = app()
+    {b, _} = Commands.split_pane(a, 1, :horizontal, 0.5, true)
+    {c, _} = Commands.create_workspace(b, nil, false)
+
+    # pane 1 is not in ws2:t1 (which holds only 3): the move must not half-commit
+    {d, [{:notice, %{text: "the move destination vanished"}}]} =
+      Commands.move_pane(c, 2, {:tab, {2, 1}, 1, "right", 0.5}, true)
+
+    assert Commands.locate(d, 2) == {1, 1}
+  end
+
+  test "move_pane with focus? false keeps the destination tab's focus" do
+    a = app()
+    {b, _} = Commands.split_pane(a, 1, :horizontal, 0.5, true)
+    {c, _} = Commands.create_tab(b, 1, nil, false)
+
+    # move 3 into the active t1 (target 2) without focus: focus stays on 2
+    {d, _} = Commands.move_pane(c, 3, {:tab, {1, 1}, 2, "right", 0.5}, false)
+    assert d.focus.pane == 2
+  end
+
   test "split too small warns and changes nothing" do
     {a, _} = Actions.init(%{cols: 2, rows: 24})
 

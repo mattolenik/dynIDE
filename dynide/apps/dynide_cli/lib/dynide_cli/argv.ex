@@ -307,6 +307,20 @@ defmodule DynideCli.Argv do
       "modifier" => {"modifiers", {:many, ~w(shift alt ctrl)}}
     }
 
+    move = %{
+      "tab" => {"tab_id", :string},
+      "target-pane" => {"target_pane_id", :string},
+      "split" => {"split", {:enum, ["right", "down"]}},
+      "ratio" => {"ratio", :number},
+      "new-tab" => {"new_tab", :flag},
+      "new-workspace" => {"new_workspace", :flag},
+      "workspace" => {"workspace_id", :string},
+      "label" => {"label", :string},
+      "tab-label" => {"tab_label", :string},
+      "focus" => {"focus", :flag},
+      "no-focus" => {"focus", {:const, false}}
+    }
+
     wait =
       Map.merge(@read_opts, %{
         "match" => {"match", :string},
@@ -359,6 +373,14 @@ defmodule DynideCli.Argv do
         "pane resize [<pane_id>] --direction left|right|up|down [--amount F]"
       ),
       cmd(
+        ~w(pane neighbor),
+        "pane.neighbor",
+        [opt_id],
+        nav,
+        :json,
+        "pane neighbor [<pane_id>] --direction left|right|up|down"
+      ),
+      cmd(
         ~w(pane rename),
         "pane.rename",
         [id, {:opt, "label"}],
@@ -385,6 +407,17 @@ defmodule DynideCli.Argv do
         "pane zoom [<pane_id>] [--on|--off]"
       ),
       cmd(~w(pane layout), "pane.layout", [opt_id], %{}, :json, "pane layout [<pane_id>]"),
+      cmd(
+        ~w(pane move),
+        "pane.move",
+        [id],
+        move,
+        :json,
+        "pane move <pane_id> --tab <tab_id> [--target-pane <pane_id>] " <>
+          "[--split right|down] [--ratio R] [--focus|--no-focus] | " <>
+          "--new-tab [--workspace <workspace_id>] [--label L] | " <>
+          "--new-workspace [--label L] [--tab-label L]"
+      ),
       cmd(
         ~w(pane process-info),
         "pane.process_info",
@@ -586,6 +619,20 @@ defmodule DynideCli.Argv do
         :events,
         "events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] " <>
           "[--workspace <workspace_id>]"
+      ),
+      cmd(
+        ~w(events wait),
+        "events.wait",
+        [{:req, "event"}],
+        %{
+          "pane" => {"pane_id", :string},
+          "tab" => {"tab_id", :string},
+          "workspace" => {"workspace_id", :string},
+          "timeout" => {"timeout_ms", :int}
+        },
+        :json,
+        "events wait <type> [--pane <pane_id>] [--tab <tab_id>] " <>
+          "[--workspace <workspace_id>] [--timeout MS]"
       )
     ]
   end
@@ -823,6 +870,59 @@ defmodule DynideCli.Argv do
   defp finish(%{method: "events.subscribe"}, params, _env) do
     {types, filters} = Map.pop(params, "types")
     {:subscribe, %{"subscriptions" => Enum.map(types, &Map.put(filters, "type", &1))}}
+  end
+
+  defp finish(%{method: "events.wait"} = c, params, _env) do
+    {event, params} = Map.pop(params, "event")
+    {ids, params} = Map.split(params, ["pane_id", "tab_id", "workspace_id"])
+    plain(c, Map.put(params, "match_event", Map.put(ids, "event", event)))
+  end
+
+  # the --tab / --new-tab / --new-workspace flags fold into one destination object
+  defp finish(%{method: "pane.move"} = c, params, _env) do
+    {new_tab, params} = Map.pop(params, "new_tab")
+    {new_workspace, params} = Map.pop(params, "new_workspace")
+
+    destination =
+      cond do
+        new_tab ->
+          %{
+            "type" => "new_tab",
+            "workspace_id" => params["workspace_id"],
+            "label" => params["label"]
+          }
+
+        new_workspace ->
+          %{
+            "type" => "new_workspace",
+            "label" => params["label"],
+            "tab_label" => params["tab_label"]
+          }
+
+        true ->
+          %{
+            "type" => "tab",
+            "tab_id" => params["tab_id"],
+            "target_pane_id" => params["target_pane_id"],
+            "split" => params["split"],
+            "ratio" => params["ratio"]
+          }
+      end
+
+    params =
+      params
+      |> Map.drop([
+        "workspace_id",
+        "label",
+        "tab_label",
+        "tab_id",
+        "target_pane_id",
+        "split",
+        "ratio"
+      ])
+      |> Map.put("destination", destination)
+
+    plain(c, params)
   end
 
   # herdr prints the manifest status text; `--json` prints the reply
@@ -1077,6 +1177,28 @@ defmodule DynideCli.Argv do
       if t not in @event_types,
         do: {:error, "unknown event type #{inspect(t)}; one of #{Enum.join(@event_types, ", ")}"}
     end)
+  end
+
+  defp check("events.wait", %{"event" => t}) do
+    if t in @event_types,
+      do: :ok,
+      else: {:error, "unknown event type #{inspect(t)}; one of #{Enum.join(@event_types, ", ")}"}
+  end
+
+  defp check("pane.move", params) do
+    cond do
+      Map.has_key?(params, "new_tab") and Map.has_key?(params, "new_workspace") ->
+        {:error, "give at most one of --new-tab and --new-workspace"}
+
+      Map.has_key?(params, "new_tab") or Map.has_key?(params, "new_workspace") ->
+        :ok
+
+      Map.has_key?(params, "tab_id") ->
+        :ok
+
+      true ->
+        {:error, "give --tab, --new-tab or --new-workspace"}
+    end
   end
 
   defp check("worktree.create", %{"branch" => _}), do: :ok

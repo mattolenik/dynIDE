@@ -81,6 +81,10 @@ defmodule DynideServer.Api.ConformanceTest do
   defp default({:list, :string}), do: ["a"]
   defp default({:list, {:object, _}}), do: [%{"type" => "pane.created"}]
   defp default({:map, _}), do: %{"k" => "v"}
+  defp default(:object), do: %{}
+
+  defp default({:object, params}),
+    do: for(p <- params, p.required, into: %{}, do: {p.name, default(p.type)})
 
   defp call(s, method, fill \\ %{}), do: ApiClient.call(s, method, params(method, fill))
 
@@ -247,6 +251,50 @@ defmodule DynideServer.Api.ConformanceTest do
     %{"result" => %{"type" => "subscription_started"}} = call(s, "events.subscribe")
     Process.exit(Process.whereis(Events), :kill)
     ApiClient.recv_line(s)
+  end
+
+  defp produce("events.wait", :not_found, ctx),
+    do:
+      call(listen(ctx), "events.wait", %{
+        "match_event" => %{"event" => "pane.created", "pane_id" => "p99"}
+      })
+
+  defp produce("events.wait", :not_available, ctx) do
+    s = listen(ctx)
+    stop_supervised!(Events)
+    call(s, "events.wait")
+  end
+
+  defp produce("events.wait", :timeout, ctx),
+    do:
+      call(listen(ctx), "events.wait", %{
+        "match_event" => %{"event" => "tab.closed"},
+        "timeout_ms" => 100
+      })
+
+  defp produce("events.wait", :events_lost, ctx) do
+    s = listen(ctx)
+
+    spawn(fn ->
+      Process.sleep(100)
+      Process.exit(Process.whereis(Events), :kill)
+    end)
+
+    call(s, "events.wait", %{"match_event" => %{"event" => "tab.closed"}})
+  end
+
+  # a pane area too narrow for any split: the move's size check answers failed
+  defp produce("pane.move", :failed, ctx) do
+    s = listen(ctx)
+    %{"result" => _} = ApiClient.call(s, "tab.create", %{})
+
+    {:ok, _, _} =
+      Store.request({DynideServer.App.Actions, :apply, [{:resize, %{cols: 1, rows: 24}}]})
+
+    call(s, "pane.move", %{
+      "pane_id" => "p1",
+      "destination" => %{"type" => "tab", "tab_id" => "w1:t2", "split" => "right"}
+    })
   end
 
   # over the 32-token cap

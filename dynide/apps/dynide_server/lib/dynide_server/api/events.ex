@@ -67,6 +67,88 @@ defmodule DynideServer.Api.Events do
     end
   end
 
+  @doc """
+  The `events.wait` handler: subscribe the connection to a single `match_event` filter,
+  then poll until a matching event arrives or `timeout_ms` elapses. The continuation
+  holds only data (the filter, deadline and hub monitor), so a reload moves a running
+  wait onto new code; the subscription is dropped when the wait answers. The hub is
+  monitored: a hub that stops answers `events_lost`, like a stream.
+  """
+  @spec wait(map(), pid()) ::
+          {:continue, {module(), atom(), list()}} | {:ok, map()} | {:error, atom(), String.t()}
+  def wait(%{match_event: match} = params, conn) do
+    app = Store.snapshot()
+
+    cond do
+      msg = missing(app, match) ->
+        {:error, :not_found, msg}
+
+      GenServer.whereis(__MODULE__) == nil ->
+        {:error, :not_available, "events are not served"}
+
+      true ->
+        filter = match_filter(match)
+        :ok = subscribe(conn, [filter])
+        deadline = params[:timeout_ms] && System.monotonic_time(:millisecond) + params.timeout_ms
+        ref = Process.monitor(Process.whereis(__MODULE__))
+        poll_wait(%{filter: filter, deadline: deadline, hub: ref}, nil)
+    end
+  end
+
+  @doc false
+  def poll_wait(state, _ctx) do
+    case receive_match(state.filter, state.hub) do
+      {:ok, event} ->
+        finish_wait(state)
+        {type, data} = Map.pop(event, "event")
+        {:ok, %{type: "event_wait", event: type, data: data}}
+
+      :down ->
+        Process.demonitor(state.hub, [:flush])
+        {:error, :events_lost, "the event hub stopped"}
+
+      :none ->
+        if state.deadline && System.monotonic_time(:millisecond) >= state.deadline do
+          finish_wait(state)
+          {:error, :timeout, "no matching event in time"}
+        else
+          {:continue, {__MODULE__, :poll_wait, [state]}}
+        end
+    end
+  end
+
+  defp receive_match(filter, hub) do
+    receive do
+      {:api_event, event} ->
+        if matches?(filter, event), do: {:ok, event}, else: receive_match(filter, hub)
+
+      {:DOWN, ^hub, :process, _, _} ->
+        :down
+    after
+      0 -> :none
+    end
+  end
+
+  # the hub may have stopped just after it delivered the event: an unsubscribe is then a
+  # noproc, and the consumed event must still answer rather than be re-polled away
+  defp finish_wait(state) do
+    Process.demonitor(state.hub, [:flush])
+    safe_unsubscribe(self())
+  end
+
+  defp safe_unsubscribe(pid) do
+    unsubscribe(pid)
+  catch
+    :exit, {reason, _} when reason in [:noproc, :normal, :shutdown, :killed] -> :ok
+  end
+
+  defp match_filter(match) do
+    for k <- [:workspace_id, :tab_id, :pane_id],
+        (id = match[k]) != nil,
+        into: %{"type" => match.event},
+        do: {Atom.to_string(k), public(k, id)}
+  end
+
   defp missing(app, sub) do
     Enum.find_value([:workspace_id, :tab_id, :pane_id], fn k ->
       id = sub[k]

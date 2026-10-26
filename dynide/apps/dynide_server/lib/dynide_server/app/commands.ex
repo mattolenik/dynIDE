@@ -188,6 +188,153 @@ defmodule DynideServer.App.Commands do
     end
   end
 
+  @doc """
+  Moves `pane` into `dest`, keeping its id and kernel; only the layouts change. `dest`
+  is `{:tab, {ws_id, tab_id}, target_pane, split, ratio}`, `{:new_tab, ws_id, label}` or
+  `{:new_workspace, label, tab_label}`, already resolved by the handler. The source tab
+  closes when it empties, the source workspace when it empties and the pane moved out of
+  it. `focus?` focuses the moved pane in its new home. The pane is neither spawned nor
+  closed, so a successful move has no effects; a move whose destination vanished or is
+  too small to split answers a warning notice instead of half-committing.
+  """
+  @spec move_pane(app(), integer(), term(), boolean()) :: result()
+  def move_pane(app, pane, dest, focus?) do
+    with {sws, stab} <- locate(app, pane) do
+      removed = remove_source(app, pane, sws, stab)
+
+      case place(removed, pane, dest, focus?) do
+        {:error, reason} ->
+          # the destination vanished or cannot hold the pane: keep the pane in place
+          {app, [{:notice, %{level: :warning, text: reason}}]}
+
+        {:ok, placed} ->
+          {placed |> drop_source_ws(pane, sws) |> focus_move(pane, focus?), []}
+      end
+    else
+      nil -> {app, []}
+    end
+  end
+
+  # remove the pane from its tab; the tab closes when it empties (the workspace may be
+  # left empty for `drop_source_ws/3`)
+  defp remove_source(app, pane, sws, stab) do
+    ws = find_ws(app, sws)
+    tab = Enum.find(ws.tabs, &(&1.id == stab))
+
+    case Layout.take(tab.layout, pane) do
+      {:ok, l} ->
+        tabs = Enum.map(ws.tabs, &if(&1.id == stab, do: unzoomed(&1, l), else: &1))
+        put_ws(app, %{ws | tabs: tabs})
+
+      :last ->
+        idx = Enum.find_index(ws.tabs, &(&1.id == stab))
+        tabs = List.delete_at(ws.tabs, idx)
+
+        active =
+          if ws.active_tab == stab and tabs != [],
+            do: Enum.at(tabs, max(idx - 1, 0)).id,
+            else: ws.active_tab
+
+        put_ws(app, %{ws | tabs: tabs, active_tab: active})
+    end
+  end
+
+  defp place(app, pane, {:tab, {tw, tt}, target, split, ratio}, focus?) do
+    with {_ws, tab} <- find_tab(app, tw, tt),
+         true <- target in Layout.pane_ids(tab.layout) do
+      dir = if split == "right", do: :horizontal, else: :vertical
+      l = Layout.split(tab.layout, target, dir, pane, ratio)
+      opts = Layout.opts(tab, app.ui)
+
+      cond do
+        not big_enough?(Layout.size(l, app.session.area, opts, pane)) ->
+          {:error, "the moved pane is too small to place"}
+
+        not big_enough?(Layout.size(l, app.session.area, opts, target)) ->
+          {:error, "the target pane is too small to split"}
+
+        true ->
+          # `--no-focus` keeps the destination tab's old focus (the split focuses the pane)
+          l = if focus?, do: l, else: restore_focus(l, tab.layout)
+          {:ok, put_tab_layout(app, tw, tt, l)}
+      end
+    else
+      _ -> {:error, "the move destination vanished"}
+    end
+  end
+
+  defp place(app, pane, {:new_tab, tw, label}, _focus?) do
+    {tab_id, app} = take_tab_id(app)
+
+    case find_ws(app, tw) do
+      nil ->
+        {:error, "the move destination vanished"}
+
+      ws ->
+        tab = %{id: tab_id, name: label || Integer.to_string(tab_id), layout: Layout.new(pane)}
+        # a source emptied into its own workspace left `active_tab` dangling: fix it
+        active = if ws.tabs == [], do: tab_id, else: ws.active_tab
+        {:ok, put_ws(app, %{ws | tabs: ws.tabs ++ [tab], active_tab: active})}
+    end
+  end
+
+  defp place(app, pane, {:new_workspace, label, tab_label}, _focus?) do
+    {ws_id, app} = take_ws_id(app)
+
+    ws = %{
+      id: ws_id,
+      name: label || Integer.to_string(ws_id),
+      auto_name: label == nil,
+      tabs: [%{id: 1, name: tab_label || "1", layout: Layout.new(pane)}],
+      active_tab: 1
+    }
+
+    {:ok, %{app | session: %{app.session | workspaces: app.session.workspaces ++ [ws]}}}
+  end
+
+  # drop the source workspace when the move left it empty and the pane is elsewhere
+  defp drop_source_ws(app, pane, sws) do
+    with {tw, _} <- locate(app, pane),
+         %{tabs: []} <- find_ws(app, sws),
+         true <- tw != sws do
+      drop_ws(app, sws)
+    else
+      _ -> app
+    end
+  end
+
+  defp drop_ws(app, sws) do
+    wss = app.session.workspaces
+    idx = Enum.find_index(wss, &(&1.id == sws))
+
+    case List.delete_at(wss, idx) do
+      [] ->
+        app
+
+      rest ->
+        active =
+          if app.session.active_workspace == sws,
+            do: Enum.at(rest, min(idx, length(rest) - 1)).id,
+            else: app.session.active_workspace
+
+        %{app | session: %{app.session | workspaces: rest, active_workspace: active}}
+    end
+  end
+
+  defp focus_move(app, pane, focus?) do
+    app =
+      if focus? do
+        {tw, tt} = locate(app, pane)
+        app = %{app | session: %{app.session | active_workspace: tw}}
+        ws = find_ws(app, tw)
+        put_ws(app, %{ws | active_tab: tt})
+      else
+        app
+      end
+
+    Actions.reframe(app) |> sync()
+  end
+
   @doc "The `{workspace_id, tab_id}` holding `pane`, or nil."
   @spec locate(app(), integer()) :: {integer(), integer()} | nil
   def locate(app, pane) do
@@ -225,6 +372,15 @@ defmodule DynideServer.App.Commands do
 
   defp find_ws(app, ws_id), do: Enum.find(app.session.workspaces, &(&1.id == ws_id))
 
+  defp find_tab(app, ws_id, tab_id) do
+    with %{} = ws <- find_ws(app, ws_id) do
+      case Enum.find(ws.tabs, &(&1.id == tab_id)) do
+        nil -> nil
+        tab -> {ws, tab}
+      end
+    end
+  end
+
   defp put_ws(app, ws) do
     update_in(app.session.workspaces, fn l ->
       Enum.map(l, &if(&1.id == ws.id, do: ws, else: &1))
@@ -251,6 +407,12 @@ defmodule DynideServer.App.Commands do
     do: %{split_layout | focus: old.focus, prev_focus: old.prev_focus}
 
   defp take_id(app), do: {app.session.next_id, update_in(app.session.next_id, &(&1 + 1))}
+
+  defp take_tab_id(app),
+    do: {app.session.next_tab_id, update_in(app.session.next_tab_id, &(&1 + 1))}
+
+  defp take_ws_id(app),
+    do: {app.session.next_workspace_id, update_in(app.session.next_workspace_id, &(&1 + 1))}
 
   defp new_meta, do: %{title: nil, layout_gen: 0}
 

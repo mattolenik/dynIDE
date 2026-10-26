@@ -344,10 +344,100 @@ defmodule DynideServer.Api.TopologyTest do
           {"pane.zoom", p},
           {"pane.layout", p},
           {"pane.process_info", p},
-          {"pane.rename", Map.put(p, "label", "x")}
+          {"pane.rename", Map.put(p, "label", "x")},
+          {"pane.neighbor", Map.put(p, "direction", "right")},
+          {"pane.move", Map.put(p, "destination", %{"type" => "new_tab"})}
         ] do
       assert {"not_found", _} = err(s, m, params), m
     end
+  end
+
+  test "pane.neighbor reports the directional neighbour", %{s: s} do
+    ok!(s, "pane.split", %{"pane_id" => "p1", "direction" => "right"})
+
+    r = ok!(s, "pane.neighbor", %{"pane_id" => "p1", "direction" => "right"})
+    assert r["pane_id"] == "p1"
+    assert r["direction"] == "right"
+    assert r["neighbor_pane_id"] == "p2"
+
+    assert ok!(s, "pane.neighbor", %{"pane_id" => "p2", "direction" => "right"})[
+             "neighbor_pane_id"
+           ] == nil
+  end
+
+  test "pane.move into a new tab", %{s: s} do
+    ok!(s, "pane.split", %{"pane_id" => "p1", "direction" => "right"})
+
+    r =
+      ok!(s, "pane.move", %{
+        "pane_id" => "p2",
+        "destination" => %{"type" => "new_tab", "label" => "moved"}
+      })
+
+    assert r["changed"] == true
+    assert r["pane"]["pane_id"] == "p2"
+    assert r["previous_tab_id"] == "w1:t1"
+    assert r["created_tab"]["tab_id"] == "w1:t2"
+    assert r["focused_pane_id"] == "p2"
+    refute Map.has_key?(r, "closed_tab_id")
+
+    assert Enum.map(ok!(s, "pane.list", %{"tab_id" => "w1:t2"})["panes"], & &1["pane_id"]) ==
+             ["p2"]
+
+    assert Enum.map(ok!(s, "pane.list", %{"tab_id" => "w1:t1"})["panes"], & &1["pane_id"]) ==
+             ["p1"]
+  end
+
+  test "pane.move into an existing tab closes the emptied source tab", %{s: s} do
+    ok!(s, "tab.create", %{})
+
+    r =
+      ok!(s, "pane.move", %{
+        "pane_id" => "p1",
+        "destination" => %{"type" => "tab", "tab_id" => "w1:t2", "split" => "right"}
+      })
+
+    assert r["changed"] == true
+    assert r["pane"]["pane_id"] == "p1"
+    assert r["closed_tab_id"] == "w1:t1"
+    assert r["target_layout"]["tab_id"] == "w1:t2"
+
+    assert Enum.sort(
+             Enum.map(ok!(s, "pane.list", %{"tab_id" => "w1:t2"})["panes"], & &1["pane_id"])
+           ) ==
+             ["p1", "p2"]
+  end
+
+  test "pane.move into a new workspace", %{s: s} do
+    r =
+      ok!(s, "pane.move", %{
+        "pane_id" => "p1",
+        "destination" => %{"type" => "new_workspace", "label" => "w", "tab_label" => "t"}
+      })
+
+    assert r["changed"] == true
+    assert r["created_workspace"]["workspace_id"] == "w2"
+    assert r["created_tab"]["tab_id"] == "w2:t1"
+    assert r["previous_workspace_id"] == "w1"
+    assert r["pane"]["pane_id"] == "p1"
+    assert r["focused_pane_id"] == "p1"
+
+    assert ok!(s, "pane.get", %{"pane_id" => "p1"})["pane"]["workspace_id"] == "w2"
+    # the emptied source workspace is gone
+    assert Enum.map(ok!(s, "workspace.list")["workspaces"], & &1["workspace_id"]) == ["w2"]
+  end
+
+  test "pane.move to the same tab is unchanged", %{s: s} do
+    ok!(s, "pane.split", %{"pane_id" => "p1", "direction" => "right"})
+
+    r =
+      ok!(s, "pane.move", %{
+        "pane_id" => "p1",
+        "destination" => %{"type" => "tab", "tab_id" => "w1:t1", "split" => "right"}
+      })
+
+    assert r["changed"] == false
+    assert r["reason"] == "same_tab"
   end
 
   test "tab.move and workspace.move take herdr's insert_index and answer the new order",
