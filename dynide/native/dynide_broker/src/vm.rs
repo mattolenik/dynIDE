@@ -1,6 +1,6 @@
 //! Real VM spawning: `<vm argv>` with inherited cwd, stdio, controlling
 //! terminal and process group (so SIGWINCH and a terminal ^C reach it), plus
-//! `HERDR_BROKER_SOCK` and `HERDR_LIVE_GEN`. The elixir/erl scripts exec down
+//! `DYNIDE_BROKER_SOCK` and `DYNIDE_GEN`. The elixir/erl scripts exec down
 //! to beam.smp, so the spawned pid is the VM pid.
 
 use crate::broker::{Role, Spawner};
@@ -21,8 +21,8 @@ impl Spawner for Real {
         // Dropping the Child neither kills nor waits; the broker reaps with waitpid.
         let child = Command::new(prog)
             .args(args)
-            .env("HERDR_BROKER_SOCK", &self.sock)
-            .env("HERDR_LIVE_GEN", gen.to_string())
+            .env("DYNIDE_BROKER_SOCK", &self.sock)
+            .env("DYNIDE_GEN", gen.to_string())
             .spawn()?;
         Ok(child.id())
     }

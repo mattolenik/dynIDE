@@ -177,9 +177,9 @@ defmodule DynideServer.Plugins.PanesTest do
   end
 
   test "the VM-only env is removed from a plugin pane (nil: the kernel unsets it)" do
-    System.put_env("HERDR_BROKER_SOCK", "/tmp/live-broker.sock")
-    on_exit(fn -> System.delete_env("HERDR_BROKER_SOCK") end)
-    assert {:ok, _} = open(%{target_pane_id: 1, env: %{"HERDR_BROKER_SOCK" => "/evil"}})
+    System.put_env("DYNIDE_BROKER_SOCK", "/tmp/live-broker.sock")
+    on_exit(fn -> System.delete_env("DYNIDE_BROKER_SOCK") end)
+    assert {:ok, _} = open(%{target_pane_id: 1, env: %{"DYNIDE_BROKER_SOCK" => "/evil"}})
     e = Map.new(Fake.Keeper.last_spec().env)
     assert Enum.all?(Env.vm_only(), &(Map.fetch(e, &1) == {:ok, nil}))
   end

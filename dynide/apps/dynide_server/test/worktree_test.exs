@@ -33,7 +33,7 @@ defmodule DynideServer.WorktreeTest do
 
   test "default_path expands ~" do
     assert Worktree.default_path(nil, "r", "a/b") ==
-             Path.join([System.user_home!(), ".herdr-live/worktrees", "r", "a-b"])
+             Path.join([System.user_home!(), ".dynide/worktrees", "r", "a-b"])
 
     assert Worktree.default_path("/d", "r", "a/b") == "/d/r/a-b"
   end

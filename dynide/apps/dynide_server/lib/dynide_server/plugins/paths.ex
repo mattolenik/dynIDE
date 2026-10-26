@@ -1,6 +1,6 @@
 defmodule DynideServer.Plugins.Paths do
   @moduledoc """
-  Where plugins live on disk, re-rooted at `herdr-live/` (herdr's layout otherwise). Bases
+  Where plugins live on disk, re-rooted at `dynide/` (herdr's layout otherwise). Bases
   resolve at call time: app env `:plugins` `:config_dir` / `:state_dir` win, then XDG.
   """
 
@@ -80,7 +80,7 @@ defmodule DynideServer.Plugins.Paths do
 
   defp base(key, xdg, fallback) do
     case Application.get_env(:dynide_server, :plugins, [])[key] do
-      nil -> Path.join(env(xdg) || Path.join(System.user_home!(), fallback), "herdr-live")
+      nil -> Path.join(env(xdg) || Path.join(System.user_home!(), fallback), "dynide")
       dir -> dir
     end
   end

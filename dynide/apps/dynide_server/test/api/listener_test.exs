@@ -202,8 +202,8 @@ defmodule DynideServer.Api.ListenerTest do
   test "the default state dir is created 0700, an existing open one is locked to 0700" do
     base = Path.join(System.tmp_dir!(), "hls#{System.unique_integer([:positive])}")
     on_exit(fn -> File.rm_rf!(base) end)
-    old = Map.take(System.get_env(), ["HERDR_LIVE_API", "XDG_STATE_HOME"])
-    System.delete_env("HERDR_LIVE_API")
+    old = Map.take(System.get_env(), ["DYNIDE_API", "XDG_STATE_HOME"])
+    System.delete_env("DYNIDE_API")
     System.put_env("XDG_STATE_HOME", base)
 
     on_exit(fn ->
@@ -212,7 +212,7 @@ defmodule DynideServer.Api.ListenerTest do
     end)
 
     start_supervised!(Listener)
-    dir = Path.join(base, "herdr-live")
+    dir = Path.join(base, "dynide")
     assert File.stat!(dir).mode |> Bitwise.band(0o777) == 0o700
     assert once(Path.join(dir, "api.sock"), "ping")["result"]["type"] == "pong"
     stop_supervised!(Listener)
@@ -230,17 +230,17 @@ defmodule DynideServer.Api.ListenerTest do
     assert SocketPath.lock("/d", %{st | uid: 501}, nil) == {:error, "/d is owned by another user"}
   end
 
-  test "the default path honours HERDR_LIVE_API; empty counts as unset" do
-    old = System.get_env("HERDR_LIVE_API")
+  test "the default path honours DYNIDE_API; empty counts as unset" do
+    old = System.get_env("DYNIDE_API")
 
     on_exit(fn ->
-      if old, do: System.put_env("HERDR_LIVE_API", old), else: System.delete_env("HERDR_LIVE_API")
+      if old, do: System.put_env("DYNIDE_API", old), else: System.delete_env("DYNIDE_API")
     end)
 
-    System.put_env("HERDR_LIVE_API", "/x/y.sock")
+    System.put_env("DYNIDE_API", "/x/y.sock")
     assert SocketPath.path() == "/x/y.sock"
-    System.put_env("HERDR_LIVE_API", "")
-    assert SocketPath.path() |> String.ends_with?("/herdr-live/api.sock")
+    System.put_env("DYNIDE_API", "")
+    assert SocketPath.path() |> String.ends_with?("/dynide/api.sock")
   end
 
   test "terminating and restarting the child removes and recreates the socket" do
@@ -322,7 +322,7 @@ defmodule DynideServer.Api.ListenerTest do
         wait_until(fn -> :sys.get_state(pid).connects == 2 end)
       end)
 
-    assert length(String.split(log, "herdr-event api_connect")) == 2
+    assert length(String.split(log, "dynide-event api_connect")) == 2
     assert log =~ "count=1"
     assert log =~ "conns="
 

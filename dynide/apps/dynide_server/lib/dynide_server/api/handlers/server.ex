@@ -97,7 +97,7 @@ defmodule DynideServer.Api.Handlers.Server do
 
   @doc false
   def gen do
-    case Integer.parse(System.get_env("HERDR_LIVE_GEN") || "0") do
+    case Integer.parse(System.get_env("DYNIDE_GEN") || "0") do
       {n, ""} -> n
       _ -> 0
     end

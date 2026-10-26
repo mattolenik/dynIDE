@@ -20,7 +20,7 @@ defmodule DynideTerm.Demo.FakeRows do
     ]
 
     lines =
-      [text("herdr-live demo #{cols}x#{rows} pid #{pid}", [:bold]), border(cols, "┌", "┐")] ++
+      [text("dynide demo #{cols}x#{rows} pid #{pid}", [:bold]), border(cols, "┌", "┐")] ++
         Enum.map(inner, &boxed/1) ++ [border(cols, "└", "┘")]
 
     for y <- 0..(rows - 1), do: {y, lines |> Enum.at(y, []) |> fit(cols) |> Cell.encode_row()}

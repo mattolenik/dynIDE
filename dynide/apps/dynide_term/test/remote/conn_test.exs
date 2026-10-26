@@ -205,8 +205,8 @@ defmodule DynideTerm.Remote.ConnTest do
     ssh = Path.join(ctx.dir, "fake-ssh")
     File.write!(ssh, "#!/bin/sh\nexit 255\n")
     File.chmod!(ssh, 0o755)
-    System.put_env("HERDR_LIVE_SSH", ssh)
-    on_exit(fn -> System.delete_env("HERDR_LIVE_SSH") end)
+    System.put_env("DYNIDE_SSH", ssh)
+    on_exit(fn -> System.delete_env("DYNIDE_SSH") end)
     start(ctx, transport: {:ssh, "nosuchhost", nil})
     assert_receive :local_exit, @wait
     assert File.read!(reason) == "ssh relay to nosuchhost exited (255) before attaching"
@@ -254,8 +254,8 @@ defmodule DynideTerm.Remote.ConnTest do
 
   defp reason_file(ctx) do
     path = Path.join(ctx.dir, "reason")
-    System.put_env("HERDR_LIVE_CLIENT_REASON", path)
-    on_exit(fn -> System.delete_env("HERDR_LIVE_CLIENT_REASON") end)
+    System.put_env("DYNIDE_CLIENT_REASON", path)
+    on_exit(fn -> System.delete_env("DYNIDE_CLIENT_REASON") end)
     path
   end
 
@@ -312,8 +312,8 @@ defmodule DynideTerm.Remote.ConnTest do
     """)
 
     File.chmod!(ssh, 0o755)
-    System.put_env("HERDR_LIVE_SSH", ssh)
-    on_exit(fn -> System.delete_env("HERDR_LIVE_SSH") end)
+    System.put_env("DYNIDE_SSH", ssh)
+    on_exit(fn -> System.delete_env("DYNIDE_SSH") end)
 
     conn = start(ctx, transport: {:ssh, "box", "s"}, session: "s")
     input(conn, 1, Event.key("a"))
@@ -327,7 +327,7 @@ defmodule DynideTerm.Remote.ConnTest do
       end)
 
     assert [{:attach, %{session: "s"}}, {:input, 1, {:key, %{key: "a"}}}] = frames
-    assert File.read!(args) =~ ~r/BatchMode=yes .*box herdr-live attach-relay/
+    assert File.read!(args) =~ ~r/BatchMode=yes .*box dynide attach-relay/
   end
 
   test "an ssh relay that exits shows a notice and is respawned with the same client_id",
@@ -354,8 +354,8 @@ defmodule DynideTerm.Remote.ConnTest do
     """)
 
     File.chmod!(ssh, 0o755)
-    System.put_env("HERDR_LIVE_SSH", ssh)
-    on_exit(fn -> System.delete_env("HERDR_LIVE_SSH") end)
+    System.put_env("DYNIDE_SSH", ssh)
+    on_exit(fn -> System.delete_env("DYNIDE_SSH") end)
 
     conn = start(ctx, transport: {:ssh, "box", nil})
     assert_receive {:scene, sc}, @wait

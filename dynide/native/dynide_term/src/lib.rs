@@ -121,7 +121,7 @@ mod nif {
         let mut owned = OwnedEnv::new();
         let tag = owned.save(tag);
         let spawned = std::thread::Builder::new()
-            .name("herdr-tty-open".into())
+            .name("dynide-tty-open".into())
             .spawn(move || {
                 // Opening and wrapping run under catch_unwind; only the send is outside.
                 let result = catch_unwind(AssertUnwindSafe(|| {

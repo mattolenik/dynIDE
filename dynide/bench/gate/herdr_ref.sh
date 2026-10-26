@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Prints the absolute path of a release `herdr` binary (the pre-prune Rust product).
 # $HERDR_BIN (must be executable) wins; otherwise builds the `herdr-reference` tag from
-# `git archive` under ${XDG_CACHE_HOME:-$HOME/.cache}/herdr-live/herdr-reference/<short sha>
+# `git archive` under ${XDG_CACHE_HOME:-$HOME/.cache}/dynide/herdr-reference/<short sha>
 # (reused once target/release/herdr exists).
 # --print-dir prints the extracted source tree instead (exit 3 when HERDR_BIN is set and
 # no tree exists).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(git -C "$here" rev-parse --show-toplevel)
-cache=${XDG_CACHE_HOME:-$HOME/.cache}/herdr-live/herdr-reference
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/dynide/herdr-reference
 mode=bin
 [ "${1:-}" = "--print-dir" ] && mode=dir
 

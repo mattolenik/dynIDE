@@ -361,7 +361,7 @@ defmodule DynideReload.ServerTest do
         assert Server.synced() == [Toy.V]
       end)
 
-    assert log =~ ~r/herdr-event sync ts=\d{13} count=1 modules=Toy.V failed=0/
+    assert log =~ ~r/dynide-event sync ts=\d{13} count=1 modules=Toy.V failed=0/
     assert_receive {:dynide_reload, {:synced, [Toy.V]}}
     # a call is served after the start-up sync
     assert Server.batches() == []
@@ -379,7 +379,7 @@ defmodule DynideReload.ServerTest do
     DynideReload.ReloadCase.write_source!(dir, "lib/v.ex", v_src(2))
 
     log = capture_log(fn -> assert {:ok, _} = Server.reload([path(dir, "v")]) end)
-    assert log =~ ~r/herdr-event reload ts=\d{13} batch=2 fanout=1 modules=Toy.V compile_ms=\d+/
+    assert log =~ ~r/dynide-event reload ts=\d{13} batch=2 fanout=1 modules=Toy.V compile_ms=\d+/
   end
 
   test "a module new in a rolled-back batch leaves only its rejected beam" do

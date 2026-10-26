@@ -15,7 +15,7 @@ defmodule DynideTerm.Remote.Args do
     "terminal observe <pane_id> [--host <host>]"
   ]
 
-  @doc "Usage lines, without the `herdr-live ` prefix."
+  @doc "Usage lines, without the `dynide ` prefix."
   @spec usage_lines() :: [binary]
   def usage_lines, do: @usage
 
@@ -26,7 +26,7 @@ defmodule DynideTerm.Remote.Args do
         {:ok, [transport: transport(host, session, env), session: session, target: target]}
 
       :usage ->
-        {:usage, Enum.map_join(@usage, "\n", &"  herdr-live #{&1}") |> then(&"usage:\n#{&1}")}
+        {:usage, Enum.map_join(@usage, "\n", &"  dynide #{&1}") |> then(&"usage:\n#{&1}")}
     end
   end
 
@@ -63,15 +63,15 @@ defmodule DynideTerm.Remote.Args do
   defp transport(host, session, _env), do: {:ssh, host, session}
 
   @doc """
-  `{executable, args}` for the ssh relay (R13): `$HERDR_LIVE_SSH` split on spaces (else
+  `{executable, args}` for the ssh relay (R13): `$DYNIDE_SSH` split on spaces (else
   `ssh`), then `-T -o BatchMode=yes -o ServerAliveInterval=10 -o ServerAliveCountMax=3
-  <host> <remote_bin> attach-relay`, `remote_bin` = `$HERDR_LIVE_REMOTE_BIN` else
-  `herdr-live`.
+  <host> <remote_bin> attach-relay`, `remote_bin` = `$DYNIDE_REMOTE_BIN` else
+  `dynide`.
   """
   @spec ssh_command(binary, %{optional(binary) => binary}) :: {binary, [binary]}
   def ssh_command(host, env) do
-    [exe | pre] = String.split(get(env, "HERDR_LIVE_SSH") || "ssh")
-    bin = get(env, "HERDR_LIVE_REMOTE_BIN") || "herdr-live"
+    [exe | pre] = String.split(get(env, "DYNIDE_SSH") || "ssh")
+    bin = get(env, "DYNIDE_REMOTE_BIN") || "dynide"
     opts = ~w(-T -o BatchMode=yes -o ServerAliveInterval=10 -o ServerAliveCountMax=3)
     {exe, pre ++ opts ++ [host, bin, "attach-relay"]}
   end

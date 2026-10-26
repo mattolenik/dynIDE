@@ -1,4 +1,4 @@
-# Test-on-save gate latency. Run: cd dynide && HERDR_LIVE_HEADLESS=1 mix run bench/reload/test_gate_bench.exs
+# Test-on-save gate latency. Run: cd dynide && DYNIDE_HEADLESS=1 mix run bench/reload/test_gate_bench.exs
 # (dev env: the app's own reload pipeline and watcher run). Gate on, adds a marker function to
 # view.ex (it has test/view_test.exs), times save -> {:tests, :passed} and save -> {:loaded}, 5
 # iterations, restores the file byte for byte, prints a RESULT line with medians.

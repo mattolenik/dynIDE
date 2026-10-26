@@ -1,5 +1,5 @@
 defmodule DynideCli.Completion do
-  @moduledoc "Shell completion scripts for `herdr-live`, built from the `Argv` command rows."
+  @moduledoc "Shell completion scripts for `dynide`, built from the `Argv` command rows."
 
   @extra [~w(help), ~w(kernel-restart), ~w(status)] ++
            for(s <- ~w(bash zsh fish), do: ["completion", s])
@@ -22,7 +22,7 @@ defmodule DynideCli.Completion do
     cases = Enum.map_join(seconds, "", fn {f, ss} -> "      #{f}) opts=\"#{ss}\" ;;\n" end)
 
     """
-    _herdr_live() {
+    _dynide() {
       local opts
       if [ "$COMP_CWORD" = 1 ]; then
         opts="#{firsts}"
@@ -32,7 +32,7 @@ defmodule DynideCli.Completion do
       fi
       COMPREPLY=($(compgen -W "$opts" -- "${COMP_WORDS[COMP_CWORD]}"))
     }
-    complete -F _herdr_live herdr-live
+    complete -F _dynide dynide
     """
   end
 
@@ -40,8 +40,8 @@ defmodule DynideCli.Completion do
     cases = Enum.map_join(seconds, "", fn {f, ss} -> "      #{f}) compadd #{ss} ;;\n" end)
 
     """
-    #compdef herdr-live
-    _herdr_live() {
+    #compdef dynide
+    _dynide() {
       if [ "$CURRENT" = 2 ]; then
         compadd #{firsts}
       else
@@ -49,14 +49,14 @@ defmodule DynideCli.Completion do
     #{cases}    esac
       fi
     }
-    compdef _herdr_live herdr-live
+    compdef _dynide dynide
     """
   end
 
   defp gen(:fish, firsts, seconds) do
-    "complete -c herdr-live -f -n '__fish_use_subcommand' -a '#{firsts}'\n" <>
+    "complete -c dynide -f -n '__fish_use_subcommand' -a '#{firsts}'\n" <>
       Enum.map_join(seconds, "", fn {f, ss} ->
-        "complete -c herdr-live -f -n '__fish_seen_subcommand_from #{f}; " <>
+        "complete -c dynide -f -n '__fish_seen_subcommand_from #{f}; " <>
           "and not __fish_seen_subcommand_from #{ss}' -a '#{ss}'\n"
       end)
   end

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Reflow check: the same pane script in herdr (the herdr-reference build, via
-bench/gate/herdr_ref.sh, or HERDR_BIN) and in herdr-live, each attached in a 120x40 pty:
+bench/gate/herdr_ref.sh, or HERDR_BIN) and in dynIDE, each attached in a 120x40 pty:
 print a 307-char line (no soft-wrap ambiguity at
 120, 93, 60 or 59 columns) and 20 numbered lines between markers, resize the pty to 60x40,
 then back to 120x40, and read the pane text between the markers (content columns
@@ -9,7 +9,7 @@ only: the chrome around the pane is cut off).
 Prints `PASS reflow ...` when both show the same logical lines (soft-wrapped rows
 joined, so differing pane widths compare) and each pane's final rows equal its own
 rows before the resize; otherwise the exact differences are listed. Exit 1 on a
-difference or a failed launch. Skips (SKIP, exit 0) inside a herdr-live pane.
+difference or a failed launch. Skips (SKIP, exit 0) inside a dynIDE pane.
 
 Usage: reflow.py [-v]
 """
@@ -153,9 +153,9 @@ def herdr(tmp, bin_):
     return glass.herdr(tmp, bin_, 120, 40)  # isolated config, runtime dir and session
 
 
-def herdr_live(tmp):
+def dynide(tmp):
     os.makedirs(tmp)
-    h = th.Herdr(tmp, 120, 40)  # isolated log, API socket, runtime and state dirs
+    h = th.Dynide(tmp, 120, 40)  # isolated log, API socket, runtime and state dirs
     term = glass.Term.__new__(glass.Term)
     term.master, term.pid, term.carry = h.master, h.pid, b""
     term.alive, term.reaped, term.hup = True, False, False
@@ -178,7 +178,7 @@ def main():
     tmp = tempfile.mkdtemp(prefix="reflow", dir="/var/tmp")  # short: herdr's socket path
     try:
         ref = run("herdr", lambda: herdr(os.path.join(tmp, "h"), bin_))
-        live = run("herdr-live", lambda: herdr_live(os.path.join(tmp, "l")))
+        live = run("dynide", lambda: dynide(os.path.join(tmp, "l")))
     except Failed as e:
         print(f"FAIL reflow: {e}")
         return 1
@@ -190,15 +190,15 @@ def main():
                 pass
         shutil.rmtree(tmp, ignore_errors=True)
     diffs = []
-    for name, (before, narrow, after, _) in (("herdr", ref), ("herdr-live", live)):
+    for name, (before, narrow, after, _) in (("herdr", ref), ("dynide", live)):
         if after != before:
             diffs.append(f"{name}: rows after 120->60->120 differ from before: {before[0]!r} vs {after[0]!r}")
         if logical(*narrow) != logical(*before):
             diffs.append(f"{name}: logical lines at {narrow[1]} cols differ: {logical(*narrow)!r}")
     lr, ll = logical(*ref[2]), logical(*live[2])
     if lr != ll:
-        diffs.append(f"herdr vs herdr-live logical lines: {lr!r} vs {ll!r}")
-    widths = f"pane widths herdr {ref[0][1]}/{ref[1][1]}/{ref[2][1]}, herdr-live {live[0][1]}/{live[1][1]}/{live[2][1]}"
+        diffs.append(f"herdr vs dynide logical lines: {lr!r} vs {ll!r}")
+    widths = f"pane widths herdr {ref[0][1]}/{ref[1][1]}/{ref[2][1]}, dynide {live[0][1]}/{live[1][1]}/{live[2][1]}"
     if diffs:
         print(f"FAIL reflow: {widths}; differences:")
         for d in diffs:
@@ -210,8 +210,8 @@ def main():
 
 
 if __name__ == "__main__":
-    if os.environ.get("HERDR_LIVE_API"):
-        print("SKIP: reflow: running inside herdr-live (run it outside, see editing-live.md)")
+    if os.environ.get("DYNIDE_API"):
+        print("SKIP: reflow: running inside dynIDE (run it outside, see editing-live.md)")
         sys.exit(0)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     sys.exit(main())

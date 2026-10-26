@@ -142,7 +142,7 @@ defmodule DynideServer.WorkspaceFactsTest do
     [root | _] = Layout.pane_ids(hd(ws.tabs).layout)
     {:ok, res} = Fake.Keeper.lookup(Rows.kernel_id(root))
     # no .git above it, so the label is the basename
-    Fake.Pty.set_cwd(res.pty, "/nonexistent-herdr-wf-test/proj")
+    Fake.Pty.set_cwd(res.pty, "/nonexistent-dynide-wf-test/proj")
 
     start_supervised!({WorkspaceFacts, enabled: true, name: :workspace_facts_wiring, poll_ms: 10})
     wait_until(fn -> hd(Store.snapshot().session.workspaces).name == "proj" end)

@@ -40,14 +40,14 @@ defmodule DynideServer.Api.Spec.Doc do
       Enum.map_join(Spec.error_codes(), "\n", &"| `#{&1}` | #{Map.fetch!(@error_docs, &1)} |")
 
     """
-    # herdr-live socket API
+    # dynide socket API
 
     Generated from `DynideServer.Api.Spec` by `mix dynide.api.docs`. Do not edit by hand.
 
     ## Transport
 
-    - Unix domain socket at `$HERDR_LIVE_API`, else
-      `${XDG_STATE_HOME:-~/.local/state}/herdr-live/api.sock` (an empty variable counts as unset).
+    - Unix domain socket at `$DYNIDE_API`, else
+      `${XDG_STATE_HOME:-~/.local/state}/dynide/api.sock` (an empty variable counts as unset).
     - Framing: one JSON object per line, UTF-8, at most 1 MiB per line. Several requests
       may be sent per connection; they are answered in order.
     - Request: `{"id": string, "method": string, "params": object?}`.
@@ -79,7 +79,7 @@ defmodule DynideServer.Api.Spec.Doc do
 
     ## CLI output
 
-    `herdr-live <verb>` prints herdr's shapes (`src/cli.rs` in herdr):
+    `dynide <verb>` prints herdr's shapes (`src/cli.rs` in herdr):
 
     - Success: the whole response on stdout, one line,
       `{"id": "cli:<method>", "result": {...}}`, exit 0. A herdr plugin's
@@ -94,7 +94,7 @@ defmodule DynideServer.Api.Spec.Doc do
       explanation, `--json` the bare explain object (`result.agent`); `plugin config-dir`
       prints the path; `server agent-manifests` prints herdr's manifest status table,
       `--json` the whole response.
-    - herdr-live's own verbs: `rollback` prints `ok <batch>...`, `test-on-save` prints
+    - dynIDE's own verbs: `rollback` prints `ok <batch>...`, `test-on-save` prints
       `ok <mode>`, `server status --kv` prints `key=value` lines, `events subscribe` prints
       one event per line, and `update` and `--version` print their own text.
     """
@@ -199,14 +199,14 @@ defmodule DynideServer.Api.Spec.Doc do
     ## Client verbs
 
     These verbs open a terminal client instead of calling the API. The client runs in its
-    own VM (log: `$HERDR_LIVE_CLIENT_LOG`, default
-    `${XDG_STATE_HOME:-~/.local/state}/herdr-live/client.log`).
+    own VM (log: `$DYNIDE_CLIENT_LOG`, default
+    `${XDG_STATE_HOME:-~/.local/state}/dynide/client.log`).
 
     #{verbs}
 
     ## Client socket
 
-    - Path: `$HERDR_LIVE_CLIENT_SOCK`, else `client.sock` beside the API socket. The token is
+    - Path: `$DYNIDE_CLIENT_SOCK`, else `client.sock` beside the API socket. The token is
       `client.token` beside it (mode 0600, created once, kept across restarts).
     - Framing: `<<len::32-big, term_to_binary(term)>>`, at most 32 MiB client to server and
       64 MiB server to client. A frame that cannot be decoded closes that connection.

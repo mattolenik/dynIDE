@@ -479,12 +479,12 @@ defmodule DynideCli.ArgvTest do
 
   test "no verb and unknown verbs are usage; help is help" do
     assert {:usage, text} = p("")
-    assert text =~ "usage: herdr-live"
+    assert text =~ "usage: dynide"
     assert {:help, text} = p("help")
-    assert text =~ "usage: herdr-live"
+    assert text =~ "usage: dynide"
     assert {:help, ^text} = p("--help")
     assert {:help, ^text} = p("-h")
-    assert {:usage, "herdr-live: empty command\n" <> _} = Argv.parse([""], %{})
+    assert {:usage, "dynide: empty command\n" <> _} = Argv.parse([""], %{})
     assert {:usage, _} = p("frobnicate")
   end
 

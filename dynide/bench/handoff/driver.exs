@@ -1,6 +1,6 @@
 defmodule HandoffDriver do
   @moduledoc """
-  Drives a headless `bin/herdr-live` through its broker socket for the M5
+  Drives a headless `bin/dynide` through its broker socket for the M5
   handoff smoke and benches (plain `elixir` scripts, no Mix). Frames per
   docs/herdr-live/plans/m5.md "Wire protocol": `len: u32 | kind | nfds | body`.
   """
@@ -15,10 +15,10 @@ defmodule HandoffDriver do
 
   def dynide_dir, do: @live
 
-  @doc "The launcher under test: $HERDR_LIVE_BENCH_BIN (an installed release) else dynide/bin/herdr-live (not $HERDR_LIVE_BIN: a pane exports that, so a bench run inside a pane would drive the dogfood instance)."
+  @doc "The launcher under test: $DYNIDE_BENCH_BIN (an installed release) else dynide/bin/dynide (not $DYNIDE_BIN: a pane exports that, so a bench run inside a pane would drive the dogfood instance)."
   def bin do
-    case System.get_env("HERDR_LIVE_BENCH_BIN") do
-      b when b in [nil, ""] -> Path.join(@live, "bin/herdr-live")
+    case System.get_env("DYNIDE_BENCH_BIN") do
+      b when b in [nil, ""] -> Path.join(@live, "bin/dynide")
       b -> Path.expand(b)
     end
   end
@@ -34,25 +34,25 @@ defmodule HandoffDriver do
     dir = "/tmp/hl-#{tag}-#{System.pid()}"
     File.rm_rf!(dir)
     File.mkdir_p!(dir)
-    log = Path.join(dir, "herdr-live.log")
+    log = Path.join(dir, "dynide.log")
     # M13: a fresh config opens the first-run onboarding modal, which takes every key
     config = Path.join(dir, "config.toml")
     File.write!(config, "onboarding = false\n")
 
     env = [
-      {~c"HERDR_LIVE_HEADLESS", ~c"1"},
-      {~c"HERDR_LIVE_RUNTIME_DIR", String.to_charlist(Path.join(dir, "rt"))},
-      {~c"HERDR_LIVE_LOG", String.to_charlist(log)},
+      {~c"DYNIDE_HEADLESS", ~c"1"},
+      {~c"DYNIDE_RUNTIME_DIR", String.to_charlist(Path.join(dir, "rt"))},
+      {~c"DYNIDE_LOG", String.to_charlist(log)},
       # session files (M8) under the run dir, never the real session
-      {~c"HERDR_LIVE_STATE_DIR", String.to_charlist(Path.join(dir, "state"))},
-      {~c"HERDR_LIVE_SESSION", false},
-      {~c"HERDR_LIVE_PERSIST", false},
-      {~c"HERDR_LIVE_API", String.to_charlist(Path.join(dir, "ctl.sock"))},
-      {~c"HERDR_LIVE_CONFIG", String.to_charlist(config)},
+      {~c"DYNIDE_STATE_DIR", String.to_charlist(Path.join(dir, "state"))},
+      {~c"DYNIDE_SESSION", false},
+      {~c"DYNIDE_PERSIST", false},
+      {~c"DYNIDE_API", String.to_charlist(Path.join(dir, "ctl.sock"))},
+      {~c"DYNIDE_CONFIG", String.to_charlist(config)},
       {~c"PATH", String.to_charlist(path())},
       {~c"HERDR_SOCKET_PATH", false},
       {~c"HERDR_CLIENT_SOCKET_PATH", false},
-      {~c"HERDR_BROKER_SOCK", false},
+      {~c"DYNIDE_BROKER_SOCK", false},
       {~c"MIX_ENV", false}
     ]
 
@@ -113,15 +113,15 @@ defmodule HandoffDriver do
     end
   end
 
-  # ---- evidence (HERDR_BENCH_KEEP=1) ----
+  # ---- evidence (DYNIDE_BENCH_KEEP=1) ----
 
-  @doc "HERDR_BENCH_KEEP=1: keep the run dir and copy its log to HERDR_BENCH_KEEP_DIR."
-  def keep?, do: System.get_env("HERDR_BENCH_KEEP") == "1"
+  @doc "DYNIDE_BENCH_KEEP=1: keep the run dir and copy its log to DYNIDE_BENCH_KEEP_DIR."
+  def keep?, do: System.get_env("DYNIDE_BENCH_KEEP") == "1"
 
   defp keep(b) do
-    with true <- keep?(), dir when is_binary(dir) <- System.get_env("HERDR_BENCH_KEEP_DIR") do
+    with true <- keep?(), dir when is_binary(dir) <- System.get_env("DYNIDE_BENCH_KEEP_DIR") do
       File.mkdir_p!(dir)
-      dest = Path.join(dir, "#{Path.basename(b.root)}-herdr-live.log")
+      dest = Path.join(dir, "#{Path.basename(b.root)}-dynide.log")
       File.cp!(b.log, dest)
       IO.puts("KEEP log=#{dest}")
     else
@@ -176,7 +176,7 @@ defmodule HandoffDriver do
     {"handoff failed", :failed},
     {"handoff crash", :restored},
     {"is primary", :primary},
-    {"herdr-live started", :started}
+    {"dynide started", :started}
   ]
 
   defp step(rest) do

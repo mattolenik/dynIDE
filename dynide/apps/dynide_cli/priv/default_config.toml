@@ -1,4 +1,4 @@
-# herdr-live default config. Save as ~/.config/herdr-live/config.toml (or $HERDR_LIVE_CONFIG).
+# dynIDE default config. Save as ~/.config/dynide/config.toml (or $DYNIDE_CONFIG).
 # Values shown are the defaults; the [keys] entries are commented, uncomment to change one.
 
 # Uncomment to skip the first-run onboarding.
@@ -32,7 +32,7 @@ light_name = "catppuccin-latte"
 dark_name = "catppuccin"
 
 [worktrees]
-# directory = "~/.herdr-live/worktrees"   # new checkouts go to <directory>/<repo>/<branch>
+# directory = "~/.dynide/worktrees"   # new checkouts go to <directory>/<repo>/<branch>
 
 [session]
 # resume_agents_on_restore = false   # after a restore, type each pane's reported agent resume command into its shell

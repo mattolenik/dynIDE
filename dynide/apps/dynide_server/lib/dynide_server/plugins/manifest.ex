@@ -206,7 +206,7 @@ defmodule DynideServer.Plugins.Manifest do
       for %{"on" => on} <- events do
         cond do
           on not in @hook_events -> "unknown event '#{on}'"
-          on in @not_emitted -> "event #{on} is not emitted by herdr-live yet"
+          on in @not_emitted -> "event #{on} is not emitted by dynIDE yet"
           true -> nil
         end
       end

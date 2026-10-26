@@ -49,7 +49,7 @@ defmodule DynideCliTest do
     err =
       ExUnit.CaptureIO.capture_io(:stderr, fn ->
         assert ExUnit.CaptureIO.capture_io(fn ->
-                 assert DynideCli.run(["ping"], %{"HERDR_LIVE_API" => path}) == 1
+                 assert DynideCli.run(["ping"], %{"DYNIDE_API" => path}) == 1
                end) == ""
       end)
 
@@ -57,16 +57,16 @@ defmodule DynideCliTest do
              JSON.decode!(err)
 
     assert m =~ path
-    assert m =~ "`herdr-live attach`"
+    assert m =~ "`dynide attach`"
   end
 
   test "a usage error exits 2 without touching the socket" do
     assert ExUnit.CaptureIO.capture_io(:stderr, fn ->
              assert DynideCli.run(["pane", "split", "--direction", "left"], %{}) == 2
-           end) =~ "usage: herdr-live pane split"
+           end) =~ "usage: dynide pane split"
   end
 
-  # main/1 halts, so it runs in its own erl like bin/herdr-live starts it.
+  # main/1 halts, so it runs in its own erl like bin/dynide starts it.
   test "a crash prints nothing on stdout and exits 1" do
     elixir = Path.join(:code.lib_dir(:elixir), "ebin")
     cli = Path.join(:code.lib_dir(:dynide_cli), "ebin")
@@ -94,7 +94,7 @@ defmodule DynideCliTest do
 
     assert code == 1
     assert out == ""
-    assert File.read!(stderr) =~ "herdr-live: internal error"
+    assert File.read!(stderr) =~ "dynide: internal error"
   end
 
   test "help and --help print usage on stdout and exit 0" do
@@ -106,7 +106,7 @@ defmodule DynideCliTest do
                  end) == ""
         end)
 
-      assert out =~ "usage: herdr-live <verb>"
+      assert out =~ "usage: dynide <verb>"
     end
   end
 
@@ -132,7 +132,7 @@ defmodule DynideCliTest do
         out =
           ExUnit.CaptureIO.capture_io(fn ->
             assert DynideCli.run(["events", "subscribe", "tab.closed"], %{
-                     "HERDR_LIVE_API" => path
+                     "DYNIDE_API" => path
                    }) ==
                      1
           end)
@@ -140,6 +140,6 @@ defmodule DynideCliTest do
         assert out =~ "tab.closed"
       end)
 
-    assert err == "herdr-live: stream closed by server\n"
+    assert err == "dynide: stream closed by server\n"
   end
 end

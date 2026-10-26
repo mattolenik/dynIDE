@@ -22,8 +22,8 @@ const MAX_PENDING_BYTES: usize = 64 << 20;
 /// herdr's per-image cap for `t=t`; larger images go direct.
 const MAX_IMAGE_BYTES: usize = 16 << 20;
 const FILE_PREFIX: &str = "tty-graphics-protocol-";
-/// Per-process subdir of the per-user dir: `herdr-live-gfx-<pid>`.
-const DIR_PREFIX: &str = "herdr-live-gfx-";
+/// Per-process subdir of the per-user dir: `dynide-gfx-<pid>`.
+const DIR_PREFIX: &str = "dynide-gfx-";
 /// The writer unlinks its files older than this, consumed or not.
 const MAX_FILE_AGE: Duration = Duration::from_secs(60);
 /// Ghostty accepts `t=t` only under /tmp, whatever TMPDIR says.
@@ -324,7 +324,7 @@ impl Files {
         });
     }
 
-    /// Creates (or checks) `<root>/herdr-live-kitty-<euid>/herdr-live-gfx-<pid>/`.
+    /// Creates (or checks) `<root>/dynide-kitty-<euid>/dynide-gfx-<pid>/`.
     fn init(&mut self) -> io::Result<()> {
         let user = user_dir(&self.root);
         trusted(&user, true)?;
@@ -375,7 +375,7 @@ impl Drop for Files {
 fn user_dir(root: &Path) -> PathBuf {
     // SAFETY: geteuid has no preconditions.
     let euid = unsafe { libc::geteuid() };
-    root.join(format!("herdr-live-kitty-{euid}"))
+    root.join(format!("dynide-kitty-{euid}"))
 }
 
 fn process_dir(root: &Path) -> PathBuf {
@@ -403,7 +403,7 @@ fn trusted(dir: &Path, create: bool) -> io::Result<()> {
 }
 
 /// Client start: removes what processes that are gone left in the per-user dir
-/// under `root` (their `herdr-live-gfx-<pid>` dirs, and loose files of older clients).
+/// under `root` (their `dynide-gfx-<pid>` dirs, and loose files of older clients).
 pub fn sweep(root: &Path) {
     let user = user_dir(root);
     let Ok(entries) = trusted(&user, false).and_then(|()| fs::read_dir(&user)) else {
@@ -426,7 +426,7 @@ pub fn remove_process_dir(root: &Path) {
     let _ = fs::remove_dir_all(process_dir(root));
 }
 
-/// `herdr-live-gfx-<pid>` or `tty-graphics-protocol-<pid>-<n>` of a process that no
+/// `dynide-gfx-<pid>` or `tty-graphics-protocol-<pid>-<n>` of a process that no
 /// longer exists.
 fn leftover(name: &str) -> bool {
     let pid = match name.strip_prefix(DIR_PREFIX) {
@@ -703,7 +703,7 @@ mod tests {
     fn untrusted_or_missing_dir_disables() {
         let root = root("untrusted");
         let euid = unsafe { libc::geteuid() };
-        let dir = root.join(format!("herdr-live-kitty-{euid}"));
+        let dir = root.join(format!("dynide-kitty-{euid}"));
         fs::create_dir(&dir).unwrap();
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
         let mut files = Files::at(&root);

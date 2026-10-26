@@ -16,7 +16,7 @@ defmodule DynideServer.Plugins.Command do
   # even if a descendant still holds its output open (as herdr). The files grow with the
   # command's output until it exits (only the first `cap` bytes are read): bounded by the
   # timeout, if any. The wrapper's own stderr (job notices) goes to /dev/null.
-  @wrapper ~S(d=$HERDR_LIVE_CMD_DIR; unset HERDR_LIVE_CMD_DIR; exec 2>/dev/null; ) <>
+  @wrapper ~S(d=$DYNIDE_CMD_DIR; unset DYNIDE_CMD_DIR; exec 2>/dev/null; ) <>
              ~S(if command -v setsid >/dev/null; then s=setsid; else s=; set -m; fi; ) <>
              ~S($s "$0" "$@" </dev/null >"$d/out" 2>"$d/err" & echo $! >"$d/pid"; wait $!)
 
@@ -59,7 +59,7 @@ defmodule DynideServer.Plugins.Command do
     case run_dir(opts[:tmp_dir] || Path.join(Paths.state_dir(), "tmp")) do
       {:ok, dir} ->
         try do
-          port_run(exe, args, cwd, [{"HERDR_LIVE_CMD_DIR", dir} | env], dir, cap, opts)
+          port_run(exe, args, cwd, [{"DYNIDE_CMD_DIR", dir} | env], dir, cap, opts)
         after
           File.rm_rf(dir)
         end

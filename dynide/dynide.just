@@ -1,4 +1,4 @@
-# herdr-live recipes (imported from the root justfile)
+# dynIDE recipes (imported from the root justfile)
 
 dynide_dir := source_directory()
 dynide_crates := "dynide_fdpass dynide_kernel dynide_term dynide_broker"
@@ -11,7 +11,7 @@ dynide-test:
     python3 -m unittest discover -s '{{dynide_dir}}/scripts' -p 'test_log_summary.py'
 
 # Milestone gate: lint, types, tests, launcher, handoff and attached smokes, tty harness
-# (M2 destructor and demo; herdr-live attached on the real kernels, then 15 panes + cat flood,
+# (M2 destructor and demo; dynide attached on the real kernels, then 15 panes + cat flood,
 # then selfhost: edit, reload, rollback, kernel-restart; then persist: stop, start, same layout and cwds;
 # then agent: the CLI from a pane; then plugins: two herdr example plugins unmodified)
 dynide-check:
@@ -26,8 +26,8 @@ dynide-check:
     '{{dynide_dir}}/scripts/attached_smoke.sh'
     python3 '{{dynide_dir}}/scripts/tty_harness.py' destructor
     python3 '{{dynide_dir}}/scripts/tty_harness.py' demo
-    python3 '{{dynide_dir}}/scripts/tty_harness.py' herdr
-    python3 '{{dynide_dir}}/scripts/tty_harness.py' herdr-stress
+    python3 '{{dynide_dir}}/scripts/tty_harness.py' dynide
+    python3 '{{dynide_dir}}/scripts/tty_harness.py' dynide-stress
     python3 '{{dynide_dir}}/scripts/tty_harness.py' selfhost
     python3 '{{dynide_dir}}/scripts/tty_harness.py' persist
     python3 '{{dynide_dir}}/scripts/tty_harness.py' agent
@@ -35,14 +35,14 @@ dynide-check:
     python3 '{{dynide_dir}}/scripts/tty_harness.py' remote
     python3 '{{dynide_dir}}/scripts/tty_harness.py' broker-kill
 
-# Summarise a herdr-live log (reloads, rollbacks, handoffs, restores, session losses); args: [LOG ...] [--since ISO] [--json]
+# Summarise a dynIDE log (reloads, rollbacks, handoffs, restores, session losses); args: [LOG ...] [--since ISO] [--json]
 dynide-log-summary *args:
     python3 '{{dynide_dir}}/scripts/log_summary.py' {{args}}
 
-# Compile, then run herdr-live
+# Compile, then run dynide
 dynide-run:
     cd '{{dynide_dir}}' && mix compile
-    exec '{{dynide_dir}}/bin/herdr-live'
+    exec '{{dynide_dir}}/bin/dynide'
 
 # Throwaway tty/blit demo in this terminal (q quits, Ctrl-Z suspends)
 dynide-demo:
@@ -55,11 +55,11 @@ dynide-demo:
 dynide-bench:
     cd '{{dynide_dir}}' && MIX_ENV=test mix dynide.bench
 
-# M6 gate: keystroke -> glass in a real pty, herdr (the herdr-reference tag build, or HERDR_BIN) then herdr-live (GLASS lines)
+# M6 gate: keystroke -> glass in a real pty, herdr (the herdr-reference tag build, or HERDR_BIN) then dynide (GLASS lines)
 dynide-bench-glass:
     cd '{{dynide_dir}}' && mix compile
     python3 '{{dynide_dir}}/bench/gate/glass.py' herdr --n 500
-    python3 '{{dynide_dir}}/bench/gate/glass.py' herdr-live --n 500
+    python3 '{{dynide_dir}}/bench/gate/glass.py' dynide --n 500
 
 # M9 exit evidence: terminal-fidelity checks in a real pty (PASS/FAIL per check), then reflow against herdr
 dynide-bench-fidelity:

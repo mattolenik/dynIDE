@@ -4,8 +4,8 @@ defmodule DynideTerm.Remote.ArgsTest do
   alias DynideTerm.Remote.Args
 
   @env %{"HOME" => "/h"}
-  @sock "/h/.local/state/herdr-live/client.sock"
-  @token "/h/.local/state/herdr-live/client.token"
+  @sock "/h/.local/state/dynide/client.sock"
+  @token "/h/.local/state/dynide/client.token"
 
   test "attach forms" do
     assert {:ok, o} = Args.parse(["attach"], @env)
@@ -19,8 +19,8 @@ defmodule DynideTerm.Remote.ArgsTest do
     assert o[:transport] == {:ssh, "box", "work"} and o[:session] == "work"
   end
 
-  test "the client socket follows HERDR_LIVE_CLIENT_SOCK" do
-    env = Map.put(@env, "HERDR_LIVE_CLIENT_SOCK", "/run/x/c.sock")
+  test "the client socket follows DYNIDE_CLIENT_SOCK" do
+    env = Map.put(@env, "DYNIDE_CLIENT_SOCK", "/run/x/c.sock")
     assert {:ok, o} = Args.parse(["attach"], env)
     assert o[:transport] == {:unix, "/run/x/c.sock", "/run/x/client.token"}
   end
@@ -54,24 +54,24 @@ defmodule DynideTerm.Remote.ArgsTest do
           ["terminal", "attach", "p1", "--host"]
         ] do
       assert {:usage, text} = Args.parse(argv, @env), inspect(argv)
-      assert text =~ "herdr-live attach [<host>] [<session>]"
+      assert text =~ "dynide attach [<host>] [<session>]"
     end
   end
 
   test "usage lines" do
     assert "attach [<host>] [<session>]" in Args.usage_lines()
-    assert Enum.all?(Args.usage_lines(), &(not String.starts_with?(&1, "herdr-live")))
+    assert Enum.all?(Args.usage_lines(), &(not String.starts_with?(&1, "dynide")))
   end
 
   test "ssh command per R13" do
     opts = ~w(-T -o BatchMode=yes -o ServerAliveInterval=10 -o ServerAliveCountMax=3)
-    assert Args.ssh_command("box", %{}) == {"ssh", opts ++ ~w(box herdr-live attach-relay)}
+    assert Args.ssh_command("box", %{}) == {"ssh", opts ++ ~w(box dynide attach-relay)}
 
-    env = %{"HERDR_LIVE_SSH" => "ssh -p 2222", "HERDR_LIVE_REMOTE_BIN" => "/opt/hl"}
+    env = %{"DYNIDE_SSH" => "ssh -p 2222", "DYNIDE_REMOTE_BIN" => "/opt/hl"}
 
     assert Args.ssh_command("box", env) ==
              {"ssh", ~w(-p 2222) ++ opts ++ ~w(box /opt/hl attach-relay)}
 
-    assert Args.ssh_command("box", %{"HERDR_LIVE_SSH" => ""}) |> elem(0) == "ssh"
+    assert Args.ssh_command("box", %{"DYNIDE_SSH" => ""}) |> elem(0) == "ssh"
   end
 end

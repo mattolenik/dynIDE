@@ -2,7 +2,7 @@
 # in the dev PLT. Outside MIX_ENV=test the task does not exist.
 if Mix.env() == :test do
   defmodule Mix.Tasks.Dynide.Bench do
-    @shortdoc "Runs the herdr-live M3 benchmarks (MIX_ENV=test; fake or real server kernel)"
+    @shortdoc "Runs the dynIDE M3 benchmarks (MIX_ENV=test; fake or real server kernel)"
     @moduledoc """
     M3 benchmark harness behind `just dynide-bench`. By default everything runs against
     `Kernel.Fake` (Elixir side only); `--kernel real` restarts dynide_server on M1's
@@ -22,14 +22,14 @@ if Mix.env() == :test do
     Prints a markdown table and writes `_build/bench/m3.json` (`m3-real.json` with
     `--kernel real`, `-COLSxROWS` with a non-default `--size`, `-quick` suffix for quick
     runs). `--size COLSxROWS` (default 200x50, at least 60x20 for 16 panes) is client A's
-    terminal and the frame-cost geometry. `--quick` (or `HERDR_BENCH_QUICK=1`)
+    terminal and the frame-cost geometry. `--quick` (or `DYNIDE_BENCH_QUICK=1`)
     shrinks every metric 10x. `--flood-mb N` sets the bytes per flooded pane (MiB,
     default 100). `--compose raw|inline|budget` picks how frame cost calls Compose:
     `raw` (default) is M3's direct `Compose.frame/4` (chrome layout precomputed, as
     Render caches it); `inline` and `budget` go through
     `DynideReload.Guard.run/4` on `Compose.screen/5` like Render, without and with its
     50ms budget (a worker per frame). With `--kernel real` the typed pane runs `cat` (tty echo) and each
-    flooded pane runs `cat` of one generated file (in `HERDR_REAL_KERNEL_TMP`, default
+    flooded pane runs `cat` of one generated file (in `DYNIDE_REAL_KERNEL_TMP`, default
     the system tmp dir). Compiled only in `:test` because it drives the clients with
     `DynideIntegration.Driver` (test/support).
     """
@@ -72,7 +72,7 @@ if Mix.env() == :test do
           ]
         )
 
-      quick? = opts[:quick] == true or System.get_env("HERDR_BENCH_QUICK") == "1"
+      quick? = opts[:quick] == true or System.get_env("DYNIDE_BENCH_QUICK") == "1"
       s = if quick?, do: 10, else: 1
       kernel = if opts[:kernel] == "real", do: :real, else: :fake
 
@@ -144,8 +144,8 @@ if Mix.env() == :test do
 
     # one file of numbered 64-byte lines, `bytes` long, ending in a marker line
     defp flood_file(bytes) do
-      dir = System.get_env("HERDR_REAL_KERNEL_TMP", System.tmp_dir!())
-      path = Path.join(dir, "herdr-bench-flood-#{System.unique_integer([:positive])}")
+      dir = System.get_env("DYNIDE_REAL_KERNEL_TMP", System.tmp_dir!())
+      path = Path.join(dir, "dynide-bench-flood-#{System.unique_integer([:positive])}")
       line = fn n -> String.pad_trailing(Integer.to_string(n), 62, ".") <> "\r\n" end
       lines = div(bytes, 64) - 1
 
@@ -742,7 +742,7 @@ if Mix.env() == :test do
       {bc, br} = @second_size
 
       """
-      ## herdr-live M3 bench: #{title(cfg)}; targets judged at M6
+      ## dynIDE M3 bench: #{title(cfg)}; targets judged at M6
 
       #{if cfg.quick, do: "**QUICK run (every metric 10x smaller)**\n", else: ""}
       | metric | value | target (design.md, judged at M6) |

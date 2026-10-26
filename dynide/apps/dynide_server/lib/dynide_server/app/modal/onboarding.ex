@@ -2,7 +2,7 @@ defmodule DynideServer.App.Modal.Onboarding do
   @moduledoc """
   The first-run welcome (`%{kind: :onboarding}`, inventory §5), opened by
   `Actions.init` when `ui.onboarding` is set (`at_start/1`). herdr's lines, with
-  `herdr-live` as the title; the prefix line shows `ui.keybinds.prefix` and `?` as
+  `dynide` as the title; the prefix line shows `ui.keybinds.prefix` and `?` as
   keycaps. Panel `max(hint + 5, 64)` x 16, one button `continue` (Enter).
 
   Enter, Right, `l` or the `continue` button close it, set `ui.onboarding: false` and
@@ -49,7 +49,7 @@ defmodule DynideServer.App.Modal.Onboarding do
     rect = V.panel(size, max(hint + 5, 64), 16)
 
     body = [
-      V.title("herdr-live"),
+      V.title("dynIDE"),
       V.text(:subtitle, "terminal workspace manager for coding agents", :muted),
       V.spacer(:gap),
       V.line(0, "this is a mouse-first terminal."),

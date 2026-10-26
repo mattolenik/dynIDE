@@ -1,38 +1,38 @@
-09:59:00.000 dynide-broker: herdr-event broker_start ts=1792490340000 pid=99
-2026-10-20 10:00:00.100 [info] herdr-event vm_start ts=1792490400100 gen=1 role=primary adopt=fresh
-2026-10-20 10:00:05.000 [info] herdr-event reload ts=1792490405000 batch=1 fanout=3 modules=DynideServer.View,DynideServer.Layout,DynideTerm.Client.Term.Render compile_ms=120
-2026-10-20 10:01:00.000 [info] herdr-event compile_error ts=1792490460000 file=lib/dynide_server/view.ex line=42 count=2 msg="undefined function foo/1 (expected \"Mod\" to define it; path C:\\tmp\\x.ex)"
-2026-10-20 10:01:30.000 [info] herdr-event tests ts=1792490490000 result=passed files=2 failures=0 ms=900
-2026-10-20 10:02:00.000 [info] herdr-event rollback ts=1792490520000 batch=2 fanout=1 modules=DynideServer.View reason=raise detail="boom in render"
+09:59:00.000 dynide-broker: dynide-event broker_start ts=1792490340000 pid=99
+2026-10-20 10:00:00.100 [info] dynide-event vm_start ts=1792490400100 gen=1 role=primary adopt=fresh
+2026-10-20 10:00:05.000 [info] dynide-event reload ts=1792490405000 batch=1 fanout=3 modules=DynideServer.View,DynideServer.Layout,DynideTerm.Client.Term.Render compile_ms=120
+2026-10-20 10:01:00.000 [info] dynide-event compile_error ts=1792490460000 file=lib/dynide_server/view.ex line=42 count=2 msg="undefined function foo/1 (expected \"Mod\" to define it; path C:\\tmp\\x.ex)"
+2026-10-20 10:01:30.000 [info] dynide-event tests ts=1792490490000 result=passed files=2 failures=0 ms=900
+2026-10-20 10:02:00.000 [info] dynide-event rollback ts=1792490520000 batch=2 fanout=1 modules=DynideServer.View reason=raise detail="boom in render"
 2026-10-20 10:02:10.000 [error] GenServer DynideServer.Foo terminating
 ** (RuntimeError) boom in render
     (dynide_server 0.1.0) lib/dynide_server/view.ex:42: DynideServer.View.compute/2
     (dynide_server 0.1.0) lib/dynide_server/foo.ex:10: DynideServer.Foo.handle_call/3
-2026-10-20 10:02:11.000 [info] herdr-event guard_failure ts=1792490531000 mfa=DynideServer.View.compute/2 kind=raise attributed=2 detail="boom"
-2026-10-20 10:02:12.000 [info] herdr-event guard_failure ts=1792490532000 mfa=DynideServer.View.compute/2 kind=exit attributed=none detail="noproc"
-2026-10-20 10:03:00.000 [info] herdr-event reload ts=1792490580000 batch=3 fanout=5 modules=A,B,C,D,E compile_ms=300
-2026-10-20 10:03:20.000 [info] herdr-event tests ts=1792490600000 result=failed files=1 failures=2 ms=1500
-2026-10-20 10:03:25.000 [info] herdr-event tests ts=1792490605000 result=stale files=1 failures=0 ms=800
-2026-10-20 10:04:00.000 [info] herdr-event rollback ts=1792490640000 batch=3 fanout=5 modules=A,B,C,D,E reason=manual detail="user asked"
-2026-10-20 10:04:30.000 [info] herdr-event rejected ts=1792490670000 module=DynideServer.Native path=lib/dynide_server/native.ex
-2026-10-20 10:04:40.000 [info] herdr-event purge_blocked ts=1792490680000 module=DynideServer.View holders=DynideServer.Pane.Server
-2026-10-20 10:05:00.000 [info] herdr-event handoff ts=1792490700000 phase=begin gen=1 panes=4
-2026-10-20 10:05:00.000 [info] herdr-event malformed ts=oops gen=1
-10:05:01.000 dynide-broker: herdr-event broker_handoff ts=1792490701000 kind=graceful from=1 to=2 entries=3 ms=40
-2026-10-20 10:05:02.000 [info] herdr-event vm_start ts=1792490702000 gen=2 role=primary adopt=graceful
-2026-10-20 10:05:03.000 [info] herdr-event sync ts=1792490703000 count=7 modules=A,B,C,D,E,F,G failed=0
-2026-10-20 10:06:00.000 [info] herdr-event vm_stop ts=1792490760000 gen=2
-10:06:01.000 dynide-broker: herdr-event broker_vm_exit ts=1792490761000 gen=2 status=killed role=primary
-10:06:02.000 dynide-broker: herdr-event broker_handoff_failed ts=1792490762000 reason=timeout from=2 to=3
-10:06:03.000 dynide-broker: herdr-event broker_handoff ts=1792490763000 kind=crash from=2 to=3 entries=3 ms=15
-2026-10-20 10:06:04.000 [info] herdr-event vm_start ts=1792490764000 gen=3 role=primary adopt=crash
-2026-10-20 10:07:00.000 [info] herdr-event crash ts=1792490820000 proc=store reason=killed action=restored
-2026-10-20 10:07:10.000 [info] herdr-event crash ts=1792490830000 proc=session reason=badarg action=restarted
-2026-10-20 10:07:20.000 [info] herdr-event crash ts=1792490840000 proc=local_client reason=raise action=restarted
-2026-10-20 10:07:21.000 [info] herdr-event crash ts=1792490841000 proc=local_client reason=raise action=gave_up
-10:08:00.000 dynide-broker: herdr-event broker_stop ts=1792490880000 pid=100
-10:08:30.000 dynide-broker: herdr-event broker_start ts=1792490910000 pid=101
-10:08:31.000 dynide-broker: herdr-event broker_handoff ts=1792490911000 kind=crash from=3 to=4 entries=3 ms=90
-10:09:00.000 dynide-broker: herdr-event session_lost ts=1792490940000 reason=disk_restore_not_implemented gen=4
-10:09:30.000 dynide-broker: herdr-event broker_start ts=1792490970000 pid=102
-2026-10-20 10:10:10.000 [info] herdr-event session_lost ts=1792491010000 proc=store reason=fresh_restart panes=2
+2026-10-20 10:02:11.000 [info] dynide-event guard_failure ts=1792490531000 mfa=DynideServer.View.compute/2 kind=raise attributed=2 detail="boom"
+2026-10-20 10:02:12.000 [info] dynide-event guard_failure ts=1792490532000 mfa=DynideServer.View.compute/2 kind=exit attributed=none detail="noproc"
+2026-10-20 10:03:00.000 [info] dynide-event reload ts=1792490580000 batch=3 fanout=5 modules=A,B,C,D,E compile_ms=300
+2026-10-20 10:03:20.000 [info] dynide-event tests ts=1792490600000 result=failed files=1 failures=2 ms=1500
+2026-10-20 10:03:25.000 [info] dynide-event tests ts=1792490605000 result=stale files=1 failures=0 ms=800
+2026-10-20 10:04:00.000 [info] dynide-event rollback ts=1792490640000 batch=3 fanout=5 modules=A,B,C,D,E reason=manual detail="user asked"
+2026-10-20 10:04:30.000 [info] dynide-event rejected ts=1792490670000 module=DynideServer.Native path=lib/dynide_server/native.ex
+2026-10-20 10:04:40.000 [info] dynide-event purge_blocked ts=1792490680000 module=DynideServer.View holders=DynideServer.Pane.Server
+2026-10-20 10:05:00.000 [info] dynide-event handoff ts=1792490700000 phase=begin gen=1 panes=4
+2026-10-20 10:05:00.000 [info] dynide-event malformed ts=oops gen=1
+10:05:01.000 dynide-broker: dynide-event broker_handoff ts=1792490701000 kind=graceful from=1 to=2 entries=3 ms=40
+2026-10-20 10:05:02.000 [info] dynide-event vm_start ts=1792490702000 gen=2 role=primary adopt=graceful
+2026-10-20 10:05:03.000 [info] dynide-event sync ts=1792490703000 count=7 modules=A,B,C,D,E,F,G failed=0
+2026-10-20 10:06:00.000 [info] dynide-event vm_stop ts=1792490760000 gen=2
+10:06:01.000 dynide-broker: dynide-event broker_vm_exit ts=1792490761000 gen=2 status=killed role=primary
+10:06:02.000 dynide-broker: dynide-event broker_handoff_failed ts=1792490762000 reason=timeout from=2 to=3
+10:06:03.000 dynide-broker: dynide-event broker_handoff ts=1792490763000 kind=crash from=2 to=3 entries=3 ms=15
+2026-10-20 10:06:04.000 [info] dynide-event vm_start ts=1792490764000 gen=3 role=primary adopt=crash
+2026-10-20 10:07:00.000 [info] dynide-event crash ts=1792490820000 proc=store reason=killed action=restored
+2026-10-20 10:07:10.000 [info] dynide-event crash ts=1792490830000 proc=session reason=badarg action=restarted
+2026-10-20 10:07:20.000 [info] dynide-event crash ts=1792490840000 proc=local_client reason=raise action=restarted
+2026-10-20 10:07:21.000 [info] dynide-event crash ts=1792490841000 proc=local_client reason=raise action=gave_up
+10:08:00.000 dynide-broker: dynide-event broker_stop ts=1792490880000 pid=100
+10:08:30.000 dynide-broker: dynide-event broker_start ts=1792490910000 pid=101
+10:08:31.000 dynide-broker: dynide-event broker_handoff ts=1792490911000 kind=crash from=3 to=4 entries=3 ms=90
+10:09:00.000 dynide-broker: dynide-event session_lost ts=1792490940000 reason=disk_restore_not_implemented gen=4
+10:09:30.000 dynide-broker: dynide-event broker_start ts=1792490970000 pid=102
+2026-10-20 10:10:10.000 [info] dynide-event session_lost ts=1792491010000 proc=store reason=fresh_restart panes=2

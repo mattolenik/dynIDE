@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end host tty checks for DynideTerm.Native.Tty under a real pty.
 
-Usage: tty_harness.py destructor|demo|herdr|herdr-stress|selfhost|persist|agent|plugins|remote|broker-kill [-v]
+Usage: tty_harness.py destructor|demo|dynide|dynide-stress|selfhost|persist|agent|plugins|remote|broker-kill [-v]
 
 destructor: runs scripts/tty_destructor.exs in the BEAM as the pty's session
 leader. Answers each kitty/DA1 probe, then checks: the destructor of a killed
@@ -17,7 +17,7 @@ kill -9 of the VM (the wrapper restores the tty), `kill %1` of a suspended job
 SIGTTOU/SIGTTIN, and exits non-zero), `kill %1; fg` (ends on the main screen,
 cooked), and `q` exiting 0.
 
-herdr: runs bin/herdr-live attached (real tty and blit kernels, real server
+herdr: runs bin/dynide attached (real tty and blit kernels, real server
 kernel) as the session leader of a 120x40 pty: first frame (alt screen,
 TERMINAL status), prefix v and prefix - split (three shell prompts), typing
 `echo hi-from""-pty` shows the shell's output, a resize to 100x30 repaints
@@ -25,7 +25,7 @@ TERMINAL status), prefix v and prefix - split (three shell prompts), typing
 status 0, the restore sequence (kitty pop, alt screen left) and unchanged
 tty settings.
 
-herdr-stress: the same launch, then grows to 15 panes (each time clicking the
+dynide-stress: the same launch, then grows to 15 panes (each time clicking the
 largest pane with an SGR mouse press, then prefix v or -), cats a 21 MB file
 in a loop in one pane while typing in another, checks the typed echo shows up
 while the loop still runs (it stops only after that) and reports its latency,
@@ -36,10 +36,10 @@ selfhost: the self-hosting loop through the real launcher. The same launch
 apps/dynide_server/lib/dynide_server/selfhost_probe.ex and waits for the
 status row to show `r<n> 1m` (rewritten every 2 s until a batch shows, as a
 defense: since b30f3505 the status bridge subscribes at once and seeds from
-the newest batch, so the first write normally shows); `bin/herdr-live rollback` shows
-`r<n> rolled back: manual`; `bin/herdr-live kernel-restart` shows
+the newest batch, so the first write normally shows); `bin/dynide rollback` shows
+`r<n> rolled back: manual`; `bin/dynide kernel-restart` shows
 `handoff graceful g<gen>` and both panes still answer an `echo` (clicked to
-focus), and a pane shell has HERDR_LIVE_API set and no HERDR_BROKER_SOCK; the probe file is deleted (the status settles), prefix q exits 0, and
+focus), and a pane shell has DYNIDE_API set and no DYNIDE_BROKER_SOCK; the probe file is deleted (the status settles), prefix q exits 0, and
 log_summary.py on the run's log reports reloads >= 1, rollbacks manual 1,
 handoffs graceful 1, session_losses 0. The probe file is removed in a
 `finally` (also on Ctrl-C); afterwards no probe beam is left in
@@ -54,9 +54,9 @@ cwds, two tabs, a side-by-side split). Run 2 on the same state dir: the log has
 `persist_restore source=disk reason=boot`, the screen shows m8-marker-b (scrollback
 replay), the focused pane's `pwd` is dir-b; 3 s, prefix q, dump B. PASS when A == B.
 
-agent: an agent in a pane drives herdr-live through the CLI. The same launch
-(120x40); the first pane's shell runs "$HERDR_LIVE_BIN" (exported by the
-launcher, as is HERDR_LIVE_API) with output into the run's temp dir: pane split
+agent: an agent in a pane drives dynide through the CLI. The same launch
+(120x40); the first pane's shell runs "$DYNIDE_BIN" (exported by the
+launcher, as is DYNIDE_API) with output into the run's temp dir: pane split
 --direction right (split.json is herdr's {"id","result"} reply with result.pane.pane_id,
 two prompts), pane run <id>
 'echo agent-""marker', pane wait-output <id> --match agent-marker, pane read
@@ -68,7 +68,7 @@ connects >= 5 and session_losses 0.
 
 plugins: M14's exit criterion, two of herdr's example plugins
 (fetched at pinned commit 18709cd by plugin_examples.sh into the XDG cache, unmodified; SKIP,
-exit 0, when neither cache nor network, HERDR_LIVE_OFFLINE=1 forbids fetching) end to end. The same launch with its own
+exit 0, when neither cache nor network, DYNIDE_OFFLINE=1 forbids fetching) end to end. The same launch with its own
 XDG_CONFIG_HOME and XDG_STATE_HOME (plugin registry, checkouts, config and state dirs
 under the temp dir) and a temp bin/ first on PATH with two stubs, so the plugins run
 unmodified and offline: `gh` prints `stub-gh <args>` (github-link-preview's preview.sh
@@ -89,7 +89,7 @@ invoke fail with plugin_disabled, enable, uninstall drops it from plugin list; p
 exits 0 and log_summary.py reports session_losses 0.
 
 remote: M16's remote attach. A (120x40) runs the instance; B (80x24) runs
-`bin/herdr-live attach fakehost` with HERDR_LIVE_SSH=bench/remote/fake_ssh.sh (the
+`bin/dynide attach fakehost` with DYNIDE_SSH=bench/remote/fake_ssh.sh (the
 relay runs locally) and its own transcript: B shows TERMINAL on row 24, an echo
 typed in either shows in the other; killing the relay (its pid file) shows
 reconnecting in B, then a client_reconnect and B's echo on A; kernel-restart
@@ -99,18 +99,18 @@ quits; log_summary.py reports clients attaches >= 2 and session_losses 0. On a
 failure the client and server log tails are printed.
 
 broker-kill: the same launch (120x40), then kill -9 of the broker (its pid from
-`bin/herdr-live status`): tty_guard.sh restores the tty (settings unchanged, mouse
+`bin/dynide status`): tty_guard.sh restores the tty (settings unchanged, mouse
 off, alt screen left), the launcher exits 137 and the log has broker_killed. A
 second launch gets SIGTERM on the launcher pid: the guard forwards TERM to the
 broker, a clean stop (exit 0, settings unchanged, no broker_killed).
 
-herdr, herdr-stress, selfhost, persist, agent, plugins, remote and broker-kill launch bin/herdr-live and compile into the
-shared _build/dev, so they skip (print SKIP, exit 0) inside a herdr-live pane:
-pane shells have HERDR_LIVE_API set (herdr's own panes do not). Run them outside the dogfood
+dynide, dynide-stress, selfhost, persist, agent, plugins, remote and broker-kill launch bin/dynide and compile into the
+shared _build/dev, so they skip (print SKIP, exit 0) inside a dynIDE pane:
+pane shells have DYNIDE_API set (herdr's own panes do not). Run them outside the dogfood
 instance (another terminal or worktree).
 
-Every herdr-live launch gets its own HERDR_LIVE_LOG, HERDR_LIVE_API,
-HERDR_LIVE_RUNTIME_DIR, HERDR_LIVE_STATE_DIR and HERDR_LIVE_CONFIG (a config with
+Every dynide launch gets its own DYNIDE_LOG, DYNIDE_API,
+DYNIDE_RUNTIME_DIR, DYNIDE_STATE_DIR and DYNIDE_CONFIG (a config with
 `onboarding = false`, so no welcome modal) under the run's temp dir, so the
 CLI calls address that instance only and no run reads or writes the human's
 session file.
@@ -223,7 +223,7 @@ def spawn(master, slave, env):
             os.dup2(slave, 2)
             os.close(master)
             os.chdir(LIVE)
-            # Launched like bin/herdr-live, so the BEAM never drives the tty itself.
+            # Launched like bin/dynide, so the BEAM never drives the tty itself.
             os.execvpe("elixir", ["elixir", "--erl", "-noshell -noinput", "-S", "mix", "run",
                                   "--no-start", "scripts/tty_destructor.exs"], env)
         finally:
@@ -434,7 +434,7 @@ class Shell:
     def paint(self, size, start, label):
         """Waits for a frame header naming `size`; returns the VM's OS pid and
         registers the wrapper job's process group for cleanup."""
-        m = self.expect(lambda seen: re.search(rb"herdr-live demo " + size + rb" pid (\d+)", seen),
+        m = self.expect(lambda seen: re.search(rb"dynide demo " + size + rb" pid (\d+)", seen),
                         start, label)
         vm = int(m.group(1))
         try:
@@ -524,7 +524,7 @@ def demo():
 
         at = sh.send(b"fg\n")
         at = sh.expect(CLEAR, at, "full repaint after fg")
-        sh.expect(b"herdr-live demo 80x24", at, "repainted frame after fg")
+        sh.expect(b"dynide demo 80x24", at, "repainted frame after fg")
         ok(lflag(sh.fd) & COOKED == 0, "resume: fg repaints fully (ESC[2J + header) and tty is raw again")
 
         at = len(transcript)
@@ -590,8 +590,8 @@ def demo():
         print("--- transcript", repr(bytes(transcript)), sep="\n")
 
 
-class Herdr:
-    """bin/herdr-live attached, leading the session of a fresh cols x rows pty."""
+class Dynide:
+    """bin/dynide attached, leading the session of a fresh cols x rows pty."""
 
     # the open terminals: until() and cli() pump them all, so a second pty (remote)
     # never fills up while the checks wait on the other
@@ -600,11 +600,11 @@ class Herdr:
     def __init__(self, tmp, cols, rows, run="", args=(), extra_env=None):
         """`run` names the log, API socket and runtime dir, so two launches in one
         temp dir (persist) stay apart; the state dir (session files) is the temp dir's.
-        `args` launches `bin/herdr-live args` (attach: a client of the instance named by
+        `args` launches `bin/dynide args` (attach: a client of the instance named by
         `run`) with its own transcript; the plain launch uses the global one."""
         self.args = tuple(args)
         self.transcript = bytearray() if args else transcript
-        self.log = os.path.join(tmp, f"herdr-live{run}.log")
+        self.log = os.path.join(tmp, f"dynide{run}.log")
         self.tmp = tmp
         self.master, slave = os.openpty()
         fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -613,8 +613,8 @@ class Herdr:
         self.answered = 0
         env = {k: v for k, v in os.environ.items()
                if k not in ("ENV", "BASH_ENV", "HERDR_SOCKET_PATH", "HERDR_CLIENT_SOCKET_PATH",
-                            "HERDR_LIVE_HEADLESS", "HERDR_LIVE_TEST_ON_SAVE", "HERDR_BROKER_SOCK",
-                            "HERDR_LIVE_SESSION", "HERDR_LIVE_PERSIST", "HERDR_PANE_ID", "HERDR_LIVE_BIN")}
+                            "DYNIDE_HEADLESS", "DYNIDE_TEST_ON_SAVE", "DYNIDE_BROKER_SOCK",
+                            "DYNIDE_SESSION", "DYNIDE_PERSIST", "HERDR_PANE_ID", "DYNIDE_BIN")}
         # the panes' shell: plain sh with a known prompt; sockets and session files of
         # this instance only (never the human's session.default.etf)
         self.state = os.path.join(tmp, "state")
@@ -625,9 +625,9 @@ class Herdr:
             with open(config_path, "w") as f:
                 f.write("onboarding = false\n")
         env.update(SHELL="/bin/sh", PS1="$ ", HISTFILE="/dev/null", TERM="xterm-256color",
-                   HERDR_LIVE_LOG=self.log, HERDR_LIVE_API=os.path.join(tmp, f"api{run}.sock"),
-                   HERDR_LIVE_RUNTIME_DIR=os.path.join(tmp, f"rt{run}"), HERDR_LIVE_STATE_DIR=self.state,
-                   HERDR_LIVE_CONFIG=config_path)
+                   DYNIDE_LOG=self.log, DYNIDE_API=os.path.join(tmp, f"api{run}.sock"),
+                   DYNIDE_RUNTIME_DIR=os.path.join(tmp, f"rt{run}"), DYNIDE_STATE_DIR=self.state,
+                   DYNIDE_CONFIG=config_path)
         env.update(extra_env or {})
         self.env = env
         pid = os.fork()
@@ -639,13 +639,13 @@ class Herdr:
                 os.dup2(slave, 1)
                 os.dup2(slave, 2)
                 os.close(self.master)
-                os.execve(os.path.join(LIVE, "bin", "herdr-live"), ["herdr-live", *self.args], env)
+                os.execve(os.path.join(LIVE, "bin", "dynide"), ["dynide", *self.args], env)
             finally:
                 os._exit(127)
         os.close(slave)
         self.pid = pid
         pgroups.add(pid)
-        Herdr.running.append(self)
+        Dynide.running.append(self)
 
     def pump(self, wait=0.05):
         """Reads for at most `wait` seconds (a busy stream never starves the checks)."""
@@ -686,11 +686,11 @@ class Herdr:
         return text in self.screen.text()
 
     def cli(self, *args, timeout=60):
-        """Runs `bin/herdr-live args` against this instance, pumping the pty meanwhile;
+        """Runs `bin/dynide args` against this instance, pumping the pty meanwhile;
         returns (exit status, output)."""
         out = os.path.join(self.tmp, "cli.out")
         with open(out, "w") as f:
-            p = subprocess.Popen([os.path.join(LIVE, "bin", "herdr-live"), *args], cwd=LIVE,
+            p = subprocess.Popen([os.path.join(LIVE, "bin", "dynide"), *args], cwd=LIVE,
                                  env=self.env, stdin=subprocess.DEVNULL, stdout=f, stderr=f,
                                  start_new_session=True)
         pgroups.add(p.pid)
@@ -698,7 +698,7 @@ class Herdr:
             end = min(DEADLINE, time.monotonic() + timeout)
             while p.poll() is None:
                 if time.monotonic() > end:
-                    fail(f"herdr-live {' '.join(args)} timed out")
+                    fail(f"dynide {' '.join(args)} timed out")
                 pump_all()
         finally:
             if p.poll() is None:
@@ -726,13 +726,13 @@ class Herdr:
         status = None
         while status is None:
             if time.monotonic() > DEADLINE:
-                fail("timed out waiting for herdr-live to exit after prefix q")
+                fail("timed out waiting for dynide to exit after prefix q")
             self.pump()
             pid, st = os.waitpid(self.pid, os.WNOHANG)
             if pid:
                 status = st
         pgroups.discard(self.pid)
-        Herdr.running.remove(self)
+        Dynide.running.remove(self)
         self.pump(0.1)
         after = bytes(transcript[at:])
         ok(os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0,
@@ -742,18 +742,18 @@ class Herdr:
         ok(config(self.master) == self.before, "quit: tty settings unchanged")
         if not self.args:
             log = open(self.log).read()
-            ok("herdr-live stopped" in log, "quit: log has herdr-live stopped")
+            ok("dynide stopped" in log, "quit: log has dynide stopped")
 
 
 def pump_all():
-    for h in Herdr.running:
+    for h in Dynide.running:
         h.pump()
 
 
-def herdr():
+def dynide():
     with tempfile.TemporaryDirectory() as tmp:
         compile_then_start_clock(tmp)
-        h = Herdr(tmp, 120, 40)
+        h = Dynide(tmp, 120, 40)
         h.start()
         h.send(b"\x02v")
         h.until(lambda: h.prompts() >= 2, "second prompt after prefix v")
@@ -776,14 +776,14 @@ def wait_exit(h, label):
     """Pumps the pty until the launcher pid exits; returns its wait status."""
     while True:
         if time.monotonic() > DEADLINE:
-            fail(f"timed out waiting for herdr-live to exit after {label}")
+            fail(f"timed out waiting for dynide to exit after {label}")
         h.pump()
         pid, st = os.waitpid(h.pid, os.WNOHANG)
         if pid:
             pgroups.discard(h.pid)
             h.pump(0.1)
             # a later pump_all must not answer probes on this dead pty (EIO)
-            Herdr.running.remove(h)
+            Dynide.running.remove(h)
             return st
 
 
@@ -796,7 +796,7 @@ def describe_status(st):
 def broker_kill():
     with tempfile.TemporaryDirectory() as tmp:
         compile_then_start_clock(tmp)
-        h = Herdr(tmp, 120, 40)
+        h = Dynide(tmp, 120, 40)
         h.start()
         rc, out = h.cli("status")
         m = re.search(r"^broker_pid=(\d+)$", out, re.M)
@@ -812,7 +812,7 @@ def broker_kill():
            "broker-kill: restore sequence written (mouse off, alt screen left)")
         ok("broker_killed" in open(h.log).read(), "broker-kill: log has broker_killed")
         # SIGTERM to the launcher reaches the broker as TERM through the guard: a clean stop
-        h2 = Herdr(tmp, 120, 40, run="-term")
+        h2 = Dynide(tmp, 120, 40, run="-term")
         h2.start()
         os.kill(h2.pid, signal.SIGTERM)
         st = wait_exit(h2, "SIGTERM")
@@ -822,7 +822,7 @@ def broker_kill():
         ok("broker_killed" not in open(h2.log).read(), "broker-kill: no broker_killed after SIGTERM")
 
 
-def herdr_stress():
+def dynide_stress():
     global DEADLINE
     with tempfile.TemporaryDirectory() as tmp:
         compile_then_start_clock(tmp)
@@ -833,7 +833,7 @@ def herdr_stress():
                 f.write(f"{n:08d} " + "x" * 60 + "\n")
         size = os.path.getsize(big)
         cols, rows = 120, 40
-        h = Herdr(tmp, cols, rows)
+        h = Dynide(tmp, cols, rows)
         h.start()
         # model of the pane rects (right of the 26-col sidebar, under the tab bar, above the
         # status row); only the centres are used
@@ -917,7 +917,7 @@ def selfhost():
         compile_then_start_clock(tmp)
         DEADLINE += 120
         cols, rows = 120, 40
-        h = Herdr(tmp, cols, rows)
+        h = Dynide(tmp, cols, rows)
         try:
             h.start()
             h.send(b"\x02v")
@@ -926,7 +926,7 @@ def selfhost():
             # ReloadNotices (the status line's bridge) subscribes right after the reload
             # pipeline starts and seeds from the newest batch (b30f3505), so the first write
             # normally shows; rewriting the probe (new value) every 2 s stays as a defense
-            h.until(lambda: "herdr-event vm_start" in read_text(h.log), "vm_start in the log")
+            h.until(lambda: "dynide-event vm_start" in read_text(h.log), "vm_start in the log")
             n = int(time.time() * 1000) % 1_000_000_000
             loaded = lambda: re.search(r"\br(\d+) 1m\b", h.screen.text())
             writes = 0
@@ -943,12 +943,12 @@ def selfhost():
             batch = int(h.until(loaded, "r<n> 1m after the log settled", timeout=5).group(1))
             ok(True, f"selfhost: new module file reloads, status shows r{batch} 1m ({writes} write(s))")
             code, out = h.cli("rollback")
-            ok(code == 0, f"selfhost: herdr-live rollback exits 0 ({out.strip()})")
+            ok(code == 0, f"selfhost: dynide rollback exits 0 ({out.strip()})")
             h.until(lambda: h.shows(f"r{batch} rolled back: manual"), f"r{batch} rolled back: manual",
                     timeout=20)
             ok(True, f"selfhost: status shows r{batch} rolled back: manual")
             code, out = h.cli("kernel-restart", timeout=90)
-            ok(code == 0, f"selfhost: herdr-live kernel-restart exits 0 ({out.strip()})")
+            ok(code == 0, f"selfhost: dynide kernel-restart exits 0 ({out.strip()})")
             m = h.until(lambda: re.search(r"handoff graceful g\d+", h.screen.text()),
                         "handoff graceful g<gen>", timeout=60)
             ok(True, f"selfhost: status shows {m.group(0)}")
@@ -959,9 +959,9 @@ def selfhost():
                 h.until(lambda: h.shows(mark), f"echo {mark} after the handoff", timeout=20)
                 ok(True, f"selfhost: pane {i + 1} answers an echo after the handoff ({mark})")
             # the marker the launcher modes skip on; the VM's broker socket is removed from panes
-            h.send(b'echo inside-${HERDR_LIVE_API:+herdr}-${HERDR_BROKER_SOCK:-live}\r')
-            h.until(lambda: h.shows("inside-herdr-live"), "HERDR_LIVE_API and no HERDR_BROKER_SOCK in a pane's env", timeout=20)
-            ok(True, "selfhost: a pane shell has HERDR_LIVE_API (the harness skip marker), not HERDR_BROKER_SOCK")
+            h.send(b'echo inside-${DYNIDE_API:+dyn}ide-${DYNIDE_BROKER_SOCK:-live}\r')
+            h.until(lambda: h.shows("inside-dynide-live"), "DYNIDE_API and no DYNIDE_BROKER_SOCK in a pane's env", timeout=20)
+            ok(True, "selfhost: a pane shell has DYNIDE_API (the harness skip marker), not DYNIDE_BROKER_SOCK")
             os.remove(PROBE_SRC)
             settle(h)
             last = h.screen.rows()[rows - 1].strip() if len(h.screen.rows()) >= rows else ""
@@ -976,7 +976,7 @@ def selfhost():
         print(summary.stdout, end="")
         if verbose:
             with open(h.log) as f:
-                print("--- reload events", *[l.rstrip() for l in f if re.search(r"herdr-event (reload|rollback)", l)],
+                print("--- reload events", *[l.rstrip() for l in f if re.search(r"dynide-event (reload|rollback)", l)],
                       sep="\n")
 
         s = json.loads(subprocess.run([sys.executable, os.path.join(LIVE, "scripts", "log_summary.py"),
@@ -1030,7 +1030,7 @@ def persist():
         os.makedirs(dir_b)
         os.makedirs(dir_c)
         cols, rows = 120, 40
-        h = Herdr(tmp, cols, rows, run=".1")
+        h = Dynide(tmp, cols, rows, run=".1")
         h.start()
         h.send(b"\x02v")
         h.until(lambda: h.prompts() >= 2, "second prompt after prefix v")
@@ -1070,11 +1070,11 @@ def persist():
         # run 2: same state dir, a new log, sockets and runtime dir; the probe-reply count
         # follows the transcript, so it starts empty again
         del transcript[:]
-        h = Herdr(tmp, cols, rows, run=".2")
+        h = Dynide(tmp, cols, rows, run=".2")
         h.start()
-        h.until(lambda: re.search(r"herdr-event persist_restore .*source=disk", read_text(h.log)),
+        h.until(lambda: re.search(r"dynide-event persist_restore .*source=disk", read_text(h.log)),
                 "persist_restore source=disk in the run 2 log", timeout=60)
-        line = re.search(r"herdr-event persist_restore .*", read_text(h.log)).group(0)
+        line = re.search(r"dynide-event persist_restore .*", read_text(h.log)).group(0)
         ok("reason=boot" in line, f"persist run 2: log has {line.strip()}")
         h.until(lambda: h.shows("m8-marker-b"), "m8-marker-b replayed in run 2", timeout=60)
         ok(True, "persist run 2: m8-marker-b from run 1's scrollback is on screen")
@@ -1108,7 +1108,7 @@ def persist():
 def agent():
     with tempfile.TemporaryDirectory() as tmp:
         compile_then_start_clock(tmp)
-        h = Herdr(tmp, 120, 40)
+        h = Dynide(tmp, 120, 40)
         h.start()
         t = lambda name: os.path.join(tmp, name)
 
@@ -1117,7 +1117,7 @@ def agent():
             h.send(f"{cmd}; touch {t(done)}\r".encode())
             h.until(lambda: os.path.exists(t(done)), label, timeout=timeout)
 
-        bin_ = '"$HERDR_LIVE_BIN"'
+        bin_ = '"$DYNIDE_BIN"'
         shell(f'echo "$HERDR_PANE_ID" > {t("me.txt")}; {bin_} pane split --direction right > {t("split.json")}',
               "s1", "pane split from the pane")
         h.until(lambda: h.prompts() >= 2, "two prompts after pane split", timeout=30)
@@ -1180,14 +1180,14 @@ def remote():
         compile_then_start_clock(tmp)
         DEADLINE += 180
         pidfile, clog = os.path.join(tmp, "relay.pid"), os.path.join(tmp, "client.log")
-        events = lambda kind: re.findall(rf"herdr-event {kind}\b.*", read_text(a.log))
-        a = Herdr(tmp, 120, 40)
+        events = lambda kind: re.findall(rf"dynide-event {kind}\b.*", read_text(a.log))
+        a = Dynide(tmp, 120, 40)
         try:
             a.start()
-            b = Herdr(tmp, 80, 24, args=("attach", "fakehost"), extra_env={
-                "HERDR_LIVE_SSH": os.path.join(LIVE, "bench", "remote", "fake_ssh.sh"),
-                "HERDR_LIVE_REMOTE_BIN": os.path.join(LIVE, "bin", "herdr-live"),
-                "HERDR_LIVE_FAKE_SSH_PIDFILE": pidfile, "HERDR_LIVE_CLIENT_LOG": clog})
+            b = Dynide(tmp, 80, 24, args=("attach", "fakehost"), extra_env={
+                "DYNIDE_SSH": os.path.join(LIVE, "bench", "remote", "fake_ssh.sh"),
+                "DYNIDE_REMOTE_BIN": os.path.join(LIVE, "bin", "dynide"),
+                "DYNIDE_FAKE_SSH_PIDFILE": pidfile, "DYNIDE_CLIENT_LOG": clog})
             b.until(lambda: ALT_ON in b.transcript and len(b.screen.rows()) >= 24
                     and b.screen.rows()[23].startswith("TERMINAL") and b.prompts() >= 1,
                     "B: first frame with TERMINAL on row 24 and a prompt", timeout=120)
@@ -1222,7 +1222,7 @@ def remote():
 
             reconnects, held = len(events("client_reconnect")), len(events("client_held"))
             code, out = a.cli("kernel-restart", timeout=120)
-            ok(code == 0, f"remote: herdr-live kernel-restart exits 0 ({out.strip()})")
+            ok(code == 0, f"remote: dynide kernel-restart exits 0 ({out.strip()})")
             a.until(lambda: re.search(r"handoff graceful g\d+", a.screen.text()),
                     "handoff graceful g<gen> on A", timeout=60)
             b.until(lambda: len(events("client_held")) > held, "client_held after the restart", timeout=60)
@@ -1294,11 +1294,11 @@ def plugins():
         path = t("bin") + os.pathsep + os.environ.get("PATH", "")
         if not shutil.which("lua", path=path):
             fail("plugins: dev-layout-bootstrap runs `lua setup.lua`: no lua on PATH (brew install lua, apt install lua5.4)")
-        h = Herdr(tmp, 120, 40, extra_env={"PATH": path, "XDG_CONFIG_HOME": t("xdg-config"),
+        h = Dynide(tmp, 120, 40, extra_env={"PATH": path, "XDG_CONFIG_HOME": t("xdg-config"),
                                            "XDG_STATE_HOME": t("xdg-state")})
         h.start()
         layout, preview = "examples.dev-layout-bootstrap", "examples.github-link-preview"
-        bin_ = '"$HERDR_LIVE_BIN"'
+        bin_ = '"$DYNIDE_BIN"'
 
         def shell(cmd, done, label, timeout=60):
             """Types `cmd` into the focused (first) pane, then waits for `touch done`."""
@@ -1308,7 +1308,7 @@ def plugins():
         def cli_json(*args):
             code, out = h.cli(*args)
             if code != 0:
-                fail(f"plugins: herdr-live {' '.join(args)} exits {code} ({out.strip()[-300:]})")
+                fail(f"plugins: dynide {' '.join(args)} exits {code} ({out.strip()[-300:]})")
             return json.loads(out)["result"]
 
         def listed():
@@ -1455,17 +1455,17 @@ def plugins():
 
 
 if __name__ == "__main__":
-    modes = {"destructor": destructor, "demo": demo, "herdr": herdr, "herdr-stress": herdr_stress,
+    modes = {"destructor": destructor, "demo": demo, "dynide": dynide, "dynide-stress": dynide_stress,
              "selfhost": selfhost, "persist": persist, "agent": agent, "remote": remote,
              "plugins": plugins,
              "broker-kill": broker_kill}
     args = [a for a in sys.argv[1:] if a != "-v"]
     if len(args) != 1 or args[0] not in modes:
         sys.exit(__doc__)
-    # a pane of a running herdr-live inherits the VM's env: these modes would compile into
+    # a pane of a running dynIDE inherits the VM's env: these modes would compile into
     # and reload that instance's own _build
-    if args[0] in ("herdr", "herdr-stress", "selfhost", "persist", "agent", "remote", "plugins", "broker-kill") and os.environ.get("HERDR_LIVE_API"):
-        print(f"SKIP: {args[0]}: running inside herdr-live (run dynide-check outside it, see editing-live.md)")
+    if args[0] in ("dynide", "dynide-stress", "selfhost", "persist", "agent", "remote", "plugins", "broker-kill") and os.environ.get("DYNIDE_API"):
+        print(f"SKIP: {args[0]}: running inside dynIDE (run dynide-check outside it, see editing-live.md)")
         sys.exit(0)
     # CI cancellation: let `finally` kill the process groups.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))

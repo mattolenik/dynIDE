@@ -44,11 +44,11 @@ defmodule DynideServer.App.Modal.OnboardingTest do
              Actions.apply(app, {:chrome, [{:modal, 1}, :backdrop], {:click, %{x: 0, y: 0}}})
   end
 
-  test "lines: herdr-live title, herdr's text, the prefix from the keybinds" do
+  test "lines: dynide title, herdr's text, the prefix from the keybinds" do
     n = Modal.view(open(), %{cols: 80, rows: 24})
     assert n.props.kind == :onboarding
     assert n.rect.w == 64 and n.rect.h == 16
-    assert Node.find(n, [:title]).text == "herdr-live"
+    assert Node.find(n, [:title]).text == "dynIDE"
     assert Node.find(n, [:subtitle]).text == "terminal workspace manager for coding agents"
 
     assert Enum.map(0..2, &Node.find(n, [{:line, &1}]).text) == [

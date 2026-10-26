@@ -95,7 +95,7 @@ config :dynide_term,
          ]
        )
 
-# Headless (no terminal client children) in test; HERDR_LIVE_HEADLESS=1 does
+# Headless (no terminal client children) in test; DYNIDE_HEADLESS=1 does
 # the same at runtime. Frames are at least min_frame_interval_ms apart.
 config :dynide_term, headless: config_env() == :test, min_frame_interval_ms: 6
 
@@ -107,7 +107,7 @@ config :dynide_term, colors_window_ms: if(config_env() == :test, do: 1000, else:
 # app's tests start dynide_server, and modal tests may write to it. Tests needing another
 # file set the path.
 if config_env() == :test do
-  test_config = Path.join(System.tmp_dir!(), "herdr-live-test-config-#{System.pid()}.toml")
+  test_config = Path.join(System.tmp_dir!(), "dynide-test-config-#{System.pid()}.toml")
   File.write!(test_config, "onboarding = false\n[ui.toast]\ndelay_seconds = 0\n")
   config :dynide_server, :config_path, test_config
 end

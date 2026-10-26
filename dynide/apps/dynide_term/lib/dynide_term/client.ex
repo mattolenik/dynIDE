@@ -42,19 +42,19 @@ defmodule DynideTerm.Client do
   The local client is done (`{:detached, reason}` from the server, or
   `{:tty, reason}` when the host terminal hung up). Applies
   `config :dynide_term, :on_local_exit` (an MFA, default `{System, :stop, [0]}`):
-  until M5's broker exists, detaching the local client quits herdr-live.
+  until M5's broker exists, detaching the local client quits dynide.
   """
   @spec local_exit(term) :: term
   def local_exit(why) do
     DynideTerm.Application.mark_local_stop()
-    Logger.info("local terminal client done (#{inspect(why)}), stopping herdr-live")
+    Logger.info("local terminal client done (#{inspect(why)}), stopping dynIDE")
     {m, f, a} = Application.get_env(:dynide_term, :on_local_exit, {System, :stop, [0]})
     apply(m, f, a)
   end
 
   @doc """
   Handoff `:begin` reached the local client: stops `DynideTerm.LocalClient` normally (its
-  `Tty.Owner` restores the tty for the next VM's client) without stopping herdr-live.
+  `Tty.Owner` restores the tty for the next VM's client) without stopping dynide.
   Returns at once (the caller is one of the children being stopped).
   """
   @spec stop_local() :: :ok

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs a command that drives the controlling terminal (herdr-live, dynide-demo) and
+# Runs a command that drives the controlling terminal (dynide, dynide-demo) and
 # restores that terminal afterwards, whatever the cause, including kill -9 of
 # the command, which no destructor survives. Usage: tty_guard.sh [-s] cmd [args...]
 #
@@ -19,15 +19,15 @@
 # and the script waits for it. Exits with the command's status; with -s, a
 # signal that reached this script turns a zero status into 1 (dynide-demo).
 # Without a controlling terminal it just runs the command.
-# With HERDR_GUARD_EVENT_LOG set (herdr-live), a command killed by a signal this
-# script did not forward appends `herdr-event broker_killed ts=<ms> signal=<n>` to it.
+# With DYNIDE_GUARD_EVENT_LOG set (dynide), a command killed by a signal this
+# script did not forward appends `dynide-event broker_killed ts=<ms> signal=<n>` to it.
 set -u
 signal_fails=0
 [ "${1:-}" = -s ] && { signal_fails=1; shift; }
 saved=$({ stty -g </dev/tty; } 2>/dev/null) || exec "$@"
 sig=0
 # Async: a non-interactive sh keeps it in our process group (SIGWINCH and tty
-# access stay with it); stdin is the caller's (herdr-live and dynide-demo use /dev/null).
+# access stay with it); stdin is the caller's (dynide and dynide-demo use /dev/null).
 "$@" <&0 &
 child=$!
 trap 'sig=1; kill -TERM "$child" 2>/dev/null' HUP INT QUIT TERM
@@ -41,9 +41,9 @@ while [ -z "$status" ]; do
 done
 vm_status=$status
 # the child was killed by a signal we did not forward (kill -9 of the broker):
-# herdr-live records it so log_summary.py counts an operator kill, not a loss
-[ -n "${HERDR_GUARD_EVENT_LOG:-}" ] && [ "$status" -gt 128 ] && [ "$sig" = 0 ] &&
-  echo "herdr-event broker_killed ts=$(date +%s)000 signal=$((status - 128))" >>"$HERDR_GUARD_EVENT_LOG"
+# dynIDE records it so log_summary.py counts an operator kill, not a loss
+[ -n "${DYNIDE_GUARD_EVENT_LOG:-}" ] && [ "$status" -gt 128 ] && [ "$sig" = 0 ] &&
+  echo "dynide-event broker_killed ts=$(date +%s)000 signal=$((status - 128))" >>"$DYNIDE_GUARD_EVENT_LOG"
 [ "$signal_fails" = 1 ] && [ "$sig" = 1 ] && [ "$status" = 0 ] && status=1
 # shellcheck disable=SC2046 # word-splits the two numbers on purpose
 foreground() { set -- $(ps -o tpgid= -o pgid= -p $$ 2>/dev/null); [ "$#" = 2 ] && [ "$1" = "$2" ]; }

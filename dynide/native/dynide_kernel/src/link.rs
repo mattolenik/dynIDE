@@ -48,7 +48,7 @@ impl Link {
     pub fn start(&self, sink: impl LinkSink) -> io::Result<()> {
         let sock = self.sock.try_clone()?;
         std::thread::Builder::new()
-            .name("herdr-link-reader".into())
+            .name("dynide-link-reader".into())
             .spawn(move || {
                 let reason = catch_unwind(AssertUnwindSafe(|| loop {
                     match recv_frame(sock.as_fd()) {

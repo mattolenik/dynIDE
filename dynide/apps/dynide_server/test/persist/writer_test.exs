@@ -198,7 +198,7 @@ defmodule DynideServer.Persist.WriterTest do
         assert %{writes: 0} = Writer.stats()
       end)
 
-    assert length(Regex.scan(~r/herdr-event persist_error /, log)) == 1
+    assert length(Regex.scan(~r/dynide-event persist_error /, log)) == 1
     assert log =~ ~r/persist_error ts=\d+ op=write reason=/
   end
 
@@ -218,7 +218,7 @@ defmodule DynideServer.Persist.WriterTest do
         assert %{writes: 0, scrollback_writes: 0} = Writer.stats()
       end)
 
-    assert length(Regex.scan(~r/herdr-event persist_error /, log)) == 1
+    assert length(Regex.scan(~r/dynide-event persist_error /, log)) == 1
     assert log =~ ~r/persist_error ts=\d+ op=sweep reason=.*FunctionClauseError/
   end
 end

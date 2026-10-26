@@ -1,11 +1,11 @@
-//! dynide_broker: parent of every herdr-live VM. Holds PTY master dups and
+//! dynide_broker: parent of every dynide VM. Holds PTY master dups and
 //! per-pane blobs, keeps a warm standby, and hands both to a new VM on VM
 //! death or `kernel-restart`.
 //!
 //! dynide_broker run [--runtime-dir DIR] -- <vm argv...>
 //! dynide_broker kernel-restart [--runtime-dir DIR] [-- <vm argv...>]
 //!   with an argv, the restart target boots it, and the broker keeps it for every later
-//!   VM only when the restart succeeds (herdr-live update: the new release's VM)
+//!   VM only when the restart succeeds (dynide update: the new release's VM)
 //! dynide_broker status [--runtime-dir DIR]
 
 mod broker;
@@ -56,22 +56,22 @@ fn real_main() -> i32 {
     }
 }
 
-/// `$HERDR_LIVE_RUNTIME_DIR`, else `${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/herdr-live-<uid>`.
+/// `$DYNIDE_RUNTIME_DIR`, else `${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/dynide-<uid>`.
 fn default_runtime_dir() -> PathBuf {
     let env = |k| std::env::var_os(k).filter(|v| !v.is_empty());
-    if let Some(d) = env("HERDR_LIVE_RUNTIME_DIR") {
+    if let Some(d) = env("DYNIDE_RUNTIME_DIR") {
         return d.into();
     }
     let base = env("XDG_RUNTIME_DIR")
         .or_else(|| env("TMPDIR"))
         .unwrap_or_else(|| "/tmp".into());
     // SAFETY: getuid cannot fail.
-    PathBuf::from(base).join(format!("herdr-live-{}", unsafe { libc::getuid() }))
+    PathBuf::from(base).join(format!("dynide-{}", unsafe { libc::getuid() }))
 }
 
 fn run(dir: &Path, sock: PathBuf, argv: Vec<OsString>) -> i32 {
     if UnixStream::connect(&sock).is_ok() {
-        eprintln!("herdr-live: broker already running at {}", sock.display());
+        eprintln!("dynide: broker already running at {}", sock.display());
         return 2;
     }
     let made = std::fs::create_dir_all(dir)
@@ -90,7 +90,7 @@ fn run(dir: &Path, sock: PathBuf, argv: Vec<OsString>) -> i32 {
         }
     };
     // Headless (benches, smokes): never touch a tty the caller may own.
-    let headless = std::env::var_os("HERDR_LIVE_HEADLESS").is_some_and(|v| v == "1");
+    let headless = std::env::var_os("DYNIDE_HEADLESS").is_some_and(|v| v == "1");
     let guard = (!headless)
         .then(|| tty::Guard::open_path("/dev/tty"))
         .flatten();

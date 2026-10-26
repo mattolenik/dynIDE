@@ -2,8 +2,8 @@ defmodule DynideServer.Config do
   @moduledoc """
   herdr's TOML config file (inventory §8), read at start and on `reload_config`.
 
-    * `path/0`: `config :dynide_server, :config_path`, else `$HERDR_LIVE_CONFIG`, else
-      `${XDG_CONFIG_HOME:-$HOME/.config}/herdr-live/config.toml`.
+    * `path/0`: `config :dynide_server, :config_path`, else `$DYNIDE_CONFIG`, else
+      `${XDG_CONFIG_HOME:-$HOME/.config}/dynide/config.toml`.
     * `load/1` reads and decodes the file into its raw `keys`, `ui`, `theme`, `worktrees` and `session` tables
       plus `onboarding` (true unless the file sets `onboarding = false`). A missing file
       is the defaults with onboarding and no diagnostics; a file that does not decode or
@@ -22,15 +22,15 @@ defmodule DynideServer.Config do
   herdr's alias `"workspaces"` is `"spaces"`), `window_title` (template of `{hostname}`,
   `{workspace}`, `{tab}`, `{pane}`, `{terminal_title}`); `[ui.sound]` `enabled`,
   `command` (run by an in-VM terminal client with the sound name as its last argument;
-  never sent to a socket client, which runs its own `HERDR_LIVE_SOUND_COMMAND`),
+  never sent to a socket client, which runs its own `DYNIDE_SOUND_COMMAND`),
   `done_path`, `request_path` (sound files played instead of the built-in ones, same
-  rule: socket clients use `HERDR_LIVE_SOUND_DONE_PATH` / `_REQUEST_PATH`; relative to
+  rule: socket clients use `DYNIDE_SOUND_DONE_PATH` / `_REQUEST_PATH`; relative to
   the config file's directory, `~` expanded; a missing or non-`.mp3` file is kept with a
   diagnostic; unset keys are absent from `ui.sound`, also after a reload drops them);
   `[ui.toast]` `delivery`
   (`off | herdr | terminal | system`), `delay_seconds` (0..3600); `[theme]` `name`,
   `auto_switch`, `light_name`, `dark_name`; `[worktrees]` `directory` (new checkouts go
-  under it, default `~/.herdr-live/worktrees`); `[session]` `resume_agents_on_restore`
+  under it, default `~/.dynide/worktrees`); `[session]` `resume_agents_on_restore`
   (default false) and `startup_per_agent_delay_ms` (0..60000, default 500), read by a
   disk restore (`Persist.RestorePlan.resumes/2`); top-level `onboarding`.
 
@@ -88,10 +88,10 @@ defmodule DynideServer.Config do
 
   @spec path() :: Path.t()
   def path do
-    Application.get_env(:dynide_server, :config_path) || env("HERDR_LIVE_CONFIG") ||
+    Application.get_env(:dynide_server, :config_path) || env("DYNIDE_CONFIG") ||
       Path.join(
         env("XDG_CONFIG_HOME") || Path.join(System.user_home!(), ".config"),
-        "herdr-live/config.toml"
+        "dynide/config.toml"
       )
   end
 

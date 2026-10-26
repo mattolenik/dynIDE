@@ -1,7 +1,7 @@
 # Signed update channel manifest (M18 R5, docs/herdr-live/site/update-manifest.md).
 # Usage: elixir make_manifest.exs --url-base URL --key KEY [--out DIR] [--channel C]
 #          [--released ISO8601] [--notes-url URL] TARBALL...
-# Every TARBALL is herdr-live-<V>-<os>-<arch>.tar.gz of one version V; its artifact url is
+# Every TARBALL is dynide-<V>-<os>-<arch>.tar.gz of one version V; its artifact url is
 # URL/<basename> (URL percent-encoded as given). KEY is a keygen.sh private key file.
 # Writes DIR/manifest.json and DIR/manifest.json.sig (base64 ed25519 signature over the
 # exact manifest bytes); DIR defaults to the first tarball's dir. Prints the manifest path.
@@ -27,7 +27,7 @@ end
 artifacts =
   for t <- tarballs do
     case Regex.run(
-           ~r/^herdr-live-(.+)-(macos|linux)-(aarch64|x86_64)\.tar\.gz$/,
+           ~r/^dynide-(.+)-(macos|linux)-(aarch64|x86_64)\.tar\.gz$/,
            Path.basename(t)
          ) do
       [_, v, os, arch] ->
@@ -44,7 +44,7 @@ artifacts =
          }}
 
       _ ->
-        usage.("#{t}: not herdr-live-<V>-<os>-<arch>.tar.gz")
+        usage.("#{t}: not dynide-<V>-<os>-<arch>.tar.gz")
     end
   end
 

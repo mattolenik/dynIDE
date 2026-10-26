@@ -1,11 +1,11 @@
-# herdr-live socket API
+# dynide socket API
 
 Generated from `DynideServer.Api.Spec` by `mix dynide.api.docs`. Do not edit by hand.
 
 ## Transport
 
-- Unix domain socket at `$HERDR_LIVE_API`, else
-  `${XDG_STATE_HOME:-~/.local/state}/herdr-live/api.sock` (an empty variable counts as unset).
+- Unix domain socket at `$DYNIDE_API`, else
+  `${XDG_STATE_HOME:-~/.local/state}/dynide/api.sock` (an empty variable counts as unset).
 - Framing: one JSON object per line, UTF-8, at most 1 MiB per line. Several requests
   may be sent per connection; they are answered in order.
 - Request: `{"id": string, "method": string, "params": object?}`.
@@ -48,7 +48,7 @@ answered before a method is known.
 
 ## CLI output
 
-`herdr-live <verb>` prints herdr's shapes (`src/cli.rs` in herdr):
+`dynide <verb>` prints herdr's shapes (`src/cli.rs` in herdr):
 
 - Success: the whole response on stdout, one line,
   `{"id": "cli:<method>", "result": {...}}`, exit 0. A herdr plugin's
@@ -63,7 +63,7 @@ answered before a method is known.
   explanation, `--json` the bare explain object (`result.agent`); `plugin config-dir`
   prints the path; `server agent-manifests` prints herdr's manifest status table,
   `--json` the whole response.
-- herdr-live's own verbs: `rollback` prints `ok <batch>...`, `test-on-save` prints
+- dynIDE's own verbs: `rollback` prints `ok <batch>...`, `test-on-save` prints
   `ok <mode>`, `server status --kv` prints `key=value` lines, `events subscribe` prints
   one event per line, and `update` and `--version` print their own text.
 
@@ -73,7 +73,7 @@ answered before a method is known.
 
 Liveness check.
 
-CLI: `herdr-live ping`
+CLI: `dynide ping`
 
 Params: none.
 
@@ -85,7 +85,7 @@ Errors: `invalid_params`
 
 Return the method catalogue this server speaks.
 
-CLI: `herdr-live api schema`
+CLI: `dynide api schema`
 
 Params: none.
 
@@ -97,7 +97,7 @@ Errors: `invalid_params`
 
 Server generation, process and reload facts.
 
-CLI: `herdr-live server status [--kv]`
+CLI: `dynide server status [--kv]`
 
 Params: none.
 
@@ -109,7 +109,7 @@ Errors: `invalid_params`
 
 The loaded agent detection manifests.
 
-CLI: `herdr-live server agent-manifests [--json]`
+CLI: `dynide server agent-manifests [--json]`
 
 Params: none.
 
@@ -121,7 +121,7 @@ Errors: `invalid_params`
 
 Reload the agent detection manifests from disk.
 
-CLI: `herdr-live server reload-agent-manifests`
+CLI: `dynide server reload-agent-manifests`
 
 Params: none.
 
@@ -135,7 +135,7 @@ Errors: `invalid_params`
 
 The sessions on this socket: one per instance.
 
-CLI: `herdr-live session list`
+CLI: `dynide session list`
 
 Params: none.
 
@@ -147,7 +147,7 @@ Errors: `invalid_params`
 
 One session; default this instance's.
 
-CLI: `herdr-live session get [<name>]`
+CLI: `dynide session get [<name>]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -161,7 +161,7 @@ Errors: `invalid_params`, `not_found`
 
 The whole topology in one answer: focus, workspaces, tabs, panes and layouts.
 
-CLI: `herdr-live api snapshot`
+CLI: `dynide api snapshot`
 
 Params: none.
 
@@ -173,7 +173,7 @@ Errors: `invalid_params`
 
 Socket clients (remote attach, terminal verbs) with their current size.
 
-CLI: `herdr-live client list`
+CLI: `dynide client list`
 
 Params: none.
 
@@ -187,7 +187,7 @@ Errors: `invalid_params`
 
 Roll back the last n reload batches.
 
-CLI: `herdr-live rollback [<n>]`
+CLI: `dynide rollback [<n>]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -201,7 +201,7 @@ Errors: `invalid_params`, `not_available`, `failed`, `timeout`
 
 Read or set the test-on-save gate.
 
-CLI: `herdr-live test-on-save [on|off]`
+CLI: `dynide test-on-save [on|off]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -217,7 +217,7 @@ Errors: `invalid_params`, `not_available`
 
 List workspaces.
 
-CLI: `herdr-live workspace list`
+CLI: `dynide workspace list`
 
 Params: none.
 
@@ -229,7 +229,7 @@ Errors: `invalid_params`
 
 Describe a workspace.
 
-CLI: `herdr-live workspace get <workspace_id>`
+CLI: `dynide workspace get <workspace_id>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -243,7 +243,7 @@ Errors: `invalid_params`, `not_found`
 
 Create a workspace with one tab and one pane.
 
-CLI: `herdr-live workspace create [--label L] [--focus]`
+CLI: `dynide workspace create [--label L] [--focus]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -258,7 +258,7 @@ Errors: `invalid_params`
 
 Focus a workspace.
 
-CLI: `herdr-live workspace focus <workspace_id>`
+CLI: `dynide workspace focus <workspace_id>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -272,7 +272,7 @@ Errors: `invalid_params`, `not_found`
 
 Rename a workspace.
 
-CLI: `herdr-live workspace rename <workspace_id> <label>`
+CLI: `dynide workspace rename <workspace_id> <label>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -287,7 +287,7 @@ Errors: `invalid_params`, `not_found`
 
 Move a workspace before the one at `insert_index` (its count appends); the focused one stays focused. Answers the new order.
 
-CLI: `herdr-live workspace move <workspace_id> <insert_index>`
+CLI: `dynide workspace move <workspace_id> <insert_index>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -302,7 +302,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 
 Set or clear a workspace's metadata tokens (at most 32), shown after its branch.
 
-CLI: `herdr-live workspace report-metadata <workspace_id> --source S --token K=V... [--clear-token K]... [--seq N] [--ttl-ms N]`
+CLI: `dynide workspace report-metadata <workspace_id> --source S --token K=V... [--clear-token K]... [--seq N] [--ttl-ms N]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -320,7 +320,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 
 Close a workspace and its panes.
 
-CLI: `herdr-live workspace close <workspace_id>`
+CLI: `dynide workspace close <workspace_id>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -336,7 +336,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 
 List tabs, optionally of one workspace.
 
-CLI: `herdr-live tab list [--workspace <workspace_id>]`
+CLI: `dynide tab list [--workspace <workspace_id>]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -350,7 +350,7 @@ Errors: `invalid_params`, `not_found`
 
 Describe a tab.
 
-CLI: `herdr-live tab get <tab_id>`
+CLI: `dynide tab get <tab_id>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -364,7 +364,7 @@ Errors: `invalid_params`, `not_found`
 
 Create a tab with one pane.
 
-CLI: `herdr-live tab create [--workspace <workspace_id>] [--label L] [--focus]`
+CLI: `dynide tab create [--workspace <workspace_id>] [--label L] [--focus]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -380,7 +380,7 @@ Errors: `invalid_params`, `not_found`
 
 Focus a tab.
 
-CLI: `herdr-live tab focus <tab_id>`
+CLI: `dynide tab focus <tab_id>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -394,7 +394,7 @@ Errors: `invalid_params`, `not_found`
 
 Rename a tab.
 
-CLI: `herdr-live tab rename <tab_id> <label>`
+CLI: `dynide tab rename <tab_id> <label>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -409,7 +409,7 @@ Errors: `invalid_params`, `not_found`
 
 Move a tab before the one at `insert_index` in its workspace (its count appends); the active one stays active. Answers the workspace's new tab order.
 
-CLI: `herdr-live tab move <tab_id> <insert_index>`
+CLI: `dynide tab move <tab_id> <insert_index>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -424,7 +424,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 
 Close a tab and its panes.
 
-CLI: `herdr-live tab close <tab_id>`
+CLI: `dynide tab close <tab_id>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -440,7 +440,7 @@ Errors: `invalid_params`, `not_found`
 
 List panes, optionally of one workspace or tab.
 
-CLI: `herdr-live pane list [--workspace <workspace_id>] [--tab <tab_id>]`
+CLI: `dynide pane list [--workspace <workspace_id>] [--tab <tab_id>]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -455,7 +455,7 @@ Errors: `invalid_params`, `not_found`
 
 Describe a pane.
 
-CLI: `herdr-live pane get <pane_id>`
+CLI: `dynide pane get <pane_id>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -469,7 +469,7 @@ Errors: `invalid_params`, `not_found`
 
 The pane the caller runs in, else the focused pane.
 
-CLI: `herdr-live pane current`
+CLI: `dynide pane current`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -483,7 +483,7 @@ Errors: `invalid_params`, `not_found`
 
 Split a pane; the new pane is created beside it.
 
-CLI: `herdr-live pane split [<pane_id>] --direction right|down [--ratio R] [--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus]`
+CLI: `dynide pane split [<pane_id>] --direction right|down [--ratio R] [--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -502,7 +502,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 
 Focus the neighbour of a pane in a direction; clears the tab's zoom.
 
-CLI: `herdr-live pane focus-direction [<pane_id>] --direction left|right|up|down`
+CLI: `dynide pane focus-direction [<pane_id>] --direction left|right|up|down`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -517,7 +517,7 @@ Errors: `invalid_params`, `not_found`
 
 Swap a pane with its neighbour in a direction; clears the tab's zoom.
 
-CLI: `herdr-live pane swap [<pane_id>] --direction left|right|up|down`
+CLI: `dynide pane swap [<pane_id>] --direction left|right|up|down`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -532,7 +532,7 @@ Errors: `invalid_params`, `not_found`
 
 Move the pane's edge in a direction by a percentage of the tab; clears the tab's zoom.
 
-CLI: `herdr-live pane resize [<pane_id>] --direction left|right|up|down [--amount F]`
+CLI: `dynide pane resize [<pane_id>] --direction left|right|up|down [--amount F]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -548,7 +548,7 @@ Errors: `invalid_params`, `not_found`
 
 Report an agent's state for a pane from an integration (hook).
 
-CLI: `herdr-live pane report-agent <pane_id> --source S --agent A --state S [--message T] [--seq N]`
+CLI: `dynide pane report-agent <pane_id> --source S --agent A --state S [--message T] [--seq N]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -570,7 +570,7 @@ Errors: `invalid_params`, `not_found`
 
 Report the agent session a pane holds, so a restore with `session.resume_agents_on_restore` can resume it.
 
-CLI: `herdr-live pane report-agent-session <pane_id> --source S --agent A [--seq N] [--agent-session-id ID] [--agent-session-path PATH] [--session-start-source S] [-- <resume_arg>...]`
+CLI: `dynide pane report-agent-session <pane_id> --source S --agent A [--seq N] [--agent-session-id ID] [--agent-session-path PATH] [--session-start-source S] [-- <resume_arg>...]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -591,7 +591,7 @@ Errors: `invalid_params`, `not_found`
 
 Set or clear a pane's metadata tokens (at most 32), shown under its agent line.
 
-CLI: `herdr-live pane report-metadata <pane_id> --source S --token K=V... [--clear-token K]... [--seq N] [--ttl-ms N]`
+CLI: `dynide pane report-metadata <pane_id> --source S --token K=V... [--clear-token K]... [--seq N] [--ttl-ms N]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -609,7 +609,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 
 Release an integration's agent report for a pane.
 
-CLI: `herdr-live pane release-agent <pane_id> --source S --agent A [--seq N]`
+CLI: `dynide pane release-agent <pane_id> --source S --agent A [--seq N]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -626,7 +626,7 @@ Errors: `invalid_params`, `not_found`
 
 Name a pane; an absent or empty label clears the name.
 
-CLI: `herdr-live pane rename <pane_id> [<label>]`
+CLI: `dynide pane rename <pane_id> [<label>]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -641,7 +641,7 @@ Errors: `invalid_params`, `not_found`
 
 Activate the link under a cell of a pane's viewport, as a click would.
 
-CLI: `herdr-live pane link activate <pane_id> --col N --row N [--modifier M]...`
+CLI: `dynide pane link activate <pane_id> --col N --row N [--modifier M]...`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -658,7 +658,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 
 Close a pane.
 
-CLI: `herdr-live pane close <pane_id>`
+CLI: `dynide pane close <pane_id>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -672,7 +672,7 @@ Errors: `invalid_params`, `not_found`
 
 Focus a pane.
 
-CLI: `herdr-live pane focus <pane_id>`
+CLI: `dynide pane focus <pane_id>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -686,7 +686,7 @@ Errors: `invalid_params`, `not_found`
 
 Focus a pane and zoom it to the whole pane area, or unzoom.
 
-CLI: `herdr-live pane zoom [<pane_id>] [--on|--off]`
+CLI: `dynide pane zoom [<pane_id>] [--on|--off]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -701,7 +701,7 @@ Errors: `invalid_params`, `not_found`
 
 The split tree of the tab holding a pane.
 
-CLI: `herdr-live pane layout [<pane_id>]`
+CLI: `dynide pane layout [<pane_id>]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -715,7 +715,7 @@ Errors: `invalid_params`, `not_found`
 
 OS process facts of a pane.
 
-CLI: `herdr-live pane process-info [<pane_id>]`
+CLI: `dynide pane process-info [<pane_id>]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -729,7 +729,7 @@ Errors: `invalid_params`, `not_found`
 
 Write text to a pane as typed input, without a trailing newline.
 
-CLI: `herdr-live pane send-text <pane_id> <text>`
+CLI: `dynide pane send-text <pane_id> <text>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -746,7 +746,7 @@ Text is written in 64 KiB chunks. On `backpressure` or `failed` the error's `dat
 
 Send named keys (for example `Enter`, `C-c`) to a pane.
 
-CLI: `herdr-live pane send-keys <pane_id> <key>...`
+CLI: `dynide pane send-keys <pane_id> <key>...`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -761,7 +761,7 @@ Errors: `invalid_params`, `not_found`, `backpressure`, `failed`
 
 Write a command line to a pane and press Enter.
 
-CLI: `herdr-live pane run <pane_id> <command>`
+CLI: `dynide pane run <pane_id> <command>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -778,7 +778,7 @@ The command joins the pane's input queue, which retries until the pane takes it.
 
 Read terminal text.
 
-CLI: `herdr-live pane read [<pane_id>] [--source visible|recent] [--lines N]`
+CLI: `dynide pane read [<pane_id>] [--source visible|recent] [--lines N]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -794,7 +794,7 @@ Errors: `invalid_params`, `not_found`
 
 Wait until a pane's output matches a substring or a regex.
 
-CLI: `herdr-live pane wait-output [<pane_id>] (--match S | --regex R) [--source visible|recent] [--lines N] [--timeout MS]`
+CLI: `dynide pane wait-output [<pane_id>] (--match S | --regex R) [--source visible|recent] [--lines N] [--timeout MS]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -815,7 +815,7 @@ Errors: `invalid_params`, `not_found`, `timeout`
 
 Raise a toast on every attached client.
 
-CLI: `herdr-live notification show <title> [--body <text>] [--pane <pane_id>]`
+CLI: `dynide notification show <title> [--body <text>] [--pane <pane_id>]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -833,7 +833,7 @@ Errors: `invalid_params`
 
 Override the window title on every attached client.
 
-CLI: `herdr-live title set <title>`
+CLI: `dynide title set <title>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -847,7 +847,7 @@ Errors: `invalid_params`
 
 Drop the window title override on every attached client.
 
-CLI: `herdr-live title clear`
+CLI: `dynide title clear`
 
 Params: none.
 
@@ -861,7 +861,7 @@ Errors: `invalid_params`
 
 Close the open popup pane (its process is ended).
 
-CLI: `herdr-live popup close`
+CLI: `dynide popup close`
 
 Params: none.
 
@@ -875,7 +875,7 @@ Errors: `invalid_params`, `not_found`
 
 Turn the connection into an event stream.
 
-CLI: `herdr-live events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] [--workspace <workspace_id>]`
+CLI: `dynide events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] [--workspace <workspace_id>]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -891,7 +891,7 @@ Errors: `invalid_params`, `not_found`, `not_available`, `events_lost`
 
 List detected agents.
 
-CLI: `herdr-live agent list`
+CLI: `dynide agent list`
 
 Params: none.
 
@@ -903,7 +903,7 @@ Errors: `invalid_params`
 
 Describe an agent.
 
-CLI: `herdr-live agent get <target>`
+CLI: `dynide agent get <target>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -917,7 +917,7 @@ Errors: `invalid_params`, `not_found`
 
 Read an agent's terminal text.
 
-CLI: `herdr-live agent read <target> [--source visible|recent] [--lines N]`
+CLI: `dynide agent read <target> [--source visible|recent] [--lines N]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -933,7 +933,7 @@ Errors: `invalid_params`, `not_found`
 
 Explain why detection reports the agent's state: for a pane (`target`), or for supplied screen `text` under the `agent` manifest. Give exactly one of the two.
 
-CLI: `herdr-live agent explain <target> [--json] [--verbose] | herdr-live agent explain --file PATH --agent LABEL [--json]`
+CLI: `dynide agent explain <target> [--json] [--verbose] | dynide agent explain --file PATH --agent LABEL [--json]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -950,7 +950,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 
 Wait until an agent reaches one of the given states.
 
-CLI: `herdr-live agent wait <target> [--until S]... [--timeout MS]`
+CLI: `dynide agent wait <target> [--until S]... [--timeout MS]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -966,7 +966,7 @@ Errors: `invalid_params`, `not_found`, `timeout`
 
 Send a prompt to an agent.
 
-CLI: `herdr-live agent prompt <target> <text>`
+CLI: `dynide agent prompt <target> <text>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -981,7 +981,7 @@ Errors: `invalid_params`, `not_found`, `backpressure`, `failed`
 
 Send named keys to an agent.
 
-CLI: `herdr-live agent send-keys <target> <key>...`
+CLI: `dynide agent send-keys <target> <key>...`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -998,7 +998,7 @@ Errors: `invalid_params`, `not_found`, `backpressure`, `failed`
 
 List installed and linked plugins.
 
-CLI: `herdr-live plugin list [--plugin ID] [--json]`
+CLI: `dynide plugin list [--plugin ID] [--json]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1012,7 +1012,7 @@ Errors: `invalid_params`
 
 Install a plugin from GitHub; without `yes` answers a preview to confirm.
 
-CLI: `herdr-live plugin install <source> [--ref REF] [--yes]`
+CLI: `dynide plugin install <source> [--ref REF] [--yes]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1030,7 +1030,7 @@ Errors: `invalid_params`, `failed`
 
 Update GitHub-installed plugins; without `yes` answers a preview to confirm.
 
-CLI: `herdr-live plugin update [<target>] [--ref REF] [--yes]`
+CLI: `dynide plugin update [<target>] [--ref REF] [--yes]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1048,7 +1048,7 @@ Re-clones each plugin at its ref, checks the plugin id is unchanged, then instal
 
 Link a local plugin directory.
 
-CLI: `herdr-live plugin link <path> [--disabled]`
+CLI: `dynide plugin link <path> [--disabled]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1063,7 +1063,7 @@ Errors: `invalid_params`, `failed`
 
 Remove a plugin by id or by `owner/repo[/subdir]`.
 
-CLI: `herdr-live plugin uninstall <target>`
+CLI: `dynide plugin uninstall <target>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1077,7 +1077,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 
 Enable a plugin.
 
-CLI: `herdr-live plugin enable <plugin_id>`
+CLI: `dynide plugin enable <plugin_id>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1091,7 +1091,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 
 Disable a plugin.
 
-CLI: `herdr-live plugin disable <plugin_id>`
+CLI: `dynide plugin disable <plugin_id>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1105,7 +1105,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 
 The plugin's config directory.
 
-CLI: `herdr-live plugin config-dir <plugin_id>`
+CLI: `dynide plugin config-dir <plugin_id>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1119,7 +1119,7 @@ Errors: `invalid_params`, `failed`
 
 List plugin actions.
 
-CLI: `herdr-live plugin action list [--plugin ID]`
+CLI: `dynide plugin action list [--plugin ID]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1133,7 +1133,7 @@ Errors: `invalid_params`
 
 Run a plugin action.
 
-CLI: `herdr-live plugin action invoke <action_id> [--plugin ID]`
+CLI: `dynide plugin action invoke <action_id> [--plugin ID]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1151,7 +1151,7 @@ Starts the action's command and answers at once with the `running` log record; `
 
 Recent plugin command records.
 
-CLI: `herdr-live plugin log list [--plugin ID] [--limit N]`
+CLI: `dynide plugin log list [--plugin ID] [--limit N]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1166,7 +1166,7 @@ Errors: `invalid_params`, `not_available`
 
 Open a plugin pane entrypoint.
 
-CLI: `herdr-live plugin pane open --plugin ID --entrypoint ID [--placement P] [--width S] [--height S] [--workspace ID] [--target-pane PANE] [--direction right|down] [--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus]`
+CLI: `dynide plugin pane open --plugin ID --entrypoint ID [--placement P] [--width S] [--height S] [--workspace ID] [--target-pane PANE] [--direction right|down] [--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1186,13 +1186,13 @@ Result: `pane_info` with `pane` (`pane` object).
 
 Errors: `invalid_params`, `not_found`, `failed`, `ui_busy`
 
-Runs the entry's command (argv, no shell) as the pane's program, in the plugin root unless `cwd` is given. `split` splits the target pane (`direction` default `right`); `tab`, `overlay` and `zoomed` open a new tab in the workspace (herdr-live has no overlay or zoom). `popup` opens the session popup over the active tab (one at a time: another is `ui_busy`, `data.reason` too; it closes when its program exits or on `popup.close`), sized by `width` / `height`, else the entry's, else half the pane area; its pane is not in any tab and the result's `tab_id` / `workspace_id` are the active tab's. The pane is named after the entry's title. `data.reason` carries herdr's code (`plugin_not_found`, `plugin_pane_not_found`, `plugin_disabled`, `invalid_env`, `ui_busy`, ...).
+Runs the entry's command (argv, no shell) as the pane's program, in the plugin root unless `cwd` is given. `split` splits the target pane (`direction` default `right`); `tab`, `overlay` and `zoomed` open a new tab in the workspace (dynIDE has no overlay or zoom). `popup` opens the session popup over the active tab (one at a time: another is `ui_busy`, `data.reason` too; it closes when its program exits or on `popup.close`), sized by `width` / `height`, else the entry's, else half the pane area; its pane is not in any tab and the result's `tab_id` / `workspace_id` are the active tab's. The pane is named after the entry's title. `data.reason` carries herdr's code (`plugin_not_found`, `plugin_pane_not_found`, `plugin_disabled`, `invalid_env`, `ui_busy`, ...).
 
 ### `plugin.pane.focus`
 
 Focus a plugin pane.
 
-CLI: `herdr-live plugin pane focus <pane_id>`
+CLI: `dynide plugin pane focus <pane_id>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1206,7 +1206,7 @@ Errors: `invalid_params`, `not_found`
 
 Close a plugin pane.
 
-CLI: `herdr-live plugin pane close <pane_id>`
+CLI: `dynide plugin pane close <pane_id>`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1222,7 +1222,7 @@ Errors: `invalid_params`, `not_found`
 
 List the git worktrees of a workspace's repo.
 
-CLI: `herdr-live worktree list [--workspace <workspace_id> | --cwd <path>]`
+CLI: `dynide worktree list [--workspace <workspace_id> | --cwd <path>]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1237,7 +1237,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 
 Add a git worktree and open a workspace in it.
 
-CLI: `herdr-live worktree create --branch B [--workspace <workspace_id> | --cwd <path>] [--base REF] [--path P] [--label L] [--focus]`
+CLI: `dynide worktree create --branch B [--workspace <workspace_id> | --cwd <path>] [--base REF] [--path P] [--label L] [--focus]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1245,7 +1245,7 @@ CLI: `herdr-live worktree create --branch B [--workspace <workspace_id> | --cwd 
 | `cwd` | string | no | Absolute path inside the source repo, instead of a workspace. |
 | `branch` | string | yes | Branch to check out; created from `base` when missing. |
 | `base` | string | no | Start point of a new branch; default HEAD. |
-| `path` | string | no | Absolute checkout path; default `~/.herdr-live/worktrees/<repo>/<branch>`. |
+| `path` | string | no | Absolute checkout path; default `~/.dynide/worktrees/<repo>/<branch>`. |
 | `label` | string | no | Workspace label; default the checkout's name. |
 | `focus` | boolean | no | Focus the workspace; default false. |
 
@@ -1257,7 +1257,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 
 Open a workspace in an existing worktree (or focus the one open there).
 
-CLI: `herdr-live worktree open (--path P | --branch B) [--workspace <workspace_id> | --cwd <path>] [--label L] [--focus]`
+CLI: `dynide worktree open (--path P | --branch B) [--workspace <workspace_id> | --cwd <path>] [--label L] [--focus]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1276,7 +1276,7 @@ Errors: `invalid_params`, `not_found`, `failed`
 
 Remove a workspace's linked worktree and close the workspaces in it; the branch is kept.
 
-CLI: `herdr-live worktree remove <workspace_id> [--force]`
+CLI: `dynide worktree remove <workspace_id> [--force]`
 
 | param | type | required | description |
 | --- | --- | --- | --- |
@@ -1625,17 +1625,17 @@ An agent needs attention or finished.
 ## Client verbs
 
 These verbs open a terminal client instead of calling the API. The client runs in its
-own VM (log: `$HERDR_LIVE_CLIENT_LOG`, default
-`${XDG_STATE_HOME:-~/.local/state}/herdr-live/client.log`).
+own VM (log: `$DYNIDE_CLIENT_LOG`, default
+`${XDG_STATE_HOME:-~/.local/state}/dynide/client.log`).
 
-- `herdr-live attach [<host>] [<session>]`: Attach a terminal client to the session: the local client socket, or over ssh to <host> (needs key or agent auth).
-- `herdr-live terminal attach <pane_id> [--host <host>]`: Attach to one pane with input (control).
-- `herdr-live terminal observe <pane_id> [--host <host>]`: Watch one pane; input is dropped.
-- `herdr-live attach-relay [<session>]`: Run on the server host over ssh: relays stdio to the client socket and sends the auth frame with the host's token.
+- `dynide attach [<host>] [<session>]`: Attach a terminal client to the session: the local client socket, or over ssh to <host> (needs key or agent auth).
+- `dynide terminal attach <pane_id> [--host <host>]`: Attach to one pane with input (control).
+- `dynide terminal observe <pane_id> [--host <host>]`: Watch one pane; input is dropped.
+- `dynide attach-relay [<session>]`: Run on the server host over ssh: relays stdio to the client socket and sends the auth frame with the host's token.
 
 ## Client socket
 
-- Path: `$HERDR_LIVE_CLIENT_SOCK`, else `client.sock` beside the API socket. The token is
+- Path: `$DYNIDE_CLIENT_SOCK`, else `client.sock` beside the API socket. The token is
   `client.token` beside it (mode 0600, created once, kept across restarts).
 - Framing: `<<len::32-big, term_to_binary(term)>>`, at most 32 MiB client to server and
   64 MiB server to client. A frame that cannot be decoded closes that connection.

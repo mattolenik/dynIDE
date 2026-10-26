@@ -15,7 +15,7 @@ defmodule DynideServer.Persist.DiskTest do
   defp snapshot, do: %{v: 1, panes: %{1 => %{cwd: "/tmp", command: ["sh"], hidden: false}}}
 
   defp envelope(fields) do
-    %{format: :herdr_live_session, v: Schema.version(), saved_at: 1, snapshot: snapshot()}
+    %{format: :dynide_session, v: Schema.version(), saved_at: 1, snapshot: snapshot()}
     |> Map.merge(fields)
     |> :erlang.term_to_binary()
   end
@@ -44,7 +44,7 @@ defmodule DynideServer.Persist.DiskTest do
 
     v = Schema.version()
 
-    assert {:ok, %{format: :herdr_live_session, v: ^v, snapshot: _}} =
+    assert {:ok, %{format: :dynide_session, v: ^v, snapshot: _}} =
              {:ok, path |> File.read!() |> :erlang.binary_to_term()}
   end
 
@@ -55,6 +55,19 @@ defmodule DynideServer.Persist.DiskTest do
       File.write!(path, envelope(%{v: v}))
       assert {:ok, _, 1} = Disk.read(cfg)
     end
+  end
+
+  test "reads a session saved under the pre-rename envelope atom", %{cfg: cfg, path: path} do
+    File.mkdir_p!(cfg.dir)
+    File.write!(path, envelope(%{format: :herdr_live_session}))
+    assert {:ok, _snap, 1} = Disk.read(cfg)
+  end
+
+  test "reads scrollback saved under the pre-rename envelope atom", %{cfg: cfg} do
+    File.mkdir_p!(Disk.scrollback_dir(cfg))
+    env = %{format: :herdr_live_scrollback, v: 1, cols: 80, bytes: "abc"}
+    File.write!(Path.join(Disk.scrollback_dir(cfg), "7.etf"), :erlang.term_to_binary(env))
+    assert Disk.read_scrollback(cfg, 7) == "abc"
   end
 
   test "a snapshot holding a fun is refused and nothing is written", %{cfg: cfg} do
@@ -235,24 +248,24 @@ defmodule DynideServer.Persist.DiskTest do
     test "invalid names give default with a warning" do
       for bad <- ["../x", "a/b", String.duplicate("a", 65), "sp ace"] do
         log = capture_log(fn -> assert Disk.resolve_name(bad) == "default" end)
-        assert log =~ "HERDR_LIVE_SESSION"
+        assert log =~ "DYNIDE_SESSION"
       end
     end
   end
 
   describe "resolve_dir/1" do
-    test "HERDR_LIVE_STATE_DIR wins, then XDG_STATE_HOME, then HOME" do
-      assert Disk.resolve_dir(%{"HERDR_LIVE_STATE_DIR" => "/s", "XDG_STATE_HOME" => "/x"}) == "/s"
+    test "DYNIDE_STATE_DIR wins, then XDG_STATE_HOME, then HOME" do
+      assert Disk.resolve_dir(%{"DYNIDE_STATE_DIR" => "/s", "XDG_STATE_HOME" => "/x"}) == "/s"
 
       assert Disk.resolve_dir(%{"XDG_STATE_HOME" => "/x", "HOME" => "/h"}) ==
-               "/x/herdr-live"
+               "/x/dynide"
 
       assert Disk.resolve_dir(%{
-               "HERDR_LIVE_STATE_DIR" => "",
+               "DYNIDE_STATE_DIR" => "",
                "XDG_STATE_HOME" => "",
                "HOME" => "/h"
              }) ==
-               "/h/.local/state/herdr-live"
+               "/h/.local/state/dynide"
     end
   end
 

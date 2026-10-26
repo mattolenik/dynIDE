@@ -1,6 +1,6 @@
 defmodule DynideServer.App.Keybinds.Catalog do
   @moduledoc """
-  herdr's `[keys]` actions that herdr-live has (inventory §8): action name, keybinds
+  herdr's `[keys]` actions that dynIDE has (inventory §8): action name, keybinds
   modal group, the binding's `{M, F, A}` as `App.Keybinds.default/0` holds it, and
   herdr's default specs (`Config.Keys` syntax). Groups in display order: `global`,
   `navigation`, `workspaces / tabs`, `panes`.

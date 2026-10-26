@@ -1,41 +1,41 @@
 #!/bin/sh
-# herdr-live launcher. Usage: herdr-live [kernel-restart | status | --version | <verb> ...]
-# One script for both layouts (M18 R2): in a source tree (dynide/bin/herdr-live) it runs
+# dynIDE launcher. Usage: dynide [kernel-restart | status | --version | <verb> ...]
+# One script for both layouts (M18 R2): in a source tree (dynide/bin/dynide) it runs
 # mix and cargo as described below; in a release root (scripts/release/build.sh: it has
-# releases/start_erl.data) it runs the bundled broker, `bin/herdr_live start` as the VM
+# releases/start_erl.data) it runs the bundled broker, `bin/dynide_vm start` as the VM
 # with cwd $HOME, and the bundled erts for the CLI and the attach client (no elixir,
-# mix or cargo on PATH). Installed as <prefix>/bin/herdr-live -> ../lib/herdr-live/current/
-# bin/herdr-live (R4), symlinks are resolved only down to that path, and HERDR_LIVE_BIN
+# mix or cargo on PATH). Installed as <prefix>/bin/dynide -> ../lib/dynide/current/
+# bin/dynide (R4), symlinks are resolved only down to that path, and DYNIDE_BIN
 # is the path it was invoked through. The broker's VM argv is pinned: a start and a
-# `kernel-restart` resolve `current` (one level) to <lib>/releases/<V>/bin/herdr_live, so
+# `kernel-restart` resolve `current` (one level) to <lib>/releases/<V>/bin/dynide_vm, so
 # `current` decides what the next start or restart runs, and standby or crash boots never
-# change version behind a flip (`herdr-live update --no-restart`). `--version` prints
-# `herdr-live <V>` (a source tree: mix.exs's version with -dev).
+# change version behind a flip (`dynide update --no-restart`). `--version` prints
+# `dynide <V>` (a source tree: mix.exs's version with -dev).
 # With no argument it builds native/dynide_broker and execs `dynide_broker run`,
 # which supervises the VMs (warm standby, fd holding, handoff on kill -9 or
 # kernel-restart) and restores the host tty at exit; attached, scripts/tty_guard.sh
 # runs it and restores the tty when the broker itself is killed (kill -9).
 # The VMs never touch stdio: stdin is /dev/null and stdout/stderr (broker log
 # lines, first-compile output) go to the log.
-# HERDR_LIVE_HEADLESS=1 (inherited by the VMs) starts no terminal client.
-# HERDR_LIVE_RUNTIME_DIR picks the broker socket dir (read by the broker). A start when a
-# broker already answers there prints one line on stderr and exits 2 (`herdr-live attach`
+# DYNIDE_HEADLESS=1 (inherited by the VMs) starts no terminal client.
+# DYNIDE_RUNTIME_DIR picks the broker socket dir (read by the broker). A start when a
+# broker already answers there prints one line on stderr and exits 2 (`dynide attach`
 # joins the running instance).
 # kernel-restart and status talk to the running broker on this terminal.
 # Session persistence (M8): the VM saves the layout, focus, ui prefs, pane cwds and
 # scrollback to <state dir>/session.<name>.etf and restores them at the next start.
-# HERDR_LIVE_STATE_DIR is the state dir (default ${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live),
-# HERDR_LIVE_SESSION the name (default `default`; [A-Za-z0-9_.-], at most 64),
-# HERDR_LIVE_PERSIST=0 turns persistence off. Scripted launches set their own state dir.
-# With HERDR_LIVE_RUNTIME_DIR set and HERDR_LIVE_STATE_DIR unset, the state dir defaults to
-# $HERDR_LIVE_RUNTIME_DIR/state, so two instances with their own runtime dirs never share
+# DYNIDE_STATE_DIR is the state dir (default ${XDG_STATE_HOME:-$HOME/.local/state}/dynide),
+# DYNIDE_SESSION the name (default `default`; [A-Za-z0-9_.-], at most 64),
+# DYNIDE_PERSIST=0 turns persistence off. Scripted launches set their own state dir.
+# With DYNIDE_RUNTIME_DIR set and DYNIDE_STATE_DIR unset, the state dir defaults to
+# $DYNIDE_RUNTIME_DIR/state, so two instances with their own runtime dirs never share
 # one session file.
 #
-# herdr-live update [--manifest URL] [--check] [--yes] [--no-restart] (M18, release only
+# dynide update [--manifest URL] [--check] [--yes] [--no-restart] (M18, release only
 # beyond --check): DynideCli.Update; docs/herdr-live/site/update-manifest.md.
-# Every other verb (ping, pane ..., rollback, test-on-save, ...; `herdr-live help`
+# Every other verb (ping, pane ..., rollback, test-on-save, ...; `dynide help`
 # lists them, docs/herdr-live/api.md describes them) runs the CLI (apps/dynide_cli)
-# against the API socket ($HERDR_LIVE_API, else the api.sock beside the default log):
+# against the API socket ($DYNIDE_API, else the api.sock beside the default log):
 # `erl -noinput` with Elixir's ebin and the CLI's ebin, no mix and no Elixir boot,
 # ~150 ms p50 vs ~270 ms for `elixir -e` or an escript (M12 task 7). It never reads stdin.
 # Elixir's ebin dir is asked from `elixir` once and cached in _build/dev (version
@@ -44,30 +44,30 @@
 # stderr), not running, or an event stream the server closed, 2 usage.
 #
 # Remote attach (M16): `attach [<host>] [<session>]`, `terminal attach|observe <pane_id>
-# [--host <host>]` run a terminal client VM (mix run, DynideTerm.Remote.main/1) with HERDR_LIVE_HEADLESS=1
-# and stdio sent to $HERDR_LIVE_CLIENT_LOG (default client.log beside the default server log).
-# It talks to the client socket (HERDR_LIVE_CLIENT_SOCK, else client.sock beside the API socket),
-# or over ssh to <host>, which runs `herdr-live attach-relay` there (HERDR_LIVE_SSH,
-# HERDR_LIVE_REMOTE_BIN; BatchMode, so ssh needs key or agent auth). The launcher checks the
+# [--host <host>]` run a terminal client VM (mix run, DynideTerm.Remote.main/1) with DYNIDE_HEADLESS=1
+# and stdio sent to $DYNIDE_CLIENT_LOG (default client.log beside the default server log).
+# It talks to the client socket (DYNIDE_CLIENT_SOCK, else client.sock beside the API socket),
+# or over ssh to <host>, which runs `dynide attach-relay` there (DYNIDE_SSH,
+# DYNIDE_REMOTE_BIN; BatchMode, so ssh needs key or agent auth). The launcher checks the
 # argv shape and prints usage itself (the client VM's output goes to its log); ids are checked there.
 # A client that exits nonzero (a refusal, an unreachable host) gets one line on stderr with
 # its reason and the log path. The relay runs in ssh's non-interactive environment: it finds
-# the server's sockets from that environment's HERDR_LIVE_API / HERDR_LIVE_CLIENT_SOCK /
-# XDG_STATE_HOME defaults and herdr-live on that PATH, so a server with custom paths or an
-# install off the non-interactive PATH needs HERDR_LIVE_REMOTE_BIN (e.g. a wrapper that
+# the server's sockets from that environment's DYNIDE_API / DYNIDE_CLIENT_SOCK /
+# XDG_STATE_HOME defaults and dynIDE on that PATH, so a server with custom paths or an
+# install off the non-interactive PATH needs DYNIDE_REMOTE_BIN (e.g. a wrapper that
 # exports them).
 # `status` prints the broker's status, then the server's (key=value) when it answers.
 #
-# herdr-live rollback [n]: roll back the newest n live reload batches (default 1)
+# dynide rollback [n]: roll back the newest n live reload batches (default 1)
 # through the API socket of the running instance (DynideServer.Api.Listener, served
 # by the current primary VM; a promoted VM takes the socket over).
 # A rolled-back source is reloaded again only when its content changes: re-saving
 # or touching the same bytes does nothing (edit it, or revert it, to reload).
-# herdr-live test-on-save [on|off]: switch the test-on-save gate (a save runs the changed
+# dynide test-on-save [on|off]: switch the test-on-save gate (a save runs the changed
 # module's tests in a separate mix test first; failing tests block the reload). No
 # argument prints the current mode (ok gate | ok off). Off by default; it adds seconds
-# per save. HERDR_LIVE_TEST_ON_SAVE=1 starts it on. The runtime setting does not survive
-# a VM handoff (the new VM falls back to HERDR_LIVE_TEST_ON_SAVE / config).
+# per save. DYNIDE_TEST_ON_SAVE=1 starts it on. The runtime setting does not survive
+# a VM handoff (the new VM falls back to DYNIDE_TEST_ON_SAVE / config).
 # resolve symlinks (portable: no readlink -f on macOS)
 self=$0
 while [ -L "$self" ]; do
@@ -75,10 +75,10 @@ while [ -L "$self" ]; do
   case $link in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
 done
 root=$(cd "$(dirname "$self")/.." && pwd) || exit 1
-rel='' bin=$root/bin/herdr-live
+rel='' bin=$root/bin/dynide
 if [ -f "$root/releases/start_erl.data" ]; then
   rel=$(cut -d' ' -f2 "$root/releases/start_erl.data") || exit 1
-  # HERDR_LIVE_BIN: the path invoked (the install symlink), so pane shells survive an update
+  # DYNIDE_BIN: the path invoked (the install symlink), so pane shells survive an update
   case $0 in /*) bin=$0 ;; *) bin=$(cd "$(dirname "$0")" && pwd)/$(basename "$0") || exit 1 ;; esac
   # the release scripts honour these from the env: a stale one (another release's, or a
   # pane of an older version) would boot the wrong files
@@ -87,7 +87,7 @@ if [ -f "$root/releases/start_erl.data" ]; then
     RELEASE_BOOT_SCRIPT RELEASE_BOOT_SCRIPT_CLEAN RELEASE_SYS_CONFIG ERL_ROOTDIR
   # erlexec puts the bundled erts bin and the release's bin first on a VM's PATH; the VMs
   # give their children (panes, plugins, hooks, ssh) this one back (config/runtime.exs)
-  export HERDR_LIVE_PANE_PATH="$PATH"
+  export DYNIDE_PANE_PATH="$PATH"
 fi
 pinned() { # the release a VM boots: $root with `current` resolved one level (R4)
   if [ -L "$root" ]; then
@@ -97,7 +97,7 @@ pinned() { # the release a VM boots: $root with `current` resolved one level (R4
     printf '%s\n' "$root"
   fi
 }
-cli() { # runs in the caller's cwd, so a relative HERDR_LIVE_API keeps its meaning
+cli() { # runs in the caller's cwd, so a relative DYNIDE_API keeps its meaning
   if [ -n "$rel" ]; then # the release's erts and ebins; bin/no_dot_erlang.boot is OTP's
     # through `current` resolved: a CLI that loads a module after `update` flipped `current`
     # (DynideCli.Update) still loads it from its own release
@@ -122,9 +122,9 @@ cli() { # runs in the caller's cwd, so a relative HERDR_LIVE_API keeps its meani
 client_usage() {
   cat <<'USAGE'
 usage:
-  herdr-live attach [<host>] [<session>]
-  herdr-live terminal attach <pane_id> [--host <host>]
-  herdr-live terminal observe <pane_id> [--host <host>]
+  dynide attach [<host>] [<session>]
+  dynide terminal attach <pane_id> [--host <host>]
+  dynide terminal observe <pane_id> [--host <host>]
 USAGE
 }
 client() { # attach | terminal: the remote client VM, stdio to its log (R18)
@@ -139,31 +139,31 @@ client() { # attach | terminal: the remote client VM, stdio to its log (R18)
       ;;
     *) client_usage >&2 && exit 2 ;;
   esac
-  clog=${HERDR_LIVE_CLIENT_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/client.log}
+  clog=${DYNIDE_CLIENT_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/dynide/client.log}
   case $clog in /*) ;; *) clog=$PWD/$clog ;; esac
-  case ${HERDR_LIVE_API:-} in /* | '') ;; *) HERDR_LIVE_API=$PWD/$HERDR_LIVE_API ;; esac
-  case ${HERDR_LIVE_CLIENT_SOCK:-} in /* | '') ;; *) HERDR_LIVE_CLIENT_SOCK=$PWD/$HERDR_LIVE_CLIENT_SOCK ;; esac
-  [ -z "${HERDR_LIVE_API:-}" ] || export HERDR_LIVE_API
-  [ -z "${HERDR_LIVE_CLIENT_SOCK:-}" ] || export HERDR_LIVE_CLIENT_SOCK
+  case ${DYNIDE_API:-} in /* | '') ;; *) DYNIDE_API=$PWD/$DYNIDE_API ;; esac
+  case ${DYNIDE_CLIENT_SOCK:-} in /* | '') ;; *) DYNIDE_CLIENT_SOCK=$PWD/$DYNIDE_CLIENT_SOCK ;; esac
+  [ -z "${DYNIDE_API:-}" ] || export DYNIDE_API
+  [ -z "${DYNIDE_CLIENT_SOCK:-}" ] || export DYNIDE_CLIENT_SOCK
   (umask 077 && mkdir -p "$(dirname "$clog")") || exit 1
   if [ -n "$rel" ]; then # eval boots no app (Remote.main starts dynide_term); argv as given
-    set -- "$root/bin/herdr_live" eval 'DynideTerm.Remote.main(System.argv())' "$@"
+    set -- "$root/bin/dynide_vm" eval 'DynideTerm.Remote.main(System.argv())' "$@"
   else
     export MIX_ENV=dev
     command -v elixir >/dev/null 2>&1 || {
-      echo "herdr-live: elixir not found on PATH (the attach client runs under mix)" >&2
+      echo "dynide: elixir not found on PATH (the attach client runs under mix)" >&2
       exit 1
     }
     cd "$root" || exit 1
     set -- elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt --no-start -e 'DynideTerm.Remote.main(System.argv())' -- "$@"
   fi
   # not exec'd: a failure's reason (DynideTerm.Remote.fail/1) goes to this stderr
-  reason=$(mktemp "${TMPDIR:-/tmp}/herdr-live-client.XXXXXX") || exit 1
+  reason=$(mktemp "${TMPDIR:-/tmp}/dynide-client.XXXXXX") || exit 1
   trap 'rm -f "$reason"' EXIT
   # background + wait so TERM/HUP/INT reach the VM (a foreground child would not see them while
   # sh waits). A non-interactive sh has no job control: the job stays in this process group, so
   # the VM keeps the foreground tty (it opens /dev/tty itself) and gets no SIGTTIN/SIGTTOU.
-  HERDR_LIVE_HEADLESS=1 HERDR_LIVE_CLIENT_REASON=$reason "$@" </dev/null >>"$clog" 2>&1 &
+  DYNIDE_HEADLESS=1 DYNIDE_CLIENT_REASON=$reason "$@" </dev/null >>"$clog" 2>&1 &
   pid=$!
   trap 'kill -TERM $pid 2>/dev/null' TERM HUP INT
   wait $pid
@@ -172,7 +172,7 @@ client() { # attach | terminal: the remote client VM, stdio to its log (R18)
   while kill -0 $pid 2>/dev/null; do wait $pid; rc=$?; done
   if [ $rc -ne 0 ]; then
     why=$(cat "$reason" 2>/dev/null)
-    echo "herdr-live: client exited ($rc)${why:+: $why}; see $clog" >&2
+    echo "dynide: client exited ($rc)${why:+: $why}; see $clog" >&2
   fi
   exit $rc
 }
@@ -182,9 +182,9 @@ if [ $# -gt 0 ]; then
     kernel-restart | status) ;;
     --version)
       if [ -n "$rel" ]; then
-        echo "herdr-live $rel"
+        echo "dynide $rel"
       else
-        echo "herdr-live $(sed -n 's/^  @version "\(.*\)"$/\1/p' "$root/mix.exs")-dev"
+        echo "dynide $(sed -n 's/^  @version "\(.*\)"$/\1/p' "$root/mix.exs")-dev"
       fi
       exit 0
       ;;
@@ -192,23 +192,23 @@ if [ $# -gt 0 ]; then
     *) cli "$@" ;;
   esac
 fi
-log=${HERDR_LIVE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/herdr-live.log}
+log=${DYNIDE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/dynide/dynide.log}
 case $log in /*) ;; *) log=$PWD/$log ;; esac
-case ${HERDR_LIVE_RUNTIME_DIR:-} in /* | '') ;; *) HERDR_LIVE_RUNTIME_DIR=$PWD/$HERDR_LIVE_RUNTIME_DIR ;; esac
-case ${HERDR_LIVE_STATE_DIR:-} in /* | '') ;; *) export HERDR_LIVE_STATE_DIR="$PWD/$HERDR_LIVE_STATE_DIR" ;; esac
+case ${DYNIDE_RUNTIME_DIR:-} in /* | '') ;; *) DYNIDE_RUNTIME_DIR=$PWD/$DYNIDE_RUNTIME_DIR ;; esac
+case ${DYNIDE_STATE_DIR:-} in /* | '') ;; *) export DYNIDE_STATE_DIR="$PWD/$DYNIDE_STATE_DIR" ;; esac
 # an ad-hoc instance (its own runtime dir) gets its own session file too
-if [ -n "${HERDR_LIVE_RUNTIME_DIR:-}" ] && [ -z "${HERDR_LIVE_STATE_DIR:-}" ]; then
-  export HERDR_LIVE_STATE_DIR="$HERDR_LIVE_RUNTIME_DIR/state"
+if [ -n "${DYNIDE_RUNTIME_DIR:-}" ] && [ -z "${DYNIDE_STATE_DIR:-}" ]; then
+  export DYNIDE_STATE_DIR="$DYNIDE_RUNTIME_DIR/state"
 fi
 # 0700 when created here: the API socket (DynideServer.Api.Listener) lives beside the log
 (umask 077 && mkdir -p "$(dirname "$log")") || exit 1
-sock=${HERDR_LIVE_API:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/api.sock}
+sock=${DYNIDE_API:-${XDG_STATE_HOME:-$HOME/.local/state}/dynide/api.sock}
 case $sock in /*) ;; *) sock=$PWD/$sock ;; esac
 if [ -n "$rel" ]; then
   # pane shells start in the VM's cwd: $HOME, never the release dir
   cd "${HOME:-/}" || exit 1
   broker=$root/bin/dynide_broker
-  build() { echo "herdr-live: $broker is missing" >&2 && return 1; }
+  build() { echo "dynide: $broker is missing" >&2 && return 1; }
 else
   cd "$root" || exit 1
   broker=$PWD/native/dynide_broker/target/release/dynide_broker
@@ -221,7 +221,7 @@ case ${1:-} in
     # argv once the restart succeeds; `update` passes releases/<V> itself)
     if [ -n "$rel" ]; then
       vmroot=$(pinned) || exit 1
-      exec "$broker" kernel-restart -- "$vmroot/bin/herdr_live" start
+      exec "$broker" kernel-restart -- "$vmroot/bin/dynide_vm" start
     fi
     exec "$broker" "$1"
     ;;
@@ -229,17 +229,17 @@ case ${1:-} in
     [ -x "$broker" ] || build >&2 || exit 1
     "$broker" status
     rc=$?
-    [ -S "$sock" ] && (HERDR_LIVE_API=$sock cli server status --kv 2>/dev/null)
+    [ -S "$sock" ] && (DYNIDE_API=$sock cli server status --kv 2>/dev/null)
     exit $rc
     ;;
 esac
-# pane shells inherit both: an agent in a pane runs "$HERDR_LIVE_BIN" pane ... against this instance
-export HERDR_LIVE_BIN="$bin" HERDR_LIVE_API="$sock"
+# pane shells inherit both: an agent in a pane runs "$DYNIDE_BIN" pane ... against this instance
+export DYNIDE_BIN="$bin" DYNIDE_API="$sock"
 # herdr's names for the same two, so herdr plugins and scripts find this instance
 export HERDR_SOCKET_PATH="$sock" HERDR_BIN_PATH="$bin"
 # a second start on this runtime dir: the broker would refuse it into the log, unseen
 if [ -x "$broker" ] && "$broker" status >/dev/null 2>&1; then
-  echo "herdr-live is already running; use \`herdr-live attach\`" >&2
+  echo "dynIDE is already running; use \`dynide attach\`" >&2
   exit 2
 fi
 exec </dev/null >>"$log" 2>&1
@@ -249,14 +249,14 @@ exec </dev/null >>"$log" 2>&1
 # turns SIGINT into a clean stop).
 if [ -n "$rel" ]; then
   vmroot=$(pinned) || exit 1
-  set -- "$vmroot/bin/herdr_live" start
+  set -- "$vmroot/bin/dynide_vm" start
 else
   export MIX_ENV="${MIX_ENV:-dev}"
   set -- elixir --erl "-noshell -noinput +Bi" -S mix run --no-halt
 fi
-[ "${HERDR_LIVE_HEADLESS:-}" = 1 ] &&
+[ "${DYNIDE_HEADLESS:-}" = 1 ] &&
   exec "$broker" run -- "$@"
 # attached: tty_guard.sh is the backstop for a broker that cannot run its own
 # restore (kill -9); it logs that as broker_killed (an operator kill, not a loss)
-export HERDR_GUARD_EVENT_LOG="$log"
+export DYNIDE_GUARD_EVENT_LOG="$log"
 exec "$root/scripts/tty_guard.sh" "$broker" run -- "$@"

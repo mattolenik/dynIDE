@@ -8,7 +8,7 @@
 # snapshot = Vt.encode_snapshot/1, restore = Vt.restore/2. Both are written through
 # Disk.write_scrollback/4 (compressed ETF, synced) into a temp dir, removed at the end.
 # Then write amplification for 15 panes changing every minute at the 60 s cadence.
-# Usage: cd dynide && HERDR_LIVE_HEADLESS=1 mix run bench/persist/scrollback_cost.exs
+# Usage: cd dynide && DYNIDE_HEADLESS=1 mix run bench/persist/scrollback_cost.exs
 # (no broker, so persistence is off). Timings on a loaded host are upper bounds.
 alias DynideServer.Native.Vt
 alias DynideServer.Persist.Disk
@@ -22,7 +22,7 @@ cadence_s = 60
 {up, 0} = System.cmd("uptime", [])
 IO.puts("SCROLLBACK start load=#{String.trim(up)}")
 
-tmp = Path.join(System.tmp_dir!(), "herdr-sb-bench-#{System.unique_integer([:positive])}")
+tmp = Path.join(System.tmp_dir!(), "dynide-sb-bench-#{System.unique_integer([:positive])}")
 cfg = Map.merge(Disk.config(), %{dir: tmp, name: "bench"})
 
 seq_line = fn i -> "#{i}\r\n" end

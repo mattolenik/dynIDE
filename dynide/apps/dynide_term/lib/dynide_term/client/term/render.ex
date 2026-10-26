@@ -53,7 +53,7 @@ defmodule DynideTerm.Client.Term.Render do
   skipped for 500ms (then retried, without another `:delete_all`), a
   refused frame resets it for the next. Cell px come from `Kernel.tty().size/1`, re-read
   when the scene size changes; unknown px means no placements. Off with
-  `config :dynide_term, :kitty_graphics, false` or `HERDR_LIVE_KITTY_GRAPHICS=0`. With no
+  `config :dynide_term, :kitty_graphics, false` or `DYNIDE_KITTY_GRAPHICS=0`. With no
   placement in the scene and nothing on the host the pass is skipped (one list check per
   pane).
 
@@ -169,7 +169,7 @@ defmodule DynideTerm.Client.Term.Render do
 
   defp kitty do
     if Application.get_env(:dynide_term, :kitty_graphics, true) and
-         System.get_env("HERDR_LIVE_KITTY_GRAPHICS") != "0",
+         System.get_env("DYNIDE_KITTY_GRAPHICS") != "0",
        do: %{file?: file_transport?()}
   end
 
@@ -398,24 +398,24 @@ defmodule DynideTerm.Client.Term.Render do
 
   @doc """
   The client-local sound command: app env `:dynide_term, :sound_command`, else
-  `$HERDR_LIVE_SOUND_COMMAND`; nil (BEL) when neither is set.
+  `$DYNIDE_SOUND_COMMAND`; nil (BEL) when neither is set.
   """
   @spec sound_command() :: binary | nil
   def sound_command do
     case Application.get_env(:dynide_term, :sound_command) ||
-           System.get_env("HERDR_LIVE_SOUND_COMMAND") do
+           System.get_env("DYNIDE_SOUND_COMMAND") do
       "" -> nil
       cmd -> cmd
     end
   end
 
   @doc """
-  The client-local sound file for `:done` / `:request`: `$HERDR_LIVE_SOUND_DONE_PATH` /
-  `$HERDR_LIVE_SOUND_REQUEST_PATH`; nil (the built-in sound) when unset.
+  The client-local sound file for `:done` / `:request`: `$DYNIDE_SOUND_DONE_PATH` /
+  `$DYNIDE_SOUND_REQUEST_PATH`; nil (the built-in sound) when unset.
   """
   @spec sound_path(:done | :request) :: binary | nil
-  def sound_path(:done), do: non_empty(System.get_env("HERDR_LIVE_SOUND_DONE_PATH"))
-  def sound_path(:request), do: non_empty(System.get_env("HERDR_LIVE_SOUND_REQUEST_PATH"))
+  def sound_path(:done), do: non_empty(System.get_env("DYNIDE_SOUND_DONE_PATH"))
+  def sound_path(:request), do: non_empty(System.get_env("DYNIDE_SOUND_REQUEST_PATH"))
 
   defp non_empty(""), do: nil
   defp non_empty(v), do: v

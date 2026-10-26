@@ -28,7 +28,7 @@ defmodule DynideCli.RelayTest do
     dir = Path.join("/tmp", "hrl-#{System.pid()}-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf(dir) end)
-    {:ok, dir: dir, env: %{"HERDR_LIVE_API" => Path.join(dir, "api.sock"), "HOME" => dir}}
+    {:ok, dir: dir, env: %{"DYNIDE_API" => Path.join(dir, "api.sock"), "HOME" => dir}}
   end
 
   defp collect(port, acc \\ "") do
@@ -95,7 +95,7 @@ defmodule DynideCli.RelayTest do
 
   test "attach-relay --help prints usage without connecting", %{env: env} do
     port = start_relay(env, ["--help"])
-    assert {0, "usage: herdr-live attach-relay" <> _} = collect(port)
+    assert {0, "usage: dynide attach-relay" <> _} = collect(port)
   end
 
   defp listen(dir, token) do

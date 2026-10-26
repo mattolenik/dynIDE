@@ -106,7 +106,7 @@ defmodule DynideServer.Client.Socket do
   @spec session_name() :: binary
   def session_name do
     raw = Application.get_env(:dynide_server, DynideServer.Persist, [])[:name]
-    Disk.resolve_name(raw || System.get_env("HERDR_LIVE_SESSION"))
+    Disk.resolve_name(raw || System.get_env("DYNIDE_SESSION"))
   end
 
   @doc "The listening path, or nil when no client socket runs."

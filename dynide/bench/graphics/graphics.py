@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """M10 kitty graphics check: herdr (the herdr-reference build, via bench/gate/herdr_ref.sh,
-or HERDR_BIN) and herdr-live, each attached in a 120x40 pty with 10x20-pixel cells
+or HERDR_BIN) and dynIDE, each attached in a 120x40 pty with 10x20-pixel cells
 (TIOCSWINSZ ws_xpixel/ws_ypixel), this script the host terminal.
 
 The host keeps a kitty graphics model fed from the multiplexer's output: the cursor (CUP,
@@ -16,12 +16,12 @@ a virtual placement), `kitten icat --place 30x10@2x2` in the left one; resize to
 wheel 2 notches up over the draw pane; a new tab and back (prefix c, prefix p); close the
 draw pane (prefix x, confirm). After each step the visible placements of each pane (cell
 rect relative to the pane's content rect, source size, image pixel size) are compared,
-herdr against herdr-live, plus checks of each on its own (counts, nothing outside a pane,
+herdr against dynide, plus checks of each on its own (counts, nothing outside a pane,
 scroll moved the draw pane's placements, nothing of the draw pane left after close).
-herdr-live's placements are clipped to herdr's scrollbar gutter (pane width - 1, M9 ruling
+dynIDE's placements are clipped to herdr's scrollbar gutter (pane width - 1, M9 ruling
 2) before the compare. Prints a PASS or FAIL line per step; exit 1 on any FAIL. -v dumps the models and screens.
 
-Usage: graphics.py [-v] [--only herdr|herdr-live]
+Usage: graphics.py [-v] [--only herdr|dynide]
 """
 import base64
 import importlib.util
@@ -310,7 +310,7 @@ def scenario(d, tmp, png):
     snap("scroll")
     d.send(PREFIX + b"c")
     d.settle()
-    if d.shows("new tab") and d.shows("save"):  # herdr-live's tab name prompt (M13)
+    if d.shows("new tab") and d.shows("save"):  # dynIDE's tab name prompt (M13)
         d.send(b"\r")
     d.until(lambda: len(panes(d.k.screen.rows())) == 0, "a new tab with one pane")
     snap("new-tab")
@@ -330,7 +330,7 @@ def scenario(d, tmp, png):
 
 def gutter(snap):
     """`snap["per"]` clipped to herdr's pane width: herdr narrows each pane's pty by one
-    column for its scrollbar gutter, herdr-live keeps the full width and covers the column
+    column for its scrollbar gutter, dynIDE keeps the full width and covers the column
     only while the scrollbar shows (M9 ruling 2), so its placements may use one more column.
     The source width is scaled by the same clip (floored, as herdr)."""
     if snap["widths"] is None:
@@ -376,9 +376,9 @@ def herdr(tmp, bin_):
     return glass.herdr(tmp, bin_, 120, 40)  # isolated config, runtime dir and session
 
 
-def herdr_live(tmp):
+def dynide(tmp):
     os.makedirs(tmp)
-    h = th.Herdr(tmp, 120, 40)  # isolated log, API socket, runtime and state dirs, no onboarding
+    h = th.Dynide(tmp, 120, 40)  # isolated log, API socket, runtime and state dirs, no onboarding
     term = glass.Term.__new__(glass.Term)
     term.master, term.pid, term.carry = h.master, h.pid, b""
     term.alive, term.reaped, term.hup = True, False, False
@@ -412,14 +412,14 @@ def main():
         f.write(draw.png(200, 100))
     results, failed = {}, False
     try:
-        if only != "herdr-live":
+        if only != "dynide":
             bin_ = subprocess.check_output([os.path.join(LIVE, "bench", "gate", "herdr_ref.sh")], text=True).strip()
             results["herdr"] = run("herdr", lambda: herdr(os.path.join(tmp, "h"), bin_), tmp, png)[0]
         if only != "herdr":
             th.compile_then_start_clock(tmp)
             th.DEADLINE = time.monotonic() + 3600
             th.fail = lambda msg: (_ for _ in ()).throw(Failed(msg))
-            results["herdr-live"] = run("herdr-live", lambda: herdr_live(os.path.join(tmp, "l")), tmp, png)[0]
+            results["dynide"] = run("dynide", lambda: dynide(os.path.join(tmp, "l")), tmp, png)[0]
     except Failed as e:
         print(f"FAIL graphics: {e}")
         failed = True
@@ -432,14 +432,14 @@ def main():
         shutil.rmtree(tmp, ignore_errors=True)
     checks = {name: own_checks(name, steps) for name, steps in results.items()}
     if len(results) == 2:
-        print("NOTE herdr-live placements are clipped to pane width - 1 before the compare (herdr's "
+        print("NOTE dynIDE placements are clipped to pane width - 1 before the compare (herdr's "
               "scrollbar gutter, M9 ruling 2), source widths scaled alike")
     for i, step in enumerate(s for s, _ in next(iter(results.values()), [])):
         problems = [p for c in checks.values() for p in c.get(step, [])]
         views = {name: steps[i][1] for name, steps in results.items() if i < len(steps)}
-        if len(views) == 2 and views["herdr"]["per"] != gutter(views["herdr-live"]):
-            problems.append(f"herdr {views['herdr']['per']} != herdr-live (gutter-clipped) "
-                            f"{gutter(views['herdr-live'])}")
+        if len(views) == 2 and views["herdr"]["per"] != gutter(views["dynide"]):
+            problems.append(f"herdr {views['herdr']['per']} != dynide (gutter-clipped) "
+                            f"{gutter(views['dynide'])}")
         counts = "; ".join(f"{n} {[len(p) for p in v['per']]} ({[len(ids) for ids in v['ids']]} images)"
                            for n, v in views.items())
         if problems:
@@ -454,8 +454,8 @@ def main():
 
 
 if __name__ == "__main__":
-    if os.environ.get("HERDR_LIVE_API"):
-        print("SKIP: graphics: running inside herdr-live (run it outside, see editing-live.md)")
+    if os.environ.get("DYNIDE_API"):
+        print("SKIP: graphics: running inside dynIDE (run it outside, see editing-live.md)")
         sys.exit(0)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     sys.exit(main())

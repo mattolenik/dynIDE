@@ -11,7 +11,7 @@
 #   file:  update --manifest file://... --yes to 0.1.2
 #     each: ping reports the new version, same pane ids, same pids alive, the seq pane
 #     still has 2999, the date pane keeps ticking
-#   broken: 0.1.3 (0.1.2 repackaged with a bin/herdr_live that exits 1): kernel-restart
+#   broken: 0.1.3 (0.1.2 repackaged with a bin/dynide_vm that exits 1): kernel-restart
 #     fails, update exits 1 restart_failed, current never left 0.1.2, the old VM thawed
 #     (ping 0.1.2, same panes and pids), releases/0.1.3 kept, and a standby booted from the
 #     broker's unchanged 0.1.2 argv is ready within 30 s
@@ -23,13 +23,13 @@
 # PASS/FAIL lines like release_smoke.sh; kills only the pids it started.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
-live=$(cd "$here/../.." && pwd)
+dynide=$(cd "$here/../.." && pwd)
 tmp=$(mktemp -d)
 tmp=$(cd "$tmp" && pwd -P)
-log=$tmp/state/herdr-live/herdr-live.log
+log=$tmp/state/dynide/dynide.log
 
 pid='' hpid='' pid2=''
-log2=$tmp/state2/herdr-live/herdr-live.log
+log2=$tmp/state2/dynide/dynide.log
 # shellcheck disable=SC2329 # invoked via cleanup
 vm_pids() { sed -n 's/.*dynide-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$log" "$log2" 2>/dev/null; }
 # shellcheck disable=SC2329 # invoked via trap
@@ -70,23 +70,23 @@ manifest() { # dir key url-base tarball
   elixir "$here/make_manifest.exs" --out "$serve/$1" --key "$2" --url-base "$3" "$4" >/dev/null ||
     fail "make_manifest.exs $1"
 }
-manifest http "$key" "http://127.0.0.1:$port" "$serve/herdr-live-0.1.1-$suffix"
-manifest file "$key" "file://$serve" "$serve/herdr-live-0.1.2-$suffix"
+manifest http "$key" "http://127.0.0.1:$port" "$serve/dynide-0.1.1-$suffix"
+manifest file "$key" "file://$serve" "$serve/dynide-0.1.2-$suffix"
 other=$("$here/keygen.sh" "$tmp/otherkey") || fail "keygen.sh other"
-manifest badkey "${other%.pub}.key" "file://$serve" "$serve/herdr-live-0.1.1-$suffix"
+manifest badkey "${other%.pub}.key" "file://$serve" "$serve/dynide-0.1.1-$suffix"
 cp "$t2" "$serve/tamper/" || fail cp
-manifest tamper "$key" "file://$serve/tamper" "$serve/tamper/herdr-live-0.1.1-$suffix"
-printf X | dd of="$serve/tamper/herdr-live-0.1.1-$suffix" bs=1 seek=4096 conv=notrunc 2>/dev/null
+manifest tamper "$key" "file://$serve/tamper" "$serve/tamper/dynide-0.1.1-$suffix"
+printf X | dd of="$serve/tamper/dynide-0.1.1-$suffix" bs=1 seek=4096 conv=notrunc 2>/dev/null
 # broken 0.1.3: 0.1.2 with a VM start script that exits 1
 mkdir -p "$tmp/broken" || fail mkdir
 tar -xzf "$t3" -C "$tmp/broken" || fail "untar"
-mv "$tmp/broken/herdr-live-0.1.2" "$tmp/broken/herdr-live-0.1.3"
-b=$tmp/broken/herdr-live-0.1.3
+mv "$tmp/broken/dynide-0.1.2" "$tmp/broken/dynide-0.1.3"
+b=$tmp/broken/dynide-0.1.3
 mv "$b/releases/0.1.2" "$b/releases/0.1.3"
 sed 's/ 0\.1\.2$/ 0.1.3/' "$b/releases/start_erl.data" >"$b/start_erl" && mv "$b/start_erl" "$b/releases/start_erl.data"
-printf '#!/bin/sh\nexit 1\n' >"$b/bin/herdr_live"
-COPYFILE_DISABLE=1 tar -C "$tmp/broken" -czf "$serve/herdr-live-0.1.3-$suffix" herdr-live-0.1.3 || fail "tar broken"
-manifest broken "$key" "file://$serve" "$serve/herdr-live-0.1.3-$suffix"
+printf '#!/bin/sh\nexit 1\n' >"$b/bin/dynide_vm"
+COPYFILE_DISABLE=1 tar -C "$tmp/broken" -czf "$serve/dynide-0.1.3-$suffix" dynide-0.1.3 || fail "tar broken"
+manifest broken "$key" "file://$serve" "$serve/dynide-0.1.3-$suffix"
 echo "PASS: built 0.1.0 0.1.1 0.1.2 and a broken 0.1.3, signed manifests (dev key, fresh key, tampered)"
 
 python3 -m http.server --bind 127.0.0.1 --directory "$serve" "$port" >"$tmp/http.log" 2>&1 &
@@ -94,21 +94,21 @@ hpid=$!
 
 prefix="$tmp/pre fix"
 sh "$here/install.sh" --prefix "$prefix" "$t1" >"$tmp/install.out" 2>&1 || fail "install.sh: $(cat "$tmp/install.out")"
-bin="$prefix/bin/herdr-live"
-lib="$prefix/lib/herdr-live"
+bin="$prefix/bin/dynide"
+lib="$prefix/lib/dynide"
 printf 'onboarding = false\n' >"$tmp/config.toml"
 cat >"$tmp/x.sh" <<X
 #!/bin/sh
 exec env -i HOME="$tmp/home" PATH=/usr/bin:/bin TERM=xterm-256color SHELL=/bin/sh \
   LANG="${LANG:-C.UTF-8}" TMPDIR="$tmp/t" XDG_STATE_HOME="$tmp/state" \
-  XDG_CONFIG_HOME="$tmp/config" HERDR_LIVE_RUNTIME_DIR="$tmp/rt" \
-  HERDR_LIVE_CONFIG="$tmp/config.toml" "\$@"
+  XDG_CONFIG_HOME="$tmp/config" DYNIDE_RUNTIME_DIR="$tmp/rt" \
+  DYNIDE_CONFIG="$tmp/config.toml" "\$@"
 X
 chmod +x "$tmp/x.sh"
 x="$tmp/x.sh"
 
 # shellcheck disable=SC2016 # expanded by the inner sh
-"$x" sh -c 'cd / && HERDR_LIVE_HEADLESS=1 exec "$0"' "$bin" </dev/null >"$tmp/start.out" 2>&1 &
+"$x" sh -c 'cd / && DYNIDE_HEADLESS=1 exec "$0"' "$bin" </dev/null >"$tmp/start.out" 2>&1 &
 pid=$!
 i=0
 until "$x" "$bin" ping >"$tmp/ping" 2>&1; do
@@ -144,11 +144,11 @@ echo "PASS: 0.1.0 running, panes $(echo "$ids" | paste -sd' ' -), shell pids$pid
 # the other instance: releases/0.0.8 (0.1.0's files), its own runtime and state dirs
 cp -R "$lib/releases/0.1.0" "$lib/releases/0.0.8" || fail "copy 0.0.8"
 mkdir "$lib/releases/0.0.9" || fail "mkdir 0.0.9"
-sed "s#XDG_STATE_HOME=\"$tmp/state\"#XDG_STATE_HOME=\"$tmp/state2\"#; s#HERDR_LIVE_RUNTIME_DIR=\"$tmp/rt\"#HERDR_LIVE_RUNTIME_DIR=\"$tmp/rt2\"#" "$x" >"$tmp/x2.sh"
+sed "s#XDG_STATE_HOME=\"$tmp/state\"#XDG_STATE_HOME=\"$tmp/state2\"#; s#DYNIDE_RUNTIME_DIR=\"$tmp/rt\"#DYNIDE_RUNTIME_DIR=\"$tmp/rt2\"#" "$x" >"$tmp/x2.sh"
 chmod +x "$tmp/x2.sh"
-x2=$tmp/x2.sh bin2=$lib/releases/0.0.8/bin/herdr-live
+x2=$tmp/x2.sh bin2=$lib/releases/0.0.8/bin/dynide
 # shellcheck disable=SC2016 # expanded by the inner sh
-"$x2" sh -c 'cd / && HERDR_LIVE_HEADLESS=1 exec "$0"' "$bin2" </dev/null >"$tmp/start2.out" 2>&1 &
+"$x2" sh -c 'cd / && DYNIDE_HEADLESS=1 exec "$0"' "$bin2" </dev/null >"$tmp/start2.out" 2>&1 &
 pid2=$!
 i=0
 until "$x2" "$bin2" ping >/dev/null 2>&1; do
@@ -160,7 +160,7 @@ done
 other() { # the other instance after an update: its release kept, it answers, still pinned
   [ -d "$lib/releases/0.0.8" ] || fail "$1: prune removed releases/0.0.8, which the other instance runs"
   "$x2" "$bin2" ping >/dev/null 2>&1 || fail "$1: the other instance does not answer ping"
-  "$x2" "$bin2" status 2>&1 | grep -qxF "vm_argv=$lib/releases/0.0.8/bin/herdr_live start" ||
+  "$x2" "$bin2" status 2>&1 | grep -qxF "vm_argv=$lib/releases/0.0.8/bin/dynide_vm start" ||
     fail "$1: other instance vm argv $("$x2" "$bin2" status 2>&1 | grep '^vm_argv=')"
 }
 echo "PASS: other instance on its own runtime dir runs releases/0.0.8"
@@ -190,7 +190,7 @@ update "http://127.0.0.1:$port/http/manifest.json" >"$tmp/out" 2>"$tmp/err" || f
 grep -q "updated 0.1.0 -> 0.1.1" "$tmp/out" || fail "http update: $(cat "$tmp/out")"
 same 0.1.1 http
 other http
-"$x" "$bin" status 2>&1 | grep -q '^vm_argv=.*/releases/0.1.1/bin/herdr_live start$' ||
+"$x" "$bin" status 2>&1 | grep -q '^vm_argv=.*/releases/0.1.1/bin/dynide_vm start$' ||
   fail "http: broker vm argv is not releases/0.1.1: $("$x" "$bin" status 2>&1 | grep '^vm_argv=')"
 echo "INFO: update said: $(paste -sd' ' - <"$tmp/out")"
 echo "PASS: http update to 0.1.1 through kernel-restart: same panes, pids alive, scrollback kept, date ticking"
@@ -217,7 +217,7 @@ until "$x" "$bin" status >"$tmp/status" 2>&1 && grep -qx 'standby_ready=1' "$tmp
   [ "$i" -lt 60 ] || fail "broken: no ready standby 30 s after the failed restart: $(cat "$tmp/status")"
   sleep 0.5
 done
-grep -q '^vm_argv=.*/releases/0.1.2/bin/herdr_live start$' "$tmp/status" ||
+grep -q '^vm_argv=.*/releases/0.1.2/bin/dynide_vm start$' "$tmp/status" ||
   fail "broken: broker vm argv $(grep '^vm_argv=' "$tmp/status") (wanted releases/0.1.2)"
 echo "PASS: broken 0.1.3 refused at kernel-restart, current unchanged, old VM thawed (0.1.2, same panes), standby ready on 0.1.2 within $((i / 2)) s"
 

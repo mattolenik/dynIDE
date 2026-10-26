@@ -2,7 +2,7 @@ defmodule DynideReload.Telemetry do
   @moduledoc """
   Greppable one-line events for the log file:
 
-      herdr-event <kind> ts=<unix ms> k=v k=v ...
+      dynide-event <kind> ts=<unix ms> k=v k=v ...
 
   Values matching `^[A-Za-z0-9_.:/@+-]*$` are bare; anything else is double-quoted with
   `\\"` and `\\\\` escaped, newlines replaced by spaces, and cut to 300 bytes. Lists
@@ -17,7 +17,7 @@ defmodule DynideReload.Telemetry do
   @doc "The event line for `kind` and `fields` (pure apart from the timestamp)."
   @spec line(atom(), keyword()) :: String.t()
   def line(kind, fields) do
-    ["herdr-event ", Atom.to_string(kind), " ts=", Integer.to_string(System.os_time(:millisecond))]
+    ["dynide-event ", Atom.to_string(kind), " ts=", Integer.to_string(System.os_time(:millisecond))]
     |> Enum.concat(for {k, v} <- fields, do: [" ", Atom.to_string(k), "=", value(v)])
     |> IO.iodata_to_binary()
   end

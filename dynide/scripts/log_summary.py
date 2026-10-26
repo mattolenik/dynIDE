@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Summarise herdr-live telemetry (`herdr-event <kind> ts=<ms> k=v ...`) from log files.
+"""Summarise dynIDE telemetry (`dynide-event <kind> ts=<ms> k=v ...`) from log files.
 
 Usage: log_summary.py [LOG ...] [--since ISO8601] [--json]
-Default log: $HERDR_LIVE_LOG, else ${XDG_STATE_HOME:-~/.local/state}/herdr-live/herdr-live.log.
+Default log: $DYNIDE_LOG, else ${XDG_STATE_HOME:-~/.local/state}/dynide/dynide.log.
 Exit 0 unless a log is unreadable (exit 2).
 """
 import argparse
@@ -13,14 +13,14 @@ import sys
 from collections import Counter
 from datetime import datetime, timezone
 
-HEAD = re.compile(r"herdr-event ([A-Za-z0-9_]+) ts=(\d+)(?=\s|$)")
+HEAD = re.compile(r"dynide-event ([A-Za-z0-9_]+) ts=(\d+)(?=\s|$)")
 PAIR = re.compile(r'\s+([A-Za-z0-9_]+)=("(?:[^"\\]|\\.)*"|[^\s"]*)(?=\s|$)')
 
 
 def parse_line(line):
     """Return (kind, ts_ms, fields) for the first event on the line, None if no event
     marker, or False when the marker is present but the line is malformed."""
-    if "herdr-event" not in line:
+    if "dynide-event" not in line:
         return None
     m = HEAD.search(line)
     if not m:
@@ -41,11 +41,11 @@ def parse_line(line):
 
 
 def default_log():
-    env = os.environ.get("HERDR_LIVE_LOG")
+    env = os.environ.get("DYNIDE_LOG")
     if env:
         return env
     state = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
-    return os.path.join(state, "herdr-live", "herdr-live.log")
+    return os.path.join(state, "dynide", "dynide.log")
 
 
 def read_events(paths, since_ms=None):

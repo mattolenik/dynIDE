@@ -859,7 +859,7 @@ defmodule DynideServer.ServerTest do
     # the VM's handoff link is removed from every pane's env
     env = Map.new(Fake.Keeper.last_spec().env)
 
-    assert {Map.fetch(env, "HERDR_BROKER_SOCK"), Map.fetch(env, "HERDR_LIVE_GEN")} ==
+    assert {Map.fetch(env, "DYNIDE_BROKER_SOCK"), Map.fetch(env, "DYNIDE_GEN")} ==
              {{:ok, nil}, {:ok, nil}}
   end
 

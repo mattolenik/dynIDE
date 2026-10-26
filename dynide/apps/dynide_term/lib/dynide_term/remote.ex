@@ -1,12 +1,12 @@
 defmodule DynideTerm.Remote do
   @moduledoc """
-  The remote terminal client: `herdr-live attach|terminal ...` runs `main/1` in a VM of
+  The remote terminal client: `dynide attach|terminal ...` runs `main/1` in a VM of
   its own (R18). `DynideTerm.Remote.Conn` is the endpoint; the `DynideTerm.Client`
   (child id `DynideTerm.RemoteClient`) attaches to it with inline rows and `remote: true`
   (a hangup or detach ends the VM).
 
   Exit status: 0 for a detach or a hangup, 1 after `fail/1` (a refusal, an unreachable
-  host), whose reason is written to `$HERDR_LIVE_CLIENT_REASON` for `bin/herdr-live` to
+  host), whose reason is written to `$DYNIDE_CLIENT_REASON` for `bin/dynide` to
   print (the VM's own stdio goes to the client log), 2 for usage.
   """
 
@@ -43,12 +43,12 @@ defmodule DynideTerm.Remote do
     end
   end
 
-  @doc "Marks the VM failed (status 1) and writes `reason` to `$HERDR_LIVE_CLIENT_REASON`."
+  @doc "Marks the VM failed (status 1) and writes `reason` to `$DYNIDE_CLIENT_REASON`."
   @spec fail(binary) :: :ok
   def fail(reason) do
     :persistent_term.put({__MODULE__, :status}, 1)
 
-    case System.get_env("HERDR_LIVE_CLIENT_REASON") do
+    case System.get_env("DYNIDE_CLIENT_REASON") do
       p when p in [nil, ""] -> :ok
       path -> _ = File.write(path, reason)
     end

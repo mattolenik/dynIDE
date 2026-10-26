@@ -5,7 +5,7 @@ defmodule DynideServer.App.Workspaces.LabelTest do
 
   # outside the checkout: ExUnit's tmp_dir is inside this repo, whose .git would name it
   setup do
-    tmp = Path.join(System.tmp_dir!(), "herdr-label-#{System.unique_integer([:positive])}")
+    tmp = Path.join(System.tmp_dir!(), "dynide-label-#{System.unique_integer([:positive])}")
     File.mkdir_p!(tmp)
     on_exit(fn -> File.rm_rf(tmp) end)
     {:ok, tmp_dir: tmp}

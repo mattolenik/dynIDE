@@ -658,7 +658,7 @@ defmodule DynideServer.App.Store do
   # inherited. A nil value removes the name from the env the kernel child inherits; no
   # pane gets this VM's handoff link (a `mix test` or second VM in a pane would dial it).
   @identity ~w(HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID)
-  @vm_link ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN)
+  @vm_link ~w(DYNIDE_BROKER_SOCK DYNIDE_GEN)
 
   defp pane_env(state, id, extra, identity?) do
     own =

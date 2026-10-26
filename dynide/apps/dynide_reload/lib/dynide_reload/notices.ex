@@ -7,7 +7,7 @@ defmodule DynideReload.Notices do
   `{:purge_blocked, module, [pid_info]}`, `{:synced, [module]}` (the promotion sync
   loaded modules changed on disk).
 
-  Every broadcast is also logged as a `herdr-event` line (`DynideReload.Telemetry`).
+  Every broadcast is also logged as a `dynide-event` line (`DynideReload.Telemetry`).
   """
 
   alias DynideReload.Telemetry

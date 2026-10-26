@@ -1,5 +1,5 @@
 #!/bin/sh
-# Signs every Mach-O in a herdr-live macOS release tree (M18 task 5).
+# Signs every Mach-O in a dynIDE macOS release tree (M18 task 5).
 # Usage: sign_macos.sh --identity "Developer ID Application: NAME (TEAM)" [--dry-run] RELEASE_DIR
 # Libraries (.so, .dylib) first, then executables; each file on its own (no --deep) with
 # the hardened runtime, a secure timestamp and rel/macos/entitlements.plist. --dry-run

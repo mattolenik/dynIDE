@@ -733,7 +733,7 @@ type Body = fn(&Inner);
 fn run(inner: &Arc<Inner>, name: &str, body: Body) -> io::Result<JoinHandle<()>> {
     let inner = Arc::clone(inner);
     std::thread::Builder::new()
-        .name(format!("herdr-pty-{name}-{}", inner.id))
+        .name(format!("dynide-pty-{name}-{}", inner.id))
         .spawn(move || {
             if let Err(p) = catch_unwind(AssertUnwindSafe(|| body(&inner))) {
                 inner.fail(panic_msg(p));
@@ -1736,7 +1736,7 @@ mod tests {
     #[test]
     fn freeze_carries_unwritten_input() {
         const TOTAL: usize = 512 * 1024;
-        let out = std::env::temp_dir().join(format!("herdr-freeze-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("dynide-freeze-{}", std::process::id()));
         let script = format!(
             "stty raw -echo; printf ready; sleep 2; head -c {TOTAL} > '{}'; printf done; sleep 30",
             out.display()
@@ -1847,7 +1847,7 @@ mod tests {
 
     #[test]
     fn cwd_reports_spawn_dir() {
-        let dir = std::env::temp_dir().join(format!("herdr-cwd-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("dynide-cwd-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("mkdir");
         let canon = std::fs::canonicalize(&dir).expect("canon");
         let canon = canon.to_str().expect("utf8").to_string();

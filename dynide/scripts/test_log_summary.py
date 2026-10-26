@@ -92,10 +92,10 @@ class LogSummaryTest(unittest.TestCase):
 
     def test_clean_broker_restart_is_not_a_loss(self):
         with tempfile.NamedTemporaryFile("w", suffix=".log") as f:
-            f.write("herdr-event broker_start ts=1 pid=1\n"
-                    "herdr-event broker_stop ts=2 pid=1\n"
-                    "herdr-event broker_start ts=3 pid=2\n"
-                    "herdr-event crash ts=4 proc=store reason=killed action=restored\n")
+            f.write("dynide-event broker_start ts=1 pid=1\n"
+                    "dynide-event broker_stop ts=2 pid=1\n"
+                    "dynide-event broker_start ts=3 pid=2\n"
+                    "dynide-event crash ts=4 proc=store reason=killed action=restored\n")
             f.flush()
             got = json.loads(run(f.name, "--json").stdout)
         self.assertEqual(got["session_losses"], 0)
@@ -108,43 +108,43 @@ class LogSummaryTest(unittest.TestCase):
             return json.loads(run(f.name, "--json").stdout)
 
     def test_operator_kill_is_not_a_loss(self):
-        got = self.summary("herdr-event broker_start ts=100000 pid=1\n"
-                           "herdr-event session_lost ts=109900 reason=broker_died\n"
-                           "herdr-event broker_killed ts=110000 signal=9\n"
-                           "herdr-event broker_start ts=120000 pid=2\n")
+        got = self.summary("dynide-event broker_start ts=100000 pid=1\n"
+                           "dynide-event session_lost ts=109900 reason=broker_died\n"
+                           "dynide-event broker_killed ts=110000 signal=9\n"
+                           "dynide-event broker_start ts=120000 pid=2\n")
         self.assertEqual(got["session_losses"], 0)
         self.assertEqual(got["operator_kills"], 1)
 
     def test_crash_signal_is_a_loss(self):
-        got = self.summary("herdr-event broker_start ts=100000 pid=1\n"
-                           "herdr-event broker_killed ts=110000 signal=11\n"
-                           "herdr-event broker_start ts=120000 pid=2\n")
+        got = self.summary("dynide-event broker_start ts=100000 pid=1\n"
+                           "dynide-event broker_killed ts=110000 signal=11\n"
+                           "dynide-event broker_start ts=120000 pid=2\n")
         self.assertEqual(got["session_losses"], 1)
         self.assertEqual(got["operator_kills"], 0)
 
     def test_kill_far_from_loss_still_counts(self):
-        got = self.summary("herdr-event broker_start ts=100000 pid=1\n"
-                           "herdr-event session_lost ts=110000 reason=fallback_restore\n"
-                           "herdr-event broker_killed ts=170000 signal=9\n"
-                           "herdr-event broker_start ts=180000 pid=2\n")
+        got = self.summary("dynide-event broker_start ts=100000 pid=1\n"
+                           "dynide-event session_lost ts=110000 reason=fallback_restore\n"
+                           "dynide-event broker_killed ts=170000 signal=9\n"
+                           "dynide-event broker_start ts=180000 pid=2\n")
         self.assertEqual(got["session_losses"], 1)
         self.assertEqual(got["operator_kills"], 1)
 
     def test_unclean_restart_without_kill_still_counts(self):
-        got = self.summary("herdr-event broker_start ts=1 pid=1\n"
-                           "herdr-event broker_start ts=2 pid=2\n")
+        got = self.summary("dynide-event broker_start ts=1 pid=1\n"
+                           "dynide-event broker_start ts=2 pid=2\n")
         self.assertEqual(got["session_losses"], 1)
         self.assertEqual(got["operator_kills"], 0)
 
     def test_persist_events(self):
         with tempfile.NamedTemporaryFile("w", suffix=".log") as f:
-            f.write("herdr-event persist_restore ts=1 source=none reason=boot\n"
-                    "herdr-event persist_write ts=2 panes=2 bytes=900 us=40\n"
-                    "herdr-event persist_write ts=3 kind=scrollback panes=2 bytes=4000 us=90\n"
-                    "herdr-event persist_restore ts=4 source=disk reason=boot panes=2 scrollback=1 ms=8\n"
-                    "herdr-event persist_error ts=5 op=write reason=enospc\n"
-                    "herdr-event session_lost ts=6 reason=fallback_restore\n"
-                    "herdr-event persist_restore ts=7 source=disk reason=fallback panes=2 scrollback=2 ms=9\n")
+            f.write("dynide-event persist_restore ts=1 source=none reason=boot\n"
+                    "dynide-event persist_write ts=2 panes=2 bytes=900 us=40\n"
+                    "dynide-event persist_write ts=3 kind=scrollback panes=2 bytes=4000 us=90\n"
+                    "dynide-event persist_restore ts=4 source=disk reason=boot panes=2 scrollback=1 ms=8\n"
+                    "dynide-event persist_error ts=5 op=write reason=enospc\n"
+                    "dynide-event session_lost ts=6 reason=fallback_restore\n"
+                    "dynide-event persist_restore ts=7 source=disk reason=fallback panes=2 scrollback=2 ms=9\n")
             f.flush()
             got = json.loads(run(f.name, "--json").stdout)
             out = run(f.name).stdout.splitlines()
@@ -167,14 +167,14 @@ class LogSummaryTest(unittest.TestCase):
                           got["persist_errors"]), (0, 0, 0))
 
     def test_unreadable_log_exits_2(self):
-        self.assertEqual(run("/nonexistent/herdr.log").returncode, 2)
+        self.assertEqual(run("/nonexistent/dynide.log").returncode, 2)
 
     def test_default_path_from_env(self):
-        r = run("--json", env={"HERDR_LIVE_LOG": FIXTURE})
+        r = run("--json", env={"DYNIDE_LOG": FIXTURE})
         self.assertEqual(json.loads(r.stdout)["reloads"], 2)
 
     def test_quoted_values_parse_back(self):
-        line = ('x [info] herdr-event rollback ts=5 batch=1 reason=raise '
+        line = ('x [info] dynide-event rollback ts=5 batch=1 reason=raise '
                 'detail="say \\"hi\\" in C:\\\\tmp\\\\a b" next=ok')
         kind, ts, f = log_summary.parse_line(line)
         self.assertEqual((kind, ts), ("rollback", 5))
@@ -191,13 +191,13 @@ class LogSummaryTest(unittest.TestCase):
 
     def test_api_section(self):
         with tempfile.NamedTemporaryFile("w", suffix=".log") as f:
-            f.write("herdr-event api_connect ts=1 conns=1\n"
-                    "herdr-event api_connect ts=2 conns=2\n"
-                    "herdr-event api_connect ts=3 conns=1\n"
-                    "herdr-event api_denied ts=4 method=agent.list code=not_available\n"
-                    "herdr-event api_denied ts=5 method=nope code=unknown_method\n"
-                    "herdr-event api_denied ts=6 method=agent.get code=not_available\n"
-                    'herdr-event api_error ts=7 method=pane.read code=timeout msg="slow pane"\n')
+            f.write("dynide-event api_connect ts=1 conns=1\n"
+                    "dynide-event api_connect ts=2 conns=2\n"
+                    "dynide-event api_connect ts=3 conns=1\n"
+                    "dynide-event api_denied ts=4 method=agent.list code=not_available\n"
+                    "dynide-event api_denied ts=5 method=nope code=unknown_method\n"
+                    "dynide-event api_denied ts=6 method=agent.get code=not_available\n"
+                    'dynide-event api_error ts=7 method=pane.read code=timeout msg="slow pane"\n')
             f.flush()
             got = json.loads(run(f.name, "--json").stdout)
             out = run(f.name).stdout.splitlines()
@@ -210,8 +210,8 @@ class LogSummaryTest(unittest.TestCase):
 
     def test_api_connect_count(self):
         with tempfile.NamedTemporaryFile("w", suffix=".log") as f:
-            f.write("herdr-event api_connect ts=1 conns=1 count=5\n"
-                    "herdr-event api_connect ts=2 conns=1\n")
+            f.write("dynide-event api_connect ts=1 conns=1 count=5\n"
+                    "dynide-event api_connect ts=2 conns=1\n")
             f.flush()
             got = json.loads(run(f.name, "--json").stdout)
         self.assertEqual(got["api"]["connects"], 6)
@@ -223,18 +223,18 @@ class LogSummaryTest(unittest.TestCase):
 
     def test_clients_section(self):
         with tempfile.NamedTemporaryFile("w", suffix=".log") as f:
-            f.write("herdr-event client_attach ts=1 id=aabbccdd kind=term target=session cols=80 rows=24\n"
-                    "herdr-event client_attach ts=2 id=11223344 kind=term target=session cols=80 rows=24\n"
-                    "herdr-event client_detach ts=3 id=aabbccdd reason=grace_expired\n"
-                    "herdr-event client_detach ts=4 id=11223344 reason=session_ended\n"
-                    "herdr-event client_detach ts=5 id=11223344 reason=grace_expired\n"
-                    "herdr-event client_reconnect ts=6 id=aabbccdd away_ms=120\n"
-                    "herdr-event client_reconnect ts=7 id=aabbccdd away_ms=900\n"
-                    'herdr-event client_refused ts=8 reason="bad version"\n'
-                    "herdr-event client_held ts=9 id=aabbccdd carried=true\n"
-                    "herdr-event client_held ts=10 id=11223344 carried=false\n"
-                    "herdr-event client_held ts=11 id=55667788 carried=true\n"
-                    "herdr-event client_handoff_freeze ts=12 conns=3\n")
+            f.write("dynide-event client_attach ts=1 id=aabbccdd kind=term target=session cols=80 rows=24\n"
+                    "dynide-event client_attach ts=2 id=11223344 kind=term target=session cols=80 rows=24\n"
+                    "dynide-event client_detach ts=3 id=aabbccdd reason=grace_expired\n"
+                    "dynide-event client_detach ts=4 id=11223344 reason=session_ended\n"
+                    "dynide-event client_detach ts=5 id=11223344 reason=grace_expired\n"
+                    "dynide-event client_reconnect ts=6 id=aabbccdd away_ms=120\n"
+                    "dynide-event client_reconnect ts=7 id=aabbccdd away_ms=900\n"
+                    'dynide-event client_refused ts=8 reason="bad version"\n'
+                    "dynide-event client_held ts=9 id=aabbccdd carried=true\n"
+                    "dynide-event client_held ts=10 id=11223344 carried=false\n"
+                    "dynide-event client_held ts=11 id=55667788 carried=true\n"
+                    "dynide-event client_handoff_freeze ts=12 conns=3\n")
             f.flush()
             got = json.loads(run(f.name, "--json").stdout)
             out = run(f.name).stdout.splitlines()
@@ -257,14 +257,14 @@ class LogSummaryTest(unittest.TestCase):
 
     def test_malformed_and_plain_lines(self):
         self.assertIsNone(log_summary.parse_line("just a log line"))
-        self.assertIs(log_summary.parse_line("herdr-event x ts=abc"), False)
-        self.assertIs(log_summary.parse_line('herdr-event x ts=1 a="unterminated'), False)
+        self.assertIs(log_summary.parse_line("dynide-event x ts=abc"), False)
+        self.assertIs(log_summary.parse_line('dynide-event x ts=1 a="unterminated'), False)
 
 
 LIVE = os.path.dirname(HERE)
-# a launch of bin/herdr-live on a non-comment line: the path followed by a quote, space or
-# end of line (sh, exs), or os.path.join(..., "bin", "herdr-live") (python)
-LAUNCH = re.compile(r"""bin/herdr-live(['"]|\s|$)""" + r'|"bin", "herdr-live"')
+# a launch of bin/dynide on a non-comment line: the path followed by a quote, space or
+# end of line (sh, exs), or os.path.join(..., "bin", "dynide") (python)
+LAUNCH = re.compile(r"""bin/dynide(['"]|\s|$)""" + r'|"bin", "dynide"')
 
 
 def launchers():
@@ -290,12 +290,12 @@ class LaunchIsolationTest(unittest.TestCase):
                       "scripts/tty_harness.py", "bench/handoff/driver.exs", "bench/gate/glass.py",
                       "scripts/release/release_smoke.sh"):
             self.assertIn(known, found, "launch detection missed a known launcher")
-        # install.sh only creates the bin/herdr-live symlink, it never launches it; the
+        # install.sh only creates the bin/dynide symlink, it never launches it; the
         # release checks isolate state with a temp XDG_STATE_HOME (the launcher's fallback)
         found.pop("scripts/release/install.sh", None)
         missing = sorted(p for p, code in found.items()
-                         if "HERDR_LIVE_STATE_DIR" not in code and "XDG_STATE_HOME=" not in code)
-        self.assertEqual(missing, [], "these launch bin/herdr-live without HERDR_LIVE_STATE_DIR")
+                         if "DYNIDE_STATE_DIR" not in code and "XDG_STATE_HOME=" not in code)
+        self.assertEqual(missing, [], "these launch bin/dynide without DYNIDE_STATE_DIR")
 
 
 if __name__ == "__main__":

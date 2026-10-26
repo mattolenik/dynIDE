@@ -31,20 +31,20 @@ defmodule DynideServer.Api.Spec do
   def client_verbs do
     [
       %{
-        cli: "herdr-live attach [<host>] [<session>]",
+        cli: "dynide attach [<host>] [<session>]",
         summary:
           "Attach a terminal client to the session: the local client socket, or over ssh to <host> (needs key or agent auth)."
       },
       %{
-        cli: "herdr-live terminal attach <pane_id> [--host <host>]",
+        cli: "dynide terminal attach <pane_id> [--host <host>]",
         summary: "Attach to one pane with input (control)."
       },
       %{
-        cli: "herdr-live terminal observe <pane_id> [--host <host>]",
+        cli: "dynide terminal observe <pane_id> [--host <host>]",
         summary: "Watch one pane; input is dropped."
       },
       %{
-        cli: "herdr-live attach-relay [<session>]",
+        cli: "dynide attach-relay [<session>]",
         summary:
           "Run on the server host over ssh: relays stdio to the client socket and sends the auth frame with the host's token."
       }
@@ -149,7 +149,7 @@ defmodule DynideServer.Api.Spec do
         [ws, cwd],
         "worktree_list",
         errors,
-        "herdr-live worktree list [--workspace <workspace_id> | --cwd <path>]"
+        "dynide worktree list [--workspace <workspace_id> | --cwd <path>]"
       ),
       method(
         "worktree.create",
@@ -163,14 +163,14 @@ defmodule DynideServer.Api.Spec do
           opt(
             "path",
             :string,
-            "Absolute checkout path; default `~/.herdr-live/worktrees/<repo>/<branch>`."
+            "Absolute checkout path; default `~/.dynide/worktrees/<repo>/<branch>`."
           ),
           label,
           focus
         ],
         "worktree_created",
         errors,
-        "herdr-live worktree create --branch B [--workspace <workspace_id> | --cwd <path>] " <>
+        "dynide worktree create --branch B [--workspace <workspace_id> | --cwd <path>] " <>
           "[--base REF] [--path P] [--label L] [--focus]"
       ),
       method(
@@ -187,7 +187,7 @@ defmodule DynideServer.Api.Spec do
         ],
         "worktree_opened",
         errors,
-        "herdr-live worktree open (--path P | --branch B) [--workspace <workspace_id> | --cwd <path>] " <>
+        "dynide worktree open (--path P | --branch B) [--workspace <workspace_id> | --cwd <path>] " <>
           "[--label L] [--focus]"
       ),
       method(
@@ -200,14 +200,14 @@ defmodule DynideServer.Api.Spec do
         ],
         "worktree_removed",
         errors,
-        "herdr-live worktree remove <workspace_id> [--force]"
+        "dynide worktree remove <workspace_id> [--force]"
       )
     ]
   end
 
   defp server do
     [
-      method("ping", "server", "Liveness check.", [], "pong", [], "herdr-live ping"),
+      method("ping", "server", "Liveness check.", [], "pong", [], "dynide ping"),
       method(
         "api.schema",
         "server",
@@ -215,7 +215,7 @@ defmodule DynideServer.Api.Spec do
         [],
         "api_schema",
         [],
-        "herdr-live api schema"
+        "dynide api schema"
       ),
       method(
         "server.status",
@@ -224,7 +224,7 @@ defmodule DynideServer.Api.Spec do
         [],
         "server_status",
         [],
-        "herdr-live server status [--kv]"
+        "dynide server status [--kv]"
       ),
       method(
         "server.agent_manifests",
@@ -233,7 +233,7 @@ defmodule DynideServer.Api.Spec do
         [],
         "agent_manifests",
         [],
-        "herdr-live server agent-manifests [--json]"
+        "dynide server agent-manifests [--json]"
       ),
       method(
         "server.reload_agent_manifests",
@@ -242,7 +242,7 @@ defmodule DynideServer.Api.Spec do
         [],
         "agent_manifests",
         [],
-        "herdr-live server reload-agent-manifests"
+        "dynide server reload-agent-manifests"
       )
     ]
   end
@@ -256,7 +256,7 @@ defmodule DynideServer.Api.Spec do
         [],
         "session_list",
         [],
-        "herdr-live session list"
+        "dynide session list"
       ),
       method(
         "session.get",
@@ -265,7 +265,7 @@ defmodule DynideServer.Api.Spec do
         [opt("name", :string, "Session name; default this instance's.")],
         "session_info",
         [:not_found],
-        "herdr-live session get [<name>]"
+        "dynide session get [<name>]"
       ),
       method(
         "session.snapshot",
@@ -274,7 +274,7 @@ defmodule DynideServer.Api.Spec do
         [],
         "session_snapshot",
         [],
-        "herdr-live api snapshot"
+        "dynide api snapshot"
       ),
       method(
         "client.list",
@@ -283,7 +283,7 @@ defmodule DynideServer.Api.Spec do
         [],
         "client_list",
         [],
-        "herdr-live client list"
+        "dynide client list"
       )
     ]
   end
@@ -297,7 +297,7 @@ defmodule DynideServer.Api.Spec do
         [opt("n", {:integer, 1, 100}, "Number of batches to roll back; default 1.")],
         "reload_rollback",
         [:not_available, :failed, :timeout],
-        "herdr-live rollback [<n>]"
+        "dynide rollback [<n>]"
       ),
       method(
         "reload.test_on_save",
@@ -306,7 +306,7 @@ defmodule DynideServer.Api.Spec do
         [opt("mode", {:enum, ["on", "off"]}, "Set the gate; omit to read it.")],
         "test_on_save",
         [:not_available],
-        "herdr-live test-on-save [on|off]"
+        "dynide test-on-save [on|off]"
       )
     ]
   end
@@ -322,7 +322,7 @@ defmodule DynideServer.Api.Spec do
         [],
         "workspace_list",
         [],
-        "herdr-live workspace list"
+        "dynide workspace list"
       ),
       method(
         "workspace.get",
@@ -331,7 +331,7 @@ defmodule DynideServer.Api.Spec do
         [ws_id()],
         "workspace_info",
         [:not_found],
-        "herdr-live workspace get <workspace_id>"
+        "dynide workspace get <workspace_id>"
       ),
       method(
         "workspace.create",
@@ -343,7 +343,7 @@ defmodule DynideServer.Api.Spec do
         ],
         "workspace_created",
         [],
-        "herdr-live workspace create [--label L] [--focus]"
+        "dynide workspace create [--label L] [--focus]"
       ),
       method(
         "workspace.focus",
@@ -352,7 +352,7 @@ defmodule DynideServer.Api.Spec do
         [ws_id()],
         "workspace_info",
         [:not_found],
-        "herdr-live workspace focus <workspace_id>"
+        "dynide workspace focus <workspace_id>"
       ),
       method(
         "workspace.rename",
@@ -361,7 +361,7 @@ defmodule DynideServer.Api.Spec do
         [ws_id(), label()],
         "workspace_info",
         [:not_found],
-        "herdr-live workspace rename <workspace_id> <label>"
+        "dynide workspace rename <workspace_id> <label>"
       ),
       method(
         "workspace.move",
@@ -371,7 +371,7 @@ defmodule DynideServer.Api.Spec do
         [ws_id(), insert_index()],
         "workspace_list",
         [:not_found, :failed],
-        "herdr-live workspace move <workspace_id> <insert_index>"
+        "dynide workspace move <workspace_id> <insert_index>"
       ),
       method(
         "workspace.report_metadata",
@@ -380,7 +380,7 @@ defmodule DynideServer.Api.Spec do
         [ws_id() | metadata_params()],
         "ok",
         [:not_found, :failed],
-        "herdr-live workspace report-metadata <workspace_id> --source S --token K=V... " <>
+        "dynide workspace report-metadata <workspace_id> --source S --token K=V... " <>
           "[--clear-token K]... [--seq N] [--ttl-ms N]"
       ),
       method(
@@ -390,7 +390,7 @@ defmodule DynideServer.Api.Spec do
         [ws_id()],
         "workspace_closed",
         [:not_found, :failed],
-        "herdr-live workspace close <workspace_id>"
+        "dynide workspace close <workspace_id>"
       )
     ]
   end
@@ -406,7 +406,7 @@ defmodule DynideServer.Api.Spec do
         [opt("workspace_id", :workspace_id, "Only tabs of this workspace.")],
         "tab_list",
         [:not_found],
-        "herdr-live tab list [--workspace <workspace_id>]"
+        "dynide tab list [--workspace <workspace_id>]"
       ),
       method(
         "tab.get",
@@ -415,7 +415,7 @@ defmodule DynideServer.Api.Spec do
         [tab_id()],
         "tab_info",
         [:not_found],
-        "herdr-live tab get <tab_id>"
+        "dynide tab get <tab_id>"
       ),
       method(
         "tab.create",
@@ -428,7 +428,7 @@ defmodule DynideServer.Api.Spec do
         ],
         "tab_created",
         [:not_found],
-        "herdr-live tab create [--workspace <workspace_id>] [--label L] [--focus]"
+        "dynide tab create [--workspace <workspace_id>] [--label L] [--focus]"
       ),
       method(
         "tab.focus",
@@ -437,7 +437,7 @@ defmodule DynideServer.Api.Spec do
         [tab_id()],
         "tab_info",
         [:not_found],
-        "herdr-live tab focus <tab_id>"
+        "dynide tab focus <tab_id>"
       ),
       method(
         "tab.rename",
@@ -446,7 +446,7 @@ defmodule DynideServer.Api.Spec do
         [tab_id(), label()],
         "tab_info",
         [:not_found],
-        "herdr-live tab rename <tab_id> <label>"
+        "dynide tab rename <tab_id> <label>"
       ),
       method(
         "tab.move",
@@ -456,7 +456,7 @@ defmodule DynideServer.Api.Spec do
         [tab_id(), insert_index()],
         "tab_list",
         [:not_found, :failed],
-        "herdr-live tab move <tab_id> <insert_index>"
+        "dynide tab move <tab_id> <insert_index>"
       ),
       method(
         "tab.close",
@@ -465,7 +465,7 @@ defmodule DynideServer.Api.Spec do
         [tab_id()],
         "tab_closed",
         [:not_found],
-        "herdr-live tab close <tab_id>"
+        "dynide tab close <tab_id>"
       )
     ]
   end
@@ -486,7 +486,7 @@ defmodule DynideServer.Api.Spec do
         ],
         "pane_list",
         [:not_found],
-        "herdr-live pane list [--workspace <workspace_id>] [--tab <tab_id>]"
+        "dynide pane list [--workspace <workspace_id>] [--tab <tab_id>]"
       ),
       method(
         "pane.get",
@@ -495,7 +495,7 @@ defmodule DynideServer.Api.Spec do
         [pid],
         "pane_info",
         [:not_found],
-        "herdr-live pane get <pane_id>"
+        "dynide pane get <pane_id>"
       ),
       method(
         "pane.current",
@@ -504,7 +504,7 @@ defmodule DynideServer.Api.Spec do
         [opt("caller_pane_id", :pane_id, "Pane the caller reports itself running in.")],
         "pane_info",
         [:not_found],
-        "herdr-live pane current"
+        "dynide pane current"
       ),
       method(
         "pane.split",
@@ -524,7 +524,7 @@ defmodule DynideServer.Api.Spec do
         ],
         "pane_split",
         [:not_found, :failed],
-        "herdr-live pane split [<pane_id>] --direction right|down [--ratio R] [--cwd PATH] " <>
+        "dynide pane split [<pane_id>] --direction right|down [--ratio R] [--cwd PATH] " <>
           "[--env KEY=VALUE]... [--focus|--no-focus]"
       ),
       method(
@@ -534,7 +534,7 @@ defmodule DynideServer.Api.Spec do
         [opt_pane("Pane to start from; default the focused pane."), dir()],
         "pane_focus_direction",
         [:not_found],
-        "herdr-live pane focus-direction [<pane_id>] --direction left|right|up|down"
+        "dynide pane focus-direction [<pane_id>] --direction left|right|up|down"
       ),
       method(
         "pane.swap",
@@ -543,7 +543,7 @@ defmodule DynideServer.Api.Spec do
         [opt_pane("Pane to swap; default the focused pane."), dir()],
         "pane_swap",
         [:not_found],
-        "herdr-live pane swap [<pane_id>] --direction left|right|up|down"
+        "dynide pane swap [<pane_id>] --direction left|right|up|down"
       ),
       method(
         "pane.resize",
@@ -560,7 +560,7 @@ defmodule DynideServer.Api.Spec do
         ],
         "pane_resize",
         [:not_found],
-        "herdr-live pane resize [<pane_id>] --direction left|right|up|down [--amount F]"
+        "dynide pane resize [<pane_id>] --direction left|right|up|down [--amount F]"
       ),
       method(
         "pane.report_agent",
@@ -579,7 +579,7 @@ defmodule DynideServer.Api.Spec do
         ],
         "ok",
         [:not_found],
-        "herdr-live pane report-agent <pane_id> --source S --agent A --state S [--message T] [--seq N]"
+        "dynide pane report-agent <pane_id> --source S --agent A --state S [--message T] [--seq N]"
       ),
       method(
         "pane.report_agent_session",
@@ -615,7 +615,7 @@ defmodule DynideServer.Api.Spec do
         ],
         "ok",
         [:not_found],
-        "herdr-live pane report-agent-session <pane_id> --source S --agent A [--seq N] " <>
+        "dynide pane report-agent-session <pane_id> --source S --agent A [--seq N] " <>
           "[--agent-session-id ID] [--agent-session-path PATH] [--session-start-source S] " <>
           "[-- <resume_arg>...]"
       ),
@@ -626,7 +626,7 @@ defmodule DynideServer.Api.Spec do
         [pid | metadata_params()],
         "ok",
         [:not_found, :failed],
-        "herdr-live pane report-metadata <pane_id> --source S --token K=V... " <>
+        "dynide pane report-metadata <pane_id> --source S --token K=V... " <>
           "[--clear-token K]... [--seq N] [--ttl-ms N]"
       ),
       method(
@@ -641,7 +641,7 @@ defmodule DynideServer.Api.Spec do
         ],
         "ok",
         [:not_found],
-        "herdr-live pane release-agent <pane_id> --source S --agent A [--seq N]"
+        "dynide pane release-agent <pane_id> --source S --agent A [--seq N]"
       ),
       method(
         "pane.rename",
@@ -650,7 +650,7 @@ defmodule DynideServer.Api.Spec do
         [pid, opt("label", :string, "New name; absent or empty clears it.")],
         "pane_info",
         [:not_found],
-        "herdr-live pane rename <pane_id> [<label>]"
+        "dynide pane rename <pane_id> [<label>]"
       ),
       method(
         "pane.link.activate",
@@ -664,7 +664,7 @@ defmodule DynideServer.Api.Spec do
         ],
         "pane_link_activated",
         [:not_found, :failed],
-        "herdr-live pane link activate <pane_id> --col N --row N [--modifier M]..."
+        "dynide pane link activate <pane_id> --col N --row N [--modifier M]..."
       ),
       method(
         "pane.close",
@@ -673,7 +673,7 @@ defmodule DynideServer.Api.Spec do
         [pid],
         "pane_closed",
         [:not_found],
-        "herdr-live pane close <pane_id>"
+        "dynide pane close <pane_id>"
       ),
       method(
         "pane.focus",
@@ -682,7 +682,7 @@ defmodule DynideServer.Api.Spec do
         [pid],
         "pane_info",
         [:not_found],
-        "herdr-live pane focus <pane_id>"
+        "dynide pane focus <pane_id>"
       ),
       method(
         "pane.zoom",
@@ -694,7 +694,7 @@ defmodule DynideServer.Api.Spec do
         ],
         "pane_info",
         [:not_found],
-        "herdr-live pane zoom [<pane_id>] [--on|--off]"
+        "dynide pane zoom [<pane_id>] [--on|--off]"
       ),
       method(
         "pane.layout",
@@ -703,7 +703,7 @@ defmodule DynideServer.Api.Spec do
         [opt_pane("Pane in the tab; default the focused pane.")],
         "pane_layout",
         [:not_found],
-        "herdr-live pane layout [<pane_id>]"
+        "dynide pane layout [<pane_id>]"
       ),
       method(
         "pane.process_info",
@@ -712,7 +712,7 @@ defmodule DynideServer.Api.Spec do
         [pid],
         "process_info",
         [:not_found],
-        "herdr-live pane process-info [<pane_id>]"
+        "dynide pane process-info [<pane_id>]"
       ),
       method(
         "pane.send_text",
@@ -721,7 +721,7 @@ defmodule DynideServer.Api.Spec do
         [pid, req("text", :string, "Text to write.")],
         "ok",
         send_errors,
-        "herdr-live pane send-text <pane_id> <text>"
+        "dynide pane send-text <pane_id> <text>"
       )
       |> Map.put(
         :notes,
@@ -736,7 +736,7 @@ defmodule DynideServer.Api.Spec do
         [pid, Map.put(req("keys", {:list, :string}, "Key names."), :min_items, 1)],
         "ok",
         send_errors,
-        "herdr-live pane send-keys <pane_id> <key>..."
+        "dynide pane send-keys <pane_id> <key>..."
       ),
       method(
         "pane.run",
@@ -745,7 +745,7 @@ defmodule DynideServer.Api.Spec do
         [pid, req("command", :string, "Command line.")],
         "ok",
         send_errors,
-        "herdr-live pane run <pane_id> <command>"
+        "dynide pane run <pane_id> <command>"
       )
       |> Map.put(
         :notes,
@@ -761,7 +761,7 @@ defmodule DynideServer.Api.Spec do
         [pid, source(), lines()],
         "pane_read",
         [:not_found],
-        "herdr-live pane read [<pane_id>] [--source visible|recent] [--lines N]"
+        "dynide pane read [<pane_id>] [--source visible|recent] [--lines N]"
       ),
       method(
         "pane.wait_for_output",
@@ -777,7 +777,7 @@ defmodule DynideServer.Api.Spec do
         ],
         "output_matched",
         [:not_found, :timeout],
-        "herdr-live pane wait-output [<pane_id>] (--match S | --regex R) [--source visible|recent] [--lines N] [--timeout MS]"
+        "dynide pane wait-output [<pane_id>] (--match S | --regex R) [--source visible|recent] [--lines N] [--timeout MS]"
       )
     ]
   end
@@ -795,7 +795,7 @@ defmodule DynideServer.Api.Spec do
         ],
         "ok",
         [],
-        "herdr-live notification show <title> [--body <text>] [--pane <pane_id>]"
+        "dynide notification show <title> [--body <text>] [--pane <pane_id>]"
       )
     ]
   end
@@ -809,7 +809,7 @@ defmodule DynideServer.Api.Spec do
         [req("title", :string, "Window title; control characters are stripped.")],
         "ok",
         [],
-        "herdr-live title set <title>"
+        "dynide title set <title>"
       ),
       method(
         "client.window_title.clear",
@@ -818,7 +818,7 @@ defmodule DynideServer.Api.Spec do
         [],
         "ok",
         [],
-        "herdr-live title clear"
+        "dynide title clear"
       ),
       method(
         "popup.close",
@@ -827,7 +827,7 @@ defmodule DynideServer.Api.Spec do
         [],
         "ok",
         [:not_found],
-        "herdr-live popup close"
+        "dynide popup close"
       )
     ]
   end
@@ -854,7 +854,7 @@ defmodule DynideServer.Api.Spec do
         ],
         "subscription_started",
         [:not_found, :not_available, :events_lost],
-        "herdr-live events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] [--workspace <workspace_id>]"
+        "dynide events subscribe <type>... [--pane <pane_id>] [--tab <tab_id>] [--workspace <workspace_id>]"
       )
     ]
   end
@@ -864,14 +864,14 @@ defmodule DynideServer.Api.Spec do
       opt("until", {:list, {:enum, @agent_states}}, "Agent states to wait for; default `idle`.")
 
     [
-      agent("list", "List detected agents.", [], "agent_list", [], "herdr-live agent list"),
+      agent("list", "List detected agents.", [], "agent_list", [], "dynide agent list"),
       agent(
         "get",
         "Describe an agent.",
         [target()],
         "agent_info",
         [:not_found],
-        "herdr-live agent get <target>"
+        "dynide agent get <target>"
       ),
       agent(
         "read",
@@ -879,7 +879,7 @@ defmodule DynideServer.Api.Spec do
         [target(), source(), lines()],
         "agent_read",
         [:not_found],
-        "herdr-live agent read <target> [--source visible|recent] [--lines N]"
+        "dynide agent read <target> [--source visible|recent] [--lines N]"
       ),
       agent(
         "explain",
@@ -893,8 +893,8 @@ defmodule DynideServer.Api.Spec do
         ],
         "agent_explain",
         [:not_found, :failed],
-        "herdr-live agent explain <target> [--json] [--verbose] | " <>
-          "herdr-live agent explain --file PATH --agent LABEL [--json]"
+        "dynide agent explain <target> [--json] [--verbose] | " <>
+          "dynide agent explain --file PATH --agent LABEL [--json]"
       ),
       agent(
         "wait",
@@ -902,7 +902,7 @@ defmodule DynideServer.Api.Spec do
         [target(), until, timeout_ms()],
         "agent_wait",
         [:not_found, :timeout],
-        "herdr-live agent wait <target> [--until S]... [--timeout MS]"
+        "dynide agent wait <target> [--until S]... [--timeout MS]"
       ),
       agent(
         "prompt",
@@ -910,7 +910,7 @@ defmodule DynideServer.Api.Spec do
         [target(), req("text", :string, "Prompt text.")],
         "ok",
         [:not_found, :backpressure, :failed],
-        "herdr-live agent prompt <target> <text>"
+        "dynide agent prompt <target> <text>"
       ),
       agent(
         "send_keys",
@@ -918,7 +918,7 @@ defmodule DynideServer.Api.Spec do
         [target(), Map.put(req("keys", {:list, :string}, "Key names."), :min_items, 1)],
         "ok",
         [:not_found, :backpressure, :failed],
-        "herdr-live agent send-keys <target> <key>..."
+        "dynide agent send-keys <target> <key>..."
       )
     ]
   end
@@ -937,7 +937,7 @@ defmodule DynideServer.Api.Spec do
         "List installed and linked plugins.",
         [filter],
         "plugin_list",
-        "herdr-live plugin list [--plugin ID] [--json]",
+        "dynide plugin list [--plugin ID] [--json]",
         []
       ),
       plugin(
@@ -949,7 +949,7 @@ defmodule DynideServer.Api.Spec do
           opt("yes", :boolean, "Confirm the install.")
         ],
         "plugin_info",
-        "herdr-live plugin install <source> [--ref REF] [--yes]",
+        "dynide plugin install <source> [--ref REF] [--yes]",
         [:failed]
       )
       |> Map.put(
@@ -971,7 +971,7 @@ defmodule DynideServer.Api.Spec do
           opt("yes", :boolean, "Confirm the update.")
         ],
         "plugin_update",
-        "herdr-live plugin update [<target>] [--ref REF] [--yes]",
+        "dynide plugin update [<target>] [--ref REF] [--yes]",
         [:not_found, :failed]
       )
       |> Map.put(
@@ -995,7 +995,7 @@ defmodule DynideServer.Api.Spec do
           opt("enabled", :boolean, "Enable it; default true.")
         ],
         "plugin_info",
-        "herdr-live plugin link <path> [--disabled]",
+        "dynide plugin link <path> [--disabled]",
         [:failed]
       ),
       plugin(
@@ -1003,7 +1003,7 @@ defmodule DynideServer.Api.Spec do
         "Remove a plugin by id or by `owner/repo[/subdir]`.",
         [req("target", :string, "Plugin id or `owner/repo[/subdir]`.")],
         "plugin_removed",
-        "herdr-live plugin uninstall <target>",
+        "dynide plugin uninstall <target>",
         [:not_found, :failed]
       ),
       plugin(
@@ -1011,7 +1011,7 @@ defmodule DynideServer.Api.Spec do
         "Enable a plugin.",
         [plugin_id],
         "plugin_info",
-        "herdr-live plugin enable <plugin_id>",
+        "dynide plugin enable <plugin_id>",
         [:not_found, :failed]
       ),
       plugin(
@@ -1019,7 +1019,7 @@ defmodule DynideServer.Api.Spec do
         "Disable a plugin.",
         [plugin_id],
         "plugin_info",
-        "herdr-live plugin disable <plugin_id>",
+        "dynide plugin disable <plugin_id>",
         [:not_found, :failed]
       ),
       plugin(
@@ -1027,7 +1027,7 @@ defmodule DynideServer.Api.Spec do
         "The plugin's config directory.",
         [plugin_id],
         "plugin_dir",
-        "herdr-live plugin config-dir <plugin_id>",
+        "dynide plugin config-dir <plugin_id>",
         [:failed]
       ),
       plugin(
@@ -1035,7 +1035,7 @@ defmodule DynideServer.Api.Spec do
         "List plugin actions.",
         [filter],
         "plugin_action_list",
-        "herdr-live plugin action list [--plugin ID]",
+        "dynide plugin action list [--plugin ID]",
         []
       ),
       plugin(
@@ -1047,7 +1047,7 @@ defmodule DynideServer.Api.Spec do
           opt("context", :object, "Extra context passed to the command.")
         ],
         "plugin_action_invoked",
-        "herdr-live plugin action invoke <action_id> [--plugin ID]",
+        "dynide plugin action invoke <action_id> [--plugin ID]",
         [:not_found, :failed, :not_available]
       )
       |> Map.put(
@@ -1062,7 +1062,7 @@ defmodule DynideServer.Api.Spec do
         "Recent plugin command records.",
         [filter, opt("limit", {:integer, 1, 200}, "Maximum number of records.")],
         "plugin_log_list",
-        "herdr-live plugin log list [--plugin ID] [--limit N]",
+        "dynide plugin log list [--plugin ID] [--limit N]",
         [:not_available]
       ),
       plugin(
@@ -1082,7 +1082,7 @@ defmodule DynideServer.Api.Spec do
           focus("Focus the new pane; default true.")
         ],
         "pane_info",
-        "herdr-live plugin pane open --plugin ID --entrypoint ID [--placement P] [--width S] " <>
+        "dynide plugin pane open --plugin ID --entrypoint ID [--placement P] [--width S] " <>
           "[--height S] [--workspace ID] [--target-pane PANE] [--direction right|down] " <>
           "[--cwd PATH] [--env KEY=VALUE]... [--focus|--no-focus]",
         [:not_found, :failed, :ui_busy]
@@ -1091,7 +1091,7 @@ defmodule DynideServer.Api.Spec do
         :notes,
         "Runs the entry's command (argv, no shell) as the pane's program, in the plugin root " <>
           "unless `cwd` is given. `split` splits the target pane (`direction` default `right`); " <>
-          "`tab`, `overlay` and `zoomed` open a new tab in the workspace (herdr-live has no " <>
+          "`tab`, `overlay` and `zoomed` open a new tab in the workspace (dynIDE has no " <>
           "overlay or zoom). `popup` opens the session popup over the active tab (one at a " <>
           "time: another is `ui_busy`, `data.reason` too; it closes when its program " <>
           "exits or on `popup.close`), sized by `width` / `height`, else the entry's, else " <>
@@ -1105,7 +1105,7 @@ defmodule DynideServer.Api.Spec do
         "Focus a plugin pane.",
         [pid],
         "ok",
-        "herdr-live plugin pane focus <pane_id>",
+        "dynide plugin pane focus <pane_id>",
         [:not_found]
       ),
       plugin(
@@ -1113,7 +1113,7 @@ defmodule DynideServer.Api.Spec do
         "Close a plugin pane.",
         [pid],
         "ok",
-        "herdr-live plugin pane close <pane_id>",
+        "dynide plugin pane close <pane_id>",
         [:not_found]
       )
     ]

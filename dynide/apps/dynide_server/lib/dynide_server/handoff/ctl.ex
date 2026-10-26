@@ -1,6 +1,6 @@
 defmodule DynideServer.Handoff.Ctl do
   @moduledoc """
-  Answers broker ctl requests (`herdr-live` CLI, benches) against the kernel Keeper.
+  Answers broker ctl requests (`dynide` CLI, benches) against the kernel Keeper.
   Payloads per `docs/herdr-live/plans/m5.md` "Wire protocol"; anything else is
   `{:error, :unknown_request}`.
   """

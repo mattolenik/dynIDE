@@ -1,4 +1,4 @@
-# herdr-live task runner
+# dynide task runner
 set windows-shell := ["cmd.exe", "/d", "/s", "/c"]
 
 import 'dynide/dynide.just'

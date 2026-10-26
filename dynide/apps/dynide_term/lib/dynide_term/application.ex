@@ -1,7 +1,7 @@
 defmodule DynideTerm.Application do
   @moduledoc """
   Loads the kernel config (`DynideTerm.Kernel.load/0`), starts
-  `DynideTerm.Registry` and, unless headless (`HERDR_LIVE_HEADLESS=1` or
+  `DynideTerm.Registry` and, unless headless (`DYNIDE_HEADLESS=1` or
   `config :dynide_term, :headless`), the local terminal client (child id
   `DynideTerm.LocalClient`, registered as `DynideScene.Protocol.local_client_name/0`) once
   the server endpoint exists (`run_local/1`).
@@ -18,7 +18,7 @@ defmodule DynideTerm.Application do
     :ok = DynideTerm.Kernel.load()
 
     headless? =
-      System.get_env("HERDR_LIVE_HEADLESS") == "1" or
+      System.get_env("DYNIDE_HEADLESS") == "1" or
         Application.get_env(:dynide_term, :headless, false)
 
     starter = Supervisor.child_spec({Task, fn -> run_local([]) end}, id: :local_starter)

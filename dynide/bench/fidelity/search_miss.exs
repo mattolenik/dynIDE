@@ -6,8 +6,8 @@
 # the submitting Enter (`CopyMode.key/3`), `CopyMode.search/1` and `CopyMode.found/4`, both
 # directions: `?` from the bottom and `/` after `g` from the top.
 # Usage (isolated dirs, never the human's API socket):
-#   cd dynide && t=$(mktemp -d) && HERDR_LIVE_HEADLESS=1 HERDR_LIVE_LOG=$t/log HERDR_LIVE_API=$t/api.sock \
-#     HERDR_LIVE_RUNTIME_DIR=$t/rt HERDR_LIVE_STATE_DIR=$t/state mix run bench/fidelity/search_miss.exs [--runs N]
+#   cd dynide && t=$(mktemp -d) && DYNIDE_HEADLESS=1 DYNIDE_LOG=$t/log DYNIDE_API=$t/api.sock \
+#     DYNIDE_RUNTIME_DIR=$t/rt DYNIDE_STATE_DIR=$t/state mix run bench/fidelity/search_miss.exs [--runs N]
 # Prints `SEARCH_MISS dir=<..> rows=<total> runs=N min_ms= median_ms= max_ms= load=<uptime>`.
 alias DynideScene.Event
 alias DynideServer.Client.CopyMode

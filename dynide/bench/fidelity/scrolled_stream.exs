@@ -4,8 +4,8 @@
 # repaint). Pane.Server and Client.Session throttle facts repaints to one per 16 ms, so
 # each client should stay near 60 pushes/s, not one per 4 ms damage window.
 # Usage (isolated dirs, never the human's session or API socket):
-#   cd dynide && t=$(mktemp -d) && HERDR_LIVE_HEADLESS=1 SHELL=/bin/sh HERDR_LIVE_LOG=$t/log \
-#     HERDR_LIVE_API=$t/api.sock HERDR_LIVE_RUNTIME_DIR=$t/rt HERDR_LIVE_STATE_DIR=$t/state \
+#   cd dynide && t=$(mktemp -d) && DYNIDE_HEADLESS=1 SHELL=/bin/sh DYNIDE_LOG=$t/log \
+#     DYNIDE_API=$t/api.sock DYNIDE_RUNTIME_DIR=$t/rt DYNIDE_STATE_DIR=$t/state \
 #     mix run bench/fidelity/scrolled_stream.exs
 # Prints `SCROLLED_STREAM secs=5 client_a_pushes_per_s= client_b_pushes_per_s=
 #   snapshots_per_s= scrolled_at_end= load=<uptime>`.

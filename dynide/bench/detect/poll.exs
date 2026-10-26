@@ -4,8 +4,8 @@
 # `Poller.force_agent/3` (bench hook). A bench-owned Poller (the app's is stopped) runs
 # its normal 300 ms ticks; after the 3 s grace, 10 s of ticks are measured.
 # Usage (isolated dirs, never the human's session or API socket):
-#   cd dynide && t=$(mktemp -d) && HERDR_LIVE_HEADLESS=1 SHELL=/bin/sh HERDR_LIVE_LOG=$t/log \
-#     HERDR_LIVE_API=$t/api.sock HERDR_LIVE_RUNTIME_DIR=$t/rt HERDR_LIVE_STATE_DIR=$t/state \
+#   cd dynide && t=$(mktemp -d) && DYNIDE_HEADLESS=1 SHELL=/bin/sh DYNIDE_LOG=$t/log \
+#     DYNIDE_API=$t/api.sock DYNIDE_RUNTIME_DIR=$t/rt DYNIDE_STATE_DIR=$t/state \
 #     mix run bench/detect/poll.exs
 # Prints `DETECT_POLL_REAL panes= ticks= scans_per_tick= probes_per_tick= p50_us= p95_us=
 #   max_us= load=<uptime>`.

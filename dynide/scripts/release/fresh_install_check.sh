@@ -3,14 +3,14 @@
 # macOS host: new temp HOME and a prefix with a space, env -i, install.sh from the tarball,
 # then run it. Linux: the same body inside a clean ubuntu:24.04 podman container (no extra
 # packages), tarball and scripts mounted read-only. The tarball defaults to
-# the one in _build/release for this OS (aarch64). Env: HERDR_FRESH_IMAGE overrides the image.
+# the one in _build/release for this OS (aarch64). Env: DYNIDE_FRESH_IMAGE overrides the image.
 # Body checks: install, --version, headless start + ping, pane split (2 panes), SIGTERM
-# (status 0), state dir mode 0700, nothing new in herdr-live's default
+# (status 0), state dir mode 0700, nothing new in dynIDE's default
 # locations under the real HOME (state, config, cache, ~/.local/lib|bin).
 set -u
 # ubuntu:24.04 already ships libssl3t64 (libcrypto.so.3), libtinfo6 and glibc 2.39: nothing to apt-install.
-# HERDR_FRESH_APT="pkg ..." installs extra packages (for a slimmer image).
-LINUX_DEPS=${HERDR_FRESH_APT:-}
+# DYNIDE_FRESH_APT="pkg ..." installs extra packages (for a slimmer image).
+LINUX_DEPS=${DYNIDE_FRESH_APT:-}
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 
@@ -29,7 +29,7 @@ if [ "${1:-}" = --inner ]; then # body: inner TARBALL INSTALL_SH
   }
   trap stop EXIT
   trap 'exit 1' INT TERM HUP
-  fail() { echo "FAIL: $*" >&2; tail -n 30 "$tmp/state/herdr-live/herdr-live.log" >&2 2>/dev/null; exit 1; }
+  fail() { echo "FAIL: $*" >&2; tail -n 30 "$tmp/state/dynide/dynide.log" >&2 2>/dev/null; exit 1; }
   mkdir -p "$tmp/home" "$tmp/t"
   touch "$tmp/marker"
   prefix="$tmp/pre fix"
@@ -38,7 +38,7 @@ if [ "${1:-}" = --inner ]; then # body: inner TARBALL INSTALL_SH
 #!/bin/sh
 exec env -i HOME="$tmp/home" PATH="$prefix/bin:/usr/bin:/bin" TERM=xterm-256color SHELL=/bin/sh \\
   LANG=C.UTF-8 TMPDIR="$tmp/t" XDG_STATE_HOME="$tmp/state" XDG_CONFIG_HOME="$tmp/config" \\
-  HERDR_LIVE_RUNTIME_DIR="$tmp/rt" "\$@"
+  DYNIDE_RUNTIME_DIR="$tmp/rt" "\$@"
 X
   chmod +x "$tmp/envx"
   envx() { "$tmp/envx" "$@"; }
@@ -46,20 +46,20 @@ X
   grep -q "is on PATH" "$tmp/install.out" || fail "install did not report bin on PATH: $(cat "$tmp/install.out")"
   echo "PASS: install.sh into '$prefix'"
   [ ! -e "$tmp/state" ] && [ ! -e "$tmp/config" ] || fail "install created state or config dirs"
-  v=$(envx herdr-live --version) || fail "--version"
-  case $v in "herdr-live "*) echo "PASS: $v" ;; *) fail "--version: $v" ;; esac
-  "$tmp/envx" sh -c 'cd / && HERDR_LIVE_HEADLESS=1 HERDR_LIVE_CONFIG=/dev/null exec herdr-live' </dev/null >"$tmp/start.out" 2>&1 &
+  v=$(envx dynide --version) || fail "--version"
+  case $v in "dynide "*) echo "PASS: $v" ;; *) fail "--version: $v" ;; esac
+  "$tmp/envx" sh -c 'cd / && DYNIDE_HEADLESS=1 DYNIDE_CONFIG=/dev/null exec dynide' </dev/null >"$tmp/start.out" 2>&1 &
   pid=$!
   i=0
-  until envx herdr-live ping >"$tmp/ping" 2>&1; do
+  until envx dynide ping >"$tmp/ping" 2>&1; do
     i=$((i + 1)); kill -0 "$pid" 2>/dev/null || fail "broker exited: $(cat "$tmp/start.out")"
     [ "$i" -lt 60 ] || fail "no ping in 30 s: $(cat "$tmp/ping")"; sleep 0.5
   done
   echo "PASS: headless start answers ping"
-  ids() { envx herdr-live pane list | grep -o '"pane_id":"[^"]*"' | sort -u; }
+  ids() { envx dynide pane list | grep -o '"pane_id":"[^"]*"' | sort -u; }
   first=$(ids | sed 's/.*:"\(.*\)"/\1/')
   [ -n "$first" ] || fail "no first pane"
-  envx herdr-live pane split "$first" --direction right >"$tmp/split" 2>&1 || fail "pane split: $(cat "$tmp/split")"
+  envx dynide pane split "$first" --direction right >"$tmp/split" 2>&1 || fail "pane split: $(cat "$tmp/split")"
   [ "$(ids | grep -c .)" = 2 ] || fail "pane list: $(ids) (wanted 2 panes)"
   echo "PASS: pane split, pane list = 2"
   kill -TERM "$pid"
@@ -70,7 +70,7 @@ X
   wait "$pid"; rc=$?; pid=''
   [ "$rc" = 0 ] || fail "SIGTERM exit status $rc"
   echo "PASS: SIGTERM stops the broker with status 0"
-  mode=$(stat -c %a "$tmp/state/herdr-live" 2>/dev/null || stat -f %Lp "$tmp/state/herdr-live")
+  mode=$(stat -c %a "$tmp/state/dynide" 2>/dev/null || stat -f %Lp "$tmp/state/dynide")
   [ "$mode" = 700 ] || fail "state dir mode $mode (wanted 700)"
   echo "PASS: state dir mode 700"
   if [ -f /run/.containerenv ] || [ -f /.dockerenv ]; then
@@ -78,11 +78,11 @@ X
     stray=$(find / -xdev \( -path /proc -o -path /sys -o -path /dev -o -path /run -o -path "$tmp" \) -prune -o \
       -type f -newer "$tmp/marker" -print 2>/dev/null | head -n 10)
   else
-    # macOS host: only herdr-live's own default locations under the real HOME (the host runs the user's
+    # macOS host: only dynIDE's own default locations under the real HOME (the host runs the user's
     # herdr, which writes elsewhere in HOME, so a whole-HOME find would false-fail)
-    stray=$(find "${REAL_HOME:-/nonexistent}/.local/state/herdr-live" "${REAL_HOME:-/nonexistent}/.config/herdr-live" \
-      "${REAL_HOME:-/nonexistent}/.cache/herdr-live" "${REAL_HOME:-/nonexistent}/.local/lib/herdr-live" \
-      "${REAL_HOME:-/nonexistent}/.local/bin/herdr-live" -newer "$tmp/marker" 2>/dev/null | head -n 5)
+    stray=$(find "${REAL_HOME:-/nonexistent}/.local/state/dynide" "${REAL_HOME:-/nonexistent}/.config/dynide" \
+      "${REAL_HOME:-/nonexistent}/.cache/dynide" "${REAL_HOME:-/nonexistent}/.local/lib/dynide" \
+      "${REAL_HOME:-/nonexistent}/.local/bin/dynide" -newer "$tmp/marker" 2>/dev/null | head -n 5)
   fi
   [ -z "$stray" ] || fail "files written outside the temp dir: $stray"
   echo "PASS: nothing written outside the temp dir"
@@ -93,7 +93,7 @@ tarball=${1:-}
 if [ -z "$tarball" ]; then
   case $(uname) in Darwin) os=macos ;; *) os=linux ;; esac
   # shellcheck disable=SC2012 # glob of known names
-  tarball=$(ls "$root"/_build/release/herdr-live-*-"$os"-aarch64.tar.gz 2>/dev/null | tail -n 1)
+  tarball=$(ls "$root"/_build/release/dynide-*-"$os"-aarch64.tar.gz 2>/dev/null | tail -n 1)
 fi
 [ -f "$tarball" ] || { echo "FAIL: no tarball (run build.sh)" >&2; exit 1; }
 tarball=$(cd "$(dirname "$tarball")" && pwd)/$(basename "$tarball")
@@ -112,12 +112,12 @@ if ! command -v podman >/dev/null 2>&1; then
   exit 0
 fi
 echo "== Linux fresh install (ubuntu:24.04 container)"
-image=${HERDR_FRESH_IMAGE:-docker.io/library/ubuntu:24.04}
-name="herdr-m18-fresh-$$"
+image=${DYNIDE_FRESH_IMAGE:-docker.io/library/ubuntu:24.04}
+name="dynide-m18-fresh-$$"
 trap 'podman rm -f "$name" >/dev/null 2>&1' EXIT
 # the linux tarball is the one mounted, whatever host runs this
 # shellcheck disable=SC2012 # glob of known names
-ltar=$(ls "$root"/_build/release/herdr-live-*-linux-aarch64.tar.gz | tail -n 1)
+ltar=$(ls "$root"/_build/release/dynide-*-linux-aarch64.tar.gz | tail -n 1)
 podman run --name "$name" --rm \
   -v "$ltar:/in/$(basename "$ltar"):ro" -v "$ltar.sha256:/in/$(basename "$ltar").sha256:ro" \
   -v "$here:/scripts:ro" "$image" sh -c "

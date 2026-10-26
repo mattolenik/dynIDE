@@ -6,14 +6,14 @@
 #   dynide/scripts/linux_check.sh just dynide-bench-handoff
 #   dynide/scripts/linux_check.sh 'cd dynide/native/dynide_kernel && cargo test --locked'
 # LINUX_CHECK_OUT=<host dir> mounts it writable at /out (bench logs).
-# LINUX_CHECK_IMAGE (default localhost/herdr-m6-check) and LINUX_CHECK_VOLUME_PREFIX
-# (default herdr-m6: <prefix>-cargo, <prefix>-hex) name the image and cache volumes.
+# LINUX_CHECK_IMAGE (default localhost/dynide-m6-check) and LINUX_CHECK_VOLUME_PREFIX
+# (default dynide-m6: <prefix>-cargo, <prefix>-hex) name the image and cache volumes.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-image=${LINUX_CHECK_IMAGE:-localhost/herdr-m6-check}
-vols=${LINUX_CHECK_VOLUME_PREFIX:-herdr-m6}
+image=${LINUX_CHECK_IMAGE:-localhost/dynide-m6-check}
+vols=${LINUX_CHECK_VOLUME_PREFIX:-dynide-m6}
 
 if ! podman image exists "$image"; then
   podman build -t "$image" -f "$here/linux/Containerfile" "$here/linux"

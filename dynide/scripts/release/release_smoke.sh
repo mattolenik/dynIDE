@@ -1,8 +1,8 @@
 #!/bin/sh
 # Smoke test of the self-contained release (M18 task 1). Usage: release_smoke.sh [tarball]
 # Without a tarball it runs keygen.sh and build.sh --dev-key first (and checks update-keys/). It installs the tarball with install.sh (R4 layout)
-# under a prefix with a space (<prefix>/lib/herdr-live/releases/<V>, current -> releases/<V>,
-# <prefix>/bin/herdr-live -> ../lib/herdr-live/current/bin/herdr-live) and runs every
+# under a prefix with a space (<prefix>/lib/dynide/releases/<V>, current -> releases/<V>,
+# <prefix>/bin/dynide -> ../lib/dynide/current/bin/dynide) and runs every
 # command through that symlink in a clean env (env -i: temp HOME, XDG dirs, runtime dir,
 # PATH=/usr/bin:/bin with no erl, elixir or mix), started from cwd /. Checks: --version;
 # a headless start answers ping within 20 s with the version; a second start prints
@@ -19,7 +19,7 @@ tmp=$(cd "$tmp" && pwd -P)
 # leftover detection only (a FAIL, never a kill): every process of this run has $tmp in its argv
 ours() { pgrep -f -- "$tmp"; }
 pid='' spid=''
-vm_pids() { sed -n 's/.*dynide-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$tmp/state/herdr-live/herdr-live.log" 2>/dev/null; }
+vm_pids() { sed -n 's/.*dynide-broker: started vm .* pid=\([0-9]*\) .*/\1/p' "$tmp/state/dynide/dynide.log" 2>/dev/null; }
 # shellcheck disable=SC2329 # invoked via trap
 cleanup() { # only pids this run holds: broker, attach wrapper and launcher, the broker's VMs
   for p in $pid $spid $(cat "$tmp/attach.pid" 2>/dev/null) $(vm_pids); do kill -KILL "$p" 2>/dev/null; done
@@ -30,7 +30,7 @@ trap 'exit 1' INT TERM
 fail() {
   echo "FAIL: $*" >&2
   echo "--- log" >&2
-  tail -n 40 "$tmp/state/herdr-live/herdr-live.log" >&2 2>/dev/null
+  tail -n 40 "$tmp/state/dynide/dynide.log" >&2 2>/dev/null
   exit 1
 }
 
@@ -44,7 +44,7 @@ fi
 [ -f "$tarball" ] || fail "no tarball $tarball"
 
 top=$(tar -tzf "$tarball" | head -n 1 | cut -d/ -f1)
-v=${top#herdr-live-}
+v=${top#dynide-}
 if [ -n "${pub:-}" ]; then # built here with --dev-key: it trusts exactly the dev key
   keys=$(tar -tzf "$tarball" | grep "^$top/releases/$v/update-keys/.")
   [ "$keys" = "$top/releases/$v/update-keys/dev-update.pub" ] || fail "update-keys: $keys (wanted dev-update.pub only)"
@@ -55,21 +55,21 @@ fi
 
 # install.sh refuses a tarball whose top dir names a bad version (.., ., a space)
 for bad in .. . 'a b'; do
-  mkdir -p "$tmp/bad/herdr-live-$bad/bin" || fail mkdir
-  cp /bin/sh "$tmp/bad/herdr-live-$bad/bin/herdr-live" || fail cp
-  tar -C "$tmp/bad" -czf "$tmp/bad.tar.gz" "herdr-live-$bad" || fail "bad tarball $bad"
+  mkdir -p "$tmp/bad/dynide-$bad/bin" || fail mkdir
+  cp /bin/sh "$tmp/bad/dynide-$bad/bin/dynide" || fail cp
+  tar -C "$tmp/bad" -czf "$tmp/bad.tar.gz" "dynide-$bad" || fail "bad tarball $bad"
   sh "$here/install.sh" --prefix "$tmp/badprefix" "$tmp/bad.tar.gz" >"$tmp/bad.out" 2>&1 &&
-    fail "install.sh accepted top dir herdr-live-$bad"
-  grep -q "bad version" "$tmp/bad.out" || fail "install.sh herdr-live-$bad: $(cat "$tmp/bad.out")"
-  [ ! -e "$tmp/badprefix/lib/herdr-live/current" ] || fail "install.sh herdr-live-$bad left a current link"
+    fail "install.sh accepted top dir dynide-$bad"
+  grep -q "bad version" "$tmp/bad.out" || fail "install.sh dynide-$bad: $(cat "$tmp/bad.out")"
+  [ ! -e "$tmp/badprefix/lib/dynide/current" ] || fail "install.sh dynide-$bad left a current link"
   rm -rf "$tmp/bad" "$tmp/bad.tar.gz"
 done
-echo "PASS: install.sh refuses tarball top dirs herdr-live-.., herdr-live-. and herdr-live-a b"
+echo "PASS: install.sh refuses tarball top dirs dynide-.., dynide-. and dynide-a b"
 
 prefix="$tmp/pre fix"
 mkdir -p "$tmp/home" "$tmp/t" || fail mkdir
 sh "$here/install.sh" --prefix "$prefix" "$tarball" >"$tmp/install.out" 2>&1 || fail "install.sh: $(cat "$tmp/install.out")"
-bin="$prefix/bin/herdr-live"
+bin="$prefix/bin/dynide"
 printf 'onboarding = false\n' >"$tmp/config.toml"
 
 # x.sh: a command in the clean env
@@ -77,8 +77,8 @@ cat >"$tmp/x.sh" <<X
 #!/bin/sh
 exec env -i HOME="$tmp/home" PATH=/usr/bin:/bin TERM=xterm-256color SHELL=/bin/sh \
   LANG="${LANG:-C.UTF-8}" TMPDIR="$tmp/t" XDG_STATE_HOME="$tmp/state" \
-  XDG_CONFIG_HOME="$tmp/config" HERDR_LIVE_RUNTIME_DIR="$tmp/rt" \
-  HERDR_LIVE_CONFIG="$tmp/config.toml" HERDR_LIVE_CLIENT_LOG="$tmp/client.log" "\$@"
+  XDG_CONFIG_HOME="$tmp/config" DYNIDE_RUNTIME_DIR="$tmp/rt" \
+  DYNIDE_CONFIG="$tmp/config.toml" DYNIDE_CLIENT_LOG="$tmp/client.log" "\$@"
 X
 chmod +x "$tmp/x.sh"
 x="$tmp/x.sh"
@@ -88,11 +88,11 @@ x="$tmp/x.sh"
 echo "PASS: no erl, elixir, mix or cargo on PATH"
 
 out=$("$x" "$bin" --version 2>&1)
-[ "$out" = "herdr-live $v" ] || fail "--version: $out (wanted herdr-live $v)"
-echo "PASS: --version prints herdr-live $v"
+[ "$out" = "dynide $v" ] || fail "--version: $out (wanted dynide $v)"
+echo "PASS: --version prints dynide $v"
 
 # shellcheck disable=SC2016 # expanded by the inner sh
-"$x" sh -c 'cd / && HERDR_LIVE_HEADLESS=1 exec "$0"' "$bin" </dev/null >"$tmp/start.out" 2>&1 &
+"$x" sh -c 'cd / && DYNIDE_HEADLESS=1 exec "$0"' "$bin" </dev/null >"$tmp/start.out" 2>&1 &
 pid=$!
 i=0
 until "$x" "$bin" ping >"$tmp/ping" 2>&1; do
@@ -109,14 +109,14 @@ echo "PASS: ping answers within 20 s with version $v"
 "$x" "$bin" </dev/null >"$tmp/second.out" 2>"$tmp/second.err"
 rc=$?
 # shellcheck disable=SC2016 # literal backticks in the expected message
-want='herdr-live is already running; use `herdr-live attach`'
+want='dynIDE is already running; use `dynide attach`'
 [ "$rc" = 2 ] && [ "$(cat "$tmp/second.err")" = "$want" ] && [ ! -s "$tmp/second.out" ] ||
   fail "second start: exit $rc, stderr $(cat "$tmp/second.err") (wanted exit 2, $want)"
 echo "PASS: a second start says it is already running (stderr, exit 2)"
 
-ps -o command= -p "$pid" | grep -qF "$prefix/lib/herdr-live/releases/$v/bin/herdr_live start" ||
+ps -o command= -p "$pid" | grep -qF "$prefix/lib/dynide/releases/$v/bin/dynide_vm start" ||
   fail "broker argv is not pinned to releases/$v: $(ps -o command= -p "$pid")"
-"$x" "$bin" status 2>&1 | grep -qxF "vm_argv=$prefix/lib/herdr-live/releases/$v/bin/herdr_live start" ||
+"$x" "$bin" status 2>&1 | grep -qxF "vm_argv=$prefix/lib/dynide/releases/$v/bin/dynide_vm start" ||
   fail "broker vm_argv is not pinned to releases/$v: $("$x" "$bin" status 2>&1 | grep '^vm_argv=')"
 echo "PASS: broker VM argv pinned to releases/$v (current resolved)"
 

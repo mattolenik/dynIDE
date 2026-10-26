@@ -6,7 +6,7 @@ defmodule DynideTerm.Client.Term.Notify do
     * `backend/1` from the environment: `TERM_PROGRAM` `ghostty`, `iTerm.app`, `WezTerm`
       are OSC 9; `KITTY_WINDOW_ID` is OSC 99; then `TERM` `xterm-ghostty` (OSC 9),
       `xterm-kitty` (OSC 99), anything containing `wezterm` (OSC 9). Unknown terminals
-      get OSC 9 (herdr-live's M13 behaviour; terminals ignore OSCs they do not know).
+      get OSC 9 (dynIDE's M13 behaviour; terminals ignore OSCs they do not know).
     * `sequence/4`: OSC 9 `title: body`, or OSC 99 title then body (kitty, `i=1`),
       ST-terminated; under `TMUX` wrapped in a `tmux;` DCS passthrough with every ESC
       doubled. Title and body arrive sanitized (`Alert`).

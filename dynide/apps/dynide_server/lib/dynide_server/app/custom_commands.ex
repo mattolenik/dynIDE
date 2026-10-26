@@ -15,7 +15,7 @@ defmodule DynideServer.App.CustomCommands do
       running `/bin/sh -c cmd` in the focused pane's cwd, with no pane identity; a bad
       size, an open popup or a too small area is a warning notice.
 
-  `env` is `HERDR_LIVE_BIN` (when the VM has it), `HERDR_LIVE_API` (the API socket),
+  `env` is `DYNIDE_BIN` (when the VM has it), `DYNIDE_API` (the API socket),
   `HERDR_ACTIVE_WORKSPACE_ID`, `HERDR_ACTIVE_TAB_ID`, `HERDR_ACTIVE_PANE_ID` (`p<n>`) and
   `HERDR_ACTIVE_PANE_CWD` (when known), as `{name, value}`. The pane cwd is read from
   the pty (`Persist.Facts.cwd/1`: an ETS lookup and one bounded NIF call).
@@ -128,7 +128,7 @@ defmodule DynideServer.App.CustomCommands do
   @spec env(map) :: [{binary, binary}]
   def env(app) do
     pane = app.focus.pane
-    bin = System.get_env("HERDR_LIVE_BIN")
+    bin = System.get_env("DYNIDE_BIN")
 
     place =
       case pane && Commands.locate(app, pane) do
@@ -143,8 +143,8 @@ defmodule DynideServer.App.CustomCommands do
           []
       end
 
-    if(bin in [nil, ""], do: [], else: [{"HERDR_LIVE_BIN", bin}]) ++
-      [{"HERDR_LIVE_API", SocketPath.path()}] ++ place
+    if(bin in [nil, ""], do: [], else: [{"DYNIDE_BIN", bin}]) ++
+      [{"DYNIDE_API", SocketPath.path()}] ++ place
   end
 
   defp with_cwd(env, pane) do

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""M9 terminal-fidelity checks: herdr-live attached in a 120x40 pty, this script the host.
+"""M9 terminal-fidelity checks: dynide attached in a 120x40 pty, this script the host.
 
 Usage: fidelity.py [-v] [CHECK ...]
 
-Launches bin/herdr-live like scripts/tty_harness.py's `herdr` mode (imported by path:
-its Herdr launch with an isolated log, API socket, HERDR_LIVE_RUNTIME_DIR and
-HERDR_LIVE_STATE_DIR, its Screen and probe answers) with SSH_TTY=1 (clipboard writes go to the
+Launches bin/dynide like scripts/tty_harness.py's `dynide` mode (imported by path:
+its Herdr launch with an isolated log, API socket, DYNIDE_RUNTIME_DIR and
+DYNIDE_STATE_DIR, its Screen and probe answers) with SSH_TTY=1 (clipboard writes go to the
 host as OSC 52, never to this machine's clipboard). The host also answers the client's
 colour queries: OSC 10 fg rgb:dddd/eeee/ffff, OSC 11 bg rgb:1111/2222/3333, OSC 4 palette,
 `CSI ? 996 n` (dark) and the `CSI 5 n` sentinel. Each check runs in a new tab (prefix c,
 enter at M13's tab-name prompt)
 and prints `PASS <name> ...` or `FAIL <name>: reason`; exits 1 if any failed. Skips
-(SKIP line, exit 0) inside a herdr-live pane. Reflow against herdr is reflow.py.
+(SKIP line, exit 0) inside a dynIDE pane. Reflow against herdr is reflow.py.
 """
 import base64
 import importlib.util
@@ -446,8 +446,8 @@ def main():
 
 
 if __name__ == "__main__":
-    if os.environ.get("HERDR_LIVE_API"):
-        print("SKIP: fidelity: running inside herdr-live (run it outside, see editing-live.md)")
+    if os.environ.get("DYNIDE_API"):
+        print("SKIP: fidelity: running inside dynIDE (run it outside, see editing-live.md)")
         sys.exit(0)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     try:

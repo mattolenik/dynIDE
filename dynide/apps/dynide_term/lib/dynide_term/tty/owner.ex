@@ -18,7 +18,7 @@ defmodule DynideTerm.Tty.Owner do
   and asks Render for a full repaint; `{:exit, :tty, reason}` (host terminal
   gone) and `{:detached, reason}` (from Render, sent by the server) end the
   local client through `DynideTerm.Client.local_exit/1`; `{:handoff, %{phase: :begin}}`
-  stops the local client without stopping herdr-live (`DynideTerm.Client.stop_local/0`).
+  stops the local client without stopping dynIDE (`DynideTerm.Client.stop_local/0`).
   A remote client (`remote: true`, `DynideTerm.Remote`, its own VM) also ends on a hangup
   or a detach, and ignores a handoff (its conn holds input across it). Other clients
   only log.

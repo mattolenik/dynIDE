@@ -12,7 +12,7 @@ defmodule DynideTerm.Demo.FakeRowsTest do
     assert Enum.map(rows, &elem(&1, 0)) == Enum.to_list(0..9)
     assert Enum.all?(rows, fn {_, row} -> Cell.cols(row) == 40 end)
     [{0, row0} | _] = rows
-    assert text(row0) =~ ~r/^herdr-live demo 40x10 pid 123/
+    assert text(row0) =~ ~r/^dynide demo 40x10 pid 123/
     assert Enum.any?(rows, fn {_, row} -> text(row) =~ "last input: 78" end)
   end
 

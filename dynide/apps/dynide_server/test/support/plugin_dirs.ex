@@ -8,7 +8,7 @@ defmodule DynideServer.Test.PluginDirs do
   @doc """
   herdr's example plugins at the pinned commit, fetched into a cache (ruling R7: no upstream
   licence, so never vendored). Tests using them are tagged `:examples`; `test_helper.exs`
-  excludes that tag when this returns `:skip` (no cache and no network, or HERDR_LIVE_OFFLINE=1).
+  excludes that tag when this returns `:skip` (no cache and no network, or DYNIDE_OFFLINE=1).
   """
   @spec fetch_examples() :: {:ok, Path.t()} | :skip
   def fetch_examples do

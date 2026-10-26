@@ -3,7 +3,7 @@ defmodule DynideIntegration.RealKernelTest do
   M3's exit drivers against the real server kernel (`DynideServer.Native.*`, M1) with
   `/bin/sh` panes (`PS1='$ '`); the terminal client stays on its fakes (M2 not landed).
   Excluded by default: `mix test --only real_kernel` (the 20MB file goes to
-  `HERDR_REAL_KERNEL_TMP`, default the system tmp dir). `setup_all` restarts dynide_server
+  `DYNIDE_REAL_KERNEL_TMP`, default the system tmp dir). `setup_all` restarts dynide_server
   on the real kernel and restores the fake kernel afterwards.
   """
   use ExUnit.Case, async: false
@@ -178,8 +178,8 @@ defmodule DynideIntegration.RealKernelTest do
     do: Enum.any?(rows(scene, id, screen), &(String.trim_trailing(&1) == text))
 
   defp big_file do
-    dir = System.get_env("HERDR_REAL_KERNEL_TMP", System.tmp_dir!())
-    path = Path.join(dir, "herdr-real-kernel-#{System.unique_integer([:positive])}")
+    dir = System.get_env("DYNIDE_REAL_KERNEL_TMP", System.tmp_dir!())
+    path = Path.join(dir, "dynide-real-kernel-#{System.unique_integer([:positive])}")
 
     lines =
       Stream.map(

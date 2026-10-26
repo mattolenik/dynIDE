@@ -47,7 +47,7 @@ jobs:
         id: zig-compiler
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/herdr-zig-0.16.0
+          path: ${{ runner.temp }}/dynide-zig-0.16.0
           key: zig-compiler-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0
 
       - name: Install Zig
@@ -61,7 +61,7 @@ jobs:
         env:
           ZIG_RESTORED: ${{ steps.zig-compiler.outputs.cache-hit }}
         run: |
-          stable_zig="$RUNNER_TEMP/herdr-zig-0.16.0"
+          stable_zig="$RUNNER_TEMP/dynide-zig-0.16.0"
           if [ "$ZIG_RESTORED" != "true" ]; then
             mv "$(dirname "$(command -v zig)")" "$stable_zig"
           fi
@@ -72,7 +72,7 @@ jobs:
         if: steps.zig-compiler.outputs.cache-hit != 'true' && env.SAVE_CACHES == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/herdr-zig-0.16.0
+          path: ${{ runner.temp }}/dynide-zig-0.16.0
           key: zig-compiler-v1-${{ runner.os }}-${{ runner.arch }}-0.16.0
 
       - name: Install Erlang and Elixir (Linux)

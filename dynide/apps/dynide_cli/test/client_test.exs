@@ -28,18 +28,18 @@ defmodule DynideCli.ClientTest do
   end
 
   describe "socket_path/1" do
-    test "HERDR_LIVE_API wins, empty counts as unset" do
-      assert Client.socket_path(%{"HERDR_LIVE_API" => "/x/a.sock", "HOME" => "/h"}) ==
+    test "DYNIDE_API wins, empty counts as unset" do
+      assert Client.socket_path(%{"DYNIDE_API" => "/x/a.sock", "HOME" => "/h"}) ==
                "/x/a.sock"
 
-      assert Client.socket_path(%{"HERDR_LIVE_API" => "", "HOME" => "/h"}) ==
-               "/h/.local/state/herdr-live/api.sock"
+      assert Client.socket_path(%{"DYNIDE_API" => "", "HOME" => "/h"}) ==
+               "/h/.local/state/dynide/api.sock"
 
       assert Client.socket_path(%{"XDG_STATE_HOME" => "/s", "HOME" => "/h"}) ==
-               "/s/herdr-live/api.sock"
+               "/s/dynide/api.sock"
 
       assert Client.socket_path(%{"XDG_STATE_HOME" => "", "HOME" => "/h"}) ==
-               "/h/.local/state/herdr-live/api.sock"
+               "/h/.local/state/dynide/api.sock"
     end
   end
 

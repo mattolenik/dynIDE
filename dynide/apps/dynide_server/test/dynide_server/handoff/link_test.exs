@@ -5,8 +5,8 @@ defmodule DynideServer.Handoff.LinkTest do
   alias DynideServer.Native.{Keeper, Pty, Vt}
   alias DynideServer.Native.Link, as: NLink
 
-  test "init is :ignore without HERDR_BROKER_SOCK" do
-    assert System.get_env("HERDR_BROKER_SOCK") == nil
+  test "init is :ignore without DYNIDE_BROKER_SOCK" do
+    assert System.get_env("DYNIDE_BROKER_SOCK") == nil
     assert Link.init([]) == :ignore
     refute Link.enabled?()
     assert Link.hold("k", "b", []) == :ok
@@ -14,9 +14,9 @@ defmodule DynideServer.Handoff.LinkTest do
     assert Link.take_adopted("pane/") == []
   end
 
-  test "init is :ignore with an empty HERDR_BROKER_SOCK (a plugin pane's blanked env)" do
-    System.put_env("HERDR_BROKER_SOCK", "")
-    on_exit(fn -> System.delete_env("HERDR_BROKER_SOCK") end)
+  test "init is :ignore with an empty DYNIDE_BROKER_SOCK (a plugin pane's blanked env)" do
+    System.put_env("DYNIDE_BROKER_SOCK", "")
+    on_exit(fn -> System.delete_env("DYNIDE_BROKER_SOCK") end)
     assert Link.init([]) == :ignore
   end
 
@@ -94,12 +94,12 @@ defmodule DynideServer.Handoff.LinkTest do
       )
 
     {:ok, l} = :gen_tcp.listen(0, ifaddr: {:local, path}, mode: :binary, active: false)
-    System.put_env("HERDR_BROKER_SOCK", path)
-    System.put_env("HERDR_LIVE_GEN", "7")
+    System.put_env("DYNIDE_BROKER_SOCK", path)
+    System.put_env("DYNIDE_GEN", "7")
 
     on_exit(fn ->
-      System.delete_env("HERDR_BROKER_SOCK")
-      System.delete_env("HERDR_LIVE_GEN")
+      System.delete_env("DYNIDE_BROKER_SOCK")
+      System.delete_env("DYNIDE_GEN")
       :persistent_term.erase({Link, :link})
       :gen_tcp.close(l)
       File.rm(path)

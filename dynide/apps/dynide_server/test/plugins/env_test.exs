@@ -26,15 +26,15 @@ defmodule DynideServer.Plugins.EnvTest do
     assert JSON.decode!(env["HERDR_PLUGIN_CONTEXT_JSON"]) == ctx
 
     assert is_binary(env["HERDR_SOCKET_PATH"]) and
-             env["HERDR_LIVE_API"] == env["HERDR_SOCKET_PATH"]
+             env["DYNIDE_API"] == env["HERDR_SOCKET_PATH"]
   end
 
-  test "HERDR_BIN_PATH is always a herdr-live launcher, never a bare herdr" do
+  test "HERDR_BIN_PATH is always a dynIDE launcher, never a bare herdr" do
     env = Map.new(Env.for_command(@plugin, %{}, %{}))
     bin = env["HERDR_BIN_PATH"]
-    assert env["HERDR_LIVE_BIN"] == bin
+    assert env["DYNIDE_BIN"] == bin
     assert File.regular?(bin), inspect(bin)
-    assert Path.basename(bin) == "herdr-live"
+    assert Path.basename(bin) == "dynide"
   end
 
   test "event, entrypoint, link and click modifiers in shift,alt,ctrl order" do
@@ -61,7 +61,7 @@ defmodule DynideServer.Plugins.EnvTest do
   test "the VM's handoff and launcher vars are unset" do
     env = Map.new(Env.for_command(@plugin, %{}, %{}))
 
-    for v <- ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN HERDR_LIVE_RUNTIME_DIR HERDR_LIVE_STATE_DIR),
+    for v <- ~w(DYNIDE_BROKER_SOCK DYNIDE_GEN DYNIDE_RUNTIME_DIR DYNIDE_STATE_DIR),
         do: assert(Map.fetch(env, v) == {:ok, nil}, v)
   end
 

@@ -1,11 +1,11 @@
 #!/bin/sh
-# Smoke test: herdr-live boots with the terminal client attached (no
-# HERDR_LIVE_HEADLESS) on the real /dev/tty of a script(1) pty, sized 120x40.
+# Smoke test: dynIDE boots with the terminal client attached (no
+# DYNIDE_HEADLESS) on the real /dev/tty of a script(1) pty, sized 120x40.
 # Run 1: logs 'terminal client started', paints a frame (alt screen entered,
-# TERMINAL status), then one graceful `herdr-live kernel-restart`: the old
+# TERMINAL status), then one graceful `dynide kernel-restart`: the old
 # client restores the tty, the new VM adopts the app (Store) and its client
 # starts and puts the tty back in raw mode. It stops on SIGTERM with status 0
-# and 'herdr-live stopped', the transcript ends with the restore (alt screen
+# and 'dynide stopped', the transcript ends with the restore (alt screen
 # left, modes reset) and the tty settings are unchanged. Run 2: kill -9 of the
 # primary VM; the broker hands off to a new VM that adopts the app and whose
 # client repaints, then SIGTERM stops it with status 0, the tty settings
@@ -73,14 +73,14 @@ stty cols 120 rows 40
 stty -a >"$tmp/before.\$run"
 log="$tmp/log.\$run"
 # session files (M8) under the run dir, never the real session
-export HERDR_LIVE_STATE_DIR="$tmp/state.\$run"
+export DYNIDE_STATE_DIR="$tmp/state.\$run"
 # the run's config file (M13): no first-run welcome modal
-export HERDR_LIVE_CONFIG="$tmp/config.toml"
-HERDR_LIVE_RUNTIME_DIR="$tmp/rt.\$run" HERDR_LIVE_API="$tmp/ctl.\$run" HERDR_LIVE_LOG="\$log" "$root/bin/herdr-live" &
+export DYNIDE_CONFIG="$tmp/config.toml"
+DYNIDE_RUNTIME_DIR="$tmp/rt.\$run" DYNIDE_API="$tmp/ctl.\$run" DYNIDE_LOG="\$log" "$root/bin/dynide" &
 pid=\$!
 echo "\$pid" >"$tmp/pid.\$run"
 i=0
-ready() { grep -qs 'herdr-live started' "\$log" && grep -qs 'terminal client started' "\$log"; }
+ready() { grep -qs 'dynide started' "\$log" && grep -qs 'terminal client started' "\$log"; }
 until ready; do
   i=\$((i + 1))
   if [ "\$i" -gt $((timeout * 2)) ] || ! alive "\$pid"; then
@@ -92,7 +92,7 @@ until ready; do
 done
 sleep 1
 if [ "\$2" = TERM ]; then
-  HERDR_LIVE_RUNTIME_DIR="$tmp/rt.\$run" HERDR_LIVE_API="$tmp/ctl.\$run" "$root/bin/herdr-live" kernel-restart >"$tmp/restart.\$run" 2>&1
+  DYNIDE_RUNTIME_DIR="$tmp/rt.\$run" DYNIDE_API="$tmp/ctl.\$run" "$root/bin/dynide" kernel-restart >"$tmp/restart.\$run" 2>&1
   echo \$? >"$tmp/restart_status.\$run"
   i=0
   until [ "\$(grep -c 'terminal client started' "\$log")" -ge 2 ]; do
@@ -104,9 +104,9 @@ if [ "\$2" = TERM ]; then
   stty -a >"$tmp/mid.\$run"
 fi
 if [ "\$2" = KILL ]; then
-  # bin/herdr-live execs the broker; kill -9 its primary VM, wait for the
+  # bin/dynide execs the broker; kill -9 its primary VM, wait for the
   # handoff and the new VM's client, then stop the broker like run 1
-  vm=\$(HERDR_LIVE_RUNTIME_DIR="$tmp/rt.\$run" HERDR_LIVE_API="$tmp/ctl.\$run" "$root/bin/herdr-live" status | sed -n 's/^primary_pid=//p')
+  vm=\$(DYNIDE_RUNTIME_DIR="$tmp/rt.\$run" DYNIDE_API="$tmp/ctl.\$run" "$root/bin/dynide" status | sed -n 's/^primary_pid=//p')
   echo "\$vm" >"$tmp/vm.\$run"
   kill -KILL "\$vm"
   i=0
@@ -157,8 +157,8 @@ log="$tmp/log.term"
 [ "$(cat "$tmp/status.term")" = 0 ] || fail "term: exit status $(cat "$tmp/status.term") (wanted 0); log: $(tail -n 20 "$log" 2>&1)"
 echo "PASS: SIGTERM: exit status 0"
 grep -q 'terminal client started' "$log" || fail "log lacks 'terminal client started'"
-grep -q 'herdr-live stopped' "$log" || fail "log lacks 'herdr-live stopped'"
-echo "PASS: SIGTERM: log has herdr-live started, terminal client started, herdr-live stopped"
+grep -q 'dynide stopped' "$log" || fail "log lacks 'dynide stopped'"
+echo "PASS: SIGTERM: log has dynide started, terminal client started, dynide stopped"
 has term '\033\\[?1049h' || fail "transcript lacks the alt screen enable"
 has term 'TERMINAL' || fail "transcript lacks a rendered frame (TERMINAL status)"
 echo "PASS: SIGTERM: alt screen entered and a frame with the TERMINAL status painted"

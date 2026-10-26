@@ -1,7 +1,7 @@
 defmodule DynideCli.Relay do
   @moduledoc """
-  `herdr-live attach-relay [<session>]`: stdio <-> the local client socket, run on the server
-  host over ssh by `herdr-live attach <host>`. The relay reads the client token itself and
+  `dynide attach-relay [<session>]`: stdio <-> the local client socket, run on the server
+  host over ssh by `dynide attach <host>`. The relay reads the client token itself and
   sends `{:auth, token}` as the first frame (R2), so the token never leaves the host.
 
   Bytes are relayed raw: the framing is the client's and the server's business. Exit 0 when
@@ -12,7 +12,7 @@ defmodule DynideCli.Relay do
 
   alias DynideScene.Wire
 
-  @usage "usage: herdr-live attach-relay [<session>]\n"
+  @usage "usage: dynide attach-relay [<session>]\n"
   @drain_ms 5_000
 
   @doc "The usage text."
@@ -31,7 +31,7 @@ defmodule DynideCli.Relay do
       pump(socket, Port.open({:fd, 0, 1}, [:binary, :stream, :eof]))
     else
       {:error, text} ->
-        :file.write(:standard_error, ["herdr-live: ", text, ?\n])
+        :file.write(:standard_error, ["dynide: ", text, ?\n])
         1
     end
   end
@@ -48,7 +48,7 @@ defmodule DynideCli.Relay do
          t when t != "" <- String.trim(t) do
       {:ok, t}
     else
-      _ -> {:error, "no client token at #{path} (is herdr-live running?)"}
+      _ -> {:error, "no client token at #{path} (is dynide running?)"}
     end
   end
 

@@ -141,11 +141,11 @@ defmodule DynideTerm.Client.Term.Render.Chrome.ModalTest do
     assert hit(l, [{:modal, 1}, :actions, :apply])
   end
 
-  test "modal_onboarding_80x24: herdr-live lines, prefix keycaps in the accent, continue" do
+  test "modal_onboarding_80x24: dynide lines, prefix keycaps in the accent, continue" do
     sc = Fixture.load("modal_onboarding_80x24")
     t = texts(sc)
     box = Enum.map(4..19, &String.slice(Enum.at(t, &1), 8, 64))
-    assert Enum.at(box, 1) == "│" <> String.pad_trailing(" herdr-live", 62) <> "│"
+    assert Enum.at(box, 1) == "│" <> String.pad_trailing(" dynIDE", 62) <> "│"
     assert Enum.at(box, 4) =~ "│ this is a mouse-first terminal."
     line = " ctrl+b enters prefix mode · ? shows keybinds and settings"
     assert Enum.at(box, 8) == "│" <> String.pad_trailing(line, 62) <> "│"

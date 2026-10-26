@@ -10,7 +10,7 @@ use std::time::Duration;
 /// One request, one reply. Exit 2 when no broker answers.
 fn call(sock: &Path, k: u8, body: &[u8], timeout: Option<Duration>) -> Result<Vec<u8>, i32> {
     let Ok(s) = UnixStream::connect(sock) else {
-        eprintln!("herdr-live: no broker at {}", sock.display());
+        eprintln!("dynide: no broker at {}", sock.display());
         return Err(2);
     };
     let reply = (|| -> std::io::Result<dynide_fdpass::Frame> {
@@ -23,7 +23,7 @@ fn call(sock: &Path, k: u8, body: &[u8], timeout: Option<Duration>) -> Result<Ve
     match reply {
         Ok(f) => Ok(f.body),
         Err(e) => {
-            eprintln!("herdr-live: broker at {}: {e}", sock.display());
+            eprintln!("dynide: broker at {}: {e}", sock.display());
             Err(1)
         }
     }

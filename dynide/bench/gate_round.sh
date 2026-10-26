@@ -4,7 +4,7 @@
 # Suites: env m3fake m3real m3real120 osfloor reload handoff glass herdrref (default: all).
 # Runs suites one after another; never in parallel with another bench.
 set -uo pipefail
-live=$(cd "$(dirname "$0")/.." && pwd)
+dynide=$(cd "$(dirname "$0")/.." && pwd)
 root=$(cd "$dynide/.." && pwd)
 tag=${1:?tag}; shift
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -30,7 +30,7 @@ load() { if [ "$os" = darwin ]; then echo "$(uptime | sed 's/.*load averages*: /
 run() {
   local name=$1; shift
   echo "== $name start load=$(load) $(date +%T)" | tee -a "$out/summary.txt"
-  ( cd "$live" && "$@" ) > "$out/$name.log" 2>&1
+  ( cd "$dynide" && "$@" ) > "$out/$name.log" 2>&1
   local st=$?
   echo "== $name exit=$st end load=$(load) $(date +%T)" | tee -a "$out/summary.txt"
 }

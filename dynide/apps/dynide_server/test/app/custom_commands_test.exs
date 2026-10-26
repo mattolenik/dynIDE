@@ -135,7 +135,7 @@ defmodule DynideServer.App.CustomCommandsTest do
     assert env["HERDR_ACTIVE_WORKSPACE_ID"] == "w1"
     assert env["HERDR_ACTIVE_TAB_ID"] == Ids.tab(1, 1)
     assert env["HERDR_ACTIVE_PANE_ID"] == "p1"
-    assert env["HERDR_LIVE_API"] == SocketPath.path()
+    assert env["DYNIDE_API"] == SocketPath.path()
     refute Map.has_key?(env, "HERDR_ACTIVE_PANE_CWD")
   end
 
@@ -235,7 +235,7 @@ defmodule DynideServer.App.CustomCommandsTest do
     # no pane identity, not even one the VM inherited (nil: the kernel removes it)
     env = Map.new(Keeper.last_spec().env)
 
-    for k <- ~w(HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID HERDR_BROKER_SOCK HERDR_LIVE_GEN),
+    for k <- ~w(HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID DYNIDE_BROKER_SOCK DYNIDE_GEN),
         do: assert(Map.fetch(env, k) == {:ok, nil}, k)
 
     :ok = Store.event(Event.key("q"), @size)

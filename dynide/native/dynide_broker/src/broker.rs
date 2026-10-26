@@ -1619,7 +1619,7 @@ mod tests {
     }
 
     fn new_argv() -> Vec<OsString> {
-        vec!["/r/0.1.1/bin/herdr_live".into(), "start".into()]
+        vec!["/r/0.1.1/bin/dynide_vm".into(), "start".into()]
     }
 
     #[test]
@@ -1647,7 +1647,7 @@ mod tests {
         let (g, r, _vm4) = h.vm();
         assert_eq!((g, r), (4, Role::Standby));
         assert_eq!(argv_of(&h, 4), new_argv());
-        h.wait_status("vm_argv=/r/0.1.1/bin/herdr_live start");
+        h.wait_status("vm_argv=/r/0.1.1/bin/dynide_vm start");
     }
 
     #[test]

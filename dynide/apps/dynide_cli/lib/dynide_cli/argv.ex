@@ -1,9 +1,9 @@
 defmodule DynideCli.Argv do
   @moduledoc """
-  Pure argv parsing for `herdr-live <verb>`: argv and env in, an API request out.
+  Pure argv parsing for `dynide <verb>`: argv and env in, an API request out.
 
   Each command is a row of data: words, method, positionals, options, output mode
-  and its usage line (the Spec's `cli` string, minus `herdr-live `, checked by the
+  and its usage line (the Spec's `cli` string, minus `dynide `, checked by the
   integration conformance test). Ids are passed through as given (the server
   validates them); enums are checked here so a typo is a usage error (exit 2).
 
@@ -59,7 +59,7 @@ defmodule DynideCli.Argv do
   defp cmd(words, method, pos, opts, out, usage),
     do: %{words: words, method: method, pos: pos, opts: opts, out: out, usage: usage}
 
-  @doc "Every command row; `usage` is the CLI form without the `herdr-live ` prefix."
+  @doc "Every command row; `usage` is the CLI form without the `dynide ` prefix."
   @spec commands() :: [map()]
   def commands do
     server() ++
@@ -543,7 +543,7 @@ defmodule DynideCli.Argv do
         },
         :json,
         "agent explain <target> [--json] [--verbose] | " <>
-          "herdr-live agent explain --file PATH --agent LABEL [--json]"
+          "dynide agent explain --file PATH --agent LABEL [--json]"
       ),
       cmd(
         ~w(agent wait),
@@ -729,8 +729,8 @@ defmodule DynideCli.Argv do
   @doc "The full usage text."
   @spec usage() :: String.t()
   def usage do
-    lines = Enum.map_join(commands(), "\n", &("  herdr-live " <> &1.usage))
-    "usage: herdr-live <verb> ...\n" <> lines <> "\n"
+    lines = Enum.map_join(commands(), "\n", &("  dynide " <> &1.usage))
+    "usage: dynide <verb> ...\n" <> lines <> "\n"
   end
 
   @doc "Parses argv (without the program name) against `env` into a request."
@@ -748,8 +748,8 @@ defmodule DynideCli.Argv do
   end
 
   defp unknown([]), do: ""
-  defp unknown(["" | _]), do: "herdr-live: empty command\n"
-  defp unknown(argv), do: "herdr-live: unknown command #{Enum.join(Enum.take(argv, 2), " ")}\n"
+  defp unknown(["" | _]), do: "dynide: empty command\n"
+  defp unknown(argv), do: "dynide: unknown command #{Enum.join(Enum.take(argv, 2), " ")}\n"
 
   # longest match first: two-word commands before one-word ones
   defp find(argv) do
@@ -764,7 +764,7 @@ defmodule DynideCli.Argv do
   defp with_usage(_c, {:ok, req}), do: req
 
   defp with_usage(c, {:error, msg}),
-    do: {:usage, "herdr-live: #{msg}\nusage: herdr-live #{c.usage}\n"}
+    do: {:usage, "dynide: #{msg}\nusage: dynide #{c.usage}\n"}
 
   defp print(%{words: ["--default-config"]} = c, [_ | _]),
     do: with_usage(c, {:error, "takes no arguments"})
@@ -775,7 +775,7 @@ defmodule DynideCli.Argv do
         {:print, text}
 
       {:error, r} ->
-        {:usage, "herdr-live: cannot read default config: #{:file.format_error(r)}\n"}
+        {:usage, "dynide: cannot read default config: #{:file.format_error(r)}\n"}
     end
   end
 

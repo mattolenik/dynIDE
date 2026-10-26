@@ -4,15 +4,15 @@
 #                                 [panes=15] [only=typing|flood]
 # unix: the client socket directly (reads client.token). relay: bench/remote/fake_ssh.sh as a
 # Port, the argv `attach <host>` uses (R13); the relay authenticates. ssh=<target>: the same
-# argv with a real ssh ($HERDR_LIVE_SSH else ssh, $HERDR_LIVE_REMOTE_BIN else herdr-live).
+# argv with a real ssh ($DYNIDE_SSH else ssh, $DYNIDE_REMOTE_BIN else dynide).
 # Framing is duplicated here (len::32-big + ETF, decoded without [:safe]: we trust our own
 # server) instead of loading the compiled apps. Packed rows: 32-byte cells, glyph first.
 # frame_ms is a server config value (config/config.exs, default 8) with no per-run override;
 # the bench prints what the config says. Every metric is one `REMOTE ` line.
-# HERDR_BENCH_SERVER_ROOT=<dir> with ssh=<target>: no local broker; the server is already
+# DYNIDE_BENCH_SERVER_ROOT=<dir> with ssh=<target>: no local broker; the server is already
 # running on <target> with its API socket at <dir>/ctl.sock, and the CLI calls and the flood
 # file go over the same ssh (bench/remote/linux_ssh.sh). The relay finds the instance through
-# HERDR_LIVE_API, which the ssh command must forward (SendEnv, AcceptEnv on the server).
+# DYNIDE_API, which the ssh command must forward (SendEnv, AcceptEnv on the server).
 Code.require_file("../handoff/driver.exs", __DIR__)
 alias HandoffDriver, as: D
 
@@ -28,13 +28,13 @@ defmodule RemoteBench do
     end
   end
 
-  def server_root, do: System.get_env("HERDR_BENCH_SERVER_ROOT")
+  def server_root, do: System.get_env("DYNIDE_BENCH_SERVER_ROOT")
 
   # a shell command on the server host: over ssh when the server is remote, else locally
   def on_server(cmd) do
     case {server_root(), System.get_env("BENCH_TRANSPORT")} do
       {root, "ssh=" <> target} when is_binary(root) ->
-        [exe | pre] = String.split(System.get_env("HERDR_LIVE_SSH", "ssh"))
+        [exe | pre] = String.split(System.get_env("DYNIDE_SSH", "ssh"))
 
         System.cmd(System.find_executable(exe) || exe, pre ++ ["-T", target, cmd],
           stderr_to_stdout: true
@@ -48,13 +48,13 @@ defmodule RemoteBench do
   def sq(a), do: "'" <> String.replace(a, "'", "'\\''") <> "'"
 
   def cli(%{remote: true} = b, args) do
-    bin = System.get_env("HERDR_LIVE_REMOTE_BIN", "herdr-live")
+    bin = System.get_env("DYNIDE_REMOTE_BIN", "dynide")
     api = Path.join(b.root, "ctl.sock")
 
     {out, st} =
-      on_server(Enum.map_join(["env", "HERDR_LIVE_API=" <> api, bin | args], " ", &sq/1))
+      on_server(Enum.map_join(["env", "DYNIDE_API=" <> api, bin | args], " ", &sq/1))
 
-    st == 0 || raise "herdr-live #{Enum.join(args, " ")} failed (#{st}): #{out}"
+    st == 0 || raise "dynide #{Enum.join(args, " ")} failed (#{st}): #{out}"
     out
   end
 
@@ -62,14 +62,14 @@ defmodule RemoteBench do
     {out, st} =
       System.cmd(D.bin(), args,
         env: [
-          {"HERDR_LIVE_API", Path.join(b.root, "ctl.sock")},
-          {"HERDR_LIVE_STATE_DIR", Path.join(b.root, "state")},
+          {"DYNIDE_API", Path.join(b.root, "ctl.sock")},
+          {"DYNIDE_STATE_DIR", Path.join(b.root, "state")},
           {"PATH", D.path()}
         ],
         stderr_to_stdout: true
       )
 
-    st == 0 || raise "herdr-live #{Enum.join(args, " ")} failed (#{st}): #{out}"
+    st == 0 || raise "dynide #{Enum.join(args, " ")} failed (#{st}): #{out}"
     out
   end
 
@@ -102,8 +102,8 @@ defmodule RemoteBench do
 
   def connect(b, "ssh=" <> target) do
     b[:remote] || D.wait(fn -> File.exists?(Path.join(b.root, "client.token")) end, 60_000)
-    exe = System.get_env("HERDR_LIVE_SSH", "ssh")
-    open_ssh(b, exe, target, System.get_env("HERDR_LIVE_REMOTE_BIN", "herdr-live"))
+    exe = System.get_env("DYNIDE_SSH", "ssh")
+    open_ssh(b, exe, target, System.get_env("DYNIDE_REMOTE_BIN", "dynide"))
   end
 
   # same argv as DynideTerm.Remote.Args.ssh_command/2
@@ -118,8 +118,8 @@ defmodule RemoteBench do
         :exit_status,
         args: pre ++ opts ++ [host, bin, "attach-relay"],
         env: [
-          {~c"HERDR_LIVE_API", String.to_charlist(Path.join(b.root, "ctl.sock"))},
-          {~c"HERDR_LIVE_STATE_DIR", String.to_charlist(Path.join(b.root, "state"))},
+          {~c"DYNIDE_API", String.to_charlist(Path.join(b.root, "ctl.sock"))},
+          {~c"DYNIDE_STATE_DIR", String.to_charlist(Path.join(b.root, "state"))},
           {~c"PATH", String.to_charlist(D.path())}
         ]
       ])

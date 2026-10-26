@@ -86,7 +86,7 @@ defmodule DynideServer.App.StoreConfigTest do
     assert Store.snapshot().ui.keybinds.prefix == [{"a", [:ctrl]}]
   end
 
-  test "herdr-live starts with an undecodable file: defaults and a warning", %{path: path} do
+  test "dynide starts with an undecodable file: defaults and a warning", %{path: path} do
     File.write!(path, "this is = = not toml")
     Store.subscribe(self())
     :ok = Store.event({:resize, @size}, @size)

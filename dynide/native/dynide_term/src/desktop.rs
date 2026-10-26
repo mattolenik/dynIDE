@@ -63,7 +63,7 @@ fn notify_tools(_env_set: impl Fn(&str) -> bool) -> Vec<Tool> {
 #[cfg(target_os = "linux")]
 fn notify_tools(env_set: impl Fn(&str) -> bool) -> Vec<Tool> {
     if env_set("DISPLAY") || env_set("WAYLAND_DISPLAY") {
-        vec![&["notify-send", "--app-name", "herdr-live", "--"]]
+        vec![&["notify-send", "--app-name", "dynide", "--"]]
     } else {
         Vec::new()
     }
@@ -157,7 +157,7 @@ fn run(tools: &[&[&str]], args: &[&str], input: Option<Vec<u8>>) -> Result<(), E
 fn reap(mut child: Child, input: Option<Vec<u8>>) -> io::Result<()> {
     let (tx, rx) = mpsc::channel::<(Child, Option<Vec<u8>>)>();
     let spawned = std::thread::Builder::new()
-        .name("herdr-desktop".into())
+        .name("dynide-desktop".into())
         .spawn(move || {
             let Ok((mut child, input)) = rx.recv() else {
                 return;
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn no_tool_is_unavailable() {
         assert_eq!(
-            run(&[&["/nonexistent/herdr-tool"]], &[], None),
+            run(&[&["/nonexistent/dynide-tool"]], &[], None),
             Err(Error::Unavailable)
         );
         assert_eq!(run(&[], &[], Some(b"x".to_vec())), Err(Error::Unavailable));
@@ -240,11 +240,11 @@ mod tests {
 
     #[test]
     fn falls_through_to_the_next_tool_and_feeds_stdin() {
-        let dir = std::env::temp_dir().join(format!("herdr-desktop-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("dynide-desktop-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("tmp dir");
         let out = dir.join("out");
         let script = format!("cat > '{}'", out.display());
-        let tools: [&[&str]; 2] = [&["/nonexistent/herdr-tool"], &["sh", "-c", &script]];
+        let tools: [&[&str]; 2] = [&["/nonexistent/dynide-tool"], &["sh", "-c", &script]];
         assert_eq!(run(&tools, &[], Some(b"hello".to_vec())), Ok(()));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while std::fs::read(&out).ok().as_deref() != Some(b"hello".as_slice()) {
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn trailing_arg_is_passed() {
-        let dir = std::env::temp_dir().join(format!("herdr-desktop-arg-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("dynide-desktop-arg-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("tmp dir");
         let out = dir.join("out");
         let script = format!("printf %s \"$0\" > '{}'", out.display());
@@ -292,11 +292,11 @@ mod tests {
             let tools = notify_tools(only(env));
             assert_eq!(
                 argv(tools[0], &notify_args("-t", "b")),
-                ["notify-send", "--app-name", "herdr-live", "--", "-t", "b"]
+                ["notify-send", "--app-name", "dynide", "--", "-t", "b"]
             );
             assert_eq!(
                 argv(tools[0], &notify_args("t", "")),
-                ["notify-send", "--app-name", "herdr-live", "--", "t"]
+                ["notify-send", "--app-name", "dynide", "--", "t"]
             );
         }
     }

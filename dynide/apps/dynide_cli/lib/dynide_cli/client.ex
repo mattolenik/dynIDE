@@ -15,14 +15,14 @@ defmodule DynideCli.Client do
   @opts [:binary, packet: :line, active: false, buffer: @buffer]
 
   @doc """
-  `$HERDR_LIVE_API`, else `${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/api.sock`;
+  `$DYNIDE_API`, else `${XDG_STATE_HOME:-$HOME/.local/state}/dynide/api.sock`;
   an empty variable counts as unset. The same rule as `DynideServer.Api.SocketPath`.
   """
   @spec socket_path(%{optional(String.t()) => String.t()}) :: String.t()
   def socket_path(env) do
-    case {env(env, "HERDR_LIVE_API"), env(env, "XDG_STATE_HOME")} do
-      {nil, nil} -> Path.join(env(env, "HOME") || "", ".local/state/herdr-live/api.sock")
-      {nil, state} -> Path.join(state, "herdr-live/api.sock")
+    case {env(env, "DYNIDE_API"), env(env, "XDG_STATE_HOME")} do
+      {nil, nil} -> Path.join(env(env, "HOME") || "", ".local/state/dynide/api.sock")
+      {nil, state} -> Path.join(state, "dynide/api.sock")
       {path, _} -> path
     end
   end

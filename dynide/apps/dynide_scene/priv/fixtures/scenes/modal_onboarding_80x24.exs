@@ -295,7 +295,7 @@
             role: :text,
             id: :title,
             rect: nil,
-            text: "herdr-live",
+            text: "dynIDE",
             token: :strong,
             props: %{},
             children: []

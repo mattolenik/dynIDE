@@ -120,7 +120,7 @@ defmodule DynideIntegration.CliConformanceTest do
   # herdr's output per verb (ruling R6). `Output::Quiet` leaves of src/cli/pane/bindings.rs
   # and `quiet: true` of workspace_bindings.rs print nothing on success (`send_ok_request`);
   # `Output::Read` prints the text (`print_read_response`); every other API verb prints
-  # the whole reply (`print_response`). The rest are herdr-live's own verbs, or herdr's
+  # the whole reply (`print_response`). The rest are dynIDE's own verbs, or herdr's
   # CLI-local text (agent explain, plugin config-dir, server agent-manifests).
   @quiet ~w(pane.send_text pane.send_keys pane.run pane.report_agent pane.report_agent_session
             pane.release_agent pane.report_metadata workspace.report_metadata)
@@ -174,7 +174,7 @@ defmodule DynideIntegration.CliConformanceTest do
 
   test "every Spec cli string starts with a verb the parser accepts" do
     for m <- Spec.methods() do
-      assert "herdr-live " <> rest = m.cli
+      assert "dynide " <> rest = m.cli
       [verb | _] = String.split(rest, " ")
       assert verb in Argv.verbs(), "#{m.name}: #{m.cli}"
     end
@@ -186,7 +186,7 @@ defmodule DynideIntegration.CliConformanceTest do
       for c <- Argv.commands(),
           not Map.get(c, :alias, false),
           into: %{},
-          do: {c.method, "herdr-live " <> c.usage}
+          do: {c.method, "dynide " <> c.usage}
 
     for m <- Spec.methods() do
       assert usages[m.name] == m.cli, "#{m.name}: spec #{inspect(m.cli)}"
@@ -199,11 +199,11 @@ defmodule DynideIntegration.CliConformanceTest do
 
   test "client verbs are the remote client's usage lines, and the launcher prints them" do
     clis = Spec.client_verbs() |> Enum.map(& &1.cli)
-    usage = Enum.map(Args.usage_lines(), &"herdr-live #{&1}")
+    usage = Enum.map(Args.usage_lines(), &"dynide #{&1}")
     assert usage -- clis == []
-    assert "herdr-live attach-relay [<session>]" in clis
+    assert "dynide attach-relay [<session>]" in clis
 
-    launcher = File.read!(Path.expand("../../../bin/herdr-live", __DIR__))
+    launcher = File.read!(Path.expand("../../../bin/dynide", __DIR__))
     for line <- usage, do: assert(launcher =~ line)
   end
 end

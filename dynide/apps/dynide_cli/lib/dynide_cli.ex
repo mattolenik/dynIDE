@@ -1,13 +1,13 @@
 defmodule DynideCli do
   @moduledoc """
-  `herdr-live <verb>`: parse argv (`DynideCli.Argv`), send one request over the API
+  `dynide <verb>`: parse argv (`DynideCli.Argv`), send one request over the API
   socket (`DynideCli.Client`), print the reply (`DynideCli.Output`).
 
   Exit codes: 0 success (and `help`, `--help`: usage on stdout), 1 an API error (the
   whole `{"error","id"}` reply as JSON on stderr, herdr's shape; no server is herdr's
   `server_not_running` error) or an event stream the server closed, 2 a usage error.
 
-  `bin/herdr-live` starts this as `erl -noinput -run Elixir.DynideCli main_erl -extra
+  `bin/dynide` starts this as `erl -noinput -run Elixir.DynideCli main_erl -extra
   <args>` (no Elixir boot, no stdin reads, so it is safe in `while read` loops).
   """
 
@@ -51,7 +51,7 @@ defmodule DynideCli do
           code
 
         {:DOWN, ^ref, :process, _, reason} ->
-          err("herdr-live: internal error: #{inspect(reason, limit: 20)}\n")
+          err("dynide: internal error: #{inspect(reason, limit: 20)}\n")
           1
       end
 
@@ -104,7 +104,7 @@ defmodule DynideCli do
         emit(Output.render(:json, not_running(method, path)))
 
       {:error, r} ->
-        err("herdr-live: cannot connect to #{path}: #{inspect(r)}\n")
+        err("dynide: cannot connect to #{path}: #{inspect(r)}\n")
         1
     end
   end
@@ -122,7 +122,7 @@ defmodule DynideCli do
       "error" => %{
         "code" => "server_not_running",
         "message" =>
-          "no herdr-live server is running at #{path}; run `herdr-live` to start it, or `herdr-live attach` to join a running one"
+          "no dynIDE server is running at #{path}; run `dynide` to start it, or `dynide attach` to join a running one"
       }
     }
 
@@ -156,7 +156,7 @@ defmodule DynideCli do
   end
 
   defp lost_text(msg) do
-    err(["herdr-live: ", msg, ?\n])
+    err(["dynide: ", msg, ?\n])
     1
   end
 
@@ -201,7 +201,7 @@ defmodule DynideCli do
   end
 
   defp lost(r) do
-    err(["herdr-live: ", lost_msg(r), ?\n])
+    err(["dynide: ", lost_msg(r), ?\n])
     1
   end
 

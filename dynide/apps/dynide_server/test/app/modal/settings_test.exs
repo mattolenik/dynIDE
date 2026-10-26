@@ -102,7 +102,7 @@ defmodule DynideServer.App.Modal.SettingsTest do
 
     assert Enum.map(items(app), & &1.text) == [
              "off",
-             "inside herdr",
+             "inside dynIDE",
              "via terminal",
              "via system"
            ]

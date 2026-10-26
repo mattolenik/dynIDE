@@ -4,14 +4,14 @@ it needs authenticated claude/codex/opencode on PATH and spends model tokens.
 
     python3 scripts/agent_live_smoke.py [-v] [OUT_DIR] [AGENT...]
 
-Launches bin/herdr-live attached at 120x40 (tty_harness.Herdr: its own log, API
+Launches bin/dynide attached at 120x40 (tty_harness.Herdr: its own log, API
 socket, runtime, state and config under OUT_DIR, default
-../.superpowers/sdd/m11/tmp/smoke/run), HERDR_LIVE_PERSIST=0. Per agent: pane split,
+../.superpowers/sdd/m11/tmp/smoke/run), DYNIDE_PERSIST=0. Per agent: pane split,
 pane run the CLI in a scratch cwd, then agent wait idle -> prompt -> working -> idle
 -> prompt to run `touch` -> blocked -> esc (deny) -> idle -> ctrl+c twice -> agent
 list shrinks. At each state it records agent get and agent explain --json (matched
 rule, region, evidence preview); a missed state records explain and pane read
---source recent instead. From the first pane's shell it runs "$HERDR_LIVE_BIN" agent
+--source recent instead. From the first pane's shell it runs "$DYNIDE_BIN" agent
 read / agent explain against the agent pane (the from-inside-a-pane check).
 Exits 1 when fewer than two agents reach idle, working and blocked.
 """
@@ -121,7 +121,7 @@ def smoke(h, name, tmp, first):
                                   text=True, timeout=30).stdout.strip()
     work = os.path.join(tmp, f"work-{name}")
     os.makedirs(work, exist_ok=True)
-    marker = os.path.join(tmp, f"herdr-m11-{name}")
+    marker = os.path.join(tmp, f"dynide-m11-{name}")
     _, split = js(h, "pane", "split", first, "--direction", "right")
     pane = split["pane"]["pane_id"]
     r["pane"] = pane
@@ -176,7 +176,7 @@ def smoke(h, name, tmp, first):
     settle("idle_after_work", 180000)
 
     # from inside a pane: the first pane's shell reads and explains the agent pane
-    bin_ = '"$HERDR_LIVE_BIN"'
+    bin_ = '"$DYNIDE_BIN"'
     o1, o2 = os.path.join(tmp, f"{name}-read.txt"), os.path.join(tmp, f"{name}-explain.txt")
     ran = pane_run_file(h, first, f"{bin_} agent read {pane} --lines 20 > {o1} 2>&1; echo rc=$? >> {o1}"
                         f"; {bin_} agent explain {pane} > {o2} 2>&1; echo rc=$? >> {o2}", f"{name}-in", tmp)
@@ -219,24 +219,24 @@ def smoke(h, name, tmp, first):
 
 def main():
     args = [a for a in sys.argv[1:] if a != "-v"]
-    if os.environ.get("HERDR_LIVE_API"):
-        print("BLOCKED: running inside herdr-live; run from another terminal")
+    if os.environ.get("DYNIDE_API"):
+        print("BLOCKED: running inside dynIDE; run from another terminal")
         sys.exit(2)
     tmp = os.path.abspath(args.pop(0)) if args and "/" in args[0] else \
         os.path.join(ROOT, ".superpowers", "sdd", "m11", "tmp", "smoke", "run")
     names = [a for a in args if a in AGENTS] or [n for n, (exe, _) in AGENTS.items() if shutil.which(exe)]
     shutil.rmtree(tmp, ignore_errors=True)
     os.makedirs(tmp)
-    # the launched instance must not see a surrounding herdr (or herdr-live) session
+    # the launched instance must not see a surrounding herdr (or dynide) session
     # nor the Claude Code session that may run this script (its CLAUDE* markers)
     for k in [k for k in os.environ if k.startswith(("HERDR_", "CLAUDE")) or k == "TERM_PROGRAM"]:
         del os.environ[k]
-    os.environ["HERDR_LIVE_PERSIST"] = "0"
-    # th.Herdr sets its own HERDR_LIVE_STATE_DIR per run; this default keeps any other launch isolated too
-    os.environ["HERDR_LIVE_STATE_DIR"] = os.path.join(tmp, "state")
+    os.environ["DYNIDE_PERSIST"] = "0"
+    # th.Herdr sets its own DYNIDE_STATE_DIR per run; this default keeps any other launch isolated too
+    os.environ["DYNIDE_STATE_DIR"] = os.path.join(tmp, "state")
     th.compile_then_start_clock(tmp)
     th.DEADLINE = time.monotonic() + 3600
-    h = th.Herdr(tmp, 120, 40)
+    h = th.Dynide(tmp, 120, 40)
     h.start()
     _, lst = js(h, "pane", "list")
     first = lst["panes"][0]["pane_id"]

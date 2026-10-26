@@ -9,7 +9,7 @@ pub fn line(msg: std::fmt::Arguments<'_>) {
     emit(format_args!("{msg}"));
 }
 
-/// Writes `herdr-event <kind> ts=<ms> k=v ...` (the shared telemetry format).
+/// Writes `dynide-event <kind> ts=<ms> k=v ...` (the shared telemetry format).
 pub fn write_event(kind: &str, fields: &[(&str, String)]) {
     emit(format_args!("{}", format_event(kind, fields)));
 }
@@ -27,7 +27,7 @@ fn now_ms() -> u128 {
 /// replaced by spaces and the escaped text cut to 300 bytes on a char boundary
 /// (never inside an escape pair).
 pub fn format_event(kind: &str, fields: &[(&str, String)]) -> String {
-    let mut out = format!("herdr-event {kind} ts={}", now_ms());
+    let mut out = format!("dynide-event {kind} ts={}", now_ms());
     for (k, v) in fields {
         out.push(' ');
         out.push_str(k);
@@ -109,7 +109,7 @@ mod tests {
             "broker_handoff",
             &[("kind", "crash".into()), ("ms", "42".into())],
         );
-        assert!(l.starts_with("herdr-event broker_handoff ts="), "{l}");
+        assert!(l.starts_with("dynide-event broker_handoff ts="), "{l}");
         assert!(l.ends_with(" kind=crash ms=42"), "{l}");
     }
 

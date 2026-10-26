@@ -38,7 +38,7 @@ defmodule DynideServer.App.Modal.Settings do
   @choices %{
     indicators: [dots: "color dots", symbols: "distinct symbols"],
     sound: [{true, "on"}, {false, "off"}],
-    toasts: [off: "off", herdr: "inside herdr", terminal: "via terminal", system: "via system"]
+    toasts: [off: "off", herdr: "inside dynIDE", terminal: "via terminal", system: "via system"]
   }
 
   @doc "herdr's 18 built-in theme names (`config/theme.rs`)."

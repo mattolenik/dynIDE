@@ -1,4 +1,4 @@
-class HerdrLive < Formula
+class Dynide < Formula
   desc "Terminal multiplexer for AI agents that you can edit while it runs"
   # fork origin; the human confirms the homepage at publish
   homepage "https://github.com/mattolenik/herdr"
@@ -15,21 +15,21 @@ class HerdrLive < Formula
     # it goes flat into libexec; the launcher resolves the bin symlink back to it
     libexec.install Dir["*"]
     (libexec/"releases/managed-by").write "homebrew\n"
-    bin.install_symlink libexec/"bin/herdr-live"
+    bin.install_symlink libexec/"bin/dynide"
   end
 
   def caveats
     <<~EOS
-      Updates come from Homebrew (brew upgrade herdr-live); `herdr-live update`
+      Updates come from Homebrew (brew upgrade dynide); `dynide update`
       only works for installs made with install.sh.
 
       A running instance stays pinned to the keg it started from, which brew upgrade
-      removes. After brew upgrade herdr-live, run `herdr-live kernel-restart` to move
+      removes. After brew upgrade dynide, run `dynide kernel-restart` to move
       the running sessions to the new version.
     EOS
   end
 
   test do
-    assert_match "herdr-live #{version}", shell_output("#{bin}/herdr-live --version")
+    assert_match "dynide #{version}", shell_output("#{bin}/dynide --version")
   end
 end

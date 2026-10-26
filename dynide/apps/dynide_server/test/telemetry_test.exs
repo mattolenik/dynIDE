@@ -13,17 +13,17 @@ defmodule DynideServer.TelemetryTest do
         Notice.broadcast({:handoff, %{phase: :adopted, gen: 2, panes: [1, 2, 3]}})
       end)
 
-    assert log =~ ~r/herdr-event handoff ts=\d{13} phase=adopted gen=2 panes=3/
+    assert log =~ ~r/dynide-event handoff ts=\d{13} phase=adopted gen=2 panes=3/
   end
 
   test "start and stop log vm_start and vm_stop" do
     log = capture_log(fn -> DynideServer.Application.announce_start() end)
-    assert log =~ "herdr-live started"
-    assert log =~ ~r/herdr-event vm_start ts=\d{13} gen=\d+ role=primary adopt=fresh/
+    assert log =~ "dynide started"
+    assert log =~ ~r/dynide-event vm_start ts=\d{13} gen=\d+ role=primary adopt=fresh/
 
     log = capture_log(fn -> DynideServer.Application.stop(nil) end)
-    assert log =~ "herdr-live stopped"
-    assert log =~ ~r/herdr-event vm_stop ts=\d{13} gen=\d+/
+    assert log =~ "dynide stopped"
+    assert log =~ ~r/dynide-event vm_stop ts=\d{13} gen=\d+/
   end
 
   test "a Store restarting from the mirror logs a crash line" do
@@ -39,7 +39,7 @@ defmodule DynideServer.TelemetryTest do
         {:ok, _} = Supervisor.restart_child(DynideServer.Supervisor, Store)
       end)
 
-    assert log =~ ~r/herdr-event crash ts=\d{13} proc=store reason=restart action=restored/
+    assert log =~ ~r/dynide-event crash ts=\d{13} proc=store reason=restart action=restored/
   end
 
   describe "session_lost" do
@@ -56,7 +56,7 @@ defmodule DynideServer.TelemetryTest do
       log = capture_log(&restart_store/0)
 
       assert log =~
-               ~r/herdr-event session_lost ts=\d{13} proc=store reason=fresh_restart panes=1/
+               ~r/dynide-event session_lost ts=\d{13} proc=store reason=fresh_restart panes=1/
 
       assert Keeper.ids() == []
     end
@@ -75,7 +75,7 @@ defmodule DynideServer.TelemetryTest do
       log = capture_log(&restart_store/0)
 
       assert log =~
-               ~r/herdr-event session_lost ts=\d{13} proc=store reason=reconcile_failed panes=1/
+               ~r/dynide-event session_lost ts=\d{13} proc=store reason=reconcile_failed panes=1/
     end
 
     test "an unusable carried app beside adopted panes logs session_lost" do
@@ -90,7 +90,7 @@ defmodule DynideServer.TelemetryTest do
       log = capture_log(&restart_store/0)
 
       assert log =~
-               ~r/herdr-event session_lost ts=\d{13} proc=store reason=carry_unusable panes=1/
+               ~r/dynide-event session_lost ts=\d{13} proc=store reason=carry_unusable panes=1/
     end
   end
 

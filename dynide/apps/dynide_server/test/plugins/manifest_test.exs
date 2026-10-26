@@ -189,7 +189,7 @@ defmodule DynideServer.Plugins.ManifestTest do
       )
 
     assert "unknown event 'bogus.event'" in m["warnings"]
-    assert "event tab.moved is not emitted by herdr-live yet" in m["warnings"]
+    assert "event tab.moved is not emitted by dynIDE yet" in m["warnings"]
     assert "manifest does not declare platforms; platform support unknown" in m["warnings"]
     refute Enum.any?(m["warnings"], &(&1 =~ "pane.created"))
   end

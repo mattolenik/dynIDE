@@ -101,7 +101,7 @@ defmodule DynideReload.TestGateTest do
     # so the chrome clears a "tests..." left by an earlier stale run
     assert_received {:dynide_reload, {:tests, :none, %{files: 0, failures: 0, ms: 0}}}
     refute_received {:dynide_reload, _}
-    assert [_] = Regex.scan(~r/herdr-event tests ts=\d+ result=none files=0 failures=0 ms=0/, log)
+    assert [_] = Regex.scan(~r/dynide-event tests ts=\d+ result=none files=0 failures=0 ms=0/, log)
   end
 
   test "the root is computed once at init and used when no :root is given", %{root: root, gate: gate} do
@@ -130,8 +130,8 @@ defmodule DynideReload.TestGateTest do
     TestGate.run(%{"/d" => ["test/x_test.exs"]}, runner: runner)
     assert_received {:env, env}
     assert {"MIX_ENV", "test"} in env
-    for v <- ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN HERDR_LIVE_API HERDR_LIVE_LOG
-                HERDR_LIVE_RUNTIME_DIR HERDR_LIVE_HEADLESS),
+    for v <- ~w(DYNIDE_BROKER_SOCK DYNIDE_GEN DYNIDE_API DYNIDE_LOG
+                DYNIDE_RUNTIME_DIR DYNIDE_HEADLESS),
         do: assert({v, nil} in env)
   end
 

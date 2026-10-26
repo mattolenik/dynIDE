@@ -42,24 +42,24 @@ defmodule DynideScene.WireTest do
 
   test "paths" do
     assert %{
-             socket: "/h/.local/state/herdr-live/client.sock",
-             api: "/h/.local/state/herdr-live/api.sock"
+             socket: "/h/.local/state/dynide/client.sock",
+             api: "/h/.local/state/dynide/api.sock"
            } =
              Wire.paths(%{}, "/h")
 
-    p = Wire.paths(%{"HERDR_LIVE_API" => "/t/api.sock"}, "/h")
+    p = Wire.paths(%{"DYNIDE_API" => "/t/api.sock"}, "/h")
     assert p.socket == "/t/client.sock" and p.token == "/t/client.token"
 
     p =
       Wire.paths(
-        %{"HERDR_LIVE_CLIENT_SOCK" => "/c/s.sock", "HERDR_LIVE_API" => "/t/api.sock"},
+        %{"DYNIDE_CLIENT_SOCK" => "/c/s.sock", "DYNIDE_API" => "/t/api.sock"},
         "/h"
       )
 
     assert p.socket == "/c/s.sock" and p.token == "/c/client.token"
 
-    assert Wire.paths(%{"HERDR_LIVE_API" => "", "XDG_STATE_HOME" => "/x"}, "/h").api ==
-             "/x/herdr-live/api.sock"
+    assert Wire.paths(%{"DYNIDE_API" => "", "XDG_STATE_HOME" => "/x"}, "/h").api ==
+             "/x/dynide/api.sock"
   end
 
   @attach %{

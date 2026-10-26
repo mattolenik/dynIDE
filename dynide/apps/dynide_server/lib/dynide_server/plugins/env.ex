@@ -13,24 +13,24 @@ defmodule DynideServer.Plugins.Env do
 
   @modifiers ~w(shift alt ctrl)
 
-  # this VM's own handoff and launcher state (bin/herdr-live, config/runtime.exs): never a
+  # this VM's own handoff and launcher state (bin/dynide, config/runtime.exs): never a
   # plugin's, above all not the kernel handoff socket
-  @vm_only ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN HERDR_LIVE_RUNTIME_DIR HERDR_LIVE_LOG
-              HERDR_LIVE_HEADLESS HERDR_LIVE_TEST_ON_SAVE HERDR_LIVE_PERSIST
-              HERDR_LIVE_STATE_DIR HERDR_LIVE_SESSION)
+  @vm_only ~w(DYNIDE_BROKER_SOCK DYNIDE_GEN DYNIDE_RUNTIME_DIR DYNIDE_LOG
+              DYNIDE_HEADLESS DYNIDE_TEST_ON_SAVE DYNIDE_PERSIST
+              DYNIDE_STATE_DIR DYNIDE_SESSION)
 
   @doc "`kind` holds any of `:action_id`, `:event`, `:event_json`, `:entrypoint`."
   @spec for_command(map(), map(), map()) :: env()
   def for_command(plugin, context, kind) do
     id = plugin["plugin_id"]
     socket = Path.expand(SocketPath.path())
-    bin = env("HERDR_LIVE_BIN") || launcher()
+    bin = env("DYNIDE_BIN") || launcher()
 
     [
       {"HERDR_SOCKET_PATH", socket},
-      {"HERDR_LIVE_API", socket},
+      {"DYNIDE_API", socket},
       {"HERDR_BIN_PATH", bin},
-      {"HERDR_LIVE_BIN", bin},
+      {"DYNIDE_BIN", bin},
       {"HERDR_ENV", "1"},
       {"HERDR_PLUGIN_ID", id},
       {"HERDR_PLUGIN_ROOT", plugin["plugin_root"]},
@@ -70,11 +70,11 @@ defmodule DynideServer.Plugins.Env do
 
   defp modifiers(_), do: nil
 
-  # a VM not started by bin/herdr-live: this checkout's launcher, found from the app's own
+  # a VM not started by bin/dynide: this checkout's launcher, found from the app's own
   # dir at runtime (dynide/_build/<env>/lib/dynide_server); an inherited HERDR_BIN_PATH may
   # be the real herdr's
   defp launcher,
-    do: Path.expand("../../../../bin/herdr-live", Application.app_dir(:dynide_server))
+    do: Path.expand("../../../../bin/dynide", Application.app_dir(:dynide_server))
 
   defp env(name), do: with(v when v not in [nil, ""] <- System.get_env(name), do: v)
 end

@@ -58,7 +58,7 @@ defmodule DynideServer.SceneFixturesTest do
       scene = View.compute(app, client)
       assert :ok = Scene.validate(scene)
 
-      if System.get_env("HERDR_UPDATE_FIXTURES") == "1" do
+      if System.get_env("DYNIDE_UPDATE_FIXTURES") == "1" do
         Fixture.dump(unquote(name), scene, @dir)
       else
         assert scene == Fixture.load(unquote(name), @dir)

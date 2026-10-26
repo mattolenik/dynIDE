@@ -3,9 +3,9 @@ defmodule DynideServer.Persist.Disk do
   Snapshot and scrollback files for session persistence.
 
   Files: `<dir>/session.<name>.etf` (the snapshot envelope
-  `%{format: :herdr_live_session, v, saved_at, snapshot}`) and
+  `%{format: :dynide_session, v, saved_at, snapshot}`) and
   `<dir>/session.<name>.scrollback/<pane_id>.etf`
-  (`%{format: :herdr_live_scrollback, v: 1, cols, bytes}`). Every write is atomic (temp
+  (`%{format: :dynide_scrollback, v: 1, cols, bytes}`). Every write is atomic (temp
   file in the same dir, `:file.sync`, rename), files are 0600 and directories this
   module creates are 0700. Reads use `binary_to_term(.., [:safe])`.
 
@@ -34,6 +34,9 @@ defmodule DynideServer.Persist.Disk do
   @name_re ~r/^[A-Za-z0-9_.-]{1,64}$/
   @keep_aside 5
   @scrollback_v 1
+  # ponytail: pre-rename files; drop the herdr_live_* atoms once no session.*.etf predates the rename
+  @session_formats [:dynide_session, :herdr_live_session]
+  @scrollback_formats [:dynide_scrollback, :herdr_live_scrollback]
 
   @type cfg :: %{required(:dir) => binary, required(:name) => binary, optional(atom) => term}
 
@@ -44,20 +47,20 @@ defmodule DynideServer.Persist.Disk do
       Map.merge(@defaults, Map.new(Application.get_env(:dynide_server, DynideServer.Persist, [])))
 
     env = System.get_env() |> Map.take(["XDG_STATE_HOME", "HOME"])
-    dir = resolve_dir(Map.put(env, "HERDR_LIVE_STATE_DIR", raw.dir))
+    dir = resolve_dir(Map.put(env, "DYNIDE_STATE_DIR", raw.dir))
     %{raw | dir: dir, name: resolve_name(raw.name)}
   end
 
   @doc """
-  The state dir from an env map: `HERDR_LIVE_STATE_DIR`, else
-  `${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live`. Empty values count as unset.
+  The state dir from an env map: `DYNIDE_STATE_DIR`, else
+  `${XDG_STATE_HOME:-$HOME/.local/state}/dynide`. Empty values count as unset.
   """
   @spec resolve_dir(%{optional(binary) => binary | nil}) :: binary
   def resolve_dir(env) do
     cond do
-      set?(env["HERDR_LIVE_STATE_DIR"]) -> env["HERDR_LIVE_STATE_DIR"]
-      set?(env["XDG_STATE_HOME"]) -> Path.join(env["XDG_STATE_HOME"], "herdr-live")
-      true -> Path.join([env["HOME"] || "", ".local", "state", "herdr-live"])
+      set?(env["DYNIDE_STATE_DIR"]) -> env["DYNIDE_STATE_DIR"]
+      set?(env["XDG_STATE_HOME"]) -> Path.join(env["XDG_STATE_HOME"], "dynide")
+      true -> Path.join([env["HOME"] || "", ".local", "state", "dynide"])
     end
   end
 
@@ -71,7 +74,7 @@ defmodule DynideServer.Persist.Disk do
     if is_binary(value) and Regex.match?(@name_re, value) do
       value
     else
-      Logger.warning("HERDR_LIVE_SESSION #{inspect(value)} is not a valid name; using default")
+      Logger.warning("DYNIDE_SESSION #{inspect(value)} is not a valid name; using default")
       "default"
     end
   end
@@ -89,7 +92,7 @@ defmodule DynideServer.Persist.Disk do
   def write(cfg, snapshot) do
     if Schema.plain?(snapshot) do
       envelope = %{
-        format: :herdr_live_session,
+        format: :dynide_session,
         v: Schema.version(),
         saved_at: System.os_time(:millisecond),
         snapshot: snapshot
@@ -126,7 +129,7 @@ defmodule DynideServer.Persist.Disk do
     end
   end
 
-  defp session({:ok, %{format: :herdr_live_session, v: v} = env}) when is_integer(v) do
+  defp session({:ok, %{format: f, v: v} = env}) when f in @session_formats and is_integer(v) do
     s = Map.get(env, :snapshot)
     at = Map.get(env, :saved_at)
 
@@ -234,7 +237,7 @@ defmodule DynideServer.Persist.Disk do
   @spec write_scrollback(cfg, pos_integer, binary, pos_integer) :: :ok | {:error, term}
   def write_scrollback(cfg, id, bytes, cols)
       when is_integer(id) and id > 0 and is_binary(bytes) and is_integer(cols) do
-    envelope = %{format: :herdr_live_scrollback, v: @scrollback_v, cols: cols, bytes: bytes}
+    envelope = %{format: :dynide_scrollback, v: @scrollback_v, cols: cols, bytes: bytes}
     atomic_write(scrollback_path(cfg, id), encode(envelope))
   end
 
@@ -246,7 +249,8 @@ defmodule DynideServer.Persist.Disk do
     path = scrollback_path(cfg, id)
 
     with {:ok, bin} <- File.read(path),
-         {:ok, %{format: :herdr_live_scrollback, v: @scrollback_v, bytes: b}} when is_binary(b) <-
+         {:ok, %{format: f, v: @scrollback_v, bytes: b}}
+         when f in @scrollback_formats and is_binary(b) <-
            decode(bin) do
       b
     else

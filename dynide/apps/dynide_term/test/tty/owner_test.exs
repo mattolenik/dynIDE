@@ -157,7 +157,7 @@ defmodule DynideTerm.Tty.OwnerTest do
       send(render, {:handoff, %{phase: :begin, gen: 1, panes: []}})
       assert_receive {:DOWN, ^ref, :process, ^pid, :shutdown}, 1000
       assert_receive {:trace, ^owner, :call, {Tty, :restore, [^tty]}}
-      # stopping the client does not stop herdr-live
+      # stopping the client does not stop dynIDE
       refute_received :local_exit
     after
       :erlang.trace_pattern({Tty, :_, :_}, false, [:local])

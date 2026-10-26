@@ -4,7 +4,7 @@ defmodule DynideServer.Worktree do
   Pure of server state; every function takes the directory it works in.
   """
 
-  @default_dir "~/.herdr-live/worktrees"
+  @default_dir "~/.dynide/worktrees"
 
   @doc "Branch name as a path-safe slug (herdr `branch_to_path_slug`)."
   @spec slug(binary) :: binary
@@ -24,7 +24,7 @@ defmodule DynideServer.Worktree do
     end
   end
 
-  @doc "Default checkout path: `dir/repo_name/slug(branch)`; `dir` defaults to `~/.herdr-live/worktrees`."
+  @doc "Default checkout path: `dir/repo_name/slug(branch)`; `dir` defaults to `~/.dynide/worktrees`."
   @spec default_path(binary | nil, binary, binary) :: Path.t()
   def default_path(dir, repo_name, branch) do
     Path.join([expand(dir || @default_dir), repo_name, slug(branch)])

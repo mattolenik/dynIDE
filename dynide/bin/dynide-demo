@@ -4,7 +4,7 @@
 # the NIF. scripts/tty_guard.sh restores the tty after the VM exits, whatever
 # the cause (including kill -9, which no destructor survives).
 set -u
-log=${DYNIDE_DEMO_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/dynide-demo.log}
+log=${DYNIDE_DEMO_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/dynide/dynide-demo.log}
 case $log in /*) ;; *) log=$PWD/$log ;; esac
 mkdir -p "$(dirname "$log")" || exit 1
 # resolve symlinks (portable: no readlink -f on macOS)

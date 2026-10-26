@@ -10,7 +10,7 @@ defmodule DynideCli.UpdateTest do
 
   setup %{tmp_dir: tmp} do
     {pub, priv} = :crypto.generate_key(:eddsa, :ed25519)
-    lib = Path.join(tmp, "pre fix/lib/herdr-live")
+    lib = Path.join(tmp, "pre fix/lib/dynide")
     for v <- ~w(0.0.8 0.0.9 0.1.0), do: fake_release(Path.join([lib, "releases", v]), v, pub)
     File.mkdir_p!(Path.join(lib, "releases/.stage.123"))
     File.ln_s!("releases/0.1.0", Path.join(lib, "current"))
@@ -41,8 +41,8 @@ defmodule DynideCli.UpdateTest do
       Base.encode64(pub) <> "\n"
     )
 
-    File.write!(Path.join(dir, "bin/herdr-live"), "#!/bin/sh\n")
-    File.write!(Path.join(dir, "bin/herdr_live"), "#!/bin/sh\n")
+    File.write!(Path.join(dir, "bin/dynide"), "#!/bin/sh\n")
+    File.write!(Path.join(dir, "bin/dynide_vm"), "#!/bin/sh\n")
     broker = Path.join(dir, "bin/dynide_broker")
 
     File.write!(broker, """
@@ -55,18 +55,18 @@ defmodule DynideCli.UpdateTest do
     """)
 
     File.chmod!(broker, 0o755)
-    File.chmod!(Path.join(dir, "bin/herdr-live"), 0o755)
+    File.chmod!(Path.join(dir, "bin/dynide"), 0o755)
   end
 
   defp make_tarball(tmp, v, pub) do
     stage = Path.join(tmp, "stage")
-    fake_release(Path.join(stage, "herdr-live-#{v}"), v, pub)
-    tar = Path.join(tmp, "herdr-live-#{v}-macos-aarch64.tar.gz")
+    fake_release(Path.join(stage, "dynide-#{v}"), v, pub)
+    tar = Path.join(tmp, "dynide-#{v}-macos-aarch64.tar.gz")
 
     :ok =
       :erl_tar.create(
         String.to_charlist(tar),
-        [{~c"herdr-live-#{v}", String.to_charlist(Path.join(stage, "herdr-live-#{v}"))}],
+        [{~c"dynide-#{v}", String.to_charlist(Path.join(stage, "dynide-#{v}"))}],
         [:compressed]
       )
 
@@ -124,7 +124,7 @@ defmodule DynideCli.UpdateTest do
   defp serving(lib, vm_lib \\ nil) do
     bin = Path.join(lib, "releases/0.1.0/bin")
     File.write!(Path.join(bin, "status"), "0")
-    vm = Path.join([vm_lib || lib, "releases/0.1.0/bin/herdr_live"])
+    vm = Path.join([vm_lib || lib, "releases/0.1.0/bin/dynide_vm"])
     File.write!(Path.join(bin, "status_text"), "phase=idle\nvm_argv=#{vm} start\n")
   end
 
@@ -213,10 +213,10 @@ defmodule DynideCli.UpdateTest do
     assert {code, err} == {0, ""}
     assert out =~ "updated 0.1.0 -> 0.1.1"
     assert out =~ "kernel-restart: restarted"
-    vm = Path.join(c.lib, "releases/0.1.1/bin/herdr_live")
+    vm = Path.join(c.lib, "releases/0.1.1/bin/dynide_vm")
     assert File.read!(Path.join(c.lib, "releases/0.1.0/bin/restart_args")) == "-- #{vm} start\n"
     assert current(c.lib) == "releases/0.1.1"
-    assert File.regular?(Path.join(c.lib, "current/bin/herdr-live"))
+    assert File.regular?(Path.join(c.lib, "current/bin/dynide"))
     assert {:ok, %{mode: mode}} = File.stat(Path.join(c.lib, "current/bin/dynide_broker"))
     assert Bitwise.band(mode, 0o100) != 0
 
@@ -280,7 +280,7 @@ defmodule DynideCli.UpdateTest do
     fake_release(Path.join(c.lib, "releases/0.0.7"), "0.0.7", c.pub)
     bin = Path.join(c.lib, "releases/0.1.0/bin")
     File.write!(Path.join(bin, "status"), "0")
-    vm = Path.join(c.lib, "releases/0.0.7/bin/herdr_live")
+    vm = Path.join(c.lib, "releases/0.0.7/bin/dynide_vm")
     File.write!(Path.join(bin, "status_text"), "vm_argv=#{vm} start\n")
     url = write_manifest(c.tmp, c.tarball, c.priv)
     {0, out, ""} = update(["--manifest", url, "--yes", "--no-restart"], c.ctx)
@@ -293,14 +293,14 @@ defmodule DynideCli.UpdateTest do
   end
 
   test "a broker of a source checkout or another prefix is not restarted (foreign_broker)", c do
-    other = Path.join(c.tmp, "other/lib/herdr-live")
+    other = Path.join(c.tmp, "other/lib/dynide")
     fake_release(Path.join(other, "releases/0.1.0"), "0.1.0", c.pub)
     bin = Path.join(c.lib, "releases/0.1.0/bin")
     url = write_manifest(c.tmp, c.tarball, c.priv)
 
     for text <- [
           "vm_argv=elixir --erl -noshell -noinput +Bi -S mix run --no-halt\n",
-          "vm_argv=#{other}/releases/0.1.0/bin/herdr_live start\n",
+          "vm_argv=#{other}/releases/0.1.0/bin/dynide_vm start\n",
           "phase=idle\n"
         ] do
       File.write!(Path.join(bin, "status"), "0")
@@ -316,7 +316,7 @@ defmodule DynideCli.UpdateTest do
   test "this prefix through a symlinked path is not foreign", c do
     link = Path.join(c.tmp, "linked")
     File.ln_s!(Path.join(c.tmp, "pre fix"), link)
-    serving(c.lib, Path.join(link, "lib/herdr-live"))
+    serving(c.lib, Path.join(link, "lib/dynide"))
     url = write_manifest(c.tmp, c.tarball, c.priv)
     assert {0, out, ""} = update(["--manifest", url, "--yes"], c.ctx)
     assert out =~ "kernel-restart: restarted"
@@ -327,7 +327,7 @@ defmodule DynideCli.UpdateTest do
     fake_release(Path.join(c.lib, "releases/0.0.7"), "0.0.7", c.pub)
     # another instance (its own runtime dir) pinned to 0.0.7, through any prefix spelling
     ps =
-      "/bin/zsh\n/x/y/lib/herdr-live/current/bin/dynide_broker run -- /x/y/lib/herdr-live/releases/0.0.7/bin/herdr_live start\n"
+      "/bin/zsh\n/x/y/lib/dynide/current/bin/dynide_broker run -- /x/y/lib/dynide/releases/0.0.7/bin/dynide_vm start\n"
 
     url = write_manifest(c.tmp, c.tarball, c.priv)
     {0, _out, ""} = update(["--manifest", url, "--yes"], %{c.ctx | ps: fn -> {:ok, ps} end})
@@ -346,7 +346,7 @@ defmodule DynideCli.UpdateTest do
 
   test "in_use/2 names the releases in process argv" do
     ps =
-      "beam.smp -- -root /p re/lib/herdr-live/releases/0.0.8 -bindir /p re/lib/herdr-live/releases/0.0.8/erts-16/bin\n"
+      "beam.smp -- -root /p re/lib/dynide/releases/0.0.8 -bindir /p re/lib/dynide/releases/0.0.8/erts-16/bin\n"
 
     assert Update.in_use(ps, ~w(0.0.8 0.0.80 0.0.9)) == ["0.0.8"]
     assert Update.in_use("", ~w(0.0.8)) == []
@@ -404,7 +404,7 @@ defmodule DynideCli.UpdateTest do
     fake_release(Path.join(c.lib, "releases/0.0.7"), "0.0.7", c.pub)
     bin = Path.join(c.lib, "releases/0.1.0/bin")
     File.write!(Path.join(bin, "status"), "0")
-    vm = Path.join(c.lib, "releases/0.0.8/bin/herdr_live")
+    vm = Path.join(c.lib, "releases/0.0.8/bin/dynide_vm")
     File.write!(Path.join(bin, "status_text"), "phase=idle\nvm_argv=#{vm} start\n")
     url = write_manifest(c.tmp, c.tarball, c.priv)
     {0, _out, ""} = update(["--manifest", url, "--yes"], c.ctx)
@@ -414,11 +414,10 @@ defmodule DynideCli.UpdateTest do
   end
 
   test "running/1 reads the release from vm_argv" do
-    assert Update.running(
-             "a=1\nvm_argv=/p re/lib/herdr-live/releases/0.0.8/bin/herdr_live start\n"
-           ) == ["0.0.8"]
+    assert Update.running("a=1\nvm_argv=/p re/lib/dynide/releases/0.0.8/bin/dynide_vm start\n") ==
+             ["0.0.8"]
 
-    assert Update.running("vm_argv=/p/lib/herdr-live/current/bin/herdr_live start\n") == []
+    assert Update.running("vm_argv=/p/lib/dynide/current/bin/dynide_vm start\n") == []
     assert Update.running("") == []
   end
 
@@ -531,7 +530,7 @@ defmodule DynideCli.UpdateTest do
   end
 
   for {name, entry} <- [
-        {"outside herdr-live-<V>/", :dotdot},
+        {"outside dynide-<V>/", :dotdot},
         {"a symlink", :symlink},
         {"an absolute name", :absolute}
       ] do
@@ -549,15 +548,15 @@ defmodule DynideCli.UpdateTest do
 
   # the good 0.1.1 tree plus one bad entry
   defp evil_tarball(tmp, kind) do
-    stage = Path.join(tmp, "stage/herdr-live-0.1.1")
+    stage = Path.join(tmp, "stage/dynide-0.1.1")
     File.write!(Path.join(tmp, "x"), "x")
     File.ln_s!("/etc/passwd", Path.join(tmp, "link"))
 
     bad =
       case kind do
-        :dotdot -> {~c"herdr-live-0.1.1/../x", Path.join(tmp, "x")}
-        :symlink -> {~c"herdr-live-0.1.1/bin/link", Path.join(tmp, "link")}
-        :absolute -> {~c"/tmp/herdr-live-evil", Path.join(tmp, "x")}
+        :dotdot -> {~c"dynide-0.1.1/../x", Path.join(tmp, "x")}
+        :symlink -> {~c"dynide-0.1.1/bin/link", Path.join(tmp, "link")}
+        :absolute -> {~c"/tmp/dynide-evil", Path.join(tmp, "x")}
       end
 
     tar = Path.join(tmp, "evil-#{kind}.tar.gz")
@@ -565,7 +564,7 @@ defmodule DynideCli.UpdateTest do
     :ok =
       :erl_tar.create(
         String.to_charlist(tar),
-        [{~c"herdr-live-0.1.1", String.to_charlist(stage)}, bad]
+        [{~c"dynide-0.1.1", String.to_charlist(stage)}, bad]
         |> Enum.map(fn {n, p} -> {n, to_charlist(p)} end),
         [:compressed]
       )
@@ -575,6 +574,6 @@ defmodule DynideCli.UpdateTest do
 
   test "usage errors exit 2", c do
     assert {2, "", err} = update(["--bogus"], c.ctx)
-    assert err =~ "usage: herdr-live update"
+    assert err =~ "usage: dynide update"
   end
 end

@@ -82,6 +82,6 @@ defmodule DynideServer.Plugins.PathsTest do
         else: System.delete_env("XDG_CONFIG_HOME")
     end)
 
-    assert Paths.config_dir() == "/xdg/c/herdr-live"
+    assert Paths.config_dir() == "/xdg/c/dynide"
   end
 end

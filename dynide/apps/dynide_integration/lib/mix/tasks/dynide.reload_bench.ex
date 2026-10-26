@@ -20,9 +20,9 @@ if Mix.env() == :test do
     Prints `RESULT scenario=... key=value ...` (one line) after the details. p95 is
     nearest rank, so with n=10 it is the max.
 
-    Diagnostics: `HERDR_RELOAD_BENCH_TRACE=1` prints the reload pipeline's calls (watcher
+    Diagnostics: `DYNIDE_RELOAD_BENCH_TRACE=1` prints the reload pipeline's calls (watcher
     events, `Server.reload`, compile phases, `File.touch!`) in ms since each write;
-    `HERDR_RELOAD_BENCH_IDLE=<ms>` idles that long after the scenario (before the restore).
+    `DYNIDE_RELOAD_BENCH_IDLE=<ms>` idles that long after the scenario (before the restore).
 
     Notices: the info notice lifetime is set to #{150}ms and each iteration starts after
     #{400}ms without reload events, so every `{:loaded}` notice repaints (the default 3s
@@ -71,14 +71,14 @@ if Mix.env() == :test do
       cfg = boot(scenario, opts)
       snapshot = beams()
       sup = start_reload()
-      if System.get_env("HERDR_RELOAD_BENCH_TRACE"), do: trace()
+      if System.get_env("DYNIDE_RELOAD_BENCH_TRACE"), do: trace()
       Driver.reset()
       client = start_client(@size)
       Process.put(:client, client)
 
       try do
         result = scenario(scenario, client, cfg)
-        if t = System.get_env("HERDR_RELOAD_BENCH_IDLE"), do: idle(String.to_integer(t))
+        if t = System.get_env("DYNIDE_RELOAD_BENCH_IDLE"), do: idle(String.to_integer(t))
         report(scenario, cfg, result)
       after
         teardown(cfg, snapshot, sup)
@@ -290,10 +290,10 @@ if Mix.env() == :test do
       path = Path.join(cfg.root, rel)
       t0 = now()
 
-      if System.get_env("HERDR_RELOAD_BENCH_TRACE"),
+      if System.get_env("DYNIDE_RELOAD_BENCH_TRACE"),
         do: :ets.insert(:bench_t0, {:t0, System.monotonic_time(:microsecond)})
 
-      if System.get_env("HERDR_RELOAD_BENCH_TRACE"), do: IO.puts("TRACE write #{i}")
+      if System.get_env("DYNIDE_RELOAD_BENCH_TRACE"), do: IO.puts("TRACE write #{i}")
       File.write!(path, src)
       mods = await_loaded()
       loaded = ms(t0)
@@ -631,7 +631,7 @@ if Mix.env() == :test do
 
     defp cat_file(bytes) do
       path =
-        Path.join(System.tmp_dir!(), "herdr-reload-cat-#{System.unique_integer([:positive])}")
+        Path.join(System.tmp_dir!(), "dynide-reload-cat-#{System.unique_integer([:positive])}")
 
       line = fn n -> String.pad_trailing("cat15-line #{n}", 62, ".") <> "\r\n" end
       File.write!(path, Enum.map(1..div(bytes, 64)//1, line))

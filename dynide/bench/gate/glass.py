@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Keystroke -> glass through a real pty, for herdr (the Rust reference) and herdr-live.
+"""Keystroke -> glass through a real pty, for herdr (the Rust reference) and dynide.
 
-Usage: glass.py herdr|herdr-live [--n 500] [--size 200x50] [--bin PATH]
+Usage: glass.py herdr|dynide [--n 500] [--size 200x50] [--bin PATH]
 
 The program runs attached as the session leader of a fresh WxH pty; this script is the
 host terminal on the master. Startup probes (DA1, kitty ?u, DECRQM, OSC 10/11) are
@@ -17,8 +17,8 @@ pty master (the glass for both programs). Every 60 chars a `\\r`. A key with no 
 and exits 1 if fewer than n/2 samples were taken. herdr runs isolated (XDG_CONFIG_HOME
 and XDG_RUNTIME_DIR in a temp dir, config `onboarding = false`, `--session NAME`, stopped
 and deleted afterwards);
-herdr-live is launched like scripts/tty_harness.py's Herdr (--bin, else $HERDR_LIVE_BENCH_BIN,
-else bin/herdr-live; log in the temp dir), quit with prefix q. The process groups started here are SIGKILLed on exit.
+dynIDE is launched like scripts/tty_harness.py's Dynide (--bin, else $DYNIDE_BENCH_BIN,
+else bin/dynide; log in the temp dir), quit with prefix q. The process groups started here are SIGKILLed on exit.
 """
 import argparse
 import fcntl
@@ -42,7 +42,7 @@ ROOT = os.path.dirname(LIVE)
 QUIET_S = 0.030
 SETTLE_S = 1.0
 KEY_TIMEOUT_S = 2.0
-START_TIMEOUT_S = 600  # herdr-live's first start may compile
+START_TIMEOUT_S = 600  # dynIDE's first start may compile
 ENTER_EVERY = 60
 # probes answered (one alternation, so the kitty+DA1 pair gets one REPLY); herdr's OSC 4
 # palette queries are left to its own timeouts
@@ -98,7 +98,7 @@ class Term:
         except OSError:
             data = b""
         if not data:
-            # Linux gives EIO while no slave fd is open (herdr-live redirects its stdio to
+            # Linux gives EIO while no slave fd is open (dynIDE redirects its stdio to
             # the log before it opens /dev/tty, while it builds); macOS just blocks. Only a
             # child that has exited ends the session.
             if os.waitpid(self.pid, os.WNOHANG)[0] == 0:
@@ -178,11 +178,11 @@ def herdr(tmp, bin_, cols, rows):
     return term, stop
 
 
-def herdr_live(tmp, bin_, cols, rows):
+def dynide(tmp, bin_, cols, rows):
     env = base_env(tmp)
-    env["HERDR_LIVE_LOG"] = os.path.join(tmp, "herdr-live.log")
+    env["DYNIDE_LOG"] = os.path.join(tmp, "dynide.log")
     # session files (M8) under the run dir, never the real session
-    env["HERDR_LIVE_STATE_DIR"] = os.path.join(tmp, "state")
+    env["DYNIDE_STATE_DIR"] = os.path.join(tmp, "state")
     term = Term([bin_], env, cols, rows)
 
     def stop():
@@ -227,7 +227,7 @@ def measure(term, n):
 
 def main():
     ap = argparse.ArgumentParser(description="keystroke -> glass through a real pty")
-    ap.add_argument("impl", choices=["herdr", "herdr-live"])
+    ap.add_argument("impl", choices=["herdr", "dynide"])
     ap.add_argument("--n", type=int, default=500)
     ap.add_argument("--size", default="200x50")
     ap.add_argument("--bin")
@@ -238,7 +238,7 @@ def main():
     cols, rows = int(m.group(1)), int(m.group(2))
     launch, default = {
         "herdr": (herdr, None),
-        "herdr-live": (herdr_live, os.environ.get("HERDR_LIVE_BENCH_BIN") or os.path.join(LIVE, "bin", "herdr-live")),
+        "dynide": (dynide, os.environ.get("DYNIDE_BENCH_BIN") or os.path.join(LIVE, "bin", "dynide")),
     }[args.impl]
     if default is None and not args.bin:
         # HERDR_BIN or the herdr-reference build (herdr_ref.sh)

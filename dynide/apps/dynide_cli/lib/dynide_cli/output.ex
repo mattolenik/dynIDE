@@ -57,7 +57,7 @@ defmodule DynideCli.Output do
 
   defp body(_out, _r), do: :error
 
-  # herdr's print_agent_manifest_status (src/cli/server.rs): herdr-live has no remote
+  # herdr's print_agent_manifest_status (src/cli/server.rs): dynIDE has no remote
   # manifest channel, so the check fields print herdr's defaults ("never", "not checked",
   # remote "-"); a manifest that failed to load is herdr's "x" row with its error below
   defp manifests(ms) do
@@ -92,7 +92,7 @@ defmodule DynideCli.Output do
   defp scalar(v), do: encode(v)
 
   defp unexpected(term),
-    do: {1, {:stderr, "herdr-live: unexpected reply " <> encode(term) <> "\n"}}
+    do: {1, {:stderr, "dynide: unexpected reply " <> encode(term) <> "\n"}}
 
   @doc "One event as one JSON line."
   @spec event(map()) :: binary()

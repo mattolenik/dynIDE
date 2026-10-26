@@ -1,17 +1,17 @@
 defmodule DynideCli.Update do
   @moduledoc """
-  `herdr-live update [--manifest URL] [--check] [--yes] [--no-restart]` (M18 R4, R5).
+  `dynide update [--manifest URL] [--check] [--yes] [--no-restart]` (M18 R4, R5).
 
   Fetches the channel manifest and its `.sig` (`file://` or `http(s)://`, bodies capped:
   manifest 1 MiB, artifact its manifest `size`; redirects never leave https), verifies
   the signature against the release's `releases/<V>/update-keys/*.pub` (in a source tree
-  only `$HERDR_LIVE_UPDATE_PUBKEY`), and with `--yes` installs the artifact for this OS
+  only `$DYNIDE_UPDATE_PUBKEY`), and with `--yes` installs the artifact for this OS
   and arch beside the running release under `<lib>/.update.lock`: download to
   `<lib>/.download/`, size and sha256 check, extract into `releases/.<V>.partial`, rename
   to `releases/<V>` (an existing `releases/<V>` that is that release is reused, never
-  replaced). When a broker answers this instance (the runtime-dir env of `herdr-live
+  replaced). When a broker answers this instance (the runtime-dir env of `dynide
   kernel-restart`) and its VMs boot this `<lib>/releases/<x>` (else `foreign_broker`),
-  `dynide_broker kernel-restart -- <lib>/releases/<V>/bin/herdr_live start` boots the new
+  `dynide_broker kernel-restart -- <lib>/releases/<V>/bin/dynide_vm start` boots the new
   release; the broker keeps that VM argv only if the restart
   succeeds. `current` flips (a temp symlink renamed over it) only after that success, or
   when no instance runs, or with `--no-restart`; a failed restart leaves `current` and the
@@ -19,14 +19,14 @@ defmodule DynideCli.Update do
   two are pruned, except one a live process runs (`ps`); dot-names in `releases/` (stage
   and partial dirs) are never touched. http(s) honours `http(s)_proxy` / `no_proxy`.
 
-  Manifest URL: `--manifest`, else `$HERDR_LIVE_UPDATE_URL`, else `releases/<V>/update.url`.
+  Manifest URL: `--manifest`, else `$DYNIDE_UPDATE_URL`, else `releases/<V>/update.url`.
   Exit 0 updated or up to date, 1 refused (`{"code":..,"message":..}` on stderr), 2 usage.
   """
 
   alias DynideCli.Output
   alias DynideCli.Update.Manifest
 
-  @usage "usage: herdr-live update [--manifest URL] [--check] [--yes] [--no-restart]\n"
+  @usage "usage: dynide update [--manifest URL] [--check] [--yes] [--no-restart]\n"
   @switches [manifest: :string, check: :boolean, yes: :boolean, no_restart: :boolean]
   @max_manifest 1_048_576
 
@@ -114,7 +114,7 @@ defmodule DynideCli.Update do
       cond do
         opts[:check] and Manifest.newer?(v, cur) -> {:ok, "update available #{v}\n"}
         not Manifest.newer?(v, cur) -> {:ok, "up to date #{cur}\n"}
-        not opts[:yes] -> {:ok, "update available #{v}; run herdr-live update --yes to install\n"}
+        not opts[:yes] -> {:ok, "update available #{v}; run dynide update --yes to install\n"}
         true -> install(m, opts, Map.put(ctx, :env, env))
       end
     end
@@ -125,7 +125,7 @@ defmodule DynideCli.Update do
       {:ok, data} ->
         {:ok, data |> String.split() |> List.last()}
 
-      # a source tree: mix.exs's version (keys from HERDR_LIVE_UPDATE_PUBKEY, --check only)
+      # a source tree: mix.exs's version (keys from DYNIDE_UPDATE_PUBKEY, --check only)
       {:error, _} ->
         mix = Path.join(root, "../../mix.exs")
 
@@ -163,7 +163,7 @@ defmodule DynideCli.Update do
     if keys == [],
       do:
         {:error, :no_trusted_keys,
-         "this build trusts no update key (built without HERDR_LIVE_UPDATE_PUBKEY or the dev key); every update is refused"},
+         "this build trusts no update key (built without DYNIDE_UPDATE_PUBKEY or the dev key); every update is refused"},
       else: {:ok, keys}
   end
 
@@ -172,8 +172,8 @@ defmodule DynideCli.Update do
 
     cond do
       release?(ctx) -> for n <- ls(dir), String.ends_with?(n, ".pub"), do: Path.join(dir, n)
-      env["HERDR_LIVE_UPDATE_PUBKEY"] in [nil, ""] -> []
-      true -> [env["HERDR_LIVE_UPDATE_PUBKEY"]]
+      env["DYNIDE_UPDATE_PUBKEY"] in [nil, ""] -> []
+      true -> [env["DYNIDE_UPDATE_PUBKEY"]]
     end
   end
 
@@ -189,9 +189,9 @@ defmodule DynideCli.Update do
 
     cond do
       opts[:manifest] -> {:ok, opts[:manifest]}
-      env["HERDR_LIVE_UPDATE_URL"] not in [nil, ""] -> {:ok, env["HERDR_LIVE_UPDATE_URL"]}
+      env["DYNIDE_UPDATE_URL"] not in [nil, ""] -> {:ok, env["DYNIDE_UPDATE_URL"]}
       File.regular?(file) -> {:ok, file |> File.read!() |> String.trim()}
-      true -> {:error, :no_manifest_url, "no --manifest, HERDR_LIVE_UPDATE_URL or #{file}"}
+      true -> {:error, :no_manifest_url, "no --manifest, DYNIDE_UPDATE_URL or #{file}"}
     end
   end
 
@@ -506,7 +506,7 @@ defmodule DynideCli.Update do
           # an O_EXCL rename dance would close it if that ever matters
           :file.write(
             :standard_error,
-            "herdr-live: update lock #{lock} held by pid #{holder}, which is gone: taking it over\n"
+            "dynide: update lock #{lock} held by pid #{holder}, which is gone: taking it over\n"
           )
 
           File.rm(lock)
@@ -548,15 +548,15 @@ defmodule DynideCli.Update do
 
       true ->
         {:error, :install_failed,
-         "#{dest} exists but is not the herdr-live #{v} release; remove it and retry"}
+         "#{dest} exists but is not the dynIDE #{v} release; remove it and retry"}
     end
   end
 
   defp release_dir?(dir, v) do
     with {:ok, data} <- File.read(Path.join(dir, "releases/start_erl.data")),
          [_, ^v] <- String.split(data) do
-      File.regular?(Path.join(dir, "bin/herdr-live")) and
-        File.regular?(Path.join(dir, "bin/herdr_live"))
+      File.regular?(Path.join(dir, "bin/dynide")) and
+        File.regular?(Path.join(dir, "bin/dynide_vm"))
     else
       _ -> false
     end
@@ -581,7 +581,7 @@ defmodule DynideCli.Update do
 
       _ ->
         {:error, :not_installed,
-         "#{root} is not an install.sh layout (<prefix>/lib/herdr-live/current -> releases/<V>), so it cannot update itself"}
+         "#{root} is not an install.sh layout (<prefix>/lib/dynide/current -> releases/<V>), so it cannot update itself"}
     end
   end
 
@@ -598,7 +598,7 @@ defmodule DynideCli.Update do
 
   defp fetch_artifact(%{"url" => url, "size" => size, "sha256" => sha}, lib, v, env) do
     dir = Path.join(lib, ".download")
-    dest = Path.join(dir, "herdr-live-#{v}.tar.gz")
+    dest = Path.join(dir, "dynide-#{v}.tar.gz")
     File.rm_rf(dir)
 
     with :ok <- File.mkdir_p(dir),
@@ -636,9 +636,9 @@ defmodule DynideCli.Update do
   end
 
   # extract beside the target, then rename into place; only regular files and dirs under
-  # herdr-live-<V>/ (no links, no absolute or .. names)
+  # dynide-<V>/ (no links, no absolute or .. names)
   defp unpack(tarball, lib, v) do
-    top = "herdr-live-#{v}"
+    top = "dynide-#{v}"
     rels = Path.join(lib, "releases")
     partial = Path.join(rels, ".#{v}.partial")
     dest = Path.join(rels, v)
@@ -659,7 +659,7 @@ defmodule DynideCli.Update do
 
         other ->
           {:error, :bad_tarball,
-           "tarball is not the herdr-live #{v} release: #{inspect(other, limit: 10)}"}
+           "tarball is not the dynIDE #{v} release: #{inspect(other, limit: 10)}"}
       end
 
     File.rm_rf(partial)
@@ -721,7 +721,7 @@ defmodule DynideCli.Update do
           lib,
           [prev, v | running(text)],
           v,
-          done <> "restart skipped (--no-restart); run herdr-live kernel-restart to boot #{v}\n",
+          done <> "restart skipped (--no-restart); run dynide kernel-restart to boot #{v}\n",
           ctx
         )
 
@@ -735,7 +735,7 @@ defmodule DynideCli.Update do
 
       {text, code} ->
         {:error, :broker_unreachable,
-         "the broker did not answer status (exit #{code}: #{String.trim(text)}); releases/#{v} is installed, current still points at #{prev}; retry herdr-live update"}
+         "the broker did not answer status (exit #{code}: #{String.trim(text)}); releases/#{v} is installed, current still points at #{prev}; retry dynide update"}
     end
   end
 
@@ -743,7 +743,7 @@ defmodule DynideCli.Update do
   # nor another prefix's release): the same dir as `lib`, compared by inode (symlinked
   # prefixes, macOS /private)
   defp ours?(status, lib) do
-    with [_, dir] <- Regex.run(~r{^vm_argv=(.*)/releases/[^/\n]+/bin/herdr_live start$}m, status),
+    with [_, dir] <- Regex.run(~r{^vm_argv=(.*)/releases/[^/\n]+/bin/dynide_vm start$}m, status),
          {:ok, a} <- File.stat(dir),
          {:ok, b} <- File.stat(lib) do
       {a.major_device, a.inode} == {b.major_device, b.inode}
@@ -760,15 +760,15 @@ defmodule DynideCli.Update do
       end
 
     {:error, :foreign_broker,
-     "the running broker's VMs boot #{argv}, not #{lib}/releases/<V>/bin/herdr_live start (a source checkout or another install); not restarting it. releases/#{v} is installed, current still points at #{prev}; stop that instance, or run update with its own HERDR_LIVE_RUNTIME_DIR"}
+     "the running broker's VMs boot #{argv}, not #{lib}/releases/<V>/bin/dynide_vm start (a source checkout or another install); not restarting it. releases/#{v} is installed, current still points at #{prev}; stop that instance, or run update with its own DYNIDE_RUNTIME_DIR"}
   end
 
   @doc false
   # The release a broker's VMs boot from (its status `vm_argv=` line): pruning keeps it.
-  # A `current/bin/herdr_live` argv is `current` (prev at this point): nothing extra.
+  # A `current/bin/dynide_vm` argv is `current` (prev at this point): nothing extra.
   @spec running(String.t()) :: [String.t()]
   def running(status) do
-    case Regex.run(~r{^vm_argv=.*/releases/([^/\n]+)/bin/herdr_live start$}m, status) do
+    case Regex.run(~r{^vm_argv=.*/releases/([^/\n]+)/bin/dynide_vm start$}m, status) do
       [_, rel] -> [rel]
       nil -> []
     end
@@ -782,7 +782,7 @@ defmodule DynideCli.Update do
   end
 
   defp kernel_restart(broker, lib, keep, {prev, v, done}, ctx) do
-    vm = [Path.join([lib, "releases", v, "bin/herdr_live"]), "start"]
+    vm = [Path.join([lib, "releases", v, "bin/dynide_vm"]), "start"]
 
     case System.cmd(broker, ["kernel-restart", "--" | vm], stderr_to_stdout: true) do
       {text, 0} ->
@@ -831,12 +831,12 @@ defmodule DynideCli.Update do
   end
 
   @doc false
-  # The release dirs some process has in its argv (`.../herdr-live/releases/<n>/`: a broker
-  # has its bin/herdr_live, a VM its erts; any prefix, so a symlinked spelling of this one
+  # The release dirs some process has in its argv (`.../dynide/releases/<n>/`: a broker
+  # has its bin/dynide_vm, a VM its erts; any prefix, so a symlinked spelling of this one
   # still counts; another prefix's same version only keeps one extra dir).
   @spec in_use(String.t(), [String.t()]) :: [String.t()]
   def in_use(ps, names),
-    do: Enum.filter(names, &String.contains?(ps, "herdr-live/releases/#{&1}/"))
+    do: Enum.filter(names, &String.contains?(ps, "dynide/releases/#{&1}/"))
 
   defp ps do
     with ps when is_binary(ps) <- System.find_executable("ps"),

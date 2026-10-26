@@ -25,7 +25,7 @@ defmodule DynideServer.Kernel.NativeContractTest do
 
     test "Pty.cwd/1 reports the child's directory and follows cd" do
       {:ok, vt} = Vt.new(80, 24, 1000)
-      dir = Path.join(System.tmp_dir!(), "herdr-cwd-#{System.unique_integer([:positive])}")
+      dir = Path.join(System.tmp_dir!(), "dynide-cwd-#{System.unique_integer([:positive])}")
       File.mkdir_p!(dir)
       on_exit(fn -> File.rm_rf(dir) end)
       {:ok, pty, _} = Pty.spawn(vt, 1, "/bin/sh", [], [{"ENV", ""}], dir, 80, 24)

@@ -1,7 +1,7 @@
 defmodule DynideServer.App.Modal.Keybinds do
   @moduledoc """
   The keybinds modal (`prefix+?`, the global menu; inventory §5 "Keybinds help") with
-  herdr-live's editing. State `%{kind: :keybinds, selected, filter: TextField.t(),
+  dynIDE's editing. State `%{kind: :keybinds, selected, filter: TextField.t(),
   filtering, capture, capturing, after_prefix, error}`.
 
   The list groups `Keybinds.Catalog` actions under `:text` headings, then the

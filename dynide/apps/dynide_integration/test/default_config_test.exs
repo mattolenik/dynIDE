@@ -1,5 +1,5 @@
 defmodule DynideIntegration.DefaultConfigTest do
-  @moduledoc "`herdr-live --default-config` loads clean and states the real defaults."
+  @moduledoc "`dynide --default-config` loads clean and states the real defaults."
   use ExUnit.Case, async: true
 
   alias DynideServer.App.{Keybinds, Ui}

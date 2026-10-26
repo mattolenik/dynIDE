@@ -94,7 +94,7 @@ defmodule DynideServer.Application do
   @doc false
   @spec announce_start() :: :ok
   def announce_start do
-    Logger.info("herdr-live started")
+    Logger.info("dynide started")
 
     DynideReload.Telemetry.event(:vm_start,
       gen: gen(),
@@ -104,7 +104,7 @@ defmodule DynideServer.Application do
   end
 
   defp gen do
-    case System.get_env("HERDR_LIVE_GEN") do
+    case System.get_env("DYNIDE_GEN") do
       v when v in [nil, ""] -> "0"
       v -> v
     end
@@ -143,7 +143,7 @@ defmodule DynideServer.Application do
 
   @impl true
   def stop(_state) do
-    Logger.info("herdr-live stopped")
+    Logger.info("dynide stopped")
     DynideReload.Telemetry.event(:vm_stop, gen: gen())
   end
 end

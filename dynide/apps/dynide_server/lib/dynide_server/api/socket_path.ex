@@ -2,7 +2,7 @@ defmodule DynideServer.Api.SocketPath do
   @moduledoc """
   Where the API socket lives and whether this VM may listen there.
 
-  `path/0`: `$HERDR_LIVE_API`, else `${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/api.sock`
+  `path/0`: `$DYNIDE_API`, else `${XDG_STATE_HOME:-$HOME/.local/state}/dynide/api.sock`
   (an empty variable counts as unset, like the launcher's `${VAR:-default}`).
 
   `prepare/1` checks a path before listening. Only the default dir is created (0700).
@@ -17,11 +17,11 @@ defmodule DynideServer.Api.SocketPath do
 
   @doc "The API socket path."
   @spec path() :: Path.t()
-  def path, do: env("HERDR_LIVE_API") || Path.join(default_dir(), "api.sock")
+  def path, do: env("DYNIDE_API") || Path.join(default_dir(), "api.sock")
 
   defp default_dir do
     state = env("XDG_STATE_HOME") || Path.join(System.user_home!(), ".local/state")
-    Path.join(state, "herdr-live")
+    Path.join(state, "dynide")
   end
 
   defp env(var), do: if(System.get_env(var) in [nil, ""], do: nil, else: System.get_env(var))

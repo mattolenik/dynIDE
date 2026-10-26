@@ -2,7 +2,7 @@
 # Part 1: one writer poll tick = Facts.collect + Schema.capture + Disk.write (median/max
 #   of 50), and the unchanged tick (collect + capture + compare, no write).
 # Part 2: Keeper.open/1 for 15 panes with a 1000-row SGR replay each (the restore path).
-# Usage: cd dynide && HERDR_LIVE_HEADLESS=1 mix run bench/persist/writer_cost.exs
+# Usage: cd dynide && DYNIDE_HEADLESS=1 mix run bench/persist/writer_cost.exs
 # (dev env, no broker, so the app's own Writer is off). Timings on a loaded host are upper bounds.
 alias DynideServer.App.{Actions, Store}
 alias DynideServer.Native.Keeper
@@ -15,7 +15,7 @@ size = %{cols: 200, rows: 51}
 {up, 0} = System.cmd("uptime", [])
 IO.puts("WRITER start load=#{String.trim(up)}")
 
-tmp = Path.join(System.tmp_dir!(), "herdr-writer-bench-#{System.unique_integer([:positive])}")
+tmp = Path.join(System.tmp_dir!(), "dynide-writer-bench-#{System.unique_integer([:positive])}")
 File.mkdir_p!(tmp)
 cfg = Map.merge(Disk.config(), %{dir: tmp, enabled: true})
 

@@ -21,7 +21,7 @@ defmodule DynideServer.ConfigTest do
   describe "path/0" do
     setup do
       saved = Application.get_env(:dynide_server, :config_path)
-      env = for v <- ~w(HERDR_LIVE_CONFIG XDG_CONFIG_HOME), into: %{}, do: {v, System.get_env(v)}
+      env = for v <- ~w(DYNIDE_CONFIG XDG_CONFIG_HOME), into: %{}, do: {v, System.get_env(v)}
       Application.delete_env(:dynide_server, :config_path)
 
       on_exit(fn ->
@@ -32,13 +32,13 @@ defmodule DynideServer.ConfigTest do
       end)
     end
 
-    test "app env, then HERDR_LIVE_CONFIG, then XDG_CONFIG_HOME, then ~/.config" do
-      System.delete_env("HERDR_LIVE_CONFIG")
+    test "app env, then DYNIDE_CONFIG, then XDG_CONFIG_HOME, then ~/.config" do
+      System.delete_env("DYNIDE_CONFIG")
       System.delete_env("XDG_CONFIG_HOME")
-      assert Config.path() == Path.join(System.user_home!(), ".config/herdr-live/config.toml")
+      assert Config.path() == Path.join(System.user_home!(), ".config/dynide/config.toml")
       System.put_env("XDG_CONFIG_HOME", "/x")
-      assert Config.path() == "/x/herdr-live/config.toml"
-      System.put_env("HERDR_LIVE_CONFIG", "/y/c.toml")
+      assert Config.path() == "/x/dynide/config.toml"
+      System.put_env("DYNIDE_CONFIG", "/y/c.toml")
       assert Config.path() == "/y/c.toml"
       Application.put_env(:dynide_server, :config_path, "/z.toml")
       assert Config.path() == "/z.toml"
@@ -240,10 +240,10 @@ defmodule DynideServer.ConfigTest do
     wav = Path.join(dir, "a.wav")
     File.write!(wav, "x")
 
-    home = Path.expand("~/herdr-live-no-such-sound.mp3")
+    home = Path.expand("~/dynide-no-such-sound.mp3")
 
     toml =
-      "[ui.sound]\ndone_path = \"a.wav\"\nrequest_path = \"~/herdr-live-no-such-sound.mp3\"\n"
+      "[ui.sound]\ndone_path = \"a.wav\"\nrequest_path = \"~/dynide-no-such-sound.mp3\"\n"
 
     {_kb, ui, diags} = apply_cfg(load(dir, toml))
 

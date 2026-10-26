@@ -1,7 +1,7 @@
 defmodule DynideServer.Handoff.Link do
   @moduledoc """
   This VM's connection to `dynide_broker` (rulings 3, 7, 9 and the wire protocol in
-  `docs/herdr-live/plans/m5.md`). Without `HERDR_BROKER_SOCK` (mix test, iex) `init`
+  `docs/herdr-live/plans/m5.md`). Without `DYNIDE_BROKER_SOCK` (mix test, iex) `init`
   is `:ignore` and every call below is a cheap no-op.
 
   With it, `init` sends HELLO and blocks application start until the broker answers
@@ -135,7 +135,7 @@ defmodule DynideServer.Handoff.Link do
     do: {:ok, %__MODULE__{reason: :graceful, adopted: entries}}
 
   def init(_opts) do
-    case System.get_env("HERDR_BROKER_SOCK") do
+    case System.get_env("DYNIDE_BROKER_SOCK") do
       v when v in [nil, ""] -> :ignore
       path -> connect(path)
     end
@@ -145,7 +145,7 @@ defmodule DynideServer.Handoff.Link do
     # A restart after a crash: our old link closed with its owner, so the broker
     # has already handed our panes to another VM.
     if link(), do: halt("handoff link restarted")
-    gen = "HERDR_LIVE_GEN" |> System.get_env("0") |> String.to_integer()
+    gen = "DYNIDE_GEN" |> System.get_env("0") |> String.to_integer()
     os_pid = String.to_integer(System.pid())
     {us, n} = :timer.tc(&preload/0)
     {up, _} = :erlang.statistics(:wall_clock)

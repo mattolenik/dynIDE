@@ -264,8 +264,8 @@ impl Inner {
         });
         // Detached: each thread holds its own Arc and exits within POLL_MS of shutdown.
         for (name, body) in [
-            ("herdr-tty-reader", Inner::read_loop as fn(&Inner)),
-            ("herdr-tty-output", Inner::output_loop),
+            ("dynide-tty-reader", Inner::read_loop as fn(&Inner)),
+            ("dynide-tty-output", Inner::output_loop),
         ] {
             let thread = Arc::clone(&inner);
             let spawned = std::thread::Builder::new()
@@ -490,7 +490,7 @@ impl Inner {
         let (resumed, wait) = mpsc::channel::<()>();
         let inner = Arc::clone(self);
         std::thread::Builder::new()
-            .name("herdr-tty-resumed".into())
+            .name("dynide-tty-resumed".into())
             .spawn(move || {
                 if wait.recv().is_ok() {
                     inner.run_guarded(|i| lock(&i.sub).deliver(Event::Resumed));

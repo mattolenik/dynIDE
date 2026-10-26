@@ -1,8 +1,8 @@
 #!/bin/sh
 # Bootstrap installer (M18 task 2). Usage: install.sh [--prefix P] [--force] TARBALL
 # Installs the R4 layout under P (default $HOME/.local):
-#   P/lib/herdr-live/releases/<V>/   P/lib/herdr-live/current -> releases/<V>
-#   P/bin/herdr-live -> ../lib/herdr-live/current/bin/herdr-live
+#   P/lib/dynide/releases/<V>/   P/lib/dynide/current -> releases/<V>
+#   P/bin/dynide -> ../lib/dynide/current/bin/dynide
 # Verifies TARBALL.sha256 when present; refuses to overwrite releases/<V> without --force.
 # Creates no state or config dirs (the launcher does). POSIX sh; needs only tar, mv, ln.
 set -eu
@@ -31,12 +31,12 @@ if [ -f "$tarball.sha256" ]; then
 fi
 
 top=$(tar -tzf "$tarball" | head -n 1 | cut -d/ -f1)
-case $top in herdr-live-?*) ;; *) die "unexpected tarball top dir '$top'" ;; esac
-v=${top#herdr-live-}
+case $top in dynide-?*) ;; *) die "unexpected tarball top dir '$top'" ;; esac
+v=${top#dynide-}
 # v names releases/<v>: no path separators, no . or .. (and the version chars build.sh allows)
 case $v in . | .. | *[!0-9A-Za-z._+-]*) die "bad version '$v' in tarball top dir '$top'" ;; esac
 
-lib="$prefix/lib/herdr-live"
+lib="$prefix/lib/dynide"
 rel="$lib/releases/$v"
 if [ -e "$rel" ] && [ "$force" = 0 ]; then
   die "$rel exists (use --force to replace it)"
@@ -45,13 +45,13 @@ mkdir -p "$lib/releases" "$prefix/bin"
 
 # extract beside the target, then rename into place: a failed extract leaves nothing half-installed
 stage="$lib/releases/.stage.$$"
-cleanup() { rm -rf "$stage" "$lib/.current.$$" "$prefix/bin/.herdr-live.$$"; }
+cleanup() { rm -rf "$stage" "$lib/.current.$$" "$prefix/bin/.dynide.$$"; }
 trap cleanup EXIT
 trap 'exit 1' INT TERM HUP
 rm -rf "$stage"
 mkdir "$stage"
 tar -xzf "$tarball" --no-same-owner -C "$stage"
-[ -x "$stage/$top/bin/herdr-live" ] || die "tarball has no $top/bin/herdr-live"
+[ -x "$stage/$top/bin/dynide" ] || die "tarball has no $top/bin/dynide"
 # --force: the old release is moved aside, never deleted before its replacement is in place
 old=''
 if [ -e "$rel" ]; then old="$rel.old.$$"; mv "$rel" "$old"; fi
@@ -62,12 +62,12 @@ ln -s "releases/$v" "$lib/.current.$$"
 if mv --version >/dev/null 2>&1; then mv -fT "$lib/.current.$$" "$lib/current"
 else mv -fh "$lib/.current.$$" "$lib/current"; fi
 
-ln -s ../lib/herdr-live/current/bin/herdr-live "$prefix/bin/.herdr-live.$$"
-if mv --version >/dev/null 2>&1; then mv -fT "$prefix/bin/.herdr-live.$$" "$prefix/bin/herdr-live"
-else mv -fh "$prefix/bin/.herdr-live.$$" "$prefix/bin/herdr-live"; fi
+ln -s ../lib/dynide/current/bin/dynide "$prefix/bin/.dynide.$$"
+if mv --version >/dev/null 2>&1; then mv -fT "$prefix/bin/.dynide.$$" "$prefix/bin/dynide"
+else mv -fh "$prefix/bin/.dynide.$$" "$prefix/bin/dynide"; fi
 
 [ -z "$old" ] || rm -rf "$old"
-echo "installed herdr-live $v in $rel"
+echo "installed dynide $v in $rel"
 case ":${PATH:-}:" in
   *":$prefix/bin:"*) echo "$prefix/bin is on PATH" ;;
   *) echo "$prefix/bin is NOT on PATH; add it: export PATH=\"$prefix/bin:\$PATH\"" ;;

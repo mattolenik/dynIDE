@@ -4,7 +4,7 @@ defmodule DynideServer.Plugins.Panes do
   pty child. `spec/2` checks the request against the registry and a snapshot of the app
   and builds the launch spec; `open/2` is the `Store.request/1` command that places it.
   `split` splits the target pane; `tab` and `overlay` open a new tab in the target
-  workspace, `zoomed` in the target pane's (herdr-live has no overlay or zoom; a tab is the
+  workspace, `zoomed` in the target pane's (dynIDE has no overlay or zoom; a tab is the
   nearest full-area placement). The pane's meta carries `:name` (the entry's
   title) and `:plugin` (`%{"plugin_id", "entrypoint"}`, plain data); persistence does not
   record `:plugin`, since a restored pane runs `$SHELL`, not the plugin command.

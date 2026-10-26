@@ -15,7 +15,7 @@ defmodule DynideReload.TelemetryTest do
       )
 
     assert line =~
-             ~r/^herdr-event reload ts=\d{13} batch=3 fanout=2 modules=DynideServer.View,Foo.Bar compile_ms=41$/
+             ~r/^dynide-event reload ts=\d{13} batch=3 fanout=2 modules=DynideServer.View,Foo.Bar compile_ms=41$/
   end
 
   test "values with quotes and newlines are quoted on one line" do
@@ -37,7 +37,7 @@ defmodule DynideReload.TelemetryTest do
 
   test "event logs the line" do
     log = capture_log(fn -> Telemetry.event(:vm_stop, gen: 2) end)
-    assert log =~ ~r/herdr-event vm_stop ts=\d{13} gen=2/
+    assert log =~ ~r/dynide-event vm_stop ts=\d{13} gen=2/
   end
 
   describe "from_notice/2" do

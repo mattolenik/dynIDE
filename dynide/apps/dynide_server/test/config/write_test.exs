@@ -6,7 +6,7 @@ defmodule DynideServer.Config.WriteTest do
   @moduletag :tmp_dir
 
   @file_body """
-  # herdr-live config
+  # dynide config
   onboarding = true   # first run
 
   [keys]
@@ -113,12 +113,12 @@ defmodule DynideServer.Config.WriteTest do
   end
 
   test "a symlinked config is written through the link, which stays a link", %{tmp_dir: dir} do
-    real = Path.join([dir, "dotfiles", "herdr.toml"])
+    real = Path.join([dir, "dotfiles", "dynide.toml"])
     File.mkdir_p!(Path.dirname(real))
     File.write!(real, "onboarding = true\n")
     File.mkdir_p!(Path.join(dir, "conf"))
     # a relative link to a relative link
-    File.ln_s!("../dotfiles/herdr.toml", Path.join(dir, "conf/mid.toml"))
+    File.ln_s!("../dotfiles/dynide.toml", Path.join(dir, "conf/mid.toml"))
     link = Path.join(dir, "conf/config.toml")
     File.ln_s!("mid.toml", link)
 
@@ -126,7 +126,7 @@ defmodule DynideServer.Config.WriteTest do
     assert {:ok, %File.Stat{type: :symlink}} = File.lstat(link)
     assert File.read!(real) == "onboarding = false\n"
     assert File.ls!(Path.join(dir, "conf")) |> Enum.sort() == ["config.toml", "mid.toml"]
-    assert File.ls!(Path.join(dir, "dotfiles")) == ["herdr.toml"]
+    assert File.ls!(Path.join(dir, "dotfiles")) == ["dynide.toml"]
   end
 
   test "the file mode is kept", %{tmp_dir: dir} do

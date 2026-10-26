@@ -1,4 +1,4 @@
-# Prints a herdr-live session file (M8, `<state dir>/session.<name>.etf`) as canonical
+# Prints a dynIDE session file (M8, `<state dir>/session.<name>.etf`) as canonical
 # k=v lines, so two snapshots compare as text (tty_harness.py persist):
 #   saved_at=<ms>    (first line; drop it to compare layouts)
 #   session active_workspace=<id> next_id=<n> size=<cols>x<rows> focus=<pane>
@@ -11,7 +11,7 @@
 defmodule PersistDump do
   def main([path]) do
     with {:ok, bin} <- File.read(path),
-         {:ok, %{format: :herdr_live_session, v: v, snapshot: s} = env} when is_integer(v) <-
+         {:ok, %{format: :dynide_session, v: v, snapshot: s} = env} when is_integer(v) <-
            decode(bin) do
       IO.puts("saved_at=#{env.saved_at}")
       s |> lines() |> Enum.each(&IO.puts/1)

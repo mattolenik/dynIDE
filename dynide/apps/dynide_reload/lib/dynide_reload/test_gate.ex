@@ -1,7 +1,7 @@
 defmodule DynideReload.TestGate do
   @moduledoc """
   Optional test-on-save gate (`:test_on_save` in the `DynideReload` app env, `:off` by
-  default, `:gate` with `HERDR_LIVE_TEST_ON_SAVE=1` or `herdr-live test-on-save on`).
+  default, `:gate` with `DYNIDE_TEST_ON_SAVE=1` or `dynide test-on-save on`).
 
   With `:gate`, a save first runs the changed module's ExUnit file (`apps/<app>/lib/x.ex`
   maps to `apps/<app>/test/x_test.exs` when it exists; a saved test file maps to itself)
@@ -21,7 +21,7 @@ defmodule DynideReload.TestGate do
   vanished) while the tests ran, that reload is skipped (`tests result=stale` in telemetry) and the newer save's batch,
   queued behind, gates it. `set_mode(:off)` clears the blocked set: `:off` loads
   whatever is on disk at the next save. The runtime mode does not survive a VM handoff
-  (the new VM reads the config / `HERDR_LIVE_TEST_ON_SAVE`).
+  (the new VM reads the config / `DYNIDE_TEST_ON_SAVE`).
 
   The gate holds only for loads in this VM. A blocked (failing-tests) source is still on
   disk: a new standby VM (`mix run`) compiles it, and a crash promotion's sync or the
@@ -43,8 +43,8 @@ defmodule DynideReload.TestGate do
 
   @timeout_ms 120_000
 
-  @unset ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN HERDR_LIVE_API HERDR_LIVE_LOG
-            HERDR_LIVE_RUNTIME_DIR HERDR_LIVE_HEADLESS)
+  @unset ~w(DYNIDE_BROKER_SOCK DYNIDE_GEN DYNIDE_API DYNIDE_LOG
+            DYNIDE_RUNTIME_DIR DYNIDE_HEADLESS)
 
   @type result :: :passed | :failed | :error
 

@@ -76,7 +76,7 @@ defmodule DynideScene.Wire do
 
   @doc """
   Socket, token and API socket paths. `env` is a map of environment variables (an empty
-  value counts as unset). The client socket is `$HERDR_LIVE_CLIENT_SOCK`, else
+  value counts as unset). The client socket is `$DYNIDE_CLIENT_SOCK`, else
   `client.sock` in the API socket's directory; the token is `client.token` beside it.
   """
   @spec paths(%{optional(binary) => binary}, binary) :: %{
@@ -86,9 +86,9 @@ defmodule DynideScene.Wire do
         }
   def paths(env, home) do
     api =
-      get(env, "HERDR_LIVE_API") || Path.join([state_dir(env, home), "herdr-live", "api.sock"])
+      get(env, "DYNIDE_API") || Path.join([state_dir(env, home), "dynide", "api.sock"])
 
-    socket = get(env, "HERDR_LIVE_CLIENT_SOCK") || Path.join(Path.dirname(api), "client.sock")
+    socket = get(env, "DYNIDE_CLIENT_SOCK") || Path.join(Path.dirname(api), "client.sock")
     %{socket: socket, token: Path.join(Path.dirname(socket), "client.token"), api: api}
   end
 

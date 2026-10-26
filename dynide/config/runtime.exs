@@ -1,40 +1,40 @@
 import Config
 
-# mix test inside a herdr-live pane inherits the live VM's broker/api env (portable-pty
+# mix test inside a dynIDE pane inherits the live VM's broker/api env (portable-pty
 # passes the base env), which would make the test VM talk to the live broker and halt.
 # Test VMs never belong to an instance: drop the vars before the apps start.
 if config_env() == :test do
-  for v <- ~w(HERDR_BROKER_SOCK HERDR_LIVE_GEN HERDR_LIVE_API HERDR_LIVE_RUNTIME_DIR
-              HERDR_LIVE_TEST_ON_SAVE),
+  for v <- ~w(DYNIDE_BROKER_SOCK DYNIDE_GEN DYNIDE_API DYNIDE_RUNTIME_DIR
+              DYNIDE_TEST_ON_SAVE),
       do: System.delete_env(v)
 end
 
-# Handoff (M5): a VM under dynide_broker (HERDR_BROKER_SOCK set) may be a warm standby.
+# Handoff (M5): a VM under dynide_broker (DYNIDE_BROKER_SOCK set) may be a warm standby.
 # Its reload pipeline must not watch and compile beside the primary's, so dynide_server
 # starts it (DynideReload.Application.start_deferred/0) once this VM is the primary.
-if config_env() != :test and System.get_env("HERDR_BROKER_SOCK") not in [nil, ""],
+if config_env() != :test and System.get_env("DYNIDE_BROKER_SOCK") not in [nil, ""],
   do: config(:dynide_reload, DynideReload, defer: true)
 
-# M8: persistence only in a bin/herdr-live VM (broker socket set), never in test, and not
-# with HERDR_LIVE_PERSIST=0. dir and name are raw env values (nil when unset);
+# M8: persistence only in a bin/dynide VM (broker socket set), never in test, and not
+# with DYNIDE_PERSIST=0. dir and name are raw env values (nil when unset);
 # DynideServer.Persist.Disk.config/0 applies the XDG fallback and validates the name.
 config :dynide_server, DynideServer.Persist,
   enabled:
-    config_env() != :test and System.get_env("HERDR_BROKER_SOCK") not in [nil, ""] and
-      System.get_env("HERDR_LIVE_PERSIST") != "0",
-  dir: System.get_env("HERDR_LIVE_STATE_DIR"),
-  name: System.get_env("HERDR_LIVE_SESSION")
+    config_env() != :test and System.get_env("DYNIDE_BROKER_SOCK") not in [nil, ""] and
+      System.get_env("DYNIDE_PERSIST") != "0",
+  dir: System.get_env("DYNIDE_STATE_DIR"),
+  name: System.get_env("DYNIDE_SESSION")
 
 # M7: run the changed module's tests before each reload (adds seconds per save).
-# `herdr-live test-on-save on|off` flips it at runtime.
-if System.get_env("HERDR_LIVE_TEST_ON_SAVE") == "1" do
+# `dynide test-on-save on|off` flips it at runtime.
+if System.get_env("DYNIDE_TEST_ON_SAVE") == "1" do
   config :dynide_reload, DynideReload, test_on_save: :gate
 end
 
-# M18: a release VM (bin/herdr_live) records its version for the API, then gives every
+# M18: a release VM (bin/dynide_vm) records its version for the API, then gives every
 # process it starts the launcher caller's env back. erlexec put the bundled erts bin and the
 # release bin/ first on PATH (shadowing the user's erl/elixir/mix and bypassing the install's
-# `current` link; the launcher saved the caller's PATH as HERDR_LIVE_PANE_PATH), and the
+# `current` link; the launcher saved the caller's PATH as DYNIDE_PANE_PATH), and the
 # release scripts exported RELEASE_* (another Elixir release started from a child would
 # boot as this one) and erl's ROOTDIR/BINDIR/EMU/PROGNAME. One list serves both kinds of
 # child: port children (plugins, hooks, custom commands, git, sound, ssh) take the VM's
@@ -47,11 +47,11 @@ if config_env() == :prod do
   unset =
     for {k, _} <- System.get_env(),
         String.starts_with?(k, "RELEASE_") or
-          k in ~w(ROOTDIR BINDIR EMU PROGNAME HERDR_LIVE_PANE_PATH),
+          k in ~w(ROOTDIR BINDIR EMU PROGNAME DYNIDE_PANE_PATH),
         do: {k, nil}
 
   child_env =
-    case System.get_env("HERDR_LIVE_PANE_PATH") do
+    case System.get_env("DYNIDE_PANE_PATH") do
       nil -> unset
       path -> [{"PATH", path} | unset]
     end

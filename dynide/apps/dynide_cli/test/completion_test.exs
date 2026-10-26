@@ -22,12 +22,12 @@ defmodule DynideCli.CompletionTest do
 
   test "--default-config with extra args is its own usage" do
     assert {:usage, msg} = Argv.parse(["--default-config", "extra"], %{})
-    assert msg =~ "usage: herdr-live --default-config\n"
+    assert msg =~ "usage: dynide --default-config\n"
   end
 
   test "unknown shell is usage; --default-config prints the file" do
     assert {:usage, _} = Argv.parse(["completion", "csh"], %{})
     assert {:usage, _} = Argv.parse(["completion"], %{})
-    assert {:print, "# herdr-live default config" <> _} = Argv.parse(["--default-config"], %{})
+    assert {:print, "# dynIDE default config" <> _} = Argv.parse(["--default-config"], %{})
   end
 end

@@ -50,7 +50,7 @@ defmodule DynideServer.Client.EndpointTest do
         wait_until(fn -> :sys.get_state(Protocol.endpoint()).orphans != %{} end)
       end)
 
-    assert log =~ ~r/herdr-event crash ts=\d+ proc=session action=none reason=:killed/
+    assert log =~ ~r/dynide-event crash ts=\d+ proc=session action=none reason=:killed/
     assert Mirror.client(client) != nil
 
     send(client, :stop)
