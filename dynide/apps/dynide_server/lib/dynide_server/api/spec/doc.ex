@@ -1,12 +1,12 @@
 defmodule DynideServer.Api.Spec.Doc do
   @moduledoc """
-  Renders `DynideServer.Api.Spec` as `docs/herdr-live/api.md`. Deterministic: no dates.
+  Renders `DynideServer.Api.Spec` as `docs/dynide/api.md`. Deterministic: no dates.
   """
 
   alias DynideServer.Api.Spec
 
   # lib/dynide_server/api/spec -> repo root
-  @path Path.expand("../../../../../../../docs/herdr-live/api.md", __DIR__)
+  @path Path.expand("../../../../../../../docs/dynide/api.md", __DIR__)
 
   @error_docs %{
     parse_error: "The line was not valid JSON (the response `id` is `\"\"`).",

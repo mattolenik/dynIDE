@@ -137,7 +137,7 @@ defmodule DynideServer.Api.SpecTest do
 
   test "api.md is generated from the spec" do
     assert File.read!(Doc.path()) == Doc.markdown(),
-           "docs/herdr-live/api.md is stale: run `mix dynide.api.docs` from dynide/"
+           "docs/dynide/api.md is stale: run `mix dynide.api.docs` from dynide/"
   end
 
   test "m11 agent detection contract" do

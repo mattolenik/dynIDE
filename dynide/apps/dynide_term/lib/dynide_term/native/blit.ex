@@ -1,6 +1,6 @@
 defmodule DynideTerm.Native.Blit do
   @moduledoc """
-  Paints packed rows (`docs/herdr-live/packed-cells.md`) to the host tty.
+  Paints packed rows (`docs/dynide/packed-cells.md`) to the host tty.
 
   The tty's output thread keeps the last frame it wrote and emits only the
   cells that changed. Frames never queue: a frame submitted while the

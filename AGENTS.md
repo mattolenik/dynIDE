@@ -1,9 +1,9 @@
-# herdr-live
+# dynIDE
 
-herdr forked onto the BEAM: Elixir server and clients over a Rust NIF kernel,
+dynIDE (dynamic IDE) is herdr forked onto the BEAM: Elixir server and clients over a Rust NIF kernel,
 so an agent can edit the running multiplexer and see it in under a second
 without losing terminals, scrollback, or layout. A bad edit never takes it down.
-Rules come from `docs/herdr-live/design.md` (it wins over this file),
+Rules come from `docs/dynide/design.md` (it wins over this file),
 `milestones.md`, and `status.md` (ledger, rulings) in the same directory.
 
 ## Operating model
@@ -11,12 +11,12 @@ Rules come from `docs/herdr-live/design.md` (it wins over this file),
 - Milestone work happens on branch `live/m<N>` in worktree
   `../herdr-live-worktrees/m<N>`, branched from `herdr-live`.
 - The coordinator session owns the `herdr-live` integration branch and
-  `docs/herdr-live/status.md`. Milestone owners do not edit status.md.
+  `docs/dynide/status.md`. Milestone owners do not edit status.md.
 - Parallel owners rebase on `herdr-live` when a sibling lands, before their
   own merge.
 - Never push. Owners commit on their branch without proposing messages first.
-- Results: `docs/herdr-live/results/m<N>.md`. ADRs:
-  `docs/herdr-live/adr/NNNN-short-title.md`, copied from `0000-template.md`.
+- Results: `docs/dynide/results/m<N>.md`. ADRs:
+  `docs/dynide/adr/NNNN-short-title.md`, copied from `0000-template.md`.
 - Human decisions only at the M6 gate ADR, M7 dogfooding week, M15 GUI ADR.
 
 ## The split
@@ -43,7 +43,7 @@ scene vocabulary and fine.
 
 ## Scene contract
 
-`HerdrScene` defines the scene and input vocabulary, the one contract a GUI
+`DynideScene` defines the scene and input vocabulary, the one contract a GUI
 must satisfy. Keep it small; an edit to it recompiles server and clients.
 
 - Chrome nodes carry roles and content, never glyphs or colours. Theme tokens
@@ -55,23 +55,23 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
 
 ## Repo layout
 
-- `live/` is a Mix umbrella. `live/apps/herdr_scene`: pure contracts and
-  validators, no processes, no umbrella deps. `live/apps/herdr_server`:
-  server layer. `live/apps/herdr_term`: terminal client. `live/apps/herdr_reload`:
-  the reloader. `live/apps/herdr_cli`: the `herdr-live` CLI (depends only on
-  herdr_scene; talks JSON to the API socket). `live/apps/herdr_scene_html`:
-  dev-only HTML scene renderer (`mix herdr.scene.html`), depends only on
-  herdr_scene, nothing depends on it. `live/apps/herdr_integration`:
+- `dynide/` is a Mix umbrella. `dynide/apps/dynide_scene`: pure contracts and
+  validators, no processes, no umbrella deps. `dynide/apps/dynide_server`:
+  server layer. `dynide/apps/dynide_term`: terminal client. `dynide/apps/dynide_reload`:
+  the reloader. `dynide/apps/dynide_cli`: the `dynide` CLI (depends only on
+  dynide_scene; talks JSON to the API socket). `dynide/apps/dynide_scene_html`:
+  dev-only HTML scene renderer (`mix dynide.scene.html`), depends only on
+  dynide_scene, nothing depends on it. `dynide/apps/dynide_integration`:
   test-only, may depend on all of them.
 - Plugins (M14): herdr's external-process plugin model, unchanged, under
-  `HerdrServer.Plugins.*`; plugins run as OS processes (argv, never a shell)
+  `DynideServer.Plugins.*`; plugins run as OS processes (argv, never a shell)
   driven through the manifest, the pane env (`HERDR_PANE_ID`,
-  `HERDR_LIVE_BIN`/`HERDR_BIN_PATH`, `HERDR_LIVE_API`/`HERDR_SOCKET_PATH`)
+  `DYNIDE_BIN`/`HERDR_BIN_PATH`, `DYNIDE_API`/`HERDR_SOCKET_PATH`)
   and the API. No plugin code is ever loaded into the VM (human ruling).
   The upstream examples have no licence, so they are not in the tree:
-  `live/scripts/plugin_examples.sh` fetches pinned commit `18709cd` into
-  `${XDG_CACHE_HOME:-~/.cache}/herdr-live/plugin-examples/18709cd` for the install
-  smoke and the `:examples` tests (`HERDR_LIVE_OFFLINE=1` forbids fetching;
+  `dynide/scripts/plugin_examples.sh` fetches pinned commit `18709cd` into
+  `${XDG_CACHE_HOME:-~/.cache}/dynide/plugin-examples/18709cd` for the install
+  smoke and the `:examples` tests (`DYNIDE_OFFLINE=1` forbids fetching;
   no cache and no network skips them).
 - Kitty graphics (M10): ghostty computes placements in the kernel; the
   server publishes them through `Pane.Facts` into `Scene.Pane.graphics`; the
@@ -82,99 +82,99 @@ must satisfy. Keep it small; an edit to it recompiles server and clients.
   persisted; a graceful kernel handoff carries on-screen and virtual
   placements and their pixels (16 MiB per pane) as a VT replay in the final
   pane blob (`Vt.graphics_replay/2`), a `kill -9` does not (M18). `t=t` files
-  go in `/tmp/herdr-live-kitty-<euid>/herdr-live-gfx-<pid>/`.
-- Chrome: 19 node roles with required props in `HerdrScene.Chrome`; golden
-  fixtures in `live/apps/herdr_scene/priv/fixtures/scenes` (every role must
+  go in `/tmp/dynide-kitty-<euid>/dynide-gfx-<pid>/`.
+- Chrome: 19 node roles with required props in `DynideScene.Chrome`; golden
+  fixtures in `dynide/apps/dynide_scene/priv/fixtures/scenes` (every role must
   have one and render in both the terminal client and the HTML renderer).
   User config is herdr's TOML format at
-  `${XDG_CONFIG_HOME:-~/.config}/herdr-live/config.toml` (`$HERDR_LIVE_CONFIG`
+  `${XDG_CONFIG_HOME:-~/.config}/dynide/config.toml` (`$DYNIDE_CONFIG`
   overrides), reloaded with `prefix R`.
-- Agent detection (M11): `HerdrServer.Detect.*` (Manifests, Regions, Engine,
+- Agent detection (M11): `DynideServer.Detect.*` (Manifests, Regions, Engine,
   Identify, Tracker, Poller, Watcher). Bundled manifests (herdr's, verbatim) are
-  in `live/apps/herdr_server/priv/detect/manifests`; local overrides in
+  in `dynide/apps/dynide_server/priv/detect/manifests`; local overrides in
   `<config dir>/agent-detection/<label>.toml` win; the watcher reloads on save.
-  CLI: `herdr-live agent list|get|read|explain|wait|prompt|send-keys`,
+  CLI: `dynide agent list|get|read|explain|wait|prompt|send-keys`,
   `server agent-manifests|reload-agent-manifests`,
-  `pane report-agent|release-agent`. See `docs/herdr-live/results/m11.md`.
+  `pane report-agent|release-agent`. See `docs/dynide/results/m11.md`.
 - Modules live under the app root module: design `Native.Vt` is
-  `HerdrServer.Native.Vt`, `Client.Term.Input` is `HerdrTerm.Client.Term.Input`.
-- NIF crates: `live/native/herdr_kernel` (NIF module `HerdrServer.Native`,
+  `DynideServer.Native.Vt`, `Client.Term.Input` is `DynideTerm.Client.Term.Input`.
+- NIF crates: `dynide/native/dynide_kernel` (NIF module `DynideServer.Native`,
   links `crates/ghostty-vt`, which builds vendored libghostty-vt with Zig
-  0.16.0) and `live/native/herdr_term` (NIF module `HerdrTerm.Native`).
+  0.16.0) and `dynide/native/dynide_term` (NIF module `DynideTerm.Native`).
   Rustler `~> 0.38.0`, crate `=0.38.0`. One NIF module per crate; the
   design's `Native.*` modules are Elixir facades over it.
-- Other crates: `live/native/herdr_fdpass` (SCM_RIGHTS frame codec shared by
-  kernel and broker) and `live/native/herdr_broker` (the broker binary: VM
+- Other crates: `dynide/native/dynide_fdpass` (SCM_RIGHTS frame codec shared by
+  kernel and broker) and `dynide/native/dynide_broker` (the broker binary: VM
   supervisor, fd and blob holder, warm standby, handoff state machine, host
-  tty guard). `live/live.just` lists every crate in `live_crates`.
+  tty guard). `dynide/dynide.just` lists every crate in `dynide_crates`.
 - Each crate is its own Cargo workspace (empty `[workspace]`), so no root
   `[patch.crates-io]` is inherited: set `[patch.crates-io] portable-pty` with
   `path = "../../../vendor/portable-pty"` when a crate needs portable-pty.
-- `live/bin/herdr-live`: dev launcher. It runs the broker, which spawns the
+- `dynide/bin/dynide`: dev launcher. It runs the broker, which spawns the
   VM (`mix run --no-halt` under `-noshell -noinput`) plus one warm standby;
-  stdio goes to `$HERDR_LIVE_LOG` (default
-  `${XDG_STATE_HOME:-$HOME/.local/state}/herdr-live/herdr-live.log`).
+  stdio goes to `$DYNIDE_LOG` (default
+  `${XDG_STATE_HOME:-$HOME/.local/state}/dynide/dynide.log`).
   SIGTERM stops it cleanly with no handoff. Attached (a tty, not
-  `HERDR_LIVE_HEADLESS=1`), the broker runs under `scripts/tty_guard.sh`, which
-  restores the host tty after a broker `kill -9` and logs `herdr-event
+  `DYNIDE_HEADLESS=1`), the broker runs under `scripts/tty_guard.sh`, which
+  restores the host tty after a broker `kill -9` and logs `dynide-event
   broker_killed signal=N` (`tty_harness.py broker-kill`). Subcommands: `kernel-restart`
   (graceful handoff), `status`, `rollback [n]`. Smoke tests:
-  `live/scripts/launcher_smoke.sh`, `attached_smoke.sh`,
-  `live/bench/handoff/smoke.exs`. A VM learns its role over the link when
-  `HERDR_BROKER_SOCK` is set; without it (tests, iex) it starts standalone.
-- Release (M18, `docs/herdr-live/results/m18.md`): `live/rel/` holds the Mix
+  `dynide/scripts/launcher_smoke.sh`, `attached_smoke.sh`,
+  `dynide/bench/handoff/smoke.exs`. A VM learns its role over the link when
+  `DYNIDE_BROKER_SOCK` is set; without it (tests, iex) it starts standalone.
+- Release (M18, `docs/dynide/results/m18.md`): `dynide/rel/` holds the Mix
   release templates (`env.sh.eex`: `RELEASE_DISTRIBUTION=none`; `vm.args.eex`),
   `rel/macos/entitlements.plist` and `rel/packaging/` (Homebrew formula
-  template, Nix flake). `live/scripts/release/`: `build.sh` (tarball +
+  template, Nix flake). `dynide/scripts/release/`: `build.sh` (tarball +
   `.sha256`, path printed last; `--dev-key` embeds the dev update key, local checks only), `install.sh`, `keygen.sh` (dev update key into
-  `live/_build/release/keys/`, never committed), `make_manifest.exs` /
+  `dynide/_build/release/keys/`, never committed), `make_manifest.exs` /
   `sign_manifest.sh`, `sign_macos.sh` / `notarize_macos.sh` (dry-run capable),
   and the checks `release_smoke.sh`, `fresh_install_check.sh`,
   `update_check.sh`, `package_check.sh`. The release is `MIX_ENV=prod`: no hot
-  reload, no distribution. `bin/herdr-live` serves both layouts (release when
+  reload, no distribution. `bin/dynide` serves both layouts (release when
   `$root/releases/start_erl.data` exists). Install layout:
-  `<prefix>/lib/herdr-live/releases/<V>/`, `current -> releases/<V>`,
-  `<prefix>/bin/herdr-live -> ../lib/herdr-live/current/bin/herdr-live`.
+  `<prefix>/lib/dynide/releases/<V>/`, `current -> releases/<V>`,
+  `<prefix>/bin/dynide -> ../lib/dynide/current/bin/dynide`.
   `current` decides what the next start or `kernel-restart` runs; the broker
   pins the resolved `releases/<V>` in its VM argv, so standby and crash boots
-  never change version. `herdr-live update [--manifest URL] [--check] [--yes]
+  never change version. `dynide update [--manifest URL] [--check] [--yes]
   [--no-restart]` verifies a signed manifest (ed25519, keys in
   `releases/<V>/update-keys/`), installs beside, `kernel-restart`s into the new
   release, and flips `current` only once it answers as the new version. A
   `releases/managed-by` marker (brew, nix) makes it refuse. The running broker
   binary changes only on a full stop and start.
 - Remote attach (M16): the server listens on `client.sock` (0600, in the
-  0700 dir of the API socket; `$HERDR_LIVE_CLIENT_SOCK` overrides) with a
-  token in `client.token` beside it (0600). `herdr-live attach [<host>]
+  0700 dir of the API socket; `$DYNIDE_CLIENT_SOCK` overrides) with a
+  token in `client.token` beside it (0600). `dynide attach [<host>]
   [<session>]` starts the terminal client in its own VM (stdio to
-  `$HERDR_LIVE_CLIENT_LOG`, default `client.log` beside the server log); with
-  a host it runs `ssh -T -o BatchMode=yes <host> herdr-live attach-relay`,
+  `$DYNIDE_CLIENT_LOG`, default `client.log` beside the server log); with
+  a host it runs `ssh -T -o BatchMode=yes <host> dynide attach-relay`,
   and the relay on the server host reads the token, so it never travels
-  (`$HERDR_LIVE_SSH`, `$HERDR_LIVE_REMOTE_BIN`). Contract: `HerdrScene.Wire`.
-  Results: `docs/herdr-live/results/m16.md`.
-- Plugins (M14): `HerdrServer.Plugins.*` runs herdr's external-process plugins
+  (`$DYNIDE_SSH`, `$DYNIDE_REMOTE_BIN`). Contract: `DynideScene.Wire`.
+  Results: `docs/dynide/results/m16.md`.
+- Plugins (M14): `DynideServer.Plugins.*` runs herdr's external-process plugins
   (manifest, registry, runtime, panes, link handlers) under herdr's paths re-rooted
-  at `herdr-live/`; no plugin code ever loads into the VM.
+  at `dynide/`; no plugin code ever loads into the VM.
 - The `plugins` tty harness mode (two herdr example plugins from
-  the cached upstream checkout, unmodified) is in `just live-check`.
+  the cached upstream checkout, unmodified) is in `just dynide-check`.
 - Persistence (M8, ADR 0002): under the broker the session saves to
   `<state dir>/session.<name>.etf` (schema v2, atomic, 0600) and scrollback
   (last 1000 rows as VT) to `session.<name>.scrollback/<pane id>.etf`. State dir:
-  `HERDR_LIVE_STATE_DIR`, else `$HERDR_LIVE_RUNTIME_DIR/state`, else
-  `${XDG_STATE_HOME:-~/.local/state}/herdr-live`. `HERDR_LIVE_SESSION` names it
-  (default `default`); `HERDR_LIVE_PERSIST=0` disables. Tests and standalone
+  `DYNIDE_STATE_DIR`, else `$DYNIDE_RUNTIME_DIR/state`, else
+  `${XDG_STATE_HOME:-~/.local/state}/dynide`. `DYNIDE_SESSION` names it
+  (default `default`); `DYNIDE_PERSIST=0` disables. Tests and standalone
   `mix run` never persist. Restore order: broker carry > ETS mirror > disk.
 - The Rust herdr product (`src/`) was pruned in M7. It lives on as the git tag
-  `herdr-reference`; `live/bench/gate/herdr_ref.sh` builds it from the tag when a
+  `herdr-reference`; `dynide/bench/gate/herdr_ref.sh` builds it from the tag when a
   benchmark needs the reference binary.
 
-Adding an app: from `live/`, `mix new apps/<name>`; depend only on
-`{:herdr_scene, in_umbrella: true}` (and optionally `{:herdr_reload, in_umbrella: true}`); set
+Adding an app: from `dynide/`, `mix new apps/<name>`; depend only on
+`{:dynide_scene, in_umbrella: true}` (and optionally `{:dynide_reload, in_umbrella: true}`); set
 `consolidate_protocols: Mix.env() == :prod`.
-`live/apps/herdr_scene/test/dependency_rule_test.exs` discovers `apps/*`,
-asserts every app except `herdr_scene` has `[:herdr_scene]` or
-`[:herdr_reload, :herdr_scene]` as its umbrella deps (`herdr_reload` exactly
-`[:herdr_scene]`, `herdr_scene` none), and enforces `consolidate_protocols`.
+`dynide/apps/dynide_scene/test/dependency_rule_test.exs` discovers `apps/*`,
+asserts every app except `dynide_scene` has `[:dynide_scene]` or
+`[:dynide_reload, :dynide_scene]` as its umbrella deps (`dynide_reload` exactly
+`[:dynide_scene]`, `dynide_scene` none), and enforces `consolidate_protocols`.
 
 Adding a NIF: a `#[rustler::nif]` fn (auto-registered by `rustler::init!`)
 plus `def name(...), do: :erlang.nif_error(:nif_not_loaded)` in the crate's
@@ -198,7 +198,7 @@ Elixir NIF module, and a facade function in the `Native.*` module it belongs to.
 - **Detection is evidence-based.** Match explicit AND/OR gates over the
   bottom-buffer detection source, never whole-pane incidental text or the
   user-scrollable viewport. Live loop: `Detect.*` and the manifests above,
-  `herdr-live agent read`/`explain` (docs/herdr-live/editing-live.md "Agent
+  `dynide agent read`/`explain` (docs/dynide/editing-live.md "Agent
   detection manifests"). The reference loop is in the `herdr-reference` tag.
 - **UI patterns are reused.** Mouse-first. New dialogs and flows reuse the
   existing chrome roles and interaction patterns instead of one-off screens.
@@ -228,57 +228,57 @@ Elixir NIF module, and a facade function in the `Native.*` module it belongs to.
   `Reload.Guard.run`. That boundary is the only place a blanket
   `rescue`/`catch` of raise, throw, and exit is allowed.
 - NIF modules are not hot reloaded; kernel changes go through handoff
-  (`herdr-live kernel-restart`). Clients get
+  (`dynide kernel-restart`). Clients get
   `{:handoff, %{phase: :begin | :aborted | :released | :adopted, ...}}`;
   hold input on `:begin`, replay on `:aborted`, re-attach on `:released`.
   The reload pipeline runs only in the primary VM.
 
-## Editing herdr-live from inside herdr-live
+## Editing dynIDE from inside dynIDE
 
-Full guide: `docs/herdr-live/editing-live.md`. Human checks: `docs/herdr-live/results/m7-manual-checklist.md`.
+Full guide: `docs/dynide/editing-live.md`. Human checks: `docs/dynide/results/m7-manual-checklist.md`.
 
-- Edit under `live/apps/*/lib` and save: the Watcher compiles and loads in
-  ~200-500 ms. Edits to `herdr_scene` fan out to server and client, so batch
-  them. NIF crates and `native/` changes need `herdr-live kernel-restart`.
+- Edit under `dynide/apps/*/lib` and save: the Watcher compiles and loads in
+  ~200-500 ms. Edits to `dynide_scene` fan out to server and client, so batch
+  them. NIF crates and `native/` changes need `dynide kernel-restart`.
 - A new field in a persisted struct needs a `code_change/3` that merges
   defaults. A new session fact (`App.Session`, pane metadata) also needs a
   `Persist.Schema` field and a migration (`@migrations`, bump `version/0`);
   `App.Ui` fields persist generically (plain data only). No `fn` in state (rejected at the guard). Guarded call sites
-  stay thin; blanket `rescue` stays in `HerdrReload.Guard`.
-- A second terminal onto the running instance: `"$HERDR_LIVE_BIN" attach`
+  stay thin; blanket `rescue` stays in `DynideReload.Guard`.
+- A second terminal onto the running instance: `"$DYNIDE_BIN" attach`
   (no host, local socket). It resumes after a drop within 60 s and stays
   attached through `kernel-restart`; `prefix q` detaches only that client.
 - Read the status line (`r<N> <k>m`, `r! compile`, `rolled back`, `synced ..., no
   rollback`, `tests ...`, `handoff ...`); every text is in the guide.
 - A rolled-back source reloads only when its content changes: edit or revert
-  it, a bare re-save does nothing. `herdr-live rollback [n]` rolls back by hand.
-- `herdr-live test-on-save on|off|status` (or `HERDR_LIVE_TEST_ON_SAVE=1`) gates
+  it, a bare re-save does nothing. `dynide rollback [n]` rolls back by hand.
+- `dynide test-on-save on|off|status` (or `DYNIDE_TEST_ON_SAVE=1`) gates
   saves on the mapped `*_test.exs`; ~1 s per save, off by default.
-- Every reload, rollback, handoff and crash logs a `herdr-event` line;
-  `just live-log-summary` (`live/scripts/log_summary.py`) summarises the log.
+- Every reload, rollback, handoff and crash logs a `dynide-event` line;
+  `just dynide-log-summary` (`dynide/scripts/log_summary.py`) summarises the log.
   session_losses = `session_lost` lines (broker fallback restore, Store closing
   or orphaning live panes) + unclean broker restarts; store_restarts are not
   losses, and neither is an operator kill (`broker_killed signal=9`, counted as
   operator_kills with the restart and `session_lost` lines around it).
-- Pane shells get `HERDR_PANE_ID`, `HERDR_LIVE_BIN` and `HERDR_LIVE_API` (the API
-  socket): `"$HERDR_LIVE_BIN" pane split|run|read|wait-output|list ...` drives the
-  running instance; reference in `docs/herdr-live/api.md`. M17 verbs: `worktree
+- Pane shells get `HERDR_PANE_ID`, `DYNIDE_BIN` and `DYNIDE_API` (the API
+  socket): `"$DYNIDE_BIN" pane split|run|read|wait-output|list ...` drives the
+  running instance; reference in `docs/dynide/api.md`. M17 verbs: `worktree
   list|create|open|remove`, `pane zoom|focus-direction|swap|resize`, `pane split
   --cwd/--env`, `tab move`, `workspace move`, `pane|workspace report-metadata`,
   `pane report-agent-session`, `notification show`, `title set|clear`, `popup
-  close`; `herdr-live --default-config` prints the commented defaults and
+  close`; `dynIDE --default-config` prints the commented defaults and
   `completion bash|zsh|fish` a completion script.
-- Metrics: `just live-bench-reload|handoff|glass|os-floor`;
-  `live/bench/gate_round.sh <tag>` runs the whole slice-1 table. Self-hosted
-  tty check: `python3 live/scripts/tty_harness.py selfhost`.
-- Inside herdr-live, run `just live-test` and focused tests; run the full
-  `just live-check` from another worktree or with the dogfood instance
+- Metrics: `just dynide-bench-reload|handoff|glass|os-floor`;
+  `dynide/bench/gate_round.sh <tag>` runs the whole slice-1 table. Self-hosted
+  tty check: `python3 dynide/scripts/tty_harness.py selfhost`.
+- Inside dynIDE, run `just dynide-test` and focused tests; run the full
+  `just dynide-check` from another worktree or with the dogfood instance
   stopped (another terminal is not enough: harness and smokes share
   `_build/dev`, selfhost writes into the watched tree). One instance per log
-  file (two brokers on one log give false `broker_died` losses). In a herdr-live pane (`HERDR_LIVE_API` set) the tty harness skips
-  its launcher modes (`herdr`, `herdr-stress`, `selfhost`) with a SKIP line.
+  file (two brokers on one log give false `broker_died` losses). In a dynIDE pane (`DYNIDE_API` set) the tty harness skips
+  its launcher modes (`dynide`, `dynide-stress`, `selfhost`) with a SKIP line.
 - After any change to the snapshot path or a libghostty-vt bump, re-run
-  `cd live && elixir bench/handoff/kill9.exs runs=30` (ADR 0001), and keep or
+  `cd dynide && elixir bench/handoff/kill9.exs runs=30` (ADR 0001), and keep or
   drop vendored patch 0008 deliberately.
 
 ## Kernel (Rust NIFs)
@@ -296,10 +296,10 @@ Full guide: `docs/herdr-live/editing-live.md`. Human checks: `docs/herdr-live/re
   only with a comment explaining why. Platform code is compile-gated with
   `#[cfg(...)]` on items; `cfg!(...)` only for policy constants.
 - No new dependency without a reason. Do not break root `cargo build`.
-- `just live-test`: mix and cargo tests. `just live-check` (format, credo
+- `just dynide-test`: mix and cargo tests. `just dynide-check` (format, credo
   --strict, dialyzer, cargo fmt/clippy, tests, launcher smoke): run before
-  committing. `just live-run` launches. CI: `.github/workflows/live.yml`.
-- `just check` is an alias of `live-check`. `just maintenance-test` runs the
+  committing. `just dynide-run` launches. CI: `.github/workflows/dynide.yml`.
+- `just check` is an alias of `dynide-check`. `just maintenance-test` runs the
   vendoring script tests.
 
 ## Vendored libghostty-vt

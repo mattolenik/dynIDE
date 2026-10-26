@@ -1,6 +1,6 @@
 defmodule DynideCli.Update.Manifest do
   @moduledoc """
-  The update channel manifest (schema 1, docs/herdr-live/site/update-manifest.md), pure.
+  The update channel manifest (schema 1, docs/dynide/site/update-manifest.md), pure.
 
   `verify/3` checks the detached ed25519 signature over the exact manifest bytes before it
   parses anything, then the schema. Keys and signatures are raw bytes: a key is 32, a

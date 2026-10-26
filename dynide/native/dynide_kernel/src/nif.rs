@@ -1,6 +1,6 @@
 //! BEAM boundary: `DynideServer.Native` NIFs over `Vt` and `Pty`. Facades live in
 //! `DynideServer.Native.Vt` and `DynideServer.Native.Pty`; term shapes are in
-//! `docs/herdr-live/results/m1.md` ("Events").
+//! `docs/dynide/results/m1.md` ("Events").
 
 use std::cell::Cell;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, IntoRawFd, OwnedFd};

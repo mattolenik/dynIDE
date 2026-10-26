@@ -1,4 +1,4 @@
-//! One ghostty terminal plus a snapshot of packed rows (`docs/herdr-live/packed-cells.md`).
+//! One ghostty terminal plus a snapshot of packed rows (`docs/dynide/packed-cells.md`).
 //! Parsing and encoding happen under the core lock; BEAM-facing reads use the snapshot.
 
 use std::collections::{HashMap, HashSet};

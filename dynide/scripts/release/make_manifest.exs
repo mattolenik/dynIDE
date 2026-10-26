@@ -1,4 +1,4 @@
-# Signed update channel manifest (M18 R5, docs/herdr-live/site/update-manifest.md).
+# Signed update channel manifest (M18 R5, docs/dynide/site/update-manifest.md).
 # Usage: elixir make_manifest.exs --url-base URL --key KEY [--out DIR] [--channel C]
 #          [--released ISO8601] [--notes-url URL] TARBALL...
 # Every TARBALL is dynide-<V>-<os>-<arch>.tar.gz of one version V; its artifact url is

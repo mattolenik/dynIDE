@@ -2,7 +2,7 @@ defmodule HandoffDriver do
   @moduledoc """
   Drives a headless `bin/dynide` through its broker socket for the M5
   handoff smoke and benches (plain `elixir` scripts, no Mix). Frames per
-  docs/herdr-live/plans/m5.md "Wire protocol": `len: u32 | kind | nfds | body`.
+  docs/dynide/plans/m5.md "Wire protocol": `len: u32 | kind | nfds | body`.
   """
 
   @live Path.expand("../..", __DIR__)

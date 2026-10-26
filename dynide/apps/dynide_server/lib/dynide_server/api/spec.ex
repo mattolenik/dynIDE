@@ -3,7 +3,7 @@ defmodule DynideServer.Api.Spec do
   The socket API as plain data: methods, params, result shapes, error codes.
 
   One source for the validator, the schema endpoint, the CLI and the generated
-  `docs/herdr-live/api.md`. Pure: no processes, no I/O.
+  `docs/dynide/api.md`. Pure: no processes, no I/O.
 
   Param types: `:string | :boolean | {:integer, min, max} | {:number, min, max} |
   {:enum, [String.t()]} | :pane_id | :tab_id | :workspace_id | {:list, type} |

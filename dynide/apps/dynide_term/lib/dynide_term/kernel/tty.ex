@@ -1,7 +1,7 @@
 defmodule DynideTerm.Kernel.Tty do
   @moduledoc """
   Host terminal contract: `DynideTerm.Native.Tty`'s API (see its docs and
-  docs/herdr-live/results/m2.md). The subscriber gets `{:tty_input, binary}`,
+  docs/dynide/results/m2.md). The subscriber gets `{:tty_input, binary}`,
   `{:exit, :tty, :hangup | {:panic, binary}}` and, after a `suspend/1` that
   returned `:ok`, `{:tty_resumed}`.
   """

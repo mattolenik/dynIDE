@@ -2,7 +2,7 @@
 # Submits a signed dynIDE macOS release for Apple notarization (M18 task 5).
 # Usage: notarize_macos.sh --keychain-profile PROFILE [--dry-run] TARBALL
 # TARBALL is the build.sh .tar.gz of the signed tree, already re-packed after sign_macos.sh
-# (see docs/herdr-live/site/signing.md). notarytool takes a zip, so the tree is zipped with
+# (see docs/dynide/site/signing.md). notarytool takes a zip, so the tree is zipped with
 # ditto. A plain tarball cannot be stapled: Gatekeeper checks the ticket online.
 # --dry-run prints the commands and contacts nothing.
 set -eu

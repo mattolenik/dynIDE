@@ -1,7 +1,7 @@
 defmodule DynideScene.Cell do
   @moduledoc """
   Packed cell format: the row encoding shared by the kernel (`Native.Vt`),
-  the server, every client, and the blitter. Spec: `docs/herdr-live/packed-cells.md`.
+  the server, every client, and the blitter. Spec: `docs/dynide/packed-cells.md`.
   Golden vectors: `test/support/packed_cell_vectors.json` (Rust and Elixir
   both pass them).
 

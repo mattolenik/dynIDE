@@ -51,7 +51,7 @@ dynide-demo:
 # M3 benchmarks against the fake kernel (Elixir side only; judged at M6).
 # Real server kernel: MIX_ENV=test mix dynide.bench --kernel real [--flood-mb N].
 # The client side always blits to Fake.Blit (no real tty in CI); the real
-# blitter's frame cost is M2's (docs/herdr-live/results/m2.md).
+# blitter's frame cost is M2's (docs/dynide/results/m2.md).
 dynide-bench:
     cd '{{dynide_dir}}' && MIX_ENV=test mix dynide.bench
 

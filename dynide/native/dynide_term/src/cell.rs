@@ -1,4 +1,4 @@
-//! Packed cell decoder (spec: docs/herdr-live/packed-cells.md). The only
+//! Packed cell decoder (spec: docs/dynide/packed-cells.md). The only
 //! Rust code in this crate that knows the row layout.
 
 /// Bytes per record.

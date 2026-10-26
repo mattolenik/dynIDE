@@ -1,7 +1,7 @@
 defmodule DynideServer.Handoff.Link do
   @moduledoc """
   This VM's connection to `dynide_broker` (rulings 3, 7, 9 and the wire protocol in
-  `docs/herdr-live/plans/m5.md`). Without `DYNIDE_BROKER_SOCK` (mix test, iex) `init`
+  `docs/dynide/plans/m5.md`). Without `DYNIDE_BROKER_SOCK` (mix test, iex) `init`
   is `:ignore` and every call below is a cheap no-op.
 
   With it, `init` sends HELLO and blocks application start until the broker answers

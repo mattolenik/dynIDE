@@ -1,0 +1,69 @@
+# Install
+
+The 0.1.0 release targets macOS arm64 and Linux aarch64. Nothing is published yet:
+you build the tarball locally.
+
+## Build
+
+```sh
+dynide/scripts/release/build.sh [--version V] [--out DIR] [--dev-key]
+```
+
+The release trusts the update key in `DYNIDE_UPDATE_PUBKEY`; `--dev-key` embeds the
+local dev key from `keygen.sh` instead (local checks only). With neither it trusts no key
+and refuses every update.
+
+Produces `dynide/_build/release/dynide-<V>-<os>-<arch>.tar.gz` (or under `--out DIR`) and
+a `.sha256` next to it, and prints the tarball path as its last line (`os` is `macos` or
+`linux`, `arch` is `aarch64`; x86_64 was not built, see [release-notes.md](release-notes.md)). Building needs the toolchain in
+[AGENTS.md](../../../AGENTS.md) (Elixir 1.20.4 / OTP 29, Rust, Zig 0.16.0).
+
+## Install
+
+```sh
+dynide/scripts/release/install.sh [--prefix P] [--force] TARBALL
+```
+
+Default prefix is `~/.local`. The `.sha256` beside the tarball is checked when present; an
+existing `releases/<V>` is refused without `--force`. Layout:
+
+- `<P>/lib/dynide/releases/<V>/` the release
+- `<P>/lib/dynide/current` symlink to the active release
+- `<P>/bin/dynide` symlink to `current/bin/dynide`
+
+Put `<P>/bin` on `PATH`. The prefix may contain spaces.
+
+```sh
+dynide --version   # dynide 0.1.0
+dynide             # start an instance in this terminal
+dynide attach      # join the running instance (a second `dynide` refuses, exit 2)
+```
+
+Homebrew and Nix installs update through the package manager. A running instance stays
+pinned to the path it started from, and `brew upgrade` (or a nix switch followed by
+garbage collection) deletes that path: run `dynide kernel-restart` after `brew
+upgrade` or a nix switch, so the running sessions move to the new version.
+
+The release is a production build: hot reload is off, and there is no Erlang
+distribution or remote shell. To edit dynIDE while it runs, use a source checkout
+([editing-live.md](editing-live.md)).
+
+## Update in place
+
+```sh
+dynide update [--manifest URL] [--check] [--yes] [--no-restart]
+```
+
+`--check` only reports whether a newer version exists, and so does a run without `--yes`.
+With `--yes` the update downloads the tarball named in a signed manifest, verifies its
+sha256 and the manifest's ed25519 signature against the keys shipped in the release,
+installs it beside the old release, runs `kernel-restart` into it so the running sessions
+move to the new version without losing terminals, and flips `current` once the instance
+answers as the new version. If the restart fails, `current` is untouched. With no
+instance running it installs, flips `current` and says so. `--no-restart` only flips
+`current`: the running instance stays on its release (the broker pins it) until the next
+start or `dynide kernel-restart`.
+
+The broker process keeps running the old binary until a full stop and start; broker-side
+fixes need that. Manifest format: [update-manifest.md](update-manifest.md). Keys and
+signing: [signing.md](signing.md).

@@ -1,4 +1,4 @@
-//! Packed cell codec. Spec: `docs/herdr-live/packed-cells.md`.
+//! Packed cell codec. Spec: `docs/dynide/packed-cells.md`.
 
 pub const RECORD_SIZE: usize = 32;
 const GLYPH_BYTES: usize = 12;

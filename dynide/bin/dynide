@@ -32,9 +32,9 @@
 # one session file.
 #
 # dynide update [--manifest URL] [--check] [--yes] [--no-restart] (M18, release only
-# beyond --check): DynideCli.Update; docs/herdr-live/site/update-manifest.md.
+# beyond --check): DynideCli.Update; docs/dynide/site/update-manifest.md.
 # Every other verb (ping, pane ..., rollback, test-on-save, ...; `dynide help`
-# lists them, docs/herdr-live/api.md describes them) runs the CLI (apps/dynide_cli)
+# lists them, docs/dynide/api.md describes them) runs the CLI (apps/dynide_cli)
 # against the API socket ($DYNIDE_API, else the api.sock beside the default log):
 # `erl -noinput` with Elixir's ebin and the CLI's ebin, no mix and no Elixir boot,
 # ~150 ms p50 vs ~270 ms for `elixir -e` or an escript (M12 task 7). It never reads stdin.

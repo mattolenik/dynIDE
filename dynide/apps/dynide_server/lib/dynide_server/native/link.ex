@@ -1,7 +1,7 @@
 defmodule DynideServer.Native.Link do
   @moduledoc """
   The VM side of the broker socket: length-prefixed frames with SCM_RIGHTS fds
-  (wire protocol in `docs/herdr-live/plans/m5.md`). A kernel thread reads frames and
+  (wire protocol in `docs/dynide/plans/m5.md`). A kernel thread reads frames and
   sends the owner, in order:
 
       {:dynide_link, link, kind, body, fds}   fds :: [Pty.fd()], CLOEXEC, single-use

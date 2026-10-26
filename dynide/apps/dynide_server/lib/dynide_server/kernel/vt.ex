@@ -1,7 +1,7 @@
 defmodule DynideServer.Kernel.Vt do
   @moduledoc """
   Terminal state kernel: the API of `DynideServer.Native.Vt` (M1), which implements it.
-  `Kernel.Fake.Vt` is the test double. Shapes are M1's (docs/herdr-live/results/m1.md).
+  `Kernel.Fake.Vt` is the test double. Shapes are M1's (docs/dynide/results/m1.md).
 
   `dirty_rows/1` has ONE shared read cursor per vt: `Pane.Server` is its only consumer
   (sessions read the `Pane.Rows` cache). Never call it anywhere else.

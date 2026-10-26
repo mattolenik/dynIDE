@@ -1,8 +1,8 @@
 defmodule Mix.Tasks.Dynide.Api.Docs do
-  @shortdoc "Generate docs/herdr-live/api.md from the API spec"
+  @shortdoc "Generate docs/dynide/api.md from the API spec"
 
   @moduledoc """
-  Writes `docs/herdr-live/api.md` from `DynideServer.Api.Spec`.
+  Writes `docs/dynide/api.md` from `DynideServer.Api.Spec`.
 
       mix dynide.api.docs           # write the file
       mix dynide.api.docs --check   # exit 1 if the file differs

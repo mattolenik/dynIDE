@@ -1,6 +1,6 @@
 defmodule DynideServer.Handoff.State do
   @moduledoc """
-  The per-pane `HandoffState` blob the broker holds (`docs/herdr-live/plans/m5.md`,
+  The per-pane `HandoffState` blob the broker holds (`docs/dynide/plans/m5.md`,
   "HandoffState blob"): ETF of a map with `v: 1`. `build/3` reads the kernel; the
   rest is pure.
   """
