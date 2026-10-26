@@ -5,6 +5,9 @@ so an agent can edit the running multiplexer and see it in under a second
 without losing terminals, scrollback, or layout. A bad edit never takes it down.
 Rules come from `docs/dynide/design.md` (it wins over this file),
 `milestones.md`, and `status.md` (ledger, rulings) in the same directory.
+Changing dynIDE while it is in use (editing a running instance from inside
+itself) has its own instructions: read `docs/dynide/editing-live.md` first;
+the "Editing dynIDE from inside dynIDE" section below is only a summary.
 
 ## Operating model
 
