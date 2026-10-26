@@ -595,7 +595,7 @@ windowed UI.
 - Technology decision (ADR): LiveView in a webview (Tauri/wry) is the
   leading candidate because the client stays in Elixir and hot reload plus
   the Guard apply to it. Alternatives recorded with the live-editing cost.
-- `apps/herdr_gui`: attaches with `kind: :gui`; reports cell size from its
+- `apps/dynide_gui`: attaches with `kind: :gui`; reports cell size from its
   font metrics; renders pane rows to a canvas from packed cells; draws the
   chrome tree as widgets; renders overlays natively; emits neutral events
   including `px` coordinates.

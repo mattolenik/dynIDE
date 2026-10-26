@@ -116,7 +116,7 @@ Mix umbrella under `dynide/`:
   `dynide_kernel` (Rustler crate at `dynide/native/dynide_kernel`).
 - `apps/dynide_term` — terminal client; depends on `dynide_term` NIF crate at
   `dynide/native/dynide_term`.
-- A future `apps/herdr_gui` depends on `dynide_scene` only.
+- A future `apps/dynide_gui` depends on `dynide_scene` only.
 
 The two NIF crates share no code except through `crates/ghostty-vt` (which
 only `dynide_kernel` needs) and the packed cell format spec, which lives in
